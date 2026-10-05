@@ -20,6 +20,11 @@ class RobotsDisallowed(Exception):
     pass
 
 
+class RobotsUnavailable(RobotsDisallowed):
+    """robots.txt couldn't be read (5xx or a network error), so the host counts as
+    disallowed for now. Unlike a real disallow, it's worth retrying later."""
+
+
 def lenient_lines(text):
     """Normalize robots.txt quirks so the intended rules apply.
 
@@ -104,7 +109,7 @@ def _open(url, data=None, timeout=90):
 
 
 def robots_for(url):
-    """(host, rules, decision). decision is 'allowed' or 'no_rules'."""
+    """(host, rules, decision). decision is 'allowed', 'no_rules', or 'unavailable' (couldn't read it)."""
     parts = urllib.parse.urlsplit(url)
     host = f"{parts.scheme}://{parts.netloc}"
     if host not in _robots:
@@ -117,9 +122,9 @@ def robots_for(url):
             if 400 <= err.code < 500:
                 _robots[host] = None
             else:
-                return host, DISALLOW_ALL, "allowed"      # 5xx: disallow for now, don't cache
+                return host, DISALLOW_ALL, "unavailable"  # 5xx: disallow for now, don't cache
         except Exception:
-            return host, DISALLOW_ALL, "allowed"
+            return host, DISALLOW_ALL, "unavailable"
     rules = _robots[host]
     return host, rules, ("no_rules" if rules is None else "allowed")
 
@@ -127,6 +132,8 @@ def robots_for(url):
 def get(url, timeout=90):
     """GET with the robots check and crawl-delay. Returns (status, body bytes, robots decision)."""
     host, rules, decision = robots_for(url)
+    if decision == "unavailable":
+        raise RobotsUnavailable(f"robots.txt at {host} couldn't be read; treating {url} as disallowed for now")
     if rules is not None and not rules.allowed(url):
         raise RobotsDisallowed(f"robots.txt at {host} disallows {url}")
     delay = (rules.crawl_delay() if rules else None) or 0

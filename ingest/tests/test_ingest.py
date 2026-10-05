@@ -57,3 +57,24 @@ class AchdCamerasTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RobotsUnavailableTest(unittest.TestCase):
+    def test_unreadable_robots_is_retryable_not_a_disallow(self):
+        from ingest import http
+
+        def broken(url, data=None, timeout=90):
+            raise OSError("connection reset by peer")
+
+        real, http._open = http._open, broken
+        try:
+            http._robots.pop("https://flaky.example", None)
+            with self.assertRaises(http.RobotsUnavailable):
+                http.get("https://flaky.example/data.json")
+            self.assertNotIn("https://flaky.example", http._robots)   # not cached: retried next time
+        finally:
+            http._open = real
+
+    def test_unavailable_still_counts_as_disallowed(self):
+        from ingest import http
+        self.assertTrue(issubclass(http.RobotsUnavailable, http.RobotsDisallowed))

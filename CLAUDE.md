@@ -121,9 +121,10 @@ python3 -m unittest discover -s ingest/tests -t .
 
 Front-end rules:
 
-- The map loads only **self-hosted** tiles, fonts and sprites from
-  `/tiles/`. Never point the style at a third-party tile host or anything
-  that needs a key.
+- The map loads only **self-hosted** tiles, fonts and sprites: built
+  layers from `/tiles/`, and data layers from the app's own `/api/`
+  (e.g. road tiles cut by PostGIS). Never point the style at a
+  third-party tile host or anything that needs a key.
 - If a layer isn't built, the app says so; it doesn't silently substitute
   another source.
 - The project uses SvelteKit 3 / Svelte 5 runes, with `#lib/...` imports

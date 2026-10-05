@@ -4,6 +4,7 @@
 	import { onDestroy } from 'svelte';
 	import { addCameraLayer, CAMERA_LAYERS, type CameraCounts, type CameraProps } from '#lib/map/cameras.js';
 	import { ageText, isStale, stopText, TransitLayer, UNKNOWN_COLOR, type Vehicle } from '#lib/map/transit.js';
+	import { addStreetLayers, oneWayText, setStreetsVisible, SPEED_BINS, speedColor, type StreetProps } from '#lib/map/streets.js';
 	import { drape, imageData } from '#lib/calibration/drape.js';
 	import { footprint, type ImageSize, type Pose } from '#lib/calibration/solver.js';
 
@@ -18,8 +19,9 @@
 	let theMap: Map | undefined;
 
 	// Lenses (docs/13 §13.5): what the map is about right now. Hotkeys follow the design's numbering.
-	type Lens = 'transit' | 'cameras';
+	type Lens = 'streets' | 'transit' | 'cameras';
 	const LENSES: { id: Lens; name: string; icon: string; key: string }[] = [
+		{ id: 'streets', name: 'Streets', icon: '🛣️', key: '2' },
 		{ id: 'transit', name: 'Transit', icon: '🚌', key: '4' },
 		{ id: 'cameras', name: 'Cameras', icon: '📷', key: '7' }
 	];
@@ -31,6 +33,7 @@
 	let vehicles = $state<Vehicle[]>([]);
 	let feedNow = $state(0);
 	let busId = $state<string | null>(null);
+	let street = $state<StreetProps | null>(null);
 	let spot = $state<string | null>(null);
 	const bus = $derived(vehicles.find((v) => v.vehicleId === busId) ?? null);
 	const live = $derived(vehicles.filter((v) => !isStale(v, feedNow)));
@@ -53,8 +56,10 @@
 			if (map.getLayer(`drape-${c.calibrationId}`))
 				map.setLayoutProperty(`drape-${c.calibrationId}`, 'visibility', next === 'cameras' && showImages ? 'visible' : 'none');
 		transit?.setVisible(next === 'transit');
+		setStreetsVisible(map, next === 'streets');
 		if (next !== 'cameras') selected = null;
 		if (next !== 'transit') busId = null;
+		if (next !== 'streets') street = null;
 	}
 
 	function onKey(e: KeyboardEvent) {
@@ -91,6 +96,7 @@
 			/* per-viewer convenience only */
 		}
 		await addTransit(map);
+		addStreetLayers(map, location.origin, (s) => (street = s));
 		if (!transitReady && lens === 'transit') lens = 'cameras';
 		setLens(lens);
 		const r = await addCameraLayer(map, (c) => (selected = c));
@@ -152,7 +158,9 @@
 
 	<header class="card">
 		<h1>Treasure Valley</h1>
-		{#if lens === 'transit'}
+		{#if lens === 'streets'}
+			<p class="num">Ada County roads · posted speeds (ACHD)</p>
+		{:else if lens === 'transit'}
 			<p class="num">
 				{live.length} buses live · {Object.keys(liveByRoute).filter((r) => r !== '?').length} routes
 				{#if live.length}· positions {ageText(feedNow - Math.max(...live.map((v) => v.ts)))}{/if}
@@ -208,6 +216,32 @@
 			</ul>
 			<p class="credit">Live positions: Valley Regional Transit (CC BY 3.0)</p>
 		</aside>
+	{/if}
+
+	{#if lens === 'streets'}
+		<aside class="legend card" aria-label="Posted speed legend">
+			<p class="legend-title">Posted speed</p>
+			{#each SPEED_BINS as b (b.from)}
+				<span><i class="swatch" style="background:{b.color}"></i>{b.label}</span>
+			{/each}
+			<span class="hint">Wider line: bigger road class · ›› one-way</span>
+			<p class="credit">Ada County: ACHD road centerlines. Canyon County isn't covered yet.<br />Most local streets read 20 mph, likely a default.</p>
+		</aside>
+	{/if}
+
+	{#if street}
+		<section class="camera card" aria-label="Selected road">
+			<button class="close" aria-label="Close" onclick={() => (street = null)}>×</button>
+			<h2>{street.name ?? 'Unnamed road'}</h2>
+			<p class="speed-line">
+				<span class="speed-sign"><small>SPEED LIMIT</small><b>{street.speed ?? '?'}</b></span>
+				<span class="meta">
+					{street.class ?? 'Unknown class'}{#if street.community} · {street.community}{/if}<br />
+					{oneWayText(street)}{#if street.elevated} · bridge or overpass{/if}{#if street.private} · private{/if}
+				</span>
+			</p>
+			<p class="credit">Source: ACHD road centerlines <i class="swatch small" style="background:{speedColor(street.speed)}"></i></p>
+		</section>
 	{/if}
 
 	{#if lens === 'transit' && transitProblem}
@@ -461,6 +495,51 @@
 		font-size: 15px;
 		margin-right: 4px;
 		vertical-align: 2px;
+	}
+	.swatch {
+		display: inline-block;
+		width: 22px;
+		height: 6px;
+		margin-right: 8px;
+		border-radius: 3px;
+		vertical-align: 2px;
+	}
+	.swatch.small {
+		width: 14px;
+	}
+	.hint {
+		margin-top: 4px;
+		font-size: 12px;
+		color: var(--ink-soft);
+	}
+	.speed-line {
+		display: flex;
+		gap: 12px;
+		align-items: center;
+		margin: 4px 0 8px;
+	}
+	.speed-sign {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		min-width: 58px;
+		padding: 4px 6px;
+		border: 2.5px solid var(--ink);
+		border-radius: 8px;
+		background: #fff;
+		color: var(--ink);
+		line-height: 1;
+	}
+	.speed-sign small {
+		font: 700 8px var(--font-body);
+		letter-spacing: 0.04em;
+		text-align: center;
+	}
+	.speed-sign b {
+		font: 700 26px var(--font-body);
+	}
+	.speed-line .meta {
+		margin: 0;
 	}
 	.credit {
 		margin: 6px 0 0;

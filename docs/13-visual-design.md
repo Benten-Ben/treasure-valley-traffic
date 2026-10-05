@@ -183,7 +183,7 @@ after dark.
 | # | Lens | What it shows | How it looks |
 |---|---|---|---|
 | 1 | **Normal** | The valley itself | Full color; a few icons for the selected item only |
-| 2 | **Traffic** | Volumes (AADT now; camera-measured queues later) | Road width and color by volume, on the shared ramp |
+| 2 | **Traffic** | Volumes (AADT now; camera-measured queues later) | Road width and color by volume, on the shared ramp. **Built first as "Streets" (Oct 5, 2026):** posted speed (ACHD) on a one-hue blue ramp, width by road class, chevrons on one-way streets, speed numbers along the bigger roads |
 | 3 | **Signals** | 453 signalized intersections | Round pins with a tiny three-light signal glyph; later the A–F grade badge |
 | 4 | **Transit** | VRT routes, stops, live buses | Routes in their own GTFS colors; buses as rounded bus icons with route badges, gliding, with fading trails |
 | 5 | **Roadwork** | Work zones and incidents (WZDx, ACHD) | Orange-and-white **barricade stripes** along affected segments; cone icons; incidents as pulsing rings that fade with age |

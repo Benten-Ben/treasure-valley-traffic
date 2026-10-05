@@ -5,7 +5,7 @@ order (`run all` loads cameras before their views). STREAMS run continuously
 (`stream`), each as its own service.
 """
 
-from . import achd_cameras, idaho511_views, vrt_gtfs, vrt_realtime
+from . import achd_cameras, achd_roads, idaho511_views, vrt_gtfs, vrt_realtime
 
-SOURCES = {m.SOURCE["name"]: m for m in (achd_cameras, idaho511_views, vrt_gtfs)}
+SOURCES = {m.SOURCE["name"]: m for m in (achd_cameras, idaho511_views, vrt_gtfs, achd_roads)}
 STREAMS = {m.SOURCE["name"]: m for m in (vrt_realtime,)}
