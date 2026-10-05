@@ -48,7 +48,7 @@ assistant alone.
 | Freight rail layer (owner: "would be cool if there is live location data") | No public live train positions exist: railroads don't publish them, and the blocked-crossing feeds some share with Waze are private and off-limits to us. Possible layers: rail lines (OSM) and FRA's crossing inventory (433 crossings in Ada and Canyon); FRA's public blocked-crossing reports as history (whether they download is unchecked); and our own "train at the crossing" detection from cameras near crossings, once the camera vision pipeline exists. | Oct 5 chat; [ch. 8](08-data-inventory.md) |
 | Vision model license: permissive or AGPL? | Permissive (Apache/BSD) | [ch. 11](11-camera-validation-layer.md) |
 | Which 30–40 key cameras come first | Top-congested corridors plus highest-crash intersections | [ch. 11 §11.6](11-camera-validation-layer.md#116-open-questions-for-the-owner) |
-| Camera archive format | AV1 (SVT-AV1, crf30) in MKV, hourly roll-up per camera: 2–7x smaller than JPEG at night and 3.9–4.9x at midday (Oct 5), about 2–3x better than H.264/H.265. The evening-rush retest (5 PM) is next. | [ch. 11 §11.5](11-camera-validation-layer.md#measured-results-night-test-oct-45-2026) |
+| Camera archive format | AV1 (SVT-AV1, crf30) in MKV, hourly roll-up per camera: 2–7x smaller than JPEG at night, 3.9–4.9x at midday and 3.5–4.3x in the evening rush (Oct 5), about 2x better than H.264/H.265 in every test. Retests done: ready for the owner's OK. | [ch. 11 §11.5](11-camera-validation-layer.md#measured-results-night-test-oct-45-2026) |
 | Edits to the ACHD note before sending | — | The draft, in the private files |
 
 ## Owner actions

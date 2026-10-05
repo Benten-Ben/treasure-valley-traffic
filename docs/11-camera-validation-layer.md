@@ -380,7 +380,36 @@ Encoding took 1.6–3.3 s per 26-frame batch on 4 cores.
   sensor grain.
 - **AV1 crf30 stays about 2x ahead of H.264 and H.265**, at an SSIM of
   0.984 on both cameras.
-- **Next:** the evening rush (5 PM), which has the most motion.
+
+### Measured results (evening rush, Oct 5, 2026)
+
+**Test:** the same two cameras and method in the evening peak: 26 changed
+frames each, 5:01–5:27 PM MDT, all distinct. Frames: 656 about 44 KB per
+JPEG, 752 about 32 KB.
+
+| Config | 656: vs JPEG | 656: SSIM | 752: vs JPEG | 752: SSIM |
+|---|---|---|---|---|
+| H.264 all-intra (no inter-frame) crf23 | 1.0x | 0.995 | 1.1x | 0.996 |
+| H.264 crf23 | 1.4x | 0.996 | 1.6x | 0.997 |
+| H.264 crf28 | 1.9x | 0.990 | 2.1x | 0.992 |
+| H.265 crf24 | 1.5x | 0.997 | 1.7x | 0.997 |
+| **AV1 (SVT-AV1, preset 6) crf30** | **3.5x** | 0.980 | **4.3x** | 0.982 |
+| AV1 crf38 | 5.8x | 0.968 | 7.4x | 0.973 |
+| AV1 crf46 | 9.9x | 0.954 | 11.3x | 0.966 |
+
+**What the three tests show together:**
+
+| AV1 crf30, vs JPEG | 656 Eagle & Fairview | 752 Chinden & Cloverdale |
+|---|---|---|
+| Night (Oct 4–5) | 7.0x | 2.1x (sensor grain) |
+| Midday (Oct 5) | 3.9x | 4.9x |
+| Evening rush (Oct 5) | 3.5x | 4.3x |
+
+- **The busiest hour costs a little:** 10–12% less compression than
+  midday, because more is moving.
+- **AV1 crf30 is about 2x ahead of H.264 and H.265 in every test**, at an
+  SSIM of 0.98 against the originals.
+- **The 2–7x range used for storage holds.** Daytime sits at 3.5–4.9x.
 
 **Storage at these ratios** (AV1 crf30, 2–7x):
 
@@ -389,7 +418,7 @@ Encoding took 1.6–3.3 s per 26-frame batch on 4 cores.
 | 40 key cameras, 9 peak hours | about 1 GB | about 150–500 MB | about 15–45 GB |
 | All about 210 cameras, 24 h | about 13–14 GB | about 2–7 GB | about 180–600 GB |
 
-**Recommendation (holding after the midday retest; the evening-rush test is next):**
+**Recommendation (confirmed by the midday and evening-rush retests):**
 
 - **Codec:** AV1 via SVT-AV1, preset 6, crf30.
 - **Container:** MKV with real per-frame timestamps, as a batch roll-up per
