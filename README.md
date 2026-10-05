@@ -44,15 +44,18 @@ historical data layers.
 
 **Platform code (foundation, being built step by step):**
 
-- [`app/`](app/README.md): SvelteKit + MapLibre map of the valley. It uses
-  only self-hosted tiles and shows exactly what the basemap build produced.
+- [`app/`](app/README.md): SvelteKit + MapLibre map of the valley, on
+  self-hosted tiles only. Two lenses so far: **Transit** (Valley Regional
+  Transit's live buses in route colors) and **Cameras** (with the camera
+  calibrator).
 - [`basemap/`](basemap/README.md): builds our own map layers: an
   OpenStreetMap extract, fonts and icons, 3DEP terrain, Overture buildings
   and NAIP aerial imagery.
 - [`deploy/`](deploy/README.md): Docker Compose for the server VM
   (TimescaleDB/PostGIS, ingest, the app, Caddy).
 - [`db/`](db/README.md), [`ingest/`](ingest/README.md): schema migrations
-  and collectors (the camera list so far).
+  and collectors: ACHD's camera list, and VRT's schedule and live bus
+  positions (recorded every 30 s since Oct 5, 2026).
 
 **Research code:**
 

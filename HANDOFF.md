@@ -49,8 +49,10 @@ them.
   - the database (TimescaleDB + PostGIS), with migrations applied;
   - ingest: ACHD's camera list, daily, plus the 511 camera views, linked
     once;
-  - the app, with the map, camera nodes and view cones, and the calibrator
-    at `/calibrate/<id>`;
+  - the app, with two lenses: Transit (live buses) and Cameras (nodes,
+    view cones, and the calibrator at `/calibrate/<id>`);
+  - transit recording: VRT's live feeds every 30 s (raw archive plus bus
+    positions) and its schedule daily;
   - the map tiles: streets, terrain, buildings, aerial imagery, and
     sharper imagery around the cameras.
 - **The helper's server setup is done.** The steps and the host details are
