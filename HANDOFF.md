@@ -43,8 +43,9 @@ them.
   - the platform runs in one VM on the owner's home server, with Docker
     Compose, reached over Tailscale;
   - the first real feature is the **camera calibrator**;
-  - the map shows only the foundation (terrain, imagery, streets,
-    buildings) plus cameras for now.
+  - the map shows the foundation (terrain, imagery, streets, buildings)
+    plus cameras and transit; other collected data waits for the owner;
+  - transit is the current focus (Oct 5).
 - **Running on the server (Oct 5):**
   - the database (TimescaleDB + PostGIS), with migrations applied;
   - ingest: ACHD's camera list, daily, plus the 511 camera views, linked
@@ -60,7 +61,7 @@ them.
 - **Still waiting on the owner:**
   - the 511 developer key;
   - sending the ACHD note (the draft is in the private files);
-  - schema decisions 3–7 (`docs/12-database-schema.md` §12.9);
+  - schema decisions 4–5 (`docs/12-database-schema.md` §12.9);
   - where backups go (`docs/DECISIONS.md`).
 
 ## Message template (helper → pilot)
