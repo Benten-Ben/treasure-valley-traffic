@@ -57,6 +57,12 @@ class ColorTest(unittest.TestCase):
         self.assertEqual(len({colors["a"], colors["b"], colors["c"]}), 3)
         self.assertEqual(set(colors), {"a", "b", "c", "d"})
 
+    def test_neighbors_avoid_confusable_colors(self):
+        orange = "#eb6834"
+        colors = vrt_gtfs.assign_colors(["a", "b"], {"a": {"b"}, "b": {"a"}}, {"a": orange})
+        self.assertFalse(vrt_gtfs.clash(colors["a"], colors["b"]))
+        self.assertNotIn(colors["b"], {orange, "#eda100", "#e87ba4", "#008300", "#e34948"})
+
     def test_too_many_mutual_neighbors_still_colors_everyone(self):
         routes = [str(i) for i in range(10)]                     # 10 routes all sharing streets
         nb = {r: set(routes) - {r} for r in routes}

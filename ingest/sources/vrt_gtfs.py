@@ -9,7 +9,8 @@ Route colors: VRT's own GTFS colors are four shared tier colors, so routes
 can't be told apart by them. Each route gets one of our eight map colors
 instead, chosen so routes that share streets differ. The palette is the
 validated categorical palette; eight hues can't all be told apart at once,
-so the route number always travels with the color. The downtown core is left
+so neighbors also avoid the pairs it flags as confusable, and the route
+number always travels with the color. The downtown core is left
 out, and so are the other hubs (Towne Square), since every route serving a
 hub meets there anyway. A route keeps its color for good, so colors don't
 shift when routes come and go.
@@ -43,6 +44,11 @@ SOURCE = {
 
 # The validated categorical palette (8 hues, fixed order), on the cream map.
 ROUTE_PALETTE = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948"]
+# Pairs the palette validator fails when the two sit side by side (normal-vision
+# ΔE < 15 or colorblind ΔE < 8 on the cream map): orange with yellow, pink,
+# green and red, and pink with red. Neighbors avoid these as well as matches.
+CONFUSABLE = {frozenset(p) for p in [("#eb6834", "#eda100"), ("#eb6834", "#e87ba4"), ("#eb6834", "#008300"),
+                                     ("#eb6834", "#e34948"), ("#e87ba4", "#e34948")]}
 INK = "#2b2a33"
 NEAR_M = 40            # routes within this distance of each other run "together"...
 SHARED_MIN_M = 300     # ...for at least this long, outside the hubs
@@ -126,13 +132,18 @@ def route_order(routes):
     return [r["route_id"] for r in sorted(routes, key=key)]
 
 
+def clash(a, b):
+    """Two route colors that can't sit side by side: the same, or easily confused."""
+    return a == b or frozenset((a, b)) in CONFUSABLE
+
+
 def assign_colors(order, neighbors, existing, palette=ROUTE_PALETTE, max_steps=200_000):
     """Colors for routes that don't have one yet; existing colors are kept.
 
     First an exact search for a coloring where no two neighbors (routes
-    sharing streets) match, trying the least-used colors first so the palette
+    sharing streets) clash, trying the least-used colors first so the palette
     is spread evenly. If none exists (or the search runs long), each new
-    route takes the color least used by its neighbors instead."""
+    route takes the color that clashes least with its neighbors instead."""
     fixed = {r: c for r, c in existing.items() if c}
     todo = [r for r in order if r not in fixed]
     found = _search(todo, neighbors, dict(fixed), palette, [max_steps])
@@ -140,9 +151,10 @@ def assign_colors(order, neighbors, existing, palette=ROUTE_PALETTE, max_steps=2
         return found
     colors = dict(fixed)
     for r in sorted(todo, key=lambda r: (-len(neighbors.get(r, ())), order.index(r))):
-        near = Counter(colors[n] for n in neighbors.get(r, ()) if n in colors)
+        near = [colors[n] for n in neighbors.get(r, ()) if n in colors]
         overall = Counter(colors.values())
-        colors[r] = min(palette, key=lambda c: (near[c], overall[c], palette.index(c)))
+        colors[r] = min(palette, key=lambda c: (sum(n == c for n in near), sum(clash(c, n) for n in near),
+                                                overall[c], palette.index(c)))
     return colors
 
 
@@ -154,10 +166,10 @@ def _search(todo, neighbors, colors, palette, budget):
     def saturation(r):
         return len({colors[n] for n in neighbors.get(r, ()) if n in colors})
     r = max(todo, key=lambda r: (saturation(r), len(neighbors.get(r, ()))))
-    taken = {colors[n] for n in neighbors.get(r, ()) if n in colors}
+    near = {colors[n] for n in neighbors.get(r, ()) if n in colors}
     overall = Counter(colors.values())
     for c in sorted(palette, key=lambda c: (overall[c], palette.index(c))):
-        if c in taken:
+        if any(clash(c, n) for n in near):
             continue
         budget[0] -= 1
         if budget[0] < 0:
