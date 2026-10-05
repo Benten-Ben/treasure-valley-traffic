@@ -208,14 +208,18 @@ def prefetch(jobs, workers=8):
 
 
 def build_vrts(files, folder, name):
-    """One VRT per coordinate system (BuildVRT needs one), in the order the CRSs first appear."""
+    """One VRT per coordinate system (BuildVRT needs one), in the order the CRSs first appear.
+
+    Each gets an alpha band that is transparent wherever no image covers it.
+    Without one, the gaps between detail windows count as valid black pixels
+    and paint over the valley imagery underneath."""
     groups = {}
     for f in files:
         groups.setdefault(gdal.Open(f).GetSpatialRef().GetAuthorityCode(None) or "unknown", []).append(f)
     out = []
     for crs, fs in groups.items():
         path = os.path.join(folder, f"{name}_{crs}.vrt")
-        gdal.BuildVRT(path, fs)
+        gdal.BuildVRT(path, fs, addAlpha=True)
         out.append(path)
     return out
 
