@@ -1,5 +1,5 @@
 import { layers, namedFlavor } from '@protomaps/basemaps';
-import type { LayerSpecification, StyleSpecification } from 'maplibre-gl';
+import type { LayerSpecification, LineLayerSpecification, StyleSpecification } from 'maplibre-gl';
 
 /** Where the basemap build (basemap/) publishes its output. Same origin, no third-party hosts. */
 export const TILES_PATH = '/tiles';
@@ -79,6 +79,34 @@ export async function loadManifest(fetchFn: typeof fetch = fetch): Promise<Manif
 
 const pmtilesUrl = (origin: string, file: string) => `pmtiles://${origin}${TILES_PATH}/${file}`;
 
+const RAIL = '#6f6a75';
+
+/** A railway as a track line plus cross-ties (from zoom 13), replacing the basemap's rail layer. */
+export function railLayers(l: LineLayerSpecification): LineLayerSpecification[] {
+	const track: LineLayerSpecification = {
+		...l,
+		id: 'rail-track',
+		paint: {
+			'line-color': RAIL,
+			'line-opacity': 0.9,
+			'line-width': ['interpolate', ['linear'], ['zoom'], 9, 0.6, 12, 1.2, 15, 2, 18, 3.5]
+		}
+	};
+	const ties: LineLayerSpecification = {
+		...l,
+		id: 'rail-ties',
+		minzoom: Math.max(13, l.minzoom ?? 0),
+		paint: {
+			'line-color': RAIL,
+			'line-opacity': 0.75,
+			'line-width': ['interpolate', ['linear'], ['zoom'], 13, 5, 18, 11],
+			// Dash lengths scale with the line width: thin ties, wide gaps.
+			'line-dasharray': [0.12, 1.6]
+		}
+	};
+	return [track, ties];
+}
+
 /** MapLibre needs absolute URLs for glyphs and sprites, so the page origin is passed in. */
 export function buildStyle(m: BasemapManifest, origin: string, aerial = false): StyleSpecification {
 	let base = layers('protomaps', namedFlavor(m.basemap.flavor), { lang: 'en' });
@@ -87,6 +115,9 @@ export function buildStyle(m: BasemapManifest, origin: string, aerial = false): 
 		const minzoom = m.buildings.minzoom;
 		base = base.map((l) => (l.id === 'buildings' ? { ...l, maxzoom: minzoom } : l));
 	}
+	// Railways: the basemap's faint dashed gray is easy to miss, so draw them as
+	// classic railroad marks instead, a solid track line with cross-ties.
+	base = base.flatMap((l) => (l.id === 'roads_rail' && l.type === 'line' ? railLayers(l) : [l]));
 	const firstSymbol = base.findIndex((l) => l.type === 'symbol');
 	const below = firstSymbol === -1 ? base : base.slice(0, firstSymbol);
 	const labels = firstSymbol === -1 ? [] : base.slice(firstSymbol);
