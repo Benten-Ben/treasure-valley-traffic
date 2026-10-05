@@ -316,11 +316,11 @@ Replay simply asks what was active at time *t*:
 |---|---|---|---|
 | 1 | Table style | (a) typed tables per kind of thing, plus `raw` versions; (b) the prototype's generic features, events and observations | **(a)**. Clearer queries, constraints and indexes; `raw` keeps everything regardless. |
 | 2 | Identity | (a) our own IDs, with `source_link` records; (b) use each source's IDs directly | **(a)**. Sources disagree; links stay inspectable and fixable. |
-| 3 | Coordinate system for meters | UTM 11N (EPSG:26911), Idaho Transverse Mercator (EPSG:8826), or geography casts | **UTM 11N**. Standard, well supported, and the valley sits well inside zone 11. |
+| 3 | Coordinate system for meters | UTM 11N (EPSG:26911), Idaho Transverse Mercator (EPSG:8826), or geography casts | **UTM 11N**. Standard, well supported, and the valley sits well inside zone 11. ✅ Approved Oct 5. |
 | 4 | Turn-count layout | (a) long, one row per movement; (b) wide, 16 columns like ACHD's table | **(a)** with a pivot view for display. Easier sums by leg or movement. |
 | 5 | Reference road network | Overture (stable IDs across releases), OSM, ITD's linear-reference system | **Overture** segments with ITD HPMS lanes attached. This can wait for v1.1; v1 needs only intersections and approaches. |
-| 6 | Raw payload storage | Database (`raw.record`, jsonb) for inventories and events; none for high-volume streams | As proposed |
-| 7 | Retention | Keep everything (per the camera decision); compress after 7 days | As proposed; review once the host's disk is known |
+| 6 | Raw payload storage | Database (`raw.record`, jsonb) for inventories and events; none for high-volume streams | As proposed. ✅ Approved Oct 5: high-volume feeds (e.g. GTFS-realtime) are archived as files on disk instead. |
+| 7 | Retention | Keep everything (per the camera decision); compress after 7 days | As proposed. ✅ Approved Oct 5. |
 
 ## 12.10 Migrations and testing
 
