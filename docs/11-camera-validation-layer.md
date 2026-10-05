@@ -354,6 +354,34 @@ Encoding took 1–2.5 s per 26-frame batch on 4 cores.
   frames; hourly or daily batches compress a bit better). We should repeat
   the test with a daytime capture before settling the settings.
 
+### Measured results (midday, Oct 5, 2026)
+
+**Test:** the same two cameras and method, in daylight: 26 changed frames
+each, polled every 30 s via 511, 1:58–2:24 PM MDT. All 52 frames were
+distinct. Frames: 656 about 44 KB per JPEG, 752 about 36 KB.
+
+| Config | 656: vs JPEG | 656: SSIM | 752: vs JPEG | 752: SSIM |
+|---|---|---|---|---|
+| H.264 all-intra (no inter-frame) crf23 | 1.0x | 0.995 | 1.1x | 0.995 |
+| H.264 crf23 | 1.7x | 0.997 | 1.8x | 0.997 |
+| H.264 crf28 | 2.3x | 0.991 | 2.4x | 0.992 |
+| H.265 crf24 | 1.8x | 0.997 | 1.9x | 0.997 |
+| **AV1 (SVT-AV1, preset 6) crf30** | **3.9x** | 0.984 | **4.9x** | 0.984 |
+| AV1 crf38 | 6.5x | 0.975 | 8.9x | 0.978 |
+| AV1 crf46 | 10.7x | 0.965 | 13.5x | 0.972 |
+
+Encoding took 1.6–3.3 s per 26-frame batch on 4 cores.
+
+**What we learned:**
+
+- **Daylight sits between the two night cases.** Camera 656 compresses less
+  than at night (3.9x vs 7.0x), because there's more traffic moving.
+  Camera 752 compresses far better (4.9x vs 2.1x), because daylight has no
+  sensor grain.
+- **AV1 crf30 stays about 2x ahead of H.264 and H.265**, at an SSIM of
+  0.984 on both cameras.
+- **Next:** the evening rush (5 PM), which has the most motion.
+
 **Storage at these ratios** (AV1 crf30, 2–7x):
 
 | Plan | JPEG per day | Video per day | 90-day archive |
@@ -361,7 +389,7 @@ Encoding took 1–2.5 s per 26-frame batch on 4 cores.
 | 40 key cameras, 9 peak hours | about 1 GB | about 150–500 MB | about 15–45 GB |
 | All about 210 cameras, 24 h | about 13–14 GB | about 2–7 GB | about 180–600 GB |
 
-**Recommendation (pending the daytime retest):**
+**Recommendation (holding after the midday retest; the evening-rush test is next):**
 
 - **Codec:** AV1 via SVT-AV1, preset 6, crf30.
 - **Container:** MKV with real per-frame timestamps, as a batch roll-up per
