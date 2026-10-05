@@ -1,0 +1,49 @@
+# deploy: running on the server
+
+One **VM** on the owner's home server, running Docker Compose
+([docs/10 §10.4](../docs/10-architecture.md#104-server-plan)). **Creating
+the VM, or changing anything else on the host, needs the owner's explicit
+go-ahead for that specific action** ([CLAUDE.md](../CLAUDE.md)). The owner
+and the local helper session handle the host. Specifics of the owner's
+network stay in private notes on the server, never in this repository.
+
+| Service | Image | Role |
+|---|---|---|
+| `db` | `timescale/timescaledb-ha:pg17-ts2.30` | PostgreSQL 17 + TimescaleDB + PostGIS. Not exposed outside Compose. Checked on CPUs without AVX2. |
+| `ingest` | built from [`ingest/`](../ingest) | Applies [`db/migrations`](../db/migrations) on start, then runs scheduled sources when due (ACHD's camera list, daily). One-off sources run only by hand. |
+| `app` | built from [`app/`](../app) | SvelteKit (adapter-node) on port 3000 inside the network. Stores calibration reference frames in `FRAMES_DIR`. |
+| `web` | `caddy:2.11-alpine` | The single entry point: serves `/tiles/` from the basemap folder (with range requests) and proxies everything else to `app` |
+
+## First-time setup (on the VM)
+
+1. Install Docker Engine, the Compose plugin and git
+   (`sudo apt install -y docker.io docker-compose-v2 git` on Ubuntu 24.04).
+2. Put the code in `/srv/tvt/repo`: clone it, or push it there from a
+   checkout.
+3. Create the environment file: `cp deploy/.env.example deploy/.env`, then
+   set a database password generated on the server
+   (`openssl rand -hex 24`). Never paste it into a chat session.
+4. Create the frames folder:
+   `sudo mkdir -p /srv/tvt/frames && sudo chown 1000:1000 /srv/tvt/frames`.
+5. Put the map tiles in `TILES_DIR`: build them (see [basemap/](../basemap)),
+   or copy a finished build.
+6. Put the private reference files in `PRIVATE_DATA_DIR` (they aren't in
+   this repository).
+7. Start everything: `docker compose -f deploy/docker-compose.yml up -d --build`.
+8. Link the 511 camera views to cameras (one-off, by hand):
+   `docker compose -f deploy/docker-compose.yml exec ingest python3 -m ingest run idaho511_views_oneoff`.
+9. Open the site on port 8080.
+
+## Remote access
+
+Over Tailscale only: the site and SSH are reachable from the owner's own
+devices. Don't forward any ports on the home router. The site has no login
+yet, so it must not be exposed to the internet.
+
+## Updating
+
+```bash
+cd /srv/tvt/repo
+git pull        # or push to it from a checkout
+docker compose -f deploy/docker-compose.yml up -d --build
+```

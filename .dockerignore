@@ -1,0 +1,6 @@
+# Build context for ingest/Dockerfile is the repo root: send only what it uses.
+*
+!ingest/
+!db/
+**/__pycache__
+ingest/tests

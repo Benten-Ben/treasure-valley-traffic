@@ -1,0 +1,2 @@
+# Only needed for live bus positions (GTFS-realtime protobuf)
+gtfs-realtime-bindings>=1.0

@@ -1,0 +1,12 @@
+# Collected data stays local (licensing varies by source; see tools/README.md)
+/data/
+__pycache__/
+*.pyc
+/site/data/
+# Secrets (deploy/.env.example is the committed template)
+.env
+!.env.example
+
+# Never commit: helper reports and private project files (see CLAUDE.md, "This repository is public")
+helper-reports/
+private/

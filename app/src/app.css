@@ -1,0 +1,77 @@
+/* Design tokens and type from docs/13-visual-design.md. Fonts are bundled, not loaded from a CDN. */
+@import '@fontsource/fredoka/500.css';
+@import '@fontsource/fredoka/600.css';
+@import '@fontsource/overpass/400.css';
+@import '@fontsource/overpass/600.css';
+@import '@fontsource/overpass/700.css';
+@import '@fontsource/overpass-mono/400.css';
+@import '@fontsource/overpass-mono/600.css';
+
+:root {
+	--ink: #2b2a33;
+	--ink-soft: #5d5a66;
+	--panel: #fffbf4;
+	--panel-edge: #e3d7c4;
+	--ground: #eee7da;
+	--accent: #f2a20c; /* signal amber */
+	--accent-2: #2c8c99; /* Boise River teal */
+	--alert: #d9467a;
+	--ok: #2c8c99;
+	--shadow: 0 4px 0 rgb(60 45 20 / 0.12), 0 8px 24px rgb(60 45 20 / 0.12);
+	--radius: 16px;
+	--font-display: 'Fredoka', system-ui, sans-serif;
+	--font-body: 'Overpass', system-ui, sans-serif;
+	--font-mono: 'Overpass Mono', ui-monospace, monospace;
+}
+
+html,
+body {
+	margin: 0;
+	height: 100%;
+	background: var(--ground);
+	color: var(--ink);
+	font: 15px/1.45 var(--font-body);
+}
+
+.card {
+	background: var(--panel);
+	border: 2px solid var(--panel-edge);
+	border-radius: var(--radius);
+	box-shadow: var(--shadow);
+}
+
+.num {
+	font-family: var(--font-mono);
+	font-variant-numeric: tabular-nums;
+}
+
+button.pill {
+	border: 2px solid var(--panel-edge);
+	border-radius: 999px;
+	padding: 6px 14px;
+	background: var(--panel);
+	color: var(--ink);
+	font: 600 14px var(--font-body);
+	cursor: pointer;
+	box-shadow: 0 3px 0 rgb(60 45 20 / 0.14);
+	transition: transform 80ms, box-shadow 80ms;
+}
+button.pill:active:not(:disabled) {
+	transform: translateY(2px);
+	box-shadow: 0 1px 0 rgb(60 45 20 / 0.14);
+}
+button.pill.primary {
+	background: var(--accent);
+	border-color: #d68d00;
+}
+button.pill:disabled {
+	opacity: 0.5;
+	cursor: default;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	* {
+		transition: none !important;
+		animation: none !important;
+	}
+}

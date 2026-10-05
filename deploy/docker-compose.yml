@@ -1,0 +1,76 @@
+# Treasure Valley Traffic on the server (one VM, Docker Compose).
+# Setup steps: deploy/README.md. Secrets go in deploy/.env (never committed).
+name: tvt
+
+services:
+  db:
+    # PostgreSQL 17 with TimescaleDB and PostGIS in one image.
+    image: timescale/timescaledb-ha:pg17-ts2.30
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: tvt
+      POSTGRES_USER: tvt
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/.env}
+    volumes:
+      - db-data:/home/postgres/pgdata/data
+    shm_size: 1g
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tvt -d tvt"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    # No published port: only services on this Compose network can reach it.
+
+  ingest:
+    # Applies db/migrations on start, then runs scheduled sources when due.
+    build:
+      context: ..
+      dockerfile: ingest/Dockerfile
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://tvt:${POSTGRES_PASSWORD}@db:5432/tvt
+      # Third-party reference files kept out of the repository (one-off sources read them).
+      TVT_PRIVATE_DATA: /srv/private-data
+    volumes:
+      - ${PRIVATE_DATA_DIR:-/srv/tvt/private/data}:/srv/private-data:ro
+    depends_on:
+      db:
+        condition: service_healthy
+
+  app:
+    build: ../app
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://tvt:${POSTGRES_PASSWORD}@db:5432/tvt
+      # Calibration reference frames: keep them; calibrations point at them.
+      FRAMES_DIR: /srv/frames
+      # Take the public URL from Caddy's forwarded headers, so the app works
+      # on whatever name it's reached by (LAN address or Tailscale name).
+      PROTOCOL_HEADER: x-forwarded-proto
+      HOST_HEADER: x-forwarded-host
+    volumes:
+      - ${FRAMES_DIR:?set FRAMES_DIR in deploy/.env}:/srv/frames
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/api/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  web:
+    image: caddy:2.11-alpine
+    restart: unless-stopped
+    ports:
+      - "${HTTP_BIND:-0.0.0.0}:${HTTP_PORT:-8080}:80"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ${TILES_DIR:?set TILES_DIR in deploy/.env}:/srv/tiles:ro
+      - caddy-data:/data
+    depends_on:
+      - app
+
+volumes:
+  db-data:
+  caddy-data:

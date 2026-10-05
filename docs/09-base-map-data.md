@@ -1,0 +1,144 @@
+# 9. Base-map data: building our own map of the valley
+
+What's available to build a fully owned 2D/3D map of Ada and Canyon counties:
+terrain, LiDAR, streets, lanes, buildings, imagery and parcels, along with
+the licenses. Research as of Oct 5, 2026. Items marked ✅ were spot-checked
+directly; the rest come from the research pass and should be re-checked
+before relying on them.
+
+---
+
+## 9.1 Summary
+
+- **Everything needed for an open, key-free base map exists:** high-density
+  LiDAR terrain (public domain), OpenStreetMap/Overture streets, buildings
+  with heights (83%), lane counts, and NAIP imagery.
+- **Paid or restricted, to avoid:**
+  - Google Photorealistic 3D Tiles: billing; no caching or analysis; can't
+    be used next to a non-Google map.
+  - Esri and MapTiler basemaps: API keys and terms.
+  - COMPASS's own LiDAR and orthophotos: $220–350 per grid cell.
+- **Needs a terms check before redistributing:**
+  - ACHD's 3-inch imagery: no license stated.
+  - Boise's 3D buildings: no license stated.
+  - Ada County Assessor data: "do not re-distribute".
+
+## 9.2 Elevation, terrain and LiDAR
+
+USGS 3D Elevation Program (3DEP) coverage, by the 3DEP index at each city:
+
+| Area | LiDAR project | Quality | Flown | Published |
+|---|---|---|---|---|
+| Boise, Meridian, Eagle, Star, Kuna, Caldwell, Parma | `ID_SouthernGaps_2_D23` | QL1 (8+ points/m²) | 2023-09 to 2024-08 | Point cloud Dec 2025–Jan 2026; 1 m DEM Apr 2026 |
+| Nampa, Melba | `ID_SouthernID_21_2018` | QL2 (2+ points/m²) | 2019-10 to 2020-08 | 1 m DEM May 2024 |
+| Also present | `ID_FEMAHQ_2018` (partial Boise area), `NV_USFSR4_4_D23` (foothills), legacy 2003–2009 sets | | | |
+
+| Product | Format | Size for the valley | License | Where |
+|---|---|---|---|---|
+| ✅ **1 m DEM** | Cloud-optimized GeoTIFF, 10 km tiles (sample tiles 20–83 MB) | About 168 tiles, about 32 GB | Public domain | `prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/1m/Projects/<project>/TIFF/` (public, no key) |
+| 1/3 arc-second (about 10 m) DEM | COG | 411 MB per 1° tile (`n44w117`) | Public domain | `prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/13/TIFF/current/` |
+| LiDAR point clouds | LAZ 1.4 (2023–24); streamable EPT on AWS for the 2018–20 project only | About 160 GB (2023–24 tiles in the box) | Public domain | TNM downloader / `tnmaccess.nationalmap.gov` API; `s3://usgs-lidar-public/ID_SouthernID_21_2018/ept.json` |
+| 3DEP dynamic elevation service | Esri ImageServer | On demand | Public domain | `elevation.nationalmap.gov/arcgis/rest/services/3DEPElevation/ImageServer` |
+| Idaho LiDAR Consortium / ISU statewide DTM | Zipped rasters per 15′ quad | 3.6–4.7 GB per quad | Terms not found | idaholidar.org |
+| COMPASS 2019 LiDAR | Point cloud + ground TIFF | — | **Paid** ($220 per cell) | compassidaho.org/orthophotography |
+
+**Terrain tiles for the web map:**
+
+- **Best:** build our own from the 1 m DEM (terrain-RGB for MapLibre, or
+  quantized-mesh for Cesium). It's the most accurate and stays public
+  domain.
+- **Quick start:** AWS Terrain Tiles (free; last updated 2017) or Mapterhorn
+  (open PMTiles).
+
+## 9.3 Streets, network and lanes
+
+| Source | What | Format | License | Where |
+|---|---|---|---|---|
+| **OpenStreetMap** (Geofabrik Idaho) | Full street map with tags (lanes and turn lanes where mapped) | .osm.pbf, 123 MB | ODbL | download.geofabrik.de/north-america/us/idaho.html |
+| **Overture Maps transportation** (release 2026-09-23.1) | 173,146 road segments in the valley box; speed limits on about 14k; stable IDs across releases; no lane-count field | GeoParquet (query in place) | ODbL | `s3://overturemaps-us-west-2/release/2026-09-23.1/theme=transportation/` |
+| ✅ **ITD HPMS** (federal highway inventory) | **Through lanes** by direction (19,503 segments in the box), turn lanes, lane width, median, shoulders, access control | Esri FeatureServer | Credit ITD | `gisp.itd.idaho.gov/server/rest/services/GDWarehouse/HPMS/FeatureServer/25` (through) and `/27` (turn) |
+| ITD road network (linear referencing system, LRS) | State system plus local roads, interchanges | FeatureServer | Credit ITD | `.../GDWarehouse/RoadNetwork_Primary/FeatureServer` |
+| ACHD Master Street Map | Arterials and collectors with **existing and planned lanes**, typology, parking | FeatureServer | None stated | `gis.achdidaho.org/server/rest/services/ArcGIS_Hub/Master_Street_Map_Arterials/FeatureServer/1` |
+| COMPASS RegionalCenterline | Ada + Canyon centerlines with `pm_id`, which links to the travel model and crash data | FeatureServer (`swidrdc.org`) | Disclaimer only | COMPASS open-data hub |
+| Ada County Assessor centerlines | With address ranges; updated twice a month | Shapefile, 6.6 MB | **"Do not re-distribute"** | `adacountyassessor.org/public/roadcenterline.zip` |
+| Canyon County roads | Street names and types only | FeatureServer | Full data by records request | `maps.canyoncounty.id.gov/arcgisserver/.../CanyonCountyRoads/FeatureServer/0` |
+| Census TIGER/Line 2025 | Roads with address ranges | Shapefile (2.4 + 1.5 MB) | Public domain | `www2.census.gov/geo/tiger/TIGER2025/ROADS/` |
+
+## 9.4 Buildings
+
+| Source | Count | Heights | License | Where |
+|---|---|---|---|---|
+| **Overture buildings** | 347,652 in the valley box | **83% have height** (mostly Microsoft ML) | ODbL | `s3://overturemaps-us-west-2/release/2026-09-23.1/theme=buildings/type=building/` |
+| ✅ **Boise 3D Buildings** | 135,710 (Boise area) | Height, roof form, base elevation (from 2019 LiDAR) | **None stated**; ask the City | `services1.arcgis.com/WHM6qC35aMtyAAlN/ArcGIS/rest/services/Boise_Buildings_3D/FeatureServer/0` (3D multipatch) |
+| Microsoft US footprints | 942,132 statewide | Not in US release | ODbL | minedbuildings.z5.web.core.windows.net |
+| OSM buildings | Included in Overture | Where tagged | ODbL | Geofabrik |
+
+## 9.5 Imagery
+
+| Source | Coverage | Resolution | License | Notes |
+|---|---|---|---|---|
+| **NAIP 2023** | Whole valley | 0.6 m, 4-band | Public domain | Cloud-optimized GeoTIFFs on Microsoft Planetary Computer (free). AWS copy is requester-pays. |
+| ACHD Ada County Imagery 2024/2025 | **Ada only** | **3 inch** | **None stated** | ImageServer; `exportImage` works, no tile cache. View on request only; don't cache until ACHD confirms. |
+| COMPASS orthophotos 2025 | Ada + Canyon | 3–6 inch | **Paid** ($350 per section) | compassidaho.org |
+| Canyon County imagery | Canyon | — | Token required | — |
+| Esri World Imagery | Everywhere | Sub-meter | Esri license; API key outside ArcGIS | Avoid for an open stack |
+
+## 9.6 Parcels, zoning, land use, addresses
+
+| Source | What | License |
+|---|---|---|
+| Ada County Assessor | Parcels (32.5 MB), parcel points, address points (275,159), zoning, subdivisions; updated twice a month | Owner names removed; **"do not re-distribute"**. Use internally only. |
+| City of Boise open data (64 datasets) | Zoning, future land use, development tracker, new housing, pathways, street lights, floodplain | Disclaimer only |
+| Canyon County | Tax parcels (103,060), zoning, future land use 2030, building permits | Free to government; centerlines and addresses by records request |
+| Idaho statewide public parcels | Ada 217,038, **Canyon 0** | Not stated |
+| COMPASS open data | **TAZ demographics**, current land use, building permits, preliminary plats, crash data, counts | Disclaimer only (`swidrdc.org`) |
+
+## 9.7 3D tiles and basemap tiles
+
+| Option | Verdict |
+|---|---|
+| **Protomaps PMTiles** (OSM) | **Recommended.** Self-hosted single file, no key. Cut a valley extract from the daily planet build with `pmtiles extract --bbox`. Attribution: "© OpenStreetMap contributors". |
+| OpenMapTiles (Planetiler) | Open alternative; design is CC-BY and needs credit |
+| MapTiler / Stadia free tiers | Keys required; non-commercial only; logo required |
+| tile.openstreetmap.org | Light development use only; no bulk use |
+| Google Photorealistic 3D Tiles | Billing; no caching, analysis or derived content; can't be used next to a non-Google map. **Avoid.** |
+| Cesium ion free tier | Not for government projects or funded research. Use only if we stay unfunded. |
+
+## 9.8 Recommended open, key-free base stack
+
+1. **Basemap:** a Protomaps PMTiles extract of the valley, self-hosted and
+   rendered with MapLibre.
+2. **Terrain:** terrain-RGB tiles built from the 3DEP 1 m DEM (public
+   domain).
+3. **Imagery:** NAIP 2023 by default. ACHD 3-inch only as an on-request
+   overlay until terms are confirmed.
+4. **Buildings:** Overture with heights, extruded. Boise 3D buildings
+   downtown if the City confirms terms.
+5. **Network for joining data:** Overture or OSM topology, plus ITD HPMS
+   lanes and ACHD Master Street Map lanes. Use COMPASS `pm_id` to tie into
+   travel-model and crash data.
+6. **Context:**
+   - COMPASS TAZ and land use, Boise zoning, Census.
+   - Ada Assessor data for internal use only.
+7. **Later, for true 3D (not in v1):** stream 3DEP LiDAR point clouds
+   (EPT/COPC) into Cesium or deck.gl. Version 1 is 2.5D (owner decision,
+   Oct 5).
+
+**License notes:**
+
+- **ODbL (OSM and Overture):** credit OSM contributors. Any derived
+  *database* we publish must also be ODbL. Maps and images we publish only
+  need the credit.
+- **ITD:** credit ITD.
+- **Public domain (USGS, NAIP, Census):** no conditions.
+
+## 9.9 Not yet verified
+
+- NAIP 2025 for Idaho.
+- OSM lane and signal coverage quality.
+- COMPASS services: unreachable from our sandbox.
+- Terms for ACHD's hub, imagery and Master Street Map.
+- Terms for Boise 3D Buildings.
+- ISU DTM resolution and terms.
+- Mapterhorn high-zoom coverage over Boise.
+- Size of a valley PMTiles extract.

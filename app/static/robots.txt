@@ -1,0 +1,3 @@
+# Private tool on a home server; nothing here is meant for search engines.
+User-agent: *
+Disallow: /

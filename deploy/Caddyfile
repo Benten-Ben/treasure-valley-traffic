@@ -1,0 +1,20 @@
+{
+	# Plain HTTP inside the home network; remote access goes over Tailscale.
+	auto_https off
+	admin off
+}
+
+:80 {
+	# Basemap output from basemap/ (PMTiles, fonts, sprites, manifest.json).
+	# file_server answers HTTP range requests, which PMTiles depends on.
+	handle_path /tiles/* {
+		root * /srv/tiles
+		header Cache-Control "public, max-age=3600"
+		file_server
+	}
+
+	handle {
+		encode zstd gzip
+		reverse_proxy app:3000
+	}
+}
