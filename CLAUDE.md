@@ -160,4 +160,5 @@ live bus positions (`requirements.txt`).
 - Match the surrounding style. Cite sources inline in docs, and mark
   anything resting on secondary sources with ⚠️.
 - Commit messages: imperative summary plus a short body. Develop on the
-  assigned branch.
+  assigned branch, then fast-forward `main` (the default branch) once the
+  checks pass and the diff has been checked for private details.

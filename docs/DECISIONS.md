@@ -9,6 +9,7 @@ assistant alone.
 
 | Date | Decision | Notes |
 |---|---|---|
+| 2026-10-05 | **`main` is the default branch.** Pilot sessions work on their own branch and fast-forward `main` once the checks pass. | Owner: "proceed working in relation to it however you see fit" |
 | 2026-10-05 | **The repository goes public, under the MIT license.** Kept out of it, in private files on the server: third-party data copies (ACHD's tables, 511's camera list, the camera inventory); the tools that touch robots-disallowed hosts; unsent drafts; and every detail of the owner's network and hardware. The history was squashed to one commit, so none of those remain in it. | Owner. Rules in [CLAUDE.md](../CLAUDE.md#this-repository-is-public). The full earlier history is kept as a bundle in the private files. |
 | 2026-10-05 | **Remote access over Tailscale.** Cloud pilot sessions join the owner's tailnet with standard trusted access, like the owner's own machines. The server VM is on the tailnet with Tailscale SSH, and the pilot deploys over it. Each machine is approved by the owner opening a login link; no auth keys, and no router port forwarding. | Owner. The cloud container is destroyed when the chat ends; the owner then removes its machine from the tailnet. Names and addresses are in the private server notes. |
 | 2026-10-05 | **The local helper leads the host side**: VM or container, sizing, storage, network and backups are decided by the owner and the helper. The pilot only recommends, then deploys once the VM is on the tailnet. | Owner |
@@ -55,7 +56,7 @@ assistant alone.
 - [ ] Edit and send the ACHD note
 - [x] Approve the pilot on the tailnet; host inventory; create the server
   VM (Oct 5)
-- [ ] Make the repository public on GitHub (after the scrub)
+- [x] Make the repository public on GitHub; `main` is the default branch (Oct 5)
 - [ ] Choose where backups go
 - [ ] When a cloud session ends, remove its machine from the tailnet
   (Tailscale admin console → Machines)
