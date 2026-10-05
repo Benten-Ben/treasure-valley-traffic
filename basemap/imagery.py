@@ -250,9 +250,11 @@ def render(job):
     """One tile from the local copies: RGB where fully covered, RGBA (transparent outside) at the edges."""
     layer, z, x, y = job
     minx, miny, maxx, maxy = tile_bounds_merc(z, x, y)
+    # srcAlpha: every mosaic's last band is its alpha. GDAL only detects that by
+    # itself for a single source, so it has to be stated for the detail layer.
     ds = gdal.Warp("", _state["sources"][layer], format="MEM", dstSRS="EPSG:3857",
                    outputBounds=(minx, miny, maxx, maxy), width=TILE, height=TILE,
-                   resampleAlg="cubic", dstAlpha=True, multithread=False)
+                   resampleAlg="cubic", srcAlpha=True, dstAlpha=True, multithread=False)
     lo, hi = ds.GetRasterBand(4).ComputeRasterMinMax(False)
     if hi == 0:
         return None
