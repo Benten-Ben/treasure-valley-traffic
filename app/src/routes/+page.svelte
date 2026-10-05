@@ -84,17 +84,20 @@
 
 	async function ready(map: Map) {
 		theMap = map;
-		await addTransit(map);
-		let saved: string | null = null;
 		try {
-			saved = localStorage.getItem('tvt-lens');
+			const saved = localStorage.getItem('tvt-lens');
+			if (saved === 'transit' || saved === 'cameras') lens = saved;
 		} catch {
-			/* ignore */
+			/* per-viewer convenience only */
 		}
+		await addTransit(map);
+		if (!transitReady && lens === 'transit') lens = 'cameras';
+		setLens(lens);
 		const r = await addCameraLayer(map, (c) => (selected = c));
+		// Layers that load after a lens was chosen must follow it too.
 		if ('error' in r) {
 			cameraProblem = r.error;
-			if (saved === 'transit') setLens('transit');
+			setLens(lens);
 			return;
 		}
 		counts = r.counts;
@@ -108,7 +111,7 @@
 			paint: { 'fill-color': '#2c8c99', 'fill-opacity': 0.14 } }, 'cameras-no-image');
 		map.addLayer({ id: 'cones-line', type: 'line', source: 'cones',
 			paint: { 'line-color': '#2c8c99', 'line-width': 1.5, 'line-opacity': 0.8 } }, 'cameras-no-image');
-		if (saved === 'transit') setLens('transit');
+		setLens(lens);
 	}
 
 	/** Drape each calibrated camera's reference frame onto the ground under its cone. */
