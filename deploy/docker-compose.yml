@@ -31,8 +31,29 @@ services:
       DATABASE_URL: postgres://tvt:${POSTGRES_PASSWORD}@db:5432/tvt
       # Third-party reference files kept out of the repository (one-off sources read them).
       TVT_PRIVATE_DATA: /srv/private-data
+      # Raw feed archive (e.g. each VRT static GTFS zip as published).
+      TVT_ARCHIVE: /srv/archive
     volumes:
       - ${PRIVATE_DATA_DIR:-/srv/tvt/private/data}:/srv/private-data:ro
+      - ${ARCHIVE_DIR:-/srv/tvt/archive}:/srv/archive
+    depends_on:
+      db:
+        condition: service_healthy
+
+  transit:
+    # Records Valley Regional Transit's GTFS-realtime feeds every 30 s: each changed
+    # feed archived as published, bus positions into obs.vehicle_position. Retries
+    # the database on its own until the ingest service has applied migrations.
+    build:
+      context: ..
+      dockerfile: ingest/Dockerfile
+    restart: unless-stopped
+    command: ["python3", "-m", "ingest", "stream", "vrt_realtime"]
+    environment:
+      DATABASE_URL: postgres://tvt:${POSTGRES_PASSWORD}@db:5432/tvt
+      TVT_ARCHIVE: /srv/archive
+    volumes:
+      - ${ARCHIVE_DIR:-/srv/tvt/archive}:/srv/archive
     depends_on:
       db:
         condition: service_healthy

@@ -1,4 +1,4 @@
-"""python3 -m ingest sources | run NAME... | run all | serve"""
+"""python3 -m ingest sources | run NAME... | run all | serve | stream NAME | backfill NAME PATH"""
 
 import argparse
 import sys
@@ -6,7 +6,7 @@ import time
 import traceback
 
 from . import db
-from .sources import SOURCES
+from .sources import SOURCES, STREAMS
 
 
 def due(conn, name, schedule):
@@ -59,12 +59,29 @@ def main():
     run.add_argument("names", nargs="+", help="source names, or 'all'")
     srv = sub.add_parser("serve", help="keep running scheduled sources when they're due")
     srv.add_argument("--check-every", type=int, default=300, help="seconds between checks")
+    st = sub.add_parser("stream", help="run a streaming source continuously")
+    st.add_argument("name", choices=sorted(STREAMS))
+    st.add_argument("--every", type=int, default=30, help="seconds between polls")
+    bf = sub.add_parser("backfill", help="load a streaming source's raw archive into the database")
+    bf.add_argument("name", choices=sorted(STREAMS))
+    bf.add_argument("path", help="archive folder, e.g. $TVT_ARCHIVE/vrt-gtfs-rt")
     args = ap.parse_args()
 
     if args.cmd == "sources":
         for name, m in SOURCES.items():
             s = m.SOURCE
             print(f"{name:24} {s['access']:8} {s.get('schedule') or '-':8} {s['title']}")
+        for name, m in STREAMS.items():
+            s = m.SOURCE
+            print(f"{name:24} {s['access']:8} {'stream':8} {s['title']}")
+        return
+    if args.cmd == "stream":
+        STREAMS[args.name].stream(args.every)
+        return
+    if args.cmd == "backfill":
+        with db.connect() as conn:
+            stats = STREAMS[args.name].backfill(conn, args.path)
+        print(f"{args.name} backfill: " + ", ".join(f"{k} {v}" for k, v in stats.items()), flush=True)
         return
     if args.cmd == "serve":
         serve(args.check_every)

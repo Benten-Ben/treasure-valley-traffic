@@ -1,5 +1,11 @@
-"""Registered sources, in the order `run all` uses (cameras before their views)."""
+"""Registered sources.
 
-from . import achd_cameras, idaho511_views
+SOURCES run once per call (`run`), or on their schedule (`serve`), in this
+order (`run all` loads cameras before their views). STREAMS run continuously
+(`stream`), each as its own service.
+"""
 
-SOURCES = {m.SOURCE["name"]: m for m in (achd_cameras, idaho511_views)}
+from . import achd_cameras, idaho511_views, vrt_gtfs, vrt_realtime
+
+SOURCES = {m.SOURCE["name"]: m for m in (achd_cameras, idaho511_views, vrt_gtfs)}
+STREAMS = {m.SOURCE["name"]: m for m in (vrt_realtime,)}
