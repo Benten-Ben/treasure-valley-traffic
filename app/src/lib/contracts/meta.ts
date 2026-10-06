@@ -20,7 +20,10 @@ export const META_CONTRACT = 1;
 export interface DataVersions {
 	/** VRT's static GTFS feed version (core.transit_route.feed_version). */
 	gtfs: string | null;
-	/** Ribbon build hash (core.transit_ribbon.build), or 'none' before the first build or migration 0006. */
+	/**
+	 * Ribbon build hash (core.transit_ribbon.build), or 'none' before the first
+	 * build or migration 0006. Its form is described on TransitNetwork.build.
+	 */
 	ribbons: string;
 	/** Road segments (ACHD centerlines): changes when segments are added, retired or re-seen. */
 	roads: string | null;

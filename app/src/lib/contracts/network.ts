@@ -20,7 +20,10 @@ export const NETWORK_CONTRACT = 1;
 export interface NetworkRoute {
 	/** VRT's GTFS route_id. */
 	id: string;
-	/** Numeric route index within this build: the feature-state key (promoteId). */
+	/**
+	 * Numeric route index within this build: the feature-state key (promoteId).
+	 * 1-based (1..N in display order), never 0, which MapLibre treats as no id.
+	 */
 	rid: number;
 	shortName: string;
 	longName: string | null;
@@ -81,7 +84,13 @@ export interface DormantRoute {
 
 export interface TransitNetwork {
 	contract: typeof NETWORK_CONTRACT;
-	/** Ribbon build hash, or 'none' (plain shapes). */
+	/**
+	 * Ribbon build hash, or 'none' (plain shapes). A build is
+	 * '<16 hex of sha256 of the inputs>-<8 hex of sha256 of the route colors>':
+	 * the inputs are the shapes, the dormant set, the parameters, the display
+	 * order and the hub stops. Because the colors are in it, pinning or
+	 * recoloring a route also changes the immutable URL.
+	 */
 	build: string;
 	/** false: plain shapes, one route per segment. */
 	bundled: boolean;

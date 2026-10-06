@@ -63,7 +63,7 @@ export interface LiveView {
 	/** Expected seconds between new pictures (about 50–60 for key and on-demand, 600 for road weather). */
 	cadenceS: number;
 	state: LiveState;
-	/** Human-readable detail for blocked, capped and error. */
+	/** Human-readable detail: for blocked, capped and error, and also given for waiting, no_image and disabled. */
 	reason?: string;
 }
 

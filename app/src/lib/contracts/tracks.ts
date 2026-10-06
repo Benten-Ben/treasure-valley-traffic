@@ -7,8 +7,9 @@
  * - `Cache-Control: no-store`, with a 5 s server micro-cache.
  * - A bus's newest fix arrives as a step with `t1 = null`; a later poll
  *   replaces it (steps are keyed by vehicle id and `t0`).
- * - Fixes with no progress row yet come through as 'straight' steps between
- *   fixes, so playback never goes blank. About 4–8 KB gzip per poll.
+ * - Fixes with no progress row yet come through as steps classified by time
+ *   and distance only ('gap', 'still' or 'straight', never 'along'), so
+ *   playback never goes blank. About 4–8 KB gzip per poll.
  *
  * Frozen contract (§14.10): only the wave integrator changes it.
  */
@@ -31,9 +32,12 @@ export interface TrackVehicle {
 	routeId: string | null;
 	routeSource: RouteSource | null;
 	shortName: string | null;
+	/**
+	 * Badge plate, numeral color and halo (the badge rule, §14.3). Filled in
+	 * for unknown-route buses too: gray '#8a857c', ink '#2b2a33', halo true.
+	 */
 	color: string | null;
 	textColor: string | null;
-	/** The badge rule (§14.3); true for unknown-route gray. */
 	halo: boolean;
 	headsign: string | null;
 }
@@ -56,7 +60,11 @@ export type TrackStep = [
 
 export interface Tracks {
 	contract: typeof TRACKS_CONTRACT;
-	/** Server time, epoch s (the client's clock offset comes from it). */
+	/**
+	 * Server time, epoch s (the client's clock offset comes from it). With a
+	 * pinned `at`, `now` equals `at`, so a replay advances in real time from
+	 * `at` minus the delay.
+	 */
 	now: number;
 	vehicles: Record<string, TrackVehicle>;
 	steps: TrackStep[];

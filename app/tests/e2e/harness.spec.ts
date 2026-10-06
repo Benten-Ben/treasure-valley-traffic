@@ -18,7 +18,11 @@ test.describe('harness', () => {
 		expect(res.status()).toBe(200);
 		expect(res.headers()['cache-control']).toBe('no-cache');
 		const m = await res.json();
-		expect(m).toMatchObject({ contract: 1, database: 'ok', ribbons: null, progress: { available: false } });
+		// Since the owner's Q4 answer (Oct 6), 0006 and 0007 live in db/migrations, so the
+		// template and every clone have them: progress is available, and no ribbon build exists yet.
+		const migrations = readdirSync(join(REPO, 'db', 'migrations'));
+		const has0007 = migrations.some((f) => f.startsWith('0007_'));
+		expect(m).toMatchObject({ contract: 1, database: 'ok', ribbons: null, progress: { available: has0007 } });
 		expect(m.versions.ribbons).toBe('none');
 		for (const k of ['gtfs', 'roads', 'cameras', 'calibrations', 'tiles']) expect(m.versions[k], k).toBeTruthy();
 		expect(m.cameras.cameras).toBeGreaterThan(0);
