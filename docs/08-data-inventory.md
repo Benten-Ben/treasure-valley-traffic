@@ -251,7 +251,7 @@ The most useful layers:
 | RegionalCenterline | 62,213 segments in Ada and Canyon with `pm_id` (the key for COMPASS's counts, crashes and model), posted speed and lanes; monthly | hub |
 | Crash data | 174,038 crashes 2008–2025 (two more years than ITD's layer), linked to segments and intersections; the high-injury network (1,924 junctions, 14,487 segments); a person-level table (aggregates only) | hub |
 | Count tables | The latest count at 4,387 locations from every agency, Canyon County's included; 115 permanent counters | hub |
-| Growth | Traffic-zone demographics (2,498 zones, estimates to 2026, forecasts of population, households and jobs to 2055), building permits since 2000, 1,061 preliminary plats with units still to build | hub |
+| Growth | Traffic-zone demographics (2,498 zones, estimates to 2026, forecasts of population, households and jobs to 2055), building permits since 2000 (174,244, through 2025; the layer's statistics queries see only 97,684 and stop at 2023, so count records directly), 1,061 preliminary plats with units still to build | hub |
 
 Terms: the hub carries only a disclaimer (credit COMPASS). Layers only on
 `swidrdc.org` have no catalog entry or terms: used internally until COMPASS
