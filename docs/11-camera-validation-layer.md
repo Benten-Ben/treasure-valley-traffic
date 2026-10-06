@@ -526,6 +526,29 @@ quantization matrices) closed the gap.
   roll-up runs at low priority until it's done, so no overnight window
   limits it, and the server has plenty of idle CPU around the clock.
 
+**The first nightly roll-up** (Oct 5's partial day, 6:20 PM to midnight,
+rolled up at 12:05 AM):
+
+| | Frames | JPEGs | Videos | Smaller by |
+|---|---|---|---|---|
+| 30 ACHD key cameras (768×466) | about 9,800 | 432 MB | 121 MB | 3.6x |
+| 4 ITD I-84 cameras (1920×1166) | about 1,000 | 511 MB | 265 MB | 1.9x |
+| All 34 key cameras | 10,772 | 942 MB | 385 MB | 2.4x |
+
+- **Night costs more, and the HD cameras most:** evening and night frames
+  carry sensor grain. The four I-84 cameras are 54% of the JPEGs and 69% of
+  the video. Downtown cameras with steady lighting reached 8–10x.
+  Downscaling the HD cameras before encoding is an option for the storage
+  decision.
+- **Time:** the 34 camera days took 23 minutes with four encodes side by
+  side, about 8 frames a second, so a full day should take under 2 hours.
+  The 381 road-weather camera days (a few frames each) took 11 minutes.
+- **Failures:** 4 of 415 camera days failed because their frames had an odd
+  height (328×339, 1280×777); the encoder needs even sizes. Frames are now
+  cropped by one pixel, and the four were redone.
+- **Clock check:** 23:00 into camera 656's video shows its timestamp bar at
+  10:59:05 PM.
+
 **Why daily rather than hourly files.** Each file starts with a full frame,
 which costs about 3.5–4.3 ordinary frames (evening rush, both cameras).
 With 60 frames an hour, that's about 4–5% of an hourly file, so daily files
