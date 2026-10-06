@@ -175,7 +175,9 @@ def encode(root, cam, day, force=False):
         part = out + ".part"
         _run(["nice", "-n", "10", "ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
               "-f", "concat", "-safe", "0", "-i", listing,
-              "-vf", f"scale={width}:{height},format=yuv420p", "-fps_mode", "vfr", *CODEC,
+              # Odd sizes (e.g. 328x339) are cropped by one pixel: the encoder needs even ones.
+              "-vf", f"scale={width}:{height},crop={width - width % 2}:{height - height % 2}:0:0,format=yuv420p",
+              "-fps_mode", "vfr", *CODEC,
               "-metadata", f"title=511 Idaho camera {cam}, {day.isoformat()} (America/Boise)",
               "-metadata", "comment=One second of video is one minute of the day: mm:ss reads as hh:mm. "
                            "Gray means no frames. Frame times are in the .csv beside this file.",

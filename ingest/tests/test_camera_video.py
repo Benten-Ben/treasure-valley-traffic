@@ -166,6 +166,22 @@ class EncodeTest(unittest.TestCase):
         self.assertEqual(cv.encode(root, "656", day), {"skipped": "video exists"})
         self.assertEqual(cv.pending(root, date(2026, 10, 6)), [])
 
+    def test_odd_sized_frames_are_cropped_to_even(self):
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root)
+        start = datetime(2026, 10, 6, 1, 0, tzinfo=UTC)
+        with tempfile.TemporaryDirectory() as tmp:
+            subprocess.run(["ffmpeg", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=329x339:rate=1",
+                            "-frames:v", "3", os.path.join(tmp, "s%d.jpg")], check=True)
+            for i in range(3):
+                with open(os.path.join(tmp, f"s{i + 1}.jpg"), "rb") as f:
+                    frames.save(root, 349, f.read(), start + timedelta(seconds=600 * i), f"o{i}")
+        stats = cv.encode(root, "349", date(2026, 10, 5))
+        self.assertEqual(stats["frames"], 3)
+        size = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "stream=width,height", "-of", "csv=p=0",
+                               cv.video_path(root, "349", date(2026, 10, 5))], capture_output=True, text=True).stdout.strip()
+        self.assertEqual(size, "328,338")
+
 
 if __name__ == "__main__":
     unittest.main()
