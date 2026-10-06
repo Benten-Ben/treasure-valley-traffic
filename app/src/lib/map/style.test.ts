@@ -1,8 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 import type { LayerSpecification } from 'maplibre-gl';
+import { ANCHOR_IDS, ANCHORS } from './order.js';
 import {
 	addAerial,
 	aerialAfter,
+	basemapReady,
 	BUILDINGS_LAYER,
 	buildingOpacity,
 	buildStyle,
@@ -12,6 +14,9 @@ import {
 	type BasemapManifest,
 	type MapLike
 } from './style.js';
+
+// The Protomaps style module loads apart from the initial bundle (WP2); buildStyle needs it.
+beforeAll(() => basemapReady);
 
 const manifest: BasemapManifest = {
 	bounds: [-117.05, 43, -115.95, 43.85],
@@ -124,8 +129,38 @@ describe('style', () => {
 	it('without terrain, the imagery goes after the basemap fills and lines', () => {
 		const m = { ...manifest, terrain: undefined };
 		const style = buildStyle(m, 'http://x');
-		const firstLabel = style.layers.findIndex((l) => l.type === 'symbol');
-		expect(aerialAfter(m)).toBe(style.layers[firstLabel - 1 - (m.buildings ? 1 : 0)].id);
+		const ids = style.layers.map((l) => l.id);
+		// The end of the base slot, which sits right after the basemap's last fill or line.
+		expect(aerialAfter(m)).toBe(ANCHORS.base);
+		const lastBase = style.layers[ids.indexOf(ANCHORS.base) - 1];
+		expect(['fill', 'line']).toContain(lastBase.type);
+		expect(ids.indexOf(ANCHORS.base)).toBeLessThan(style.layers.findIndex((l) => l.type === 'symbol'));
+		const map = fakeMap(style.layers, { ...style.sources });
+		expect(addAerial(map, m, 'http://x')).toBe(true);
+		const after = map.getLayersOrder();
+		expect(after.indexOf('aerial')).toBe(after.indexOf(ANCHORS.base) + 1);
+		expect(after.indexOf('aerial-detail')).toBeLessThan(after.indexOf(ANCHORS.streets));
+	});
+
+	it('places the slot anchors in order, hidden, around the style’s own layers', () => {
+		for (const m of [manifest, { ...manifest, terrain: undefined, buildings: undefined }]) {
+			const style = buildStyle(m, 'http://x', true);
+			const ids = style.layers.map((l) => l.id);
+			const at = ANCHOR_IDS.map((id) => ids.indexOf(id));
+			expect(at.every((i) => i >= 0)).toBe(true);
+			expect([...at].sort((a, b) => a - b)).toEqual(at);
+			for (const id of ANCHOR_IDS) expect(style.layers[ids.indexOf(id)]).toMatchObject({ type: 'background', layout: { visibility: 'none' } });
+			// Hillshade and imagery under the data slots; 3D buildings over them; base labels between points and labels.
+			if (m.terrain) expect(ids.indexOf('hillshade')).toBeGreaterThan(ids.indexOf(ANCHORS.base));
+			expect(ids.indexOf('aerial')).toBeLessThan(ids.indexOf(ANCHORS.streets));
+			if (m.buildings) {
+				expect(ids.indexOf(BUILDINGS_LAYER)).toBeGreaterThan(ids.indexOf(ANCHORS.routes));
+				expect(ids.indexOf(BUILDINGS_LAYER)).toBeLessThan(ids.indexOf(ANCHORS.scene));
+			}
+			const firstSymbol = style.layers.findIndex((l) => l.type === 'symbol');
+			expect(firstSymbol).toBeGreaterThan(ids.indexOf(ANCHORS.points));
+			expect(style.layers.findLastIndex((l) => l.type === 'symbol')).toBeLessThan(ids.indexOf(ANCHORS.labels));
+		}
 	});
 
 	it('finds the basemap’s first label', () => {

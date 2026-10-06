@@ -1,8 +1,27 @@
-import { layers, namedFlavor } from '@protomaps/basemaps';
+import type * as Protomaps from '@protomaps/basemaps';
 import type { LayerSpecification, LineLayerSpecification, Map, StyleSpecification } from 'maplibre-gl';
+import { anchorLayer, ANCHORS } from './order.js';
 
 /** Where the basemap build (basemap/) publishes its output. Same origin, no third-party hosts. */
 export const TILES_PATH = '/tiles';
+
+let protomaps: typeof Protomaps | null = null;
+
+/**
+ * The Protomaps style module (about 16 KB gzip), loaded apart from the
+ * initial JavaScript to keep it within its budget (docs/14 §14.9, WP2). The
+ * import starts as soon as this module runs, in parallel with the manifest
+ * fetch, and `loadManifest` resolves only once it's here, so `buildStyle`
+ * (which needs it) can stay synchronous.
+ */
+export const basemapReady: Promise<void> = import('@protomaps/basemaps').then((m) => {
+	protomaps = m;
+});
+
+function basemap(): typeof Protomaps {
+	if (!protomaps) throw new Error('The basemap style module has not loaded yet: await basemapReady (loadManifest does).');
+	return protomaps;
+}
 
 interface TileFile {
 	/** File name relative to /tiles/, e.g. "valley.pmtiles". */
@@ -61,6 +80,7 @@ export type ManifestResult =
 	| { ok: true; manifest: BasemapManifest }
 	| { ok: false; reason: string };
 
+/** The manifest; an ok result also means the basemap style module has loaded (`basemapReady`). */
 export async function loadManifest(fetchFn: typeof fetch = fetch): Promise<ManifestResult> {
 	let res: Response;
 	try {
@@ -74,7 +94,13 @@ export async function loadManifest(fetchFn: typeof fetch = fetch): Promise<Manif
 	if (!res.ok) {
 		return { ok: false, reason: `${TILES_PATH}/manifest.json returned HTTP ${res.status}.` };
 	}
-	return { ok: true, manifest: (await res.json()) as BasemapManifest };
+	const manifest = (await res.json()) as BasemapManifest;
+	try {
+		await basemapReady;
+	} catch (e) {
+		return { ok: false, reason: `The basemap style failed to load (reload to try again): ${e}` };
+	}
+	return { ok: true, manifest };
 }
 
 const pmtilesUrl = (origin: string, file: string) => `pmtiles://${origin}${TILES_PATH}/${file}`;
@@ -109,6 +135,7 @@ export function railLayers(l: LineLayerSpecification): LineLayerSpecification[] 
 
 /** The basemap's own layers, split at the first label: fills and lines below, labels above. */
 function basemapLayers(m: BasemapManifest): { below: LayerSpecification[]; labels: LayerSpecification[] } {
+	const { layers, namedFlavor } = basemap();
 	let base = layers('protomaps', namedFlavor(m.basemap.flavor), { lang: 'en' });
 	if (m.buildings) {
 		// Our extruded buildings take over from the basemap's flat footprints.
@@ -127,12 +154,12 @@ function basemapLayers(m: BasemapManifest): { below: LayerSpecification[]; label
 
 /**
  * The layer the aerial imagery goes right after: the hillshade when there's
- * terrain, else the basemap's last fill or line. Imagery sits above the
- * basemap's fills and roads and below everything the app adds.
+ * terrain, else the end of the base slot (`anchor:base`, right after the
+ * basemap's fills and lines). Imagery sits above the basemap's fills and
+ * roads and below everything the app adds.
  */
 export function aerialAfter(m: BasemapManifest): string {
-	if (m.terrain) return 'hillshade';
-	return basemapLayers(m).below.at(-1)?.id ?? '';
+	return m.terrain ? 'hillshade' : ANCHORS.base;
 }
 
 /** The imagery sources and layers: NAIP, plus the sharper detail file around the cameras. */
@@ -245,7 +272,9 @@ export function buildStyle(m: BasemapManifest, origin: string, aerial = false): 
 			'fog-ground-blend': 0.85
 		}
 	};
+	// Under the draped data slots: hillshade and imagery. Over them: the 3D buildings.
 	const middle: LayerSpecification[] = [];
+	const over: LayerSpecification[] = [];
 
 	if (m.terrain) {
 		// One source for the 3D surface, a second for hillshading, as MapLibre recommends.
@@ -279,7 +308,7 @@ export function buildStyle(m: BasemapManifest, origin: string, aerial = false): 
 			url: pmtilesUrl(origin, m.buildings.file),
 			attribution: m.buildings.attribution
 		};
-		middle.push({
+		over.push({
 			id: BUILDINGS_LAYER,
 			type: 'fill-extrusion',
 			source: 'buildings',
@@ -295,6 +324,23 @@ export function buildStyle(m: BasemapManifest, origin: string, aerial = false): 
 		});
 	}
 
-	style.layers = [...below, ...middle, ...labels];
+	// The slot anchors (docs/14 §14.8 "Layer order", #lib/map/order.ts): modules
+	// insert before their slot's anchor, so the draped slots (base through
+	// routes) stay one contiguous run whatever loads first.
+	style.layers = [
+		...below,
+		anchorLayer('base'),
+		...middle,
+		anchorLayer('streets'),
+		anchorLayer('lanes'),
+		anchorLayer('footprints'),
+		anchorLayer('routes'),
+		...over,
+		anchorLayer('scene'),
+		anchorLayer('points'),
+		...labels,
+		anchorLayer('labels'),
+		anchorLayer('overlay')
+	];
 	return style;
 }

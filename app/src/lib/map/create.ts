@@ -10,11 +10,12 @@ import {
 // MapLibre looks for its worker next to its own module, which bundling breaks,
 // so Vite builds the worker and MapLibre gets its URL.
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
-import { Protocol } from 'pmtiles';
+import type { Protocol } from 'pmtiles';
 import { dev } from '$app/env';
 import { buildStyle, loadManifest, type BasemapManifest } from './style.js';
 
 let setUp = false;
+let protocol: Promise<Protocol> | null = null;
 
 /**
  * The worker URL and the PMTiles protocol, once per page. The boot calls this
@@ -22,13 +23,17 @@ let setUp = false;
  * first; `createMap` calls it too.
  *
  * The protocol runs with `metadata: false`: the attribution comes from the
- * manifest, so the metadata section is never fetched (docs/14 §14.8).
+ * manifest, so the metadata section is never fetched (docs/14 §14.8). The
+ * pmtiles library (with fflate, about 7 KB gzip) is its own chunk, started
+ * here and awaited by the first tile request, so it stays out of the initial
+ * JavaScript budget (§14.9; WP2).
  */
 export function setupMapLibre(): void {
 	if (setUp) return;
 	setUp = true;
 	setWorkerUrl(workerUrl);
-	addProtocol('pmtiles', new Protocol({ metadata: false }).tile);
+	protocol = import('pmtiles').then(({ Protocol }) => new Protocol({ metadata: false }));
+	addProtocol('pmtiles', async (params, abort) => (await protocol!).tile(params, abort));
 }
 
 /**
