@@ -428,6 +428,26 @@ JPEG, 752 about 32 KB.
   exists. That's longer than measuring needs (24–48 h), since disk allows
   it for now.
 
+**The encoder version matters** (checked on the server, Oct 5, evening-rush
+frames). Debian 13's newer SVT-AV1 needs 13–15% more space than the 1.7
+release the benchmark used, at the same quality, so the cameras service
+runs on Ubuntu 24.04 for SVT-AV1 1.7. Version 1.7 gave byte-identical files
+on the server and on the benchmark machine, so the server's CPU (AVX, no
+AVX2) changes speed, not results.
+
+| Encoder, preset, crf | 656: size, SSIM | 752: size, SSIM | Time for 26 frames |
+|---|---|---|---|
+| **SVT-AV1 1.7, preset 6, crf30** (chosen) | 335 KB, 0.980 | 199 KB, 0.982 | 10–11 s |
+| SVT-AV1 2.3, preset 6, crf30 | 386 KB, 0.976 | 221 KB, 0.977 | 3–4 s |
+| SVT-AV1 2.3, preset 4, crf30 | 384 KB, 0.980 | 231 KB, 0.981 | 9–11 s |
+| SVT-AV1 2.3, preset 4, crf32 | 338 KB, 0.977 | 198 KB, 0.978 | 9–11 s |
+
+None of 2.3's tuning options (`tune`, temporal filtering, variance boost,
+quantization matrices) closed the gap. At about 2.5 frames a second on the
+server, a full day for the 34 key cameras should take about 5–6 hours
+overnight. All 210 cameras would need more cores or a faster preset: a
+question for step 3.
+
 **Why daily rather than hourly files.** Each file starts with a full frame,
 which costs about 3.5–4.3 ordinary frames (evening rush, both cameras).
 With 60 frames an hour, that's about 4–5% of an hourly file, so daily files

@@ -12,7 +12,7 @@ network stay in private notes on the server, never in this repository.
 | `db` | `timescale/timescaledb-ha:pg17-ts2.30` | PostgreSQL 17 + TimescaleDB + PostGIS. Not exposed outside Compose. Checked on CPUs without AVX2. |
 | `ingest` | built from [`ingest/`](../ingest) | Applies [`db/migrations`](../db/migrations) on start, then runs scheduled sources when due (ACHD's camera list, daily). One-off sources run only by hand. |
 | `transit` | the ingest image | Records Valley Regional Transit's live feeds every 30 s: a raw archive in `ARCHIVE_DIR`, plus bus positions in the database |
-| `cameras` | the ingest image | Fetches the key cameras ([`ingest/key_cameras.csv`](../ingest/key_cameras.csv)) from 511 Idaho every 50 s into `ARCHIVE_DIR/cameras/jpeg`, and after local midnight rolls each day into one AV1 video per camera in `ARCHIVE_DIR/cameras/video`. JPEGs are deleted after a week, once their video exists. Pauses below 10 GB free. |
+| `cameras` | built from [`ingest/Dockerfile.cameras`](../ingest/Dockerfile.cameras) (Ubuntu 24.04, for the benchmarked SVT-AV1 1.7) | Fetches the key cameras ([`ingest/key_cameras.csv`](../ingest/key_cameras.csv)) from 511 Idaho every 50 s into `ARCHIVE_DIR/cameras/jpeg`, and after local midnight rolls each day into one AV1 video per camera in `ARCHIVE_DIR/cameras/video`. JPEGs are deleted after a week, once their video exists. Pauses below 10 GB free. |
 | `app` | built from [`app/`](../app) | SvelteKit (adapter-node) on port 3000 inside the network. Stores calibration reference frames in `FRAMES_DIR`. |
 | `web` | `caddy:2.11-alpine` | The single entry point: serves `/tiles/` from the basemap folder (with range requests) and proxies everything else to `app` |
 

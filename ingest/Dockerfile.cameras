@@ -1,0 +1,21 @@
+# Cameras image: the key-camera frame stream and the daily AV1 videos
+# (`python3 -m ingest stream idaho511_frames`, ingest/camera_video.py).
+# Ubuntu 24.04 for its SVT-AV1 1.7, the encoder benchmarked in docs/11. On our
+# frames, Debian 13's SVT-AV1 2.3 needs 13–15% more space for the same quality.
+# Build context is the repository root (see deploy/docker-compose.yml).
+FROM ubuntu:24.04
+RUN apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      ffmpeg python3 python3-venv ca-certificates tzdata \
+ && rm -rf /var/lib/apt/lists/* \
+ && ls /usr/lib/x86_64-linux-gnu/libSvtAv1Enc.so.1.7.*
+RUN python3 -m venv /venv
+ENV PATH=/venv/bin:$PATH
+WORKDIR /repo
+COPY ingest/requirements.txt ingest/requirements.txt
+RUN pip install --no-cache-dir -r ingest/requirements.txt
+COPY db db
+COPY ingest ingest
+# uid 1000 owns the archive folder on the server.
+USER 1000:1000
+CMD ["python3", "-m", "ingest", "stream", "idaho511_frames"]
