@@ -5,6 +5,7 @@ import type { AppCtx } from '#lib/app/context.js';
 import { addSlotted } from '#lib/map/order.js';
 import { discSprite, needsHalo, ringSprite, type OverlayInstance, type SpriteDef } from '#lib/overlay/index.js';
 import { Poller } from '#lib/state/poll.svelte.js';
+import { take } from '../prefetch.js';
 import { PRIORITY, type Badge, type Chip, type Interactive, type LayerModule, type LayerStatus, type Selection } from '../types.js';
 import Card from './Card.svelte';
 import def from './def.js';
@@ -135,6 +136,7 @@ export class TransitModule implements LayerModule {
 					title: stop.name,
 					fact: `${stop.routeIds.length} route${stop.routeIds.length === 1 ? '' : 's'} stop here`,
 					source: CREDIT,
+					at: f.geometry.type === 'Point' ? (f.geometry.coordinates.slice(0, 2) as [number, number]) : undefined,
 					data: stop
 				};
 			}
@@ -195,7 +197,7 @@ export class TransitModule implements LayerModule {
 		this.#ctx = ctx;
 		let data: { routes: TransitRoute[]; shapes: FeatureCollection; stops: FeatureCollection };
 		try {
-			const res = await fetch(await ctx.dataUrl('/api/transit/routes', 'gtfs'));
+			const res = await take(await ctx.dataUrl('/api/transit/routes', 'gtfs'));
 			if (!res.ok) {
 				const msg = (await res.json().catch(() => null))?.message ?? `HTTP ${res.status}`;
 				throw new Error(msg);
@@ -281,7 +283,7 @@ export class TransitModule implements LayerModule {
 	}
 
 	chips(): Chip[] {
-		if (this.status === 'loading') return [];
+		if (this.status !== 'ready' && this.status !== 'stale') return [];
 		const now = this.feedNow || Date.now() / 1000;
 		const live = this.vehicles.filter((v) => !isStale(v, now));
 		const running = Object.keys(liveByRoute(this.vehicles, now)).filter((k) => k !== '?').length;

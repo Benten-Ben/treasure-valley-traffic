@@ -1,6 +1,7 @@
 import type { FeatureCollection } from 'geojson';
 import type { GeoJSONSource, MapGeoJSONFeature } from 'maplibre-gl';
 import { MapScope } from '#lib/app/cleanup.js';
+import { take } from '../prefetch.js';
 import type { AppCtx } from '#lib/app/context.js';
 import { addSlotted, ANCHORS } from '#lib/map/order.js';
 import { PRIORITY, type Chip, type Interactive, type LayerModule, type LayerStatus, type Selection } from '../types.js';
@@ -22,7 +23,7 @@ import def from './def.js';
 import Legend from './Legend.svelte';
 
 async function getJson(url: string, init?: RequestInit) {
-	const res = await fetch(url, init);
+	const res = await take(url, init);
 	if (!res.ok) {
 		const msg = (await res.json().catch(() => null))?.message ?? `HTTP ${res.status}`;
 		throw new Error(msg);
@@ -56,7 +57,8 @@ export class CamerasModule implements LayerModule {
 				const id = Number(f.properties?.id);
 				const p = this.cameras.find((c) => c.id === id) ?? (f.properties as CameraProps | undefined);
 				if (!p) return null;
-				return { kind: 'camera', id: String(p.id), layer: 'cameras', title: p.name, fact: STATUS_TEXT[p.status], source: CREDIT, data: p };
+				const at = f.geometry.type === 'Point' ? (f.geometry.coordinates.slice(0, 2) as [number, number]) : undefined;
+				return { kind: 'camera', id: String(p.id), layer: 'cameras', title: p.name, fact: STATUS_TEXT[p.status], source: CREDIT, at, data: p };
 			}
 		}
 	];

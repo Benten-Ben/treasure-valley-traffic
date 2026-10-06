@@ -29,7 +29,7 @@
 	.sheet {
 		display: flex;
 		flex-direction: column;
-		max-height: 40vh;
+		max-height: 32vh;
 		border-radius: 20px 20px 16px 16px;
 		overflow: hidden;
 	}

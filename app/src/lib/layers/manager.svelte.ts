@@ -3,6 +3,7 @@ import { untrack } from 'svelte';
 import type { AppCtx } from '#lib/app/context.js';
 import { ANCHORS } from '#lib/map/order.js';
 import { BUILDINGS_LAYER } from '#lib/map/style.js';
+import { ringSprite } from '#lib/overlay/sprites.js';
 import {
 	chooseLayers,
 	DEFAULT_LAYERS,
@@ -49,6 +50,8 @@ export const FEWER_LABELS_HIDDEN = ['address_label', 'pois', 'roads_oneway', 'ro
 
 /** The temporary shared wash (removed by WP4's flavors): one layer, whatever is on. */
 export const WASH_LAYER = 'base-wash';
+const SELECTION_GROUP = 'selection';
+const SELECTION_RING = 'selection-ring';
 const WASH = { color: '#f6f0e6', opacity: 0.5 };
 
 const isBase = (v: unknown): v is BaseSettings => {
@@ -171,10 +174,15 @@ export class LayerManager {
 				this.#cleanup.push(() => map.off('idle', prefetch));
 			})
 			.catch(() => {});
+		// The selection: each module hears of it, and a point gets the ink-and-cream ring (§14.3).
+		ctx.overlay.sprite(ringSprite(SELECTION_RING, 36));
+		ctx.overlay.set(SELECTION_GROUP, [], { z: 50 });
 		this.#cleanup.push(
 			ctx.selection.listen((s) => {
 				for (const m of Object.values(this.modules)) m?.selected?.(s);
-			})
+				ctx.overlay.set(SELECTION_GROUP, s?.at ? [{ id: 'selection', lng: s.at[0], lat: s.at[1], sprite: SELECTION_RING }] : []);
+			}),
+			() => ctx.overlay.remove(SELECTION_GROUP)
 		);
 		this.#stopEffects = $effect.root(() => {
 			$effect(() => {
@@ -292,6 +300,12 @@ export class LayerManager {
 		if (!def || def.available(this.#ctx.meta) !== true) return;
 		this.#loading.add(id);
 		this.#status[id] = 'loading';
+		// Its data starts now, while its code loads.
+		try {
+			def.prefetch?.(this.#ctx);
+		} catch {
+			/* the module fetches for itself */
+		}
 		let mod: LayerModule;
 		try {
 			mod = await def.load();

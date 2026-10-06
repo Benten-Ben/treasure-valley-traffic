@@ -1,4 +1,4 @@
-import type { ExpressionSpecification } from 'maplibre-gl';
+import type { ExpressionSpecification, FilterSpecification } from 'maplibre-gl';
 import type { SlottedLayer } from '#lib/map/order.js';
 
 /**
@@ -52,11 +52,19 @@ const CLASS_WIDTH: Record<string, number> = {
 };
 
 export const L = {
+	selectedHalo: 'streets-selected-halo',
+	selected: 'streets-selected',
 	casing: 'streets-casing',
 	speed: 'streets-speed',
 	labels: 'streets-speed-labels',
 	oneway: 'streets-oneway'
 } as const;
+
+/** The filter that picks out the selected road (none: an id no segment has). */
+export function selectedFilter(id: number | null): FilterSpecification {
+	const n = id ?? -1;
+	return ['any', ['==', ['id'], n], ['==', ['get', 'id'], n]];
+}
 
 export const STREET_LAYERS: string[] = Object.values(L);
 export const ROADS_SOURCE = 'roads';
@@ -95,6 +103,19 @@ export function streetLayers(): SlottedLayer[] {
 		...SPEED_BINS.slice(1).flatMap((b) => [b.from, b.color])
 	] as unknown as ExpressionSpecification;
 	return [
+		// The selected road (§14.3): a 2 px ink edge in a 3 px cream halo, under its speed line.
+		{
+			slot: 'streets',
+			layer: { id: L.selectedHalo, type: 'line', source: ROADS_SOURCE, 'source-layer': 'roads', filter: selectedFilter(null),
+				layout: { ...hidden, 'line-cap': 'round', 'line-join': 'round' },
+				paint: { 'line-color': '#fffbf4', 'line-width': width(10) } }
+		},
+		{
+			slot: 'streets',
+			layer: { id: L.selected, type: 'line', source: ROADS_SOURCE, 'source-layer': 'roads', filter: selectedFilter(null),
+				layout: { ...hidden, 'line-cap': 'round', 'line-join': 'round' },
+				paint: { 'line-color': '#2b2a33', 'line-width': width(4) } }
+		},
 		{
 			slot: 'streets',
 			layer: { id: L.casing, type: 'line', source: ROADS_SOURCE, 'source-layer': 'roads',

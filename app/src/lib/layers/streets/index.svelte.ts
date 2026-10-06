@@ -6,7 +6,7 @@ import { PRIORITY, type Interactive, type LayerModule, type LayerStatus, type Se
 import Card from './Card.svelte';
 import def from './def.js';
 import Legend from './Legend.svelte';
-import { chevron, CHEVRON, L, ROADS_SOURCE, STREET_LAYERS, streetLayers, type StreetProps } from './streets.js';
+import { chevron, CHEVRON, L, ROADS_SOURCE, selectedFilter, STREET_LAYERS, streetLayers, type StreetProps } from './streets.js';
 
 export const SOURCE = 'ACHD road centerlines';
 
@@ -53,6 +53,12 @@ export class StreetsModule implements LayerModule {
 		});
 		scope.addImage(CHEVRON, chevron(), { pixelRatio: 2 });
 		addSlotted(map, streetLayers(), def.order, (l, before) => scope.addLayer(l, before));
+		// A road tile that fails puts ▲ on the button until Retry (§14.3: map source errors go to their layer's status).
+		scope.on('error', (e) => {
+			if ((e as { sourceId?: string }).sourceId !== ROADS_SOURCE) return;
+			this.status = 'stale';
+			this.error = `Some road tiles failed to load: ${(e as { error?: Error }).error?.message ?? 'unknown error'}`;
+		});
 		this.status = 'ready';
 		this.updatedAt = Date.now();
 		this.setVisible(this.#visible);
@@ -67,6 +73,14 @@ export class StreetsModule implements LayerModule {
 
 	summary(): string | null {
 		return 'Ada County roads';
+	}
+
+	/** Outline the selected road (a filter change on its two layers, not new data). */
+	selected(s: Selection | null): void {
+		const map = this.#scope?.map;
+		if (!map) return;
+		const id = s?.layer === 'streets' && s.kind === 'street' ? Number(s.id) : null;
+		for (const layer of [L.selectedHalo, L.selected]) if (map.getLayer(layer)) map.setFilter(layer, selectedFilter(id));
 	}
 
 	destroy(): void {

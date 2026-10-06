@@ -25,9 +25,10 @@ test.describe('polling', () => {
 		await page.goto('/');
 		await mapReady(page);
 
-		// The Transit lens polls the live buses.
+		// The Transit layer polls the live buses. (WP2: layers combine, and Transit is on at a first
+		// visit, so the lens-era "press 4" that switched to it would now turn it off.)
 		await expect.poll(() => page.evaluate(() => (globalThis as any).__tvt.layers?.transit)).toBe(true);
-		await page.keyboard.press('4');
+		expect(await page.evaluate(() => (globalThis as any).__tvt.layers?.enabled)).toContain('transit');
 		await expect.poll(() => api.filter((p) => p === '/api/transit/vehicles').length).toBeGreaterThan(0);
 
 		await setVisibility(page, 'hidden');

@@ -53,7 +53,7 @@
 				{:else if open && mod?.Legend && (status === 'ready' || status === 'stale')}
 					<div class="body">
 						{#if status === 'stale' && manager.error(d.id)}
-							<p class="stale">▲ {manager.error(d.id)}</p>
+							<p class="stale" role="alert">▲ {manager.error(d.id)} <button class="pill small" onclick={() => manager.retry(d.id)}>Retry</button></p>
 						{/if}
 						<PanelBoundary name="{d.title} legend">
 							<mod.Legend module={mod} />
@@ -155,6 +155,10 @@
 	.problem p,
 	.stale {
 		margin: 0 0 8px;
+		font-size: 12px;
+	}
+	.small {
+		padding: 2px 10px;
 		font-size: 12px;
 	}
 </style>

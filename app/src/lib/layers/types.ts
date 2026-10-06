@@ -57,6 +57,8 @@ export interface Selection {
 	/** Source and age for the tooltip ("ACHD road centerlines"). */
 	source?: string;
 	badge?: Badge;
+	/** A point to ring on the map while selected (cameras, stops); things that move ring themselves. */
+	at?: [number, number];
 	/** Owner-specific data the card reads. */
 	data?: unknown;
 	/** For 'routes' (several routes share the street here): each one's own selection. */
@@ -103,6 +105,11 @@ export interface LayerDef {
 	loadingText?: string;
 	/** true, or the reason it can't be used yet (the button is disabled with it). */
 	available(meta: DataMeta | null): true | string;
+	/**
+	 * Start the layer's data fetch while its chunk is still loading (through
+	 * `#lib/layers/prefetch.ts`, whose `take` the module then uses).
+	 */
+	prefetch?(ctx: AppCtx): void;
 	/** Import the module (its own chunk) and create it. */
 	load(): Promise<LayerModule>;
 }
