@@ -11,8 +11,8 @@ Tick an item when it's built, with the date, or strike it if we drop it.
 
 - [ ] **Lanes** (designed in ch. 14 §14.7): lane counts, turn lanes and where
   they start, from OpenStreetMap (`lanes`, `turn:lanes`), drawn at real
-  width from about zoom 16. Needs a weekly download of Geofabrik's Idaho
-  extract on the server (owner OK, Oct 6), and comes after the 3D cameras.
+  width from about zoom 16. Needs a regular copy of Geofabrik's Idaho
+  extract on the server (owner OK, Oct 6), and comes after the 3D cameras. Geofabrik's robots.txt disallows scripted downloads (Oct 6), so a hand download loads it until Geofabrik answers.
 - [ ] **Full replay:** a time bar, playback at 60x and 600x, scrubbing to any
   moment. Builds on the tracks API this round adds. This round has the
   1–5 minute playback delay and Pause.
@@ -21,6 +21,19 @@ Tick an item when it's built, with the date, or strike it if we drop it.
   bus detoured), click to fly there.
 - [ ] **Search:** places, roads, cameras, routes.
 - [ ] **Coach marks:** a short first-visit tour.
+- [ ] **Intersections layer** (data built Oct 6, [DECISIONS](DECISIONS.md)):
+  one badge per signalized intersection with its operator, coordination
+  group and confidence; the review list of candidates; approaches with
+  right-turn lanes and phasing; cameras, counts and rail crossings attached.
+- [ ] **Rail crossings layer:** FRA crossings, gates and preemption where
+  known, the nearest signal and its distance, trains per day.
+- [ ] **Lanes from every source:** draw the lanes the lanes rule picks
+  (ch. 9 §9.3), each number labeled with its source, with disagreements
+  (e.g. Chinden's) flagged; builds on the lanes design above.
+- [ ] **Crashes and the high-injury network** (COMPASS, 2008–2025), and
+  **congestion measures** by year (internal until COMPASS answers).
+- [ ] **Growth context:** building permits, plats and traffic-zone forecasts
+  near corridors; Boise's development pipeline (after the core pieces).
 
 ## Later, once their prerequisites exist
 

@@ -11,6 +11,7 @@ Run: python3 -m unittest discover -s ingest/tests -t .
 
 import json
 import os
+import re
 import unittest
 import urllib.parse
 from datetime import datetime, timezone
@@ -28,89 +29,89 @@ def geojson_line(x0=-119.5, y0=43.3, dx=0.0, dy=0.003):
 
 # --- the pager ---------------------------------------------------------------
 
-def fake_pages(*pages):
-    """A get() that answers each request with the next page; records the URLs asked for."""
-    asked = []
-    queue = list(pages)
+class BoxServer:
+    """A layer cut to a box, as ITD's server serves it: the ID list (by extent) includes
+    `outside`, rows the box query itself never returns; by ID, every row comes back.
+    Answers at most `cap` features, in ID order; `lose` drops rows altogether."""
 
-    def get(url):
-        asked.append(url)
-        body = json.dumps(queue.pop(0)).encode()
-        return 200, body, "no_rules"
-    return get, asked
+    def __init__(self, ids, outside=(), cap=4, lose=(), oid_field="OBJECTID"):
+        self.ids, self.outside, self.cap, self.lose = list(ids), set(outside), cap, set(lose)
+        self.oid_field, self.asked = oid_field, []
+
+    def get(self, url):
+        self.asked.append(url)
+        q = urllib.parse.parse_qs(urllib.parse.urlsplit(url).query)
+        if q.get("returnIdsOnly") == ["true"]:
+            body = {"objectIdFieldName": self.oid_field, "objectIds": self.ids[::-1]}
+        else:
+            if "objectIds" in q:
+                listed = {int(i) for i in q["objectIds"][0].split(",")}
+                sel = [i for i in sorted(self.ids) if i in listed]
+            else:
+                lo, hi = (int(t) for t in re.findall(r"(?:>=|<=) (\d+)", q["where"][0]))
+                sel = [i for i in sorted(self.ids) if lo <= i <= hi and i not in self.outside]
+            sel = [i for i in sel if i not in self.lose]
+            body = {"exceededTransferLimit": len(sel) > self.cap,
+                    "features": [{"attributes": {self.oid_field: i},
+                                  "geometry": {"paths": [[[-119.5, 43.3], [-119.5, 43.301]]]}} for i in sel[:self.cap]]}
+        return 200, json.dumps(body).encode(), "no_rules"
 
 
-def page(first_oid, n, exceeded=False, oid_field="OBJECTID"):
-    """An Esri JSON page of n features."""
-    p = {"features": [{"attributes": {oid_field: first_oid + i},
-                       "geometry": {"paths": [[[-119.5, 43.3], [-119.5, 43.301]]]}} for i in range(n)]}
-    if exceeded:
-        p["exceededTransferLimit"] = True
-    return p
-
-
-def where_of(url):
-    return urllib.parse.parse_qs(urllib.parse.urlsplit(url).query)["where"][0]
+def query(url):
+    return urllib.parse.parse_qs(urllib.parse.urlsplit(url).query)
 
 
 class PagerTest(unittest.TestCase):
-    def fetch(self, *pages, **kw):
-        get, asked = fake_pages(*pages)
-        out = arcgis.fetch_layer("https://example.invalid/FeatureServer/9", label="test", get=get,
-                                 sleep=lambda s: None, page=kw.pop("page", 3), check_ids=kw.pop("check_ids", False),
-                                 **kw)
-        return out, asked
+    def fetch(self, server, **kw):
+        stats = {}
+        out = arcgis.fetch_layer("https://example.invalid/FeatureServer/9", "test", get=server.get,
+                                 sleep=lambda s: None, stats=stats, **kw)
+        return out, stats
 
-    def test_listed_rows_the_pages_miss_are_fetched_by_id(self):
-        # The ID list has 7 rows; the pages bring 5 (rows 6 and 7 lie just outside the box).
-        out, asked = self.fetch({"objectIdFieldName": "OBJECTID", "objectIds": [7, 1, 2, 3, 4, 5, 6]},
-                                page(1, 3), page(4, 2), page(6, 2), check_ids=True, box=itd_hpms.BOX)
-        self.assertEqual((out["expected"], len(out["features"]), out["by_id"], out["requests"]), (7, 7, 2, 4))
-        q = [urllib.parse.parse_qs(urllib.parse.urlsplit(u).query) for u in asked]
-        self.assertEqual((q[0]["returnIdsOnly"], q[0]["geometry"]), (["true"], ["-117.05,43.0,-115.95,43.85"]))
-        self.assertEqual((q[3]["objectIds"], "geometry" in q[3]), (["6,7"], False))       # by ID, without the box
+    def test_a_box_layer_comes_whole_with_the_rows_outside_fetched_by_id(self):
+        server = BoxServer(range(1, 10), outside=[3, 9], cap=4)
+        (features, nbytes, status, robots), stats = self.fetch(server, box=itd_hpms.BOX, batch=4, precision=6,
+                                                              where="Kind = 'x'")
+        self.assertEqual([f["attributes"]["OBJECTID"] for f in features], list(range(1, 10)))
+        self.assertEqual(stats, {"listed": 9, "by_id": 2})
+        q = [query(u) for u in server.asked]
+        self.assertEqual((q[0]["returnIdsOnly"], q[0]["geometry"], q[0]["spatialRel"], q[0]["where"]),
+                         (["true"], ["-117.05,43.0,-115.95,43.85"], ["esriSpatialRelIntersects"], ["Kind = 'x'"]))
+        self.assertEqual(q[1]["where"], ["(Kind = 'x') AND OBJECTID >= 1 AND OBJECTID <= 4"])
+        self.assertEqual((q[1]["geometry"], q[1]["outSR"], q[1]["geometryPrecision"], q[1]["f"]),
+                         (["-117.05,43.0,-115.95,43.85"], ["4326"], ["6"], ["json"]))
+        by_id = q[-1]                                         # by ID, without the box
+        self.assertEqual((by_id["objectIds"], "geometry" in by_id, "where" in by_id), (["3,9"], False, False))
+        line = arcgis.esri_feature(features[0])
+        self.assertEqual((line["properties"], line["geometry"]["type"]), ({"OBJECTID": 1}, "LineString"))
 
-    def test_listed_rows_that_never_arrive_stop_the_run(self):
+    def test_paging_stops_once_every_listed_id_is_in(self):
+        server = BoxServer(range(1, 10), cap=4)
+        (features, *_), stats = self.fetch(server, batch=4)
+        self.assertEqual((len(features), len(server.asked), stats["by_id"]), (9, 1 + 3, 0))
+
+    def test_listed_rows_that_never_arrive_fail_the_fetch(self):
         with self.assertRaises(RuntimeError):
-            self.fetch({"objectIds": list(range(1, 10))}, page(1, 3), page(4, 2), {"features": []}, check_ids=True)
+            self.fetch(BoxServer(range(1, 10), outside=[9], lose=[9]), box=itd_hpms.BOX, batch=4)
 
-    def test_paging_stops_on_a_short_page(self):
-        out, asked = self.fetch(page(1, 3), page(4, 3), page(7, 2), box=itd_hpms.BOX)
-        self.assertEqual(len(out["features"]), 8)
-        self.assertEqual(len(asked), 3)
-        self.assertEqual([where_of(u) for u in asked], ["1=1", "(1=1) AND OBJECTID > 3", "(1=1) AND OBJECTID > 6"])
-        q = urllib.parse.parse_qs(urllib.parse.urlsplit(asked[0]).query)
-        self.assertEqual(q["geometry"], ["-117.05,43.0,-115.95,43.85"])
-        self.assertEqual((q["outSR"], q["f"], q["orderByFields"]), (["4326"], ["json"], ["OBJECTID ASC"]))
-        first = out["features"][0]
-        self.assertEqual((first["properties"], first["geometry"]["type"]), ({"OBJECTID": 1}, "LineString"))
+    def test_too_many_ids_and_server_errors_fail(self):
+        with self.assertRaises(RuntimeError):
+            self.fetch(BoxServer(range(1, 10)), max_features=8)
+
+        def broken(url):
+            return 200, json.dumps({"error": {"code": 400, "message": "bad"}}).encode(), "no_rules"
+        with self.assertRaises(RuntimeError):
+            arcgis.fetch_layer("https://example.invalid/0", "test", get=broken, sleep=lambda s: None)
 
     def test_esri_geometry_becomes_geojson(self):
         g = arcgis.esri_geometry
         self.assertEqual(g({"paths": [[[1, 2, 9], [3, 4, 9]]]}), {"type": "LineString", "coordinates": [[1, 2], [3, 4]]})
         self.assertEqual(g({"paths": [[[1, 2], [3, 4]], [[5, 6], [7, 8]]]}),
                          {"type": "MultiLineString", "coordinates": [[[1, 2], [3, 4]], [[5, 6], [7, 8]]]})
-        self.assertEqual(g({"x": 1, "y": 2}), {"type": "Point", "coordinates": [1, 2]})
+        self.assertEqual(g({"x": 1, "y": 2}), {"type": "Point", "coordinates": [1.0, 2.0]})
         self.assertIsNone(g({"x": None, "y": None}))
         self.assertIsNone(g({"paths": []}))
         self.assertIsNone(g(None))
-
-    def test_paging_stops_on_an_empty_page(self):
-        out, asked = self.fetch(page(1, 3), page(4, 0))
-        self.assertEqual((len(out["features"]), len(asked)), (3, 2))
-
-    def test_a_short_page_flagged_as_cut_off_keeps_paging(self):
-        # The server's own limit (2) is below the page size asked for (3).
-        out, asked = self.fetch(page(1, 2, exceeded=True), page(3, 2, exceeded=True), page(5, 1))
-        self.assertEqual((len(out["features"]), len(asked)), (5, 3))
-
-    def test_object_id_field_and_errors(self):
-        out, asked = self.fetch(page(10, 3, oid_field="objectid"), page(13, 0), oid_field="objectid")
-        self.assertIn("objectid > 12", where_of(asked[1]))
-        get, _ = fake_pages({"error": {"code": 400, "message": "bad"}})
-        with self.assertRaises(RuntimeError):
-            arcgis.fetch_layer("https://example.invalid/0", label="test", get=get, sleep=lambda s: None,
-                               check_ids=False)
 
     def test_a_reset_connection_is_retried(self):
         calls = []
@@ -120,7 +121,8 @@ class PagerTest(unittest.TestCase):
             if len(calls) == 1:
                 raise ConnectionResetError("reset by peer")
             return 200, b"{}", "no_rules"
-        self.assertEqual(arcgis.get_with_retries("https://example.invalid", "test", flaky, waits=(0,))[0], 200)
+        self.assertEqual(arcgis.get_with_retries("https://example.invalid", "test", flaky, waits=(0,),
+                                                 sleep=lambda s: None)[0], 200)
         self.assertEqual(len(calls), 2)
 
     def test_cleaners(self):

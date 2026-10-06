@@ -1,23 +1,30 @@
-"""Reading Esri ArcGIS FeatureServer layers: paged queries with retries.
+"""Reading ArcGIS feature layers (ArcGIS Online and ArcGIS Server) for ingestors.
 
-Shared by the lane-inventory ingestors (itd_hpms, achd_msm, compass_centerline).
-Pages are keyed by the layer's object ID (`where OBJECTID > last`, ordered),
-which, unlike offsets, can't skip or repeat rows if the layer changes between
-pages. Every request goes through ingest.http (robots.txt, our User-Agent,
-crawl-delay), with a pause between pages. Pages are read as Esri JSON and
-turned into GeoJSON features here.
+A layer is read in two steps: first the IDs of all its features
+(returnIdsOnly), then the features themselves in batches of BATCH by ID range
+(where=OBJECTID >= a AND OBJECTID <= b), as Esri JSON in WGS84 (outSR=4326),
+with a pause between requests. That doesn't depend on the server's default
+order, its page size or whether it honours resultOffset, and it gives a check:
+every listed ID must come back, exactly once. A layer that doesn't come back
+whole fails the fetch instead of looking smaller (a smaller snapshot would
+retire records). robots.txt and crawl-delay are handled by ingest/http.py.
+Network errors, 5xx answers and an unreadable robots.txt are retried with
+backoff (swidrdc.org sometimes resets connections).
 
-The callers store full snapshots, where a row missing from a fetch would
-read as removed, so the list of object IDs is asked for first and every one
-must arrive. With a box, the ID list (like the server's counts) is coarser
-than the pages: on ITD's server, 67 of 19,801 through-lane rows it listed
-never came in the pages (Oct 6, 2026), lines up to 2.3 km outside the box
-that the coarser test lets in. Listed rows the pages miss are fetched by ID,
-without the box; they're harmless extras (they match nothing).
+A layer can be cut to a box (and a where clause). Then the ID list is coarser
+than the features: on ITD's server, 67 of 19,801 through-lane rows it listed
+lie up to 2.3 km outside the box and never come back from a box query (Oct 6,
+2026). Listed IDs that a complete answer leaves out are fetched by ID, without
+the box, before anything counts as missing; they're harmless extras.
+
+Also here: Esri JSON to GeoJSON, small field cleaners, a line fingerprint for
+record versions, and the republish guard (a layer overwritten under new IDs
+keeps its rows).
 """
 
 import hashlib
 import json
+import math
 import time
 import urllib.error
 import urllib.parse
@@ -25,46 +32,51 @@ from datetime import datetime, timezone
 
 from . import http
 
-RETRY_WAITS_S = (5, 15, 45)
-BY_ID_CHUNK = 100            # IDs per by-ID request (keeps the URL short)
+BATCH = 500          # features per request: under every server's maxRecordCount (1,000 or 2,000)
+PAUSE_S = 2.0        # between requests to the same layer
+RETRY_WAITS_S = (10, 30, 60)
+MAX_FEATURES = 50000 # more IDs than this isn't a layer we expect: fail (callers can raise it)
+BY_ID_CHUNK = 100    # IDs per by-ID request (keeps the URL short)
 
 
 def _box(box):
-    """Rows whose line touches the box (west, south, east, north, in degrees); returned whole."""
+    """Features whose geometry touches the box (west, south, east, north, in degrees); returned whole."""
     if not box:
         return {}
     return {"geometry": ",".join(str(v) for v in box), "geometryType": "esriGeometryEnvelope", "inSR": "4326",
             "spatialRel": "esriSpatialRelIntersects"}
 
 
-def _fields(fields):
-    return fields if isinstance(fields, str) else ",".join(fields)
-
-
-def query_url(layer, *, where="1=1", fields="*", oid_field="OBJECTID", after=None, page=2000, box=None,
-              precision=6):
-    """A query for one page: rows with object ID above `after`, in object ID order, in WGS84 (Esri JSON)."""
-    clause = where if after is None else f"({where}) AND {oid_field} > {int(after)}"
-    q = {"where": clause, "outFields": _fields(fields), "returnGeometry": "true", "outSR": "4326",
-         "geometryPrecision": precision, "orderByFields": f"{oid_field} ASC", "resultRecordCount": page, "f": "json",
-         **_box(box)}
-    return f"{layer}/query?{urllib.parse.urlencode(q)}"
-
-
-def ids_url(layer, *, where="1=1", box=None):
+def ids_url(layer, where="1=1", box=None):
     """Every object ID the query matches (not limited by the server's page size)."""
-    return f"{layer}/query?{urllib.parse.urlencode({'where': where, 'returnIdsOnly': 'true', 'f': 'json', **_box(box)})}"
+    return layer + "/query?" + urllib.parse.urlencode({"where": where, "returnIdsOnly": "true", "f": "json",
+                                                        **_box(box)})
 
 
-def by_ids_url(layer, ids, *, fields="*", precision=6):
-    q = {"objectIds": ",".join(str(i) for i in ids), "outFields": _fields(fields), "returnGeometry": "true",
-         "outSR": "4326", "geometryPrecision": precision, "f": "json"}
-    return f"{layer}/query?{urllib.parse.urlencode(q)}"
+def query_url(layer, oid_field, lo, hi, where="1=1", box=None, precision=None):
+    """Features with lo <= ID <= hi, every field, geometry in WGS84."""
+    clause = f"{oid_field} >= {int(lo)} AND {oid_field} <= {int(hi)}"
+    if where and where != "1=1":
+        clause = f"({where}) AND {clause}"
+    q = {"where": clause, "outFields": "*", "returnGeometry": "true", "outSR": "4326",
+         "orderByFields": f"{oid_field} ASC", "f": "json", **_box(box)}
+    if precision is not None:
+        q["geometryPrecision"] = precision
+    return layer + "/query?" + urllib.parse.urlencode(q)
 
 
-def get_with_retries(url, label, get=None, waits=RETRY_WAITS_S):
-    """GET, retrying network errors (resets, timeouts), server errors and an unreadable
-    robots.txt with backoff. A real robots.txt disallow and other HTTP errors are not retried."""
+def by_ids_url(layer, ids, precision=None):
+    """Features by object ID, without any filter."""
+    q = {"objectIds": ",".join(str(int(i)) for i in ids), "outFields": "*", "returnGeometry": "true",
+         "outSR": "4326", "f": "json"}
+    if precision is not None:
+        q["geometryPrecision"] = precision
+    return layer + "/query?" + urllib.parse.urlencode(q)
+
+
+def get_with_retries(url, label, get=None, waits=RETRY_WAITS_S, sleep=time.sleep):
+    """http.get, retried with backoff on a network error, a 5xx or an unreadable robots.txt.
+    A real robots.txt disallow and other HTTP errors are not retried."""
     get = get or (lambda u: http.get(u, timeout=180))
     for wait in tuple(waits) + (None,):
         try:
@@ -73,11 +85,106 @@ def get_with_retries(url, label, get=None, waits=RETRY_WAITS_S):
             if wait is None or (isinstance(err, urllib.error.HTTPError) and err.code < 500):
                 raise
             print(f"{label}: {err}; retrying in {wait} s", flush=True)
-            time.sleep(wait)
+            sleep(wait)
 
 
-def _exceeded(page):
-    return bool(page.get("exceededTransferLimit") or (page.get("properties") or {}).get("exceededTransferLimit"))
+def object_id(attrs, oid_field):
+    """A feature's object ID (the field name's case varies: OBJECTID, objectid), or None."""
+    v = attrs.get(oid_field)
+    if v is None:
+        v = next((val for k, val in attrs.items() if k.lower() == oid_field.lower()), None)
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _exceeded(data):
+    return bool(data.get("exceededTransferLimit") or (data.get("properties") or {}).get("exceededTransferLimit"))
+
+
+def fetch_layer(layer, label, *, where="1=1", box=None, batch=BATCH, pause_s=PAUSE_S, precision=None,
+                max_features=MAX_FEATURES, stats=None, get=None, sleep=time.sleep):
+    """Every feature of a layer (or of its rows matching `where` and touching `box`), each
+    once, in ID order, as Esri JSON. Returns (features, bytes, http status, robots decision).
+    Raises RuntimeError if the layer doesn't come back whole. stats, if given, gets
+    'listed' and 'by_id' (listed rows a range answer left out, fetched by ID)."""
+    status, body, decision = get_with_retries(ids_url(layer, where, box), label, get, sleep=sleep)
+    data = _parse(body, layer)
+    nbytes = len(body)
+    oid_field = data.get("objectIdFieldName") or "OBJECTID"
+    ids = sorted({int(i) for i in data.get("objectIds") or []})
+    if len(ids) > max_features:
+        raise RuntimeError(f"{layer} lists {len(ids)} features, more than {max_features}")
+    wanted = set(ids)
+    got, by_id = {}, []
+    pending = ids
+    requests, max_requests = 0, 2 * (len(ids) // batch + 1) + 2
+    while pending:
+        requests += 1
+        if requests > max_requests:
+            raise RuntimeError(f"{layer}: {len(pending)} of {len(ids)} features still missing after "
+                               f"{requests - 1} requests")
+        chunk = pending[:batch]
+        sleep(pause_s)
+        status, body, decision = get_with_retries(
+            query_url(layer, oid_field, chunk[0], chunk[-1], where, box, precision), label, get, sleep=sleep)
+        data = _parse(body, layer)
+        nbytes += len(body)
+        for f in data.get("features") or []:
+            oid = object_id(f.get("attributes") or {}, oid_field)
+            if oid in wanted and oid not in got:
+                got[oid] = f
+        left = [i for i in chunk if i not in got]
+        if left and (not _exceeded(data) or len(left) == len(chunk)):
+            # A complete answer that leaves listed IDs out won't bring them next time (with a box,
+            # they lie outside it); neither will a server that ignores the query. Try them by ID.
+            by_id += left
+        queued = set(by_id)
+        pending = [i for i in pending if i not in got and i not in queued]
+    for k in range(0, len(by_id), BY_ID_CHUNK):
+        sleep(pause_s)
+        status, body, decision = get_with_retries(by_ids_url(layer, by_id[k:k + BY_ID_CHUNK], precision), label,
+                                                  get, sleep=sleep)
+        data = _parse(body, layer)
+        nbytes += len(body)
+        for f in data.get("features") or []:
+            oid = object_id(f.get("attributes") or {}, oid_field)
+            if oid in wanted and oid not in got:
+                got[oid] = f
+    lost = [i for i in ids if i not in got]
+    if lost:
+        raise RuntimeError(f"{layer}: {len(lost)} of the {len(ids)} listed features never came back "
+                           f"(e.g. {oid_field} {lost[:5]}); the server ignored the query, or the layer changed "
+                           "while we read it")
+    if stats is not None:
+        stats["listed"] = stats.get("listed", 0) + len(ids)
+        stats["by_id"] = stats.get("by_id", 0) + sum(1 for i in by_id if i in got)
+    return [got[i] for i in ids], nbytes, status, decision
+
+
+def _parse(body, layer):
+    data = json.loads(body)
+    if "error" in data:
+        raise RuntimeError(f"ArcGIS error from {layer}: {data['error']}")
+    return data
+
+
+# --- geometry ------------------------------------------------------------------
+
+def point_geojson(geometry):
+    """An Esri JSON point ({"x": lon, "y": lat}) as a GeoJSON point, or None if it's
+    missing, empty or not a number (Esri writes empty points as NaN or null)."""
+    if not geometry:
+        return None
+    x, y = geometry.get("x"), geometry.get("y")
+    try:
+        x, y = float(x), float(y)
+    except (TypeError, ValueError):
+        return None
+    if math.isnan(x) or math.isnan(y) or not (-180 <= x <= 180 and -90 <= y <= 90):
+        return None
+    return {"type": "Point", "coordinates": [round(x, 7), round(y, 7)]}
 
 
 def esri_geometry(g):
@@ -90,8 +197,8 @@ def esri_geometry(g):
             return None
         return ({"type": "LineString", "coordinates": paths[0]} if len(paths) == 1
                 else {"type": "MultiLineString", "coordinates": paths})
-    if "x" in g and "y" in g:
-        return None if g["x"] is None or g["y"] is None else {"type": "Point", "coordinates": [g["x"], g["y"]]}
+    if "x" in g or "y" in g:
+        return point_geojson(g)
     if "rings" in g:
         return {"type": "Polygon", "coordinates": [[list(p[:2]) for p in ring] for ring in g["rings"]]}
     raise ValueError(f"unsupported Esri geometry with keys {sorted(g)}")
@@ -102,82 +209,56 @@ def esri_feature(f):
     return {"type": "Feature", "properties": f.get("attributes") or {}, "geometry": esri_geometry(f.get("geometry"))}
 
 
-def _json(get, url, label, out):
-    status, body, decision = get_with_retries(url, label, get)
-    out["status"], out["robots"] = status, decision
-    out["bytes"] += len(body)
-    data = json.loads(body)
-    if "error" in data:
-        raise RuntimeError(f"{label}: server error: {data['error']}")
-    return data
+def geom_digest(geom, places=5):
+    """A short fingerprint of a geometry's coordinates rounded to `places` decimals
+    (5 is about a metre), so a moved line makes a new record version while a
+    republish's float noise doesn't. raw.record hashes only the payload, so the
+    parsers put this in it."""
+    if not geom:
+        return None
+
+    def walk(c):
+        if isinstance(c, (list, tuple)) and c and isinstance(c[0], (int, float)):
+            return [round(float(x), places) + 0.0 for x in c[:2]]
+        return [walk(x) for x in c]
+
+    blob = json.dumps([geom.get("type"), walk(geom.get("coordinates") or [])], separators=(",", ":"))
+    return hashlib.sha256(blob.encode()).hexdigest()[:16]
 
 
-def fetch_layer(layer, *, label, where="1=1", fields="*", oid_field="OBJECTID", box=None, page=2000, pause_s=1.5,
-                get=None, sleep=time.sleep, check_ids=True):
-    """Every feature of a layer (inside `box`, if given), page by page.
+# --- field cleaners ----------------------------------------------------------------
 
-    Stops on an empty page, or on a short page the server doesn't flag as cut
-    off (a server whose own limit is below `page` returns short pages flagged
-    exceededTransferLimit, and paging goes on). With check_ids, it first lists
-    the object IDs to expect; listed rows the pages missed are fetched by ID,
-    and if any still don't arrive it raises rather than return a short
-    snapshot. Returns a dict: features, expected, by_id (rows fetched by ID),
-    bytes, requests, robots (decision), status (last HTTP status).
-    """
-    out = {"features": [], "expected": None, "by_id": 0, "bytes": 0, "requests": 0, "robots": None, "status": None}
-    expected = None
-    if check_ids:
-        data = _json(get, ids_url(layer, where=where, box=box), label, out)
-        out["requests"] += 1
-        if not isinstance(data.get("objectIds", []), list):
-            raise RuntimeError(f"{label}: no object ID list from the server: {str(data)[:300]}")
-        expected = set(data.get("objectIds") or [])
-        out["expected"] = len(expected)
-        sleep(pause_s)
-    after = None
-    while True:
-        url = query_url(layer, where=where, fields=fields, oid_field=oid_field, after=after, page=page, box=box)
-        data = _json(get, url, label, out)
-        out["requests"] += 1
-        batch = [esri_feature(f) for f in data.get("features") or []]
-        out["features"] += batch
-        if not batch or (len(batch) < page and not _exceeded(data)):
-            break
-        oids = [(f.get("properties") or {}).get(oid_field) for f in batch]
-        oids = [o for o in oids if o is not None]
-        if not oids:
-            raise RuntimeError(f"{label}: features carry no {oid_field}; can't page")
-        last = max(oids)
-        if after is not None and last <= after:
-            raise RuntimeError(f"{label}: object IDs didn't advance past {after}; stopping")
-        after = last
-        sleep(pause_s)
-    if expected is not None:
-        got = {f["properties"].get(oid_field) for f in out["features"]}
-        missing = sorted(expected - got)
-        for i in range(0, len(missing), BY_ID_CHUNK):
-            sleep(pause_s)
-            data = _json(get, by_ids_url(layer, missing[i:i + BY_ID_CHUNK], fields=fields), label, out)
-            out["requests"] += 1
-            batch = [esri_feature(f) for f in data.get("features") or []]
-            out["features"] += batch
-            out["by_id"] += len(batch)
-            got |= {f["properties"].get(oid_field) for f in batch}
-        lost = expected - got
-        if lost:
-            raise RuntimeError(f"{label}: {len(lost)} of the {len(expected)} listed rows never arrived "
-                               f"(e.g. {oid_field} {sorted(lost)[:5]}); not storing a short snapshot")
-    return out
+def text(v):
+    """A field's text with whitespace collapsed; None for blanks (Esri layers often hold ' ')."""
+    v = " ".join(str(v).split()) if v is not None else ""
+    return v or None
 
 
-# --- small cleaners shared by the parsers ------------------------------------
+def yes_no(v):
+    """'Y', 'Yes', 'N', 'No' (any case) to True/False; anything else None."""
+    t = (text(v) or "").lower()
+    return {"y": True, "yes": True, "n": False, "no": False}.get(t)
+
+
+def number(v):
+    """A number field as int when whole, float otherwise; None for blanks."""
+    if v is None or (isinstance(v, str) and not v.strip()):
+        return None
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    if math.isnan(f):
+        return None
+    return int(f) if f.is_integer() else f
+
 
 def to_int(v):
-    """'5' -> 5, 5.0 -> 5; blanks, words and None -> None."""
+    """'5' -> 5, 5.0 -> 5; blanks, words, fractions and None -> None."""
     if v is None or isinstance(v, bool):
         return None
     if isinstance(v, (int, float)):
-        return int(v) if v == int(v) else None
+        return int(v) if not math.isnan(v) and v == int(v) else None
     s = str(v).strip()
     return int(s) if s.isdigit() else None
 
@@ -187,13 +268,9 @@ def to_float(v, places=None):
         f = float(v)
     except (TypeError, ValueError):
         return None
+    if math.isnan(f):
+        return None
     return f if places is None else round(f, places) + 0.0       # + 0.0 turns -0.0 into 0.0
-
-
-def text(v):
-    """Trimmed text with inner runs of spaces collapsed; blank -> None."""
-    v = " ".join(str(v).split()) if v is not None else ""
-    return v or None
 
 
 def esri_date(ms):
@@ -248,7 +325,6 @@ def pair_republished(old, new):
 
 
 def _code(values):
-    values = [v for v in values]
     return None if all(v in (None, "", " ") for v in values) else "|".join(str(v) for v in values)
 
 
@@ -271,20 +347,3 @@ def carry_over(conn, *, label, source, table, id_column, records, key_fields):
     print(f"{label}: republish: {len(set(snapshot) - set(known))} of {len(snapshot)} IDs are new; "
           f"carried {len(pairs)} rows over to their new IDs", flush=True)
     return True, len(pairs)
-
-
-def geom_digest(geom, places=5):
-    """A short fingerprint of a geometry's coordinates rounded to `places` decimals
-    (5 is about a metre), so a moved line makes a new record version while a
-    republish's float noise doesn't. raw.record hashes only the payload, so the
-    parsers put this in it."""
-    if not geom:
-        return None
-
-    def walk(c):
-        if isinstance(c, (list, tuple)) and c and isinstance(c[0], (int, float)):
-            return [round(float(x), places) + 0.0 for x in c[:2]]
-        return [walk(x) for x in c]
-
-    blob = json.dumps([geom.get("type"), walk(geom.get("coordinates") or [])], separators=(",", ":"))
-    return hashlib.sha256(blob.encode()).hexdigest()[:16]

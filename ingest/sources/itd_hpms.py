@@ -3,10 +3,10 @@ median, shoulders, access control, peak lanes and facility type, with ITD's
 road names (docs/09 §9.3).
 
 Open GIS layers (the host has no robots.txt; no license stated; credit ITD),
-read in WGS84, 2,000 rows a page by OBJECTID, with a pause between requests:
-every row whose line touches the valley box, plus the few just outside it
-that the server's ID list includes (ingest/arcgis.py). Plain paged queries
-only: ITD's server times out on spatial statistics queries.
+read with ingest/arcgis.py in WGS84, 2,000 IDs a request, with a pause
+between requests: every row whose line touches the valley box, plus the few
+just outside it that the server's ID list includes. Plain queries only:
+ITD's server times out on spatial statistics queries.
 
 Each HPMS layer is its own raw source, itd_hpms_<kind>. One EventID can
 cover several separate pieces of a route (same values, different measures),
@@ -51,7 +51,7 @@ BASE = "https://gisp.itd.idaho.gov/server/rest/services/GDWarehouse"
 HPMS = f"{BASE}/HPMS/FeatureServer"
 NAMES_LAYER = f"{BASE}/RoadNetwork_Other/FeatureServer/3"
 BOX = (-117.05, 43.00, -115.95, 43.85)          # west, south, east, north
-PAUSE_S = 1.5
+BATCH = 2000                                    # IDs per request: ITD's page size
 
 # kind -> HPMS layer id
 LAYERS = {"through_lanes": 25, "turn_lanes": 27, "lane_width": 8, "median": 10, "shoulders": 19,
@@ -300,20 +300,23 @@ def carriageway_lanes(rows, facility=None):
 
 # --- fetch and store -----------------------------------------------------------
 
+def _read(layer, label, counts, get, sleep):
+    features, nbytes, status, decision = arcgis.fetch_layer(layer, label, box=BOX, batch=BATCH, precision=6,
+                                                            stats=counts, get=get, sleep=sleep)
+    return [arcgis.esri_feature(f) for f in features], nbytes, status, decision
+
+
 def fetch_all(fetch, get=None, sleep=time.sleep):
     """Every layer inside the box. Returns ({kind: features}, name features, rows fetched by ID);
     sets fetch.bytes etc."""
-    layers, total, by_id, decision = {}, 0, 0, None
+    layers, total, counts = {}, 0, {}
     for kind, layer_id in LAYERS.items():
-        out = arcgis.fetch_layer(f"{HPMS}/{layer_id}", label=f"itd_hpms {kind}", box=BOX, pause_s=PAUSE_S,
-                                 get=get, sleep=sleep)
-        layers[kind] = out["features"]
-        total, by_id = total + out["bytes"], by_id + out["by_id"]
-        fetch.http_status, decision = out["status"], out["robots"]
-        sleep(PAUSE_S)
-    out = arcgis.fetch_layer(NAMES_LAYER, label="itd_hpms names", box=BOX, pause_s=PAUSE_S, get=get, sleep=sleep)
-    fetch.bytes, fetch.robots = total + out["bytes"], decision or out["robots"]
-    return layers, out["features"], by_id + out["by_id"]
+        layers[kind], nbytes, fetch.http_status, fetch.robots = _read(f"{HPMS}/{layer_id}", f"itd_hpms {kind}",
+                                                                      counts, get, sleep)
+        total += nbytes
+    names, nbytes, fetch.http_status, fetch.robots = _read(NAMES_LAYER, "itd_hpms names", counts, get, sleep)
+    fetch.bytes = total + nbytes
+    return layers, names, counts.get("by_id", 0)
 
 
 _UPSERT = f"""

@@ -235,6 +235,44 @@ into the image, so a slightly moved camera keeps its zones.
 - **`core.transit_route`, `core.transit_stop`, `core.transit_shape`:**
   from VRT's GTFS, versioned by feed date.
 
+**Intersections** are built, not fetched: `python3 -m ingest match-intersections`
+(and the daily `intersections` source) makes one `core.intersection` per
+COMPASS signal, snapped to the junction of its named streets in ACHD's
+centerlines. ACHD's 2022 poles (60 m), COMPASS's Regional_Signals (40 m) and
+OpenStreetMap's signal nodes (60 m) confirm it, and leftovers cluster at 45 m
+into candidates. Confidence follows how many sources agree (three 1.0, two
+0.85, COMPASS alone 0.7); below 0.6 a row is a candidate. Reviewed decisions
+(`ingest/intersection_reviews.json`) retire or hold candidates until new
+evidence reopens them. IDs carry over by Synchro ID, then by the nearest row
+within 30 m; rows are retired, never deleted. COMPASS's per-approach fields
+fill `core.approach`. Cameras link within 80 m when they share a street,
+freeway cameras to their interchange's signal within 150 m, and rail
+crossings to the nearest active signal within 300 m, with the distance. Once
+OpenStreetMap nodes confirm or create intersections, `core.intersection`
+holds positions, evidence and some names derived from OpenStreetMap, so it is
+an ODbL derivative database: credit "© OpenStreetMap contributors", and
+anything published from it stays ODbL. Until COMPASS answers, it is also
+internal only.
+
+**OpenStreetMap (`osm_valley`, Oct 6, 2026).** Geofabrik's robots.txt, read
+Oct 6, 2026, disallows its extracts for every robot (`Disallow: *.osm.pbf`,
+`*.md5`, `*updates*` and more). So the owner downloads the Idaho extract by
+hand each week and loads it with `python3 -m ingest.osm_load --inbox`; there
+is no download code and no schedule, and the owner has asked Geofabrik for
+one scripted download a week. osmium cuts the extract to the valley box. It
+keeps every major way, every other road tagged with lanes or turn lanes, and
+the intersection-signal, crossing-signal and level-crossing nodes;
+fire-station, ramp-meter, blinker and level-crossing signals are skipped, and
+a signal also tagged as a crossing counts as an intersection signal only at a
+junction. Lanes are stored one row per lane per direction, numbered from the
+left in the direction of travel. Ways match ACHD's centerlines when, with
+bearings within 20°, at least 60% of a segment lies within 15 m of the way
+(both carriageways of a divided road match), or at least 60% of a way of
+20 m or more lies within 15 m of a segment (turn-bay ways). OpenStreetMap
+stays in its own tables (ODbL, "© OpenStreetMap contributors"); only the
+road network's major and laned ways are kept, so residential street names
+come from ACHD, not OpenStreetMap.
+
 ## 12.6 `obs`: time series (TimescaleDB)
 
 | Table | One row per | Key columns | Chunk | Compress after | Rows per year (est.) |

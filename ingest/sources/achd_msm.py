@@ -2,8 +2,8 @@
 lanes, typology, right-of-way and parking (docs/09 §9.3).
 
 Open GIS layer (the host has no robots.txt; no license stated: "Created by
-Ada County Highway District, 2026"), about 1,050 segments in one request.
-Records are keyed by GlobalID. OBJECTID, Shape__Length and the edit dates
+Ada County Highway District, 2026"), about 1,050 segments: the ID list and
+one request. Records are keyed by GlobalID. OBJECTID, Shape__Length and the edit dates
 are left out of the stored record: every row was stamped 2026-08-20 by a bulk
 reload, so the dates would make each reload a "new version" of everything. A
 fingerprint of the line (to about a metre) goes in instead.
@@ -177,9 +177,9 @@ def match(conn):
 def run(conn):
     db.ensure_source(conn, SOURCE)
     with db.Fetch(conn, SOURCE["name"]) as f:
-        out = arcgis.fetch_layer(LAYER, label="achd_msm")
-        f.http_status, f.robots, f.bytes = out["status"], out["robots"], out["bytes"]
-        stats, changed = store(conn, f.id, f.started_at, out["features"])
+        features, f.bytes, f.http_status, f.robots = arcgis.fetch_layer(LAYER, SOURCE["name"], batch=2000,
+                                                                        precision=6)
+        stats, changed = store(conn, f.id, f.started_at, [arcgis.esri_feature(x) for x in features])
         f.records = stats["arterials"]
     if changed or segment_match.stale(conn, [SOURCE["name"]]):
         stats.update({f"match {k}": v for k, v in match(conn).items()})

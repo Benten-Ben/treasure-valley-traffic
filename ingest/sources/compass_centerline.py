@@ -3,8 +3,9 @@ posted speed, functional class and one-way (docs/09 §9.3).
 
 Open GIS layer on swidrdc.org (no robots.txt rules; the COMPASS open-data
 hub lists it with a disclaimer only; credit COMPASS), about 62,200 pieces
-read in pages of 2,000 by objectid, with a pause between requests. The
-server sometimes resets a connection: requests are retried with backoff.
+read with ingest/arcgis.py, 2,000 IDs a request, with a pause between
+requests. The server sometimes resets a connection: requests are retried
+with backoff.
 
 Pieces are keyed by globalid, the only unique field (migration 0016):
 pm_id, the key COMPASS's counts, crashes and travel model use, names a model
@@ -43,6 +44,7 @@ SOURCE = {
     "notes": f"Listed on the COMPASS open-data hub ({HUB}). Keyed by globalid; pm_id is a model link of several pieces.",
 }
 
+MAX_PIECES = 100000          # the layer had 62,213 (Oct 6, 2026); far more would be a different layer
 VOLATILE = {"objectid", "globalid", "Shape__Length"}
 # Our columns; every other field goes into attributes.
 CORE_FIELDS = {"pm_id", "strtconcat", "county", "funcclass", "postspeed", "lanes", "oneway"}
@@ -178,9 +180,9 @@ def match(conn):
 def run(conn):
     db.ensure_source(conn, SOURCE)
     with db.Fetch(conn, SOURCE["name"]) as f:
-        out = arcgis.fetch_layer(LAYER, label="compass_centerline", oid_field="objectid")
-        f.http_status, f.robots, f.bytes = out["status"], out["robots"], out["bytes"]
-        stats, changed = store(conn, f.id, f.started_at, out["features"])
+        features, f.bytes, f.http_status, f.robots = arcgis.fetch_layer(LAYER, SOURCE["name"], batch=2000,
+                                                                        precision=6, max_features=MAX_PIECES)
+        stats, changed = store(conn, f.id, f.started_at, [arcgis.esri_feature(x) for x in features])
         f.records = stats["pieces"]
     if changed or segment_match.stale(conn, [SOURCE["name"]]):
         stats.update({f"match {k}": v for k, v in match(conn).items()})

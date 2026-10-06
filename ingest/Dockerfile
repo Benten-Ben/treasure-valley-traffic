@@ -3,6 +3,11 @@
 # Build context is the repository root (see deploy/docker-compose.yml).
 FROM python:3.12-slim
 WORKDIR /repo
+# osmium-tool cuts and filters OpenStreetMap extracts (ingest/sources/osm_valley.py);
+# owner decision, Oct 6, 2026. Adds about 4 MB.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends osmium-tool \
+ && rm -rf /var/lib/apt/lists/*
 COPY ingest/requirements.txt ingest/requirements.txt
 RUN pip install --no-cache-dir -r ingest/requirements.txt
 COPY db db

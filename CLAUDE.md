@@ -81,7 +81,10 @@ Before every push, check the diff for these.
   aggregate-only publishing.
 - **Licenses:** credit "© OpenStreetMap contributors" (ODbL; derived
   databases we publish stay ODbL) and ITD; don't redistribute Ada County
-  Assessor data. ITD's WZDx work-zone feed is published for public use
+  Assessor data. A city's or county's imagery with no license stated may
+  be used with credit and a courtesy note, unless it's probably someone
+  else's licensed or paid product (ACHD's and Ada County's 3-inch imagery
+  is likely COMPASS's: ask first) (owner, Oct 6). ITD's WZDx work-zone feed is published for public use
   (WZDx asks for CC0), so we may republish it, raw or aggregated, with
   credit to ITD (owner, Oct 6).
 - Identify our client honestly (User-Agent with a link to this repo).
@@ -125,6 +128,8 @@ python3 -m ingest stream idaho511_frames   # key-camera frames (needs TVT_ARCHIV
 python3 -m ingest stream itd_wzdx         # ITD work zones every 5 min (needs TVT_ARCHIVE)
 python3 -m ingest stream idaho511_api     # the 511 API (needs TVT_ARCHIVE and IDAHO511_API_KEY)
 python3 -m ingest rollup --day 2026-10-05  # daily camera videos by hand (normally automatic)
+python3 -m ingest match-intersections --dry-run   # rebuild intersections from the signal sources
+python3 -m ingest.osm_load --inbox         # OSM extract downloaded by hand (needs TVT_ARCHIVE, osmium)
 python3 -m unittest discover -s ingest/tests -t .
 ```
 
