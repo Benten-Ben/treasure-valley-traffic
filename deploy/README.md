@@ -15,7 +15,7 @@ network stay in private notes on the server, never in this repository.
 | `cameras` | built from [`ingest/Dockerfile.cameras`](../ingest/Dockerfile.cameras) (Ubuntu 24.04, for the benchmarked SVT-AV1 1.7) | Fetches the key cameras ([`ingest/key_cameras.csv`](../ingest/key_cameras.csv)) from 511 Idaho every 50 s into `ARCHIVE_DIR/cameras/jpeg`, and after local midnight rolls each day into one AV1 video per camera in `ARCHIVE_DIR/cameras/video`. JPEGs are deleted after 2 days, once their video exists. Pauses below 10 GB free. The VM trims its disk daily (`/etc/systemd/system/fstrim.timer.d/daily.conf`), so deleted JPEGs free space in the server's shared storage. |
 | `regional` | the cameras image | The same capture for ITD's road-weather camera views statewide plus Oregon DOT views in the regional ring (`regional-cameras.csv` in `PRIVATE_DATA_DIR`, built from 511's camera list), every 10 minutes, with their own daily videos |
 | `app` | built from [`app/`](../app) | SvelteKit (adapter-node) on port 3000 inside the network. Stores calibration reference frames in `FRAMES_DIR`. |
-| `web` | `caddy:2.11-alpine` | The single entry point: serves `/tiles/` from the basemap folder (with range requests) and proxies everything else to `app` |
+| `web` | `caddy:2.11-alpine` | The single entry point: serves `/tiles/` from the basemap folder (with range requests) and proxies everything else to `app`. Plain HTTP on `HTTP_PORT` for the LAN, and HTTPS (HTTP/2 and HTTP/3) on the VM's Tailscale name (`TVT_HTTPS_HOST`), with the certificate from the VM's Tailscale daemon |
 
 ## First-time setup (on the VM)
 
@@ -37,6 +37,21 @@ network stay in private notes on the server, never in this repository.
 8. Link the 511 camera views to cameras (one-off, by hand):
    `docker compose -f deploy/docker-compose.yml exec ingest python3 -m ingest run idaho511_views_oneoff`.
 9. Open the site on port 8080.
+
+## HTTPS on the tailnet
+
+Browsers fetch map tiles about 6 at a time over plain HTTP/1.1, and all at
+once over HTTP/2. To serve the site over HTTPS on the tailnet (owner OK,
+Oct 6, 2026):
+
+1. In the Tailscale admin console, switch on HTTPS certificates (DNS page).
+   Certificate names are published in public certificate-transparency logs.
+2. Set `TVT_HTTPS_HOST` in `deploy/.env` to the VM's full Tailscale name.
+3. `docker compose -f deploy/docker-compose.yml up -d web`, then open
+   `https://<that name>/`.
+
+Caddy gets and renews the certificate through the VM's Tailscale socket,
+which the `web` service mounts.
 
 ## Remote access
 

@@ -116,10 +116,16 @@ services:
     restart: unless-stopped
     ports:
       - "${HTTP_BIND:-0.0.0.0}:${HTTP_PORT:-8080}:80"
+      - "${HTTPS_BIND:-0.0.0.0}:443:443"
+      - "${HTTPS_BIND:-0.0.0.0}:443:443/udp"
+    environment:
+      TVT_HTTPS_HOST: ${TVT_HTTPS_HOST:-localhost}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - ${TILES_DIR:?set TILES_DIR in deploy/.env}:/srv/tiles:ro
       - caddy-data:/data
+      # Caddy asks the VM's Tailscale daemon for the tailnet certificate.
+      - /var/run/tailscale/tailscaled.sock:/var/run/tailscale/tailscaled.sock
     depends_on:
       - app
 

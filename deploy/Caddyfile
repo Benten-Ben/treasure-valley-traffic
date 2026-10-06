@@ -1,10 +1,12 @@
 {
-	# Plain HTTP inside the home network; remote access goes over Tailscale.
-	auto_https off
+	# Plain HTTP on the LAN port, plus HTTPS on the tailnet name (HTTP/2 and
+	# HTTP/3, so map tiles load in parallel). No HTTP-to-HTTPS redirect: the
+	# LAN address keeps working as before.
+	auto_https disable_redirects
 	admin off
 }
 
-:80 {
+(site) {
 	# Basemap output from basemap/ (PMTiles, fonts, sprites, manifest.json).
 	# file_server answers HTTP range requests, which PMTiles depends on.
 	handle_path /tiles/* {
@@ -17,4 +19,15 @@
 		encode zstd gzip
 		reverse_proxy app:3000
 	}
+}
+
+:80 {
+	import site
+}
+
+# The VM's Tailscale name (TVT_HTTPS_HOST in deploy/.env, kept out of the
+# repo). Caddy gets its certificate from the VM's Tailscale daemon through the
+# mounted socket; the tailnet must have HTTPS certificates switched on.
+{$TVT_HTTPS_HOST:localhost} {
+	import site
 }
