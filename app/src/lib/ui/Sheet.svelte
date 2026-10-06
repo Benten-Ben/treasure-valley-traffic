@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { untrack, type Snippet } from 'svelte';
+	import { tick, untrack, type Snippet } from 'svelte';
 	import { getAppCtx } from '#lib/app/context.js';
 	import PanelBoundary from '#lib/components/PanelBoundary.svelte';
 	import { windowsOf } from '#lib/state/windows.svelte.js';
@@ -36,28 +36,35 @@
 	const heightAt = (i: number) => Math.min(maxH, Math.round(SNAPS[i] * vh));
 	const height = $derived(dragH ?? heightAt(snap));
 
+	const panelId = (k: string) => `sheet-panel-${k.replace(/[^a-z0-9]/gi, '-')}`;
+	const tabId = (k: string) => `sheet-tab-${k.replace(/[^a-z0-9]/gi, '-')}`;
+
 	type Tab = 'details' | string;
 	let active = $state<Tab>('details');
 	const wins = $derived(windows.list);
 
-	// A window that opens (with focus) takes its tab and lifts the sheet; a closed one gives the Map tab back.
-	let seen = new Set<string>();
+	// A window that opens (or is opened again) with focus takes its tab, lifts the sheet and gets
+	// the focus; a closed one gives the Map tab back.
+	let windowAt = -Infinity;
 	$effect(() => {
 		const list = wins;
 		untrack(() => {
 			for (const w of list)
-				if (!seen.has(w.key) && w.takeFocus) {
+				if (w.takeFocus) {
 					active = w.key;
+					windowAt = performance.now();
 					if (snap < 1) snap = 1;
+					windows.focused(w.key);
+					void tick().then(() => document.getElementById(panelId(w.key))?.focus({ preventScroll: true }));
 				}
-			seen = new Set(list.map((w) => w.key));
 			if (active !== 'details' && !list.some((w) => w.key === active)) active = 'details';
 		});
 	});
 
-	// Something selected on the map: its card is on the Map tab.
+	// Something selected on the map: its card is on the Map tab (unless the same click opened a
+	// window, as a camera's does: then the window's tab wins).
 	$effect(() => {
-		if (app.selection.current) untrack(() => (active = 'details'));
+		if (app.selection.current) untrack(() => performance.now() - windowAt > 300 && (active = 'details'));
 	});
 
 	// --- the handle --------------------------------------------------------------------
@@ -128,8 +135,6 @@
 		if (el) untrack(() => el.scrollIntoView({ inline: 'nearest', block: 'nearest' }));
 	});
 
-	const panelId = (k: string) => `sheet-panel-${k.replace(/[^a-z0-9]/gi, '-')}`;
-	const tabId = (k: string) => `sheet-tab-${k.replace(/[^a-z0-9]/gi, '-')}`;
 </script>
 
 <svelte:window onresize={() => (vh = innerHeight)} />

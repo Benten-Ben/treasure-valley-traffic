@@ -94,13 +94,18 @@
 	}
 
 	// --- height, focus ---------------------------------------------------------------------
+	let content: HTMLElement;
+	let inner: HTMLElement;
+	/** The height it wants: the frame plus all of its content, even where max-height cuts it off. */
+	const natural = () => el.offsetHeight - content.clientHeight + inner.offsetHeight;
 	let observer: ResizeObserver | undefined;
 	onMount(() => {
 		observer = new ResizeObserver(() => {
-			if (el) manager.measured(win.key, el.offsetHeight);
+			if (el) manager.measured(win.key, natural());
 		});
 		observer.observe(el);
-		manager.measured(win.key, el.offsetHeight);
+		observer.observe(inner);
+		manager.measured(win.key, natural());
 	});
 	onDestroy(() => observer?.disconnect());
 
@@ -187,10 +192,12 @@
 			</button>
 		</div>
 	</header>
-	<div class="content" style:--aspect={win.aspect ?? 'auto'}>
-		<PanelBoundary name={win.title}>
-			<win.component {...win.props} {win} />
-		</PanelBoundary>
+	<div class="content" bind:this={content} style:--aspect={win.aspect ?? 'auto'}>
+		<div bind:this={inner}>
+			<PanelBoundary name={win.title}>
+				<win.component {...win.props} {win} />
+			</PanelBoundary>
+		</div>
 	</div>
 	<button
 		class="grip"
