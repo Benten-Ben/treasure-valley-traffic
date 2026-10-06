@@ -10,3 +10,6 @@ __pycache__/
 # Never commit: helper reports and private project files (see CLAUDE.md, "This repository is public")
 helper-reports/
 private/
+
+# Agent worktrees made by multi-agent workflows (temporary, never committed)
+.claude/worktrees/
