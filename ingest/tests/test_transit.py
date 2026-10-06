@@ -138,3 +138,20 @@ class RoadsTest(unittest.TestCase):
         from ingest.sources import achd_roads
         seg = lambda code: achd_roads.segment({"PermID": 1, "OneWay": code})["one_way"]
         self.assertEqual([seg("B"), seg("F"), seg("T"), seg(None)], ["both", "forward", "backward", "both"])
+
+
+class RouteMatchTest(unittest.TestCase):
+    def test_clear_match(self):
+        from ingest import transit_match as tm
+        self.assertEqual(tm.decide(50, {"7": 45, "40": 15}), ("7", 0.9, "40", 0.3))
+
+    def test_short_or_ambiguous_trips_stay_unlabeled(self):
+        from ingest import transit_match as tm
+        self.assertIsNone(tm.decide(8, {"7": 8}))                   # too few fixes
+        self.assertIsNone(tm.decide(44, {"7": 25, "40": 22}))       # 57% vs 50%: routes share the street
+        self.assertIsNone(tm.decide(40, {"7": 20}))                 # only half the trip is on any route
+        self.assertIsNone(tm.decide(40, {}))
+
+    def test_a_lone_route_needs_no_runner_up(self):
+        from ingest import transit_match as tm
+        self.assertEqual(tm.decide(20, {"28": 20}), ("28", 1.0, None, None))

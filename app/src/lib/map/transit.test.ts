@@ -5,6 +5,7 @@ const bus = (over: Partial<Vehicle> = {}): Vehicle => ({
 	vehicleId: '706',
 	label: '706',
 	routeId: '9',
+	routeMatched: false,
 	shortName: '9',
 	longName: 'State Street',
 	color: '#2a78d6',

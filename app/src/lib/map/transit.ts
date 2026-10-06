@@ -30,6 +30,8 @@ export interface Vehicle {
 	vehicleId: string;
 	label: string | null;
 	routeId: string | null;
+	/** The feed didn't name the route; it was matched from the bus's path. */
+	routeMatched: boolean;
 	shortName: string | null;
 	longName: string | null;
 	color: string | null;

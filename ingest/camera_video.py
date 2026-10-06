@@ -25,6 +25,7 @@ import struct
 import subprocess
 import tempfile
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -33,6 +34,7 @@ SPEEDUP = 60          # one minute of the day per second of video
 GAP_S = 600           # a gap longer than this shows as gray
 LAST_FRAME_S = 60     # how long a frame stays up before a gap turns gray
 CODEC = ["-c:v", "libsvtav1", "-preset", "6", "-crf", "30", "-g", "600"]
+WORKERS = 4            # encodes side by side
 INDEX = "index.csv"
 INDEX_FIELDS = ["fetched_at", "file", "bytes", "sha256"]
 VIDEO_FIELDS = ["video_s", "kind", "fetched_at", "local_time", "file", "bytes", "sha256"]
@@ -216,25 +218,38 @@ def pending(root, today):
             and not os.path.exists(failed_path(root, cam, day))]
 
 
-def rollup(root, items, force=False, log=print):
-    """Encode each (camera, day). A failure is recorded beside the video's path and
-    not retried automatically; `python3 -m ingest rollup --day ... --force` retries."""
+def _encode_one(root, cam, day, force):
+    """Encode one camera-day; a failure is recorded beside the video's path."""
+    try:
+        stats = encode(root, cam, day, force)
+    except Exception as err:
+        os.makedirs(os.path.dirname(failed_path(root, cam, day)), exist_ok=True)
+        with open(failed_path(root, cam, day), "w") as f:
+            f.write(f"{datetime.now(timezone.utc):{TS_FORMAT}} {err}\n")
+        return "failed", f"FAILED: {err}"
+    if not stats:
+        return "empty", None
+    if force and os.path.exists(failed_path(root, cam, day)):
+        os.remove(failed_path(root, cam, day))
+    return "done", ", ".join(f"{k} {v}" for k, v in stats.items())
+
+
+def rollup(root, items, force=False, log=print, workers=WORKERS):
+    """Encode each (camera, day), WORKERS at a time: on the server, four encodes
+    side by side run about 3x faster than one using every core, with
+    byte-identical output (docs/11). A failure is recorded beside the video's
+    path and not retried automatically; `python3 -m ingest rollup --day ...
+    --force` retries."""
     done = failed = 0
-    for cam, day in items:
-        try:
-            stats = encode(root, cam, day, force)
-        except Exception as err:
-            failed += 1
-            os.makedirs(os.path.dirname(failed_path(root, cam, day)), exist_ok=True)
-            with open(failed_path(root, cam, day), "w") as f:
-                f.write(f"{datetime.now(timezone.utc):{TS_FORMAT}} {err}\n")
-            log(f"camera video {cam} {day}: FAILED: {err}")
-            continue
-        if stats:
-            if force and os.path.exists(failed_path(root, cam, day)):
-                os.remove(failed_path(root, cam, day))
-            done += 1
-            log(f"camera video {cam} {day}: " + ", ".join(f"{k} {v}" for k, v in stats.items()))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {pool.submit(_encode_one, root, cam, day, force): (cam, day) for cam, day in items}
+        for future in as_completed(futures):
+            cam, day = futures[future]
+            outcome, message = future.result()
+            done += outcome == "done"
+            failed += outcome == "failed"
+            if message:
+                log(f"camera video {cam} {day}: {message}")
     return done, failed
 
 

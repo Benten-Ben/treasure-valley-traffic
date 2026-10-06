@@ -1,4 +1,4 @@
-"""python3 -m ingest sources | run NAME... | run all | serve | stream NAME | backfill NAME PATH | rollup"""
+"""python3 -m ingest sources | run NAME... | run all | serve | stream NAME | backfill NAME PATH | match-routes | rollup"""
 
 import argparse
 import os
@@ -67,6 +67,8 @@ def main():
     bf = sub.add_parser("backfill", help="load a streaming source's raw archive into the database")
     bf.add_argument("name", choices=sorted(n for n, m in STREAMS.items() if hasattr(m, "backfill")))
     bf.add_argument("path", help="archive folder, e.g. $TVT_ARCHIVE/vrt-gtfs-rt")
+    mr = sub.add_parser("match-routes", help="put unlabeled bus trips on routes by their path (the transit stream does this)")
+    mr.add_argument("--hours", type=int, default=24, help="how far back to look (default 24)")
     ru = sub.add_parser("rollup", help="roll camera JPEGs into daily videos (the frame stream does this nightly)")
     ru.add_argument("--day", type=date.fromisoformat, help="local day, YYYY-MM-DD (default: every finished day not yet done)")
     ru.add_argument("--camera", nargs="+", help="511 image IDs (default: all with frames that day)")
@@ -86,6 +88,12 @@ def main():
             STREAMS[args.name].stream(args.every)
         else:
             STREAMS[args.name].stream()
+        return
+    if args.cmd == "match-routes":
+        from . import transit_match
+        with db.connect() as conn:
+            stats = transit_match.run(conn, args.hours)
+        print("match-routes: " + ", ".join(f"{k} {v}" for k, v in stats.items()), flush=True)
         return
     if args.cmd == "rollup":
         root = os.environ.get("TVT_ARCHIVE") or sys.exit("set TVT_ARCHIVE")

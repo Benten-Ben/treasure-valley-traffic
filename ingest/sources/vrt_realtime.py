@@ -146,6 +146,7 @@ def stream(every=30):
     last, conn, lookup, lookup_at = {}, None, None, 0.0
     snapshots = inserted = 0
     report_at = time.time() + 600
+    match_at, matched = time.time() + 60, None
     while True:
         started = time.time()
         for feed, url in FEEDS.items():
@@ -183,8 +184,21 @@ def stream(every=30):
                 except Exception:
                     pass
                 conn = None
+        if conn is not None and time.time() >= match_at:
+            try:
+                from .. import transit_match       # imported here: it imports this module
+                matched = transit_match.run(conn)
+            except Exception:
+                print(f"vrt_realtime: route matching failed:\n{traceback.format_exc()}", flush=True)
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+            match_at = time.time() + 300
         if time.time() >= report_at:
-            print(f"vrt_realtime: last 10 min: {snapshots} position snapshots, {inserted} new fixes", flush=True)
+            print(f"vrt_realtime: last 10 min: {snapshots} position snapshots, {inserted} new fixes"
+                  + (f"; route matching: " + ", ".join(f"{k} {v}" for k, v in matched.items()) if matched else ""),
+                  flush=True)
             snapshots = inserted = 0
             report_at = time.time() + 600
         time.sleep(max(1.0, every - (time.time() - started)))

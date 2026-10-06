@@ -262,6 +262,7 @@
 				{#if isStale(bus, feedNow)}<strong> · not reporting</strong>{/if}
 			</p>
 			{#if stopText(bus)}<p class="meta">{stopText(bus)}</p>{/if}
+			{#if bus.routeMatched}<p class="meta">Route matched from the bus's path: the feed doesn't name it.</p>{/if}
 		</section>
 	{/if}
 
