@@ -5,19 +5,21 @@ its own tables (core.osm_way, core.osm_lane, core.osm_node, and its rows in
 raw.record and core.segment_match), so the other sources' tables aren't
 pulled under the ODbL (db/migrations/0011, docs/09 §9.3).
 
-Where the data comes from. The owner approved Geofabrik's weekly Idaho
-extract (Oct 6, 2026), but Geofabrik's robots.txt, read that day, disallows
-the files for every robot: `Disallow: *.osm.pbf`, `*.md5`, `*updates*` (and
-.osm.bz2, .osc.gz, .shp.zip, state.txt). We respect it, so `run` (the
-download) refuses cleanly and logs the refusal in ops.fetch, and the source has
-no schedule until the owner decides. Meanwhile an extract the owner downloads
-by hand is loaded with
+Where the data comes from: by hand only. Geofabrik's robots.txt, read Oct 6,
+2026, disallows its extracts for every robot (`Disallow: *.osm.pbf`,
+`*.md5`, `*updates*`, ...), so this module makes no network requests and the
+source has no schedule; it isn't in ingest/sources SOURCES, so `run all` and
+`serve` never touch it. The owner downloads the Idaho extract in a browser
+(download.geofabrik.de/north-america/us/idaho.html), copies it (and its .md5)
+to the server, and loads it with
 
     python3 -m ingest.osm_load --inbox          # newest file in $TVT_ARCHIVE/osm/inbox/
     python3 -m ingest.osm_load --file PATH      # a .osm.pbf or OSM XML file
 
-and archived in $TVT_ARCHIVE/osm/ (the last two are kept). A file that is
-the one loaded last time (same MD5) is skipped.
+which registers the source, logs the load in ops.fetch, and archives the
+file in $TVT_ARCHIVE/osm/ (the last two are kept). The extract loaded last
+time (same MD5) is skipped. If Geofabrik agrees to a weekly scripted
+download, it gets added through ingest/http.py.
 
 Processing (osmium-tool, installed in the ingest image):
   1. osmium extract: cut the valley box (-117.05,43.00,-115.95,43.85),
@@ -25,30 +27,50 @@ Processing (osmium-tool, installed in the ingest image):
   2. osmium tags-filter: highway ways, and nodes tagged
      highway=traffic_signals, crossing=traffic_signals,
      crossing:signals=yes or railway=level_crossing;
-  3. osmium export to GeoJSON lines, with each object's id, version and timestamp.
+  3. osmium export to GeoJSON lines, with each object's id, version and
+     timestamp, and each way's node IDs.
 
 What we keep: every major way (motorway to tertiary and their _link roads)
 and any other highway way tagged lanes, lanes:forward, lanes:backward or
-turn:lanes*, but not proposed or unbuilt roads or areas; and every signal,
-crossing-signal and level-crossing node. raw.record (keys 'w<id>' and 'n<id>')
-holds the tags and a hash of the geometry, so versions stay small; the
-geometry goes to the typed tables. Ways and nodes missing from a load become
-inactive.
+turn:lanes*, but not proposed or unbuilt roads or areas. (Residential
+streets without lanes tags aren't kept, so their names aren't here either.)
+Nodes, as core.osm_node kinds:
+  - traffic_signals: highway=traffic_signals, an intersection signal;
+  - crossing_signals: a pedestrian signal: crossing=traffic_signals or
+    crossing:signals=yes, traffic_signals=crossing, or highway=traffic_signals
+    tagged as a crossing (crossing=traffic_signals) away from a junction;
+  - level_crossing: railway=level_crossing.
+Fire-station (traffic_signals=emergency), ramp-meter, blinker and
+level-crossing signals aren't intersection signals and 0011's kinds have no
+place for them, so they're skipped (and counted). A node is at a junction
+when it lies on three or more road ways, or on road ways with different
+names; osmium exports nodes before ways, so the ways' node IDs settle it.
+
+raw.record (keys 'w<id>' and 'n<id>') holds the tags and a hash of the
+geometry, so versions stay small; the geometry goes to the typed tables.
+Ways and nodes missing from a load become inactive.
 
 Lanes (core.osm_lane): one row per lane per direction, numbered from 1 at
 the left in the direction of travel, as OSM's turn:lanes and WZDx do. The
 direction split comes from lanes:forward/backward/both_ways, else from the
 turn:lanes:* slot counts, else, on a two-way road with an even count and no
 centre lane, an even split (OSM's convention); an odd count with no split
-gets no lane rows. When a turn:lanes value's slot count disagrees with the
-lane count, it's logged and the lanes get no turns; the tags are kept as tagged.
+gets no lane rows (the lanes tag stays on the way). When a turn:lanes value's
+slot count disagrees with the lane count, it's logged and the lanes get no
+turns; the tags are kept as tagged.
 
-Matching (core.segment_match, method 'buffer15_bearing20'): an OSM way
-matches an ACHD road segment when at least 60% of the segment lies within
-15 m of the way and their bearings there differ by 20° or less, measured in
-UTM 11N. Both carriageways of a divided road (5-7 m either side of ACHD's
-single centerline) can match one segment. This lives here until the shared
-matcher (ingest/segment_match.py) lands; match_achd_segments() is the seam.
+Matching (core.segment_match), in UTM 11N, with bearings within 20° along
+the shared stretch:
+  - 'buffer15_bearing20': at least 60% of the ACHD segment lies within 15 m
+    of the way. Both carriageways of a divided road (5-7 m either side of
+    ACHD's single centerline) can match one segment.
+  - 'way_in_buffer15_bearing20': otherwise, at least 60% of a way of 20 m or
+    more lies within 15 m of the segment, which catches turn-bay ways split
+    off a block (owner, Oct 6).
+share and overlap_m always measure the ACHD segment (0011); confidence is
+the matched rule's share × cos(bearing difference). This lives here until
+the shared matcher (ingest/segment_match.py) lands; match_achd_segments() is
+the seam.
 """
 
 import glob
@@ -59,50 +81,48 @@ import re
 import shutil
 import subprocess
 import tempfile
-import time
-import urllib.request
-from collections import Counter
+from collections import Counter, defaultdict
 from datetime import datetime, timezone
 
-from .. import USER_AGENT, db, http
+from .. import db
 
-URL = "https://download.geofabrik.de/north-america/us/idaho-latest.osm.pbf"
-MD5_URL = URL + ".md5"
+PAGE = "https://download.geofabrik.de/north-america/us/idaho.html"   # where the owner downloads it by hand
 BOX = (-117.05, 43.00, -115.95, 43.85)          # left, bottom, right, top
 
 SOURCE = {
     "name": "osm_valley",
     "title": "OpenStreetMap: valley roads, lanes, signal and crossing nodes",
-    "url": URL,
+    "url": PAGE,
     "access": "open",
-    # No schedule until the owner decides how to get the extract: Geofabrik's
-    # robots.txt disallows *.osm.pbf and *.md5 (read Oct 6, 2026).
-    "schedule": None,
+    "schedule": None,   # loaded by hand: Geofabrik's robots.txt disallows scripted downloads (Oct 6, 2026)
     "license": "ODbL",
     "credit": "© OpenStreetMap contributors",
-    "notes": "Geofabrik's Idaho extract cut to the valley box; major ways and ways with lanes, lanes "
-             "per direction, signal and crossing nodes. Its own tables (ODbL). Loaded by hand "
-             "(python3 -m ingest.osm_load) while Geofabrik's robots.txt disallows the download.",
+    "notes": "Geofabrik's Idaho extract, downloaded by hand and loaded with python3 -m ingest.osm_load, cut to "
+             "the valley box: major ways and ways with lanes, lanes per direction, signal and crossing nodes. "
+             "Its own tables (ODbL).",
 }
 
 TAG_FILTERS = ["w/highway", "n/highway=traffic_signals", "n/crossing=traffic_signals",
                "n/crossing:signals=yes", "n/railway=level_crossing"]
 OSM_SUFFIXES = (".osm.pbf", ".osm.bz2", ".osm.gz", ".osm")
-PAUSE_S = 2.0                 # between the .md5 request and the download
 OSMIUM_TIMEOUT_S = 1800
 SHRINK_GUARD = 0.5            # refuse to retire ways when a load brings fewer than half the active ones
 
 MAJOR = {"motorway", "trunk", "primary", "secondary", "tertiary"}
 MAJOR |= {f"{c}_link" for c in MAJOR}
+ROADS = MAJOR | {"unclassified", "residential", "living_street", "service", "road", "busway"}
 NOT_ROADS = {"proposed", "planned", "construction", "abandoned", "disused", "razed", "demolished",
              "platform", "bus_stop", "rest_area", "services"}
 LANE_KEYS = ("lanes", "lanes:forward", "lanes:backward")
+NOT_INTERSECTION_SIGNALS = {"emergency", "ramp_meter", "blinker", "level_crossing"}   # traffic_signals=*
 
 MATCH_SOURCE = SOURCE["name"]
 MATCH_METHOD = "buffer15_bearing20"
+MATCH_METHOD_WAY = "way_in_buffer15_bearing20"
 MATCH_BUFFER_M = 15
 MATCH_SHARE = 0.6
 MATCH_BEARING_DEG = 20
+MATCH_MIN_WAY_M = 20          # shorter ways can't match on their own share
 
 
 # ---- tag values ------------------------------------------------------------
@@ -246,16 +266,43 @@ def keep_way(tags):
     return any(k in tags for k in LANE_KEYS) or any(k.startswith("turn:lanes") for k in tags)
 
 
-def node_kind(tags):
-    """traffic_signals, crossing_signals or level_crossing; None for other nodes
-    (stop signs and plain crossings come through as members of the ways)."""
+def special_signal(tags):
+    """A fire-station, ramp-meter, blinker or level-crossing signal: not an intersection signal."""
+    return (tags.get("highway") == "traffic_signals"
+            and str(tags.get("traffic_signals") or "").strip().lower() in NOT_INTERSECTION_SIGNALS)
+
+
+def node_kind(tags, at_junction=None):
+    """traffic_signals, crossing_signals or level_crossing; None for other nodes (stop signs
+    and plain crossings come through as members of the ways, and special signals are skipped).
+
+    highway=traffic_signals tagged as a crossing (crossing=traffic_signals or
+    crossing:signals=yes) is an intersection signal only at a junction; when
+    at_junction is unknown (None), it counts as a crossing signal."""
     if tags.get("railway") == "level_crossing":
         return "level_crossing"
+    crossing = tags.get("crossing") == "traffic_signals" or tags.get("crossing:signals") == "yes"
     if tags.get("highway") == "traffic_signals":
-        return "crossing_signals" if tags.get("traffic_signals") == "crossing" else "traffic_signals"
-    if tags.get("crossing") == "traffic_signals" or tags.get("crossing:signals") == "yes":
-        return "crossing_signals"
-    return None
+        if special_signal(tags):
+            return None
+        if str(tags.get("traffic_signals") or "").strip().lower() == "crossing":
+            return "crossing_signals"
+        if crossing and not at_junction:
+            return "crossing_signals"
+        return "traffic_signals"
+    return "crossing_signals" if crossing else None
+
+
+def needs_junction(tags):
+    """Whether node_kind's answer depends on the node being at a junction."""
+    return node_kind(tags, True) != node_kind(tags, False)
+
+
+def at_junction(members):
+    """members: [(way id, name or ref or None)] of the road ways through a node. A junction
+    has three or more of them, or road ways with different names (a road split at a
+    mid-block signal gives two ways with one name)."""
+    return len({w for w, _ in members}) >= 3 or len({n for _, n in members}) >= 2
 
 
 def geometry_hash(geom):
@@ -299,8 +346,12 @@ def way_row(osm_id, props, tags, geom):
 
 
 def parse_features(lines):
-    """Ways and nodes we keep, from osmium's GeoJSON lines. Returns (ways, nodes, counts)."""
+    """Ways and nodes we keep, from osmium's GeoJSON lines. Returns (ways, nodes, counts).
+
+    Nodes whose kind depends on being at a junction wait until the road ways
+    have been read (osmium writes nodes first; each way carries @way_nodes)."""
     ways, nodes, counts = {}, {}, Counter()
+    waiting, members = {}, defaultdict(list)          # node id -> node; node id -> [(way id, name)]
     for line in lines:
         line = line.strip().lstrip("\x1e")         # RFC 8142 record separators, if osmium wrote them
         if not line:
@@ -312,20 +363,31 @@ def parse_features(lines):
         kind, num = fid[:1], fid[1:]
         osm_id = int(num) if num.isdigit() else props.get("@id")
         if kind == "w" and geom.get("type") == "LineString" and osm_id is not None:
+            if waiting and tags.get("highway") in ROADS:
+                name = _text(tags.get("name")) or _text(tags.get("ref"))
+                for nid in set(props.get("@way_nodes") or ()) & waiting.keys():
+                    members[nid].append((osm_id, name))
             if keep_way(tags):
                 ways[osm_id] = way_row(osm_id, props, tags, geom)
             else:
                 counts["ways skipped"] += 1
         elif kind == "n" and geom.get("type") == "Point" and osm_id is not None:
-            k = node_kind(tags)
-            if k:
-                nodes[osm_id] = {"osm_id": osm_id, "kind": k, "tags": tags, "geom": geom,
-                                 "osm_version": props.get("@version"),
-                                 "osm_timestamp": parse_timestamp(props.get("@timestamp"))}
+            node = {"osm_id": osm_id, "tags": tags, "geom": geom, "osm_version": props.get("@version"),
+                    "osm_timestamp": parse_timestamp(props.get("@timestamp"))}
+            if needs_junction(tags):
+                waiting[osm_id] = node
+            elif node_kind(tags):
+                nodes[osm_id] = {**node, "kind": node_kind(tags)}
+            elif special_signal(tags):
+                counts["special signals skipped"] += 1
             else:
                 counts["nodes skipped"] += 1
         else:
             counts["other features skipped"] += 1
+    for osm_id, node in waiting.items():
+        junction = at_junction(members.get(osm_id, []))
+        nodes[osm_id] = {**node, "kind": node_kind(node["tags"], junction)}
+        counts["signal-and-crossing nodes at junctions" if junction else "signal-and-crossing nodes mid-block"] += 1
     return list(ways.values()), list(nodes.values()), counts
 
 
@@ -339,7 +401,7 @@ def osmium_commands(src, work):
          "--no-progress", "--overwrite", "--output", valley, src],
         ["osmium", "tags-filter", "--no-progress", "--overwrite", "--output", filtered, valley, *TAG_FILTERS],
         ["osmium", "export", "--output-format", "geojsonseq", "--format-option", "print_record_separator=false",
-         "--geometry-types", "point,linestring", "--attributes", "id,version,timestamp",
+         "--geometry-types", "point,linestring", "--attributes", "id,version,timestamp,way_nodes",
          "--add-unique-id", "type_id", "--no-progress", "--overwrite", "--output", out, filtered],
     ], out
 
@@ -440,39 +502,49 @@ def store(conn, fetch_id, seen_at, ways, nodes, allow_shrink=False):
     return stats
 
 
+# Each candidate pair (an ACHD segment and a way within 15 m of it) is tried on the
+# segment's share first, then on the way's. The bearing compares the chord of the
+# shared stretch on the matched line with the chord between the closest points on
+# the other line, folded so that direction doesn't matter.
 MATCH_SQL = """
 insert into core.segment_match (road_segment_id, source, source_id, overlap_m, share, bearing_diff, method,
                                 confidence, matched_at)
-select id, %(source)s, source_id, overlap_m, share, bearing_diff, %(method)s,
-       least(1, share) * cos(radians(bearing_diff)), now()
+select id, %(source)s, source_id, overlap_m, share, bearing_diff, method,
+       least(1, rule_share) * cos(radians(bearing_diff)), now()
 from (
   select *, least(m, 180 - m) as bearing_diff
   from (
     select *, d - 180 * floor(d / 180) as m
     from (
-      select id, source_id, overlap_m, share,
+      select id, source_id, overlap_m, share, method, rule_share,
              abs(degrees(ST_Azimuth(p1, p2))
-                 - degrees(ST_Azimuth(ST_LineInterpolatePoint(wg, least(f1, f2)),
-                                      ST_LineInterpolatePoint(wg, greatest(f1, f2))))) as d
+                 - degrees(ST_Azimuth(ST_ClosestPoint(other, p1), ST_ClosestPoint(other, p2)))) as d
       from (
-        select *, greatest(0, least(1, ST_LineLocatePoint(wg, p1))) as f1,      -- clamped: never NaN or out of range
-                  greatest(0, least(1, ST_LineLocatePoint(wg, p2))) as f2
+        select id, source_id, overlap_m, share, method, rule_share, other,
+               ST_StartPoint(ST_GeometryN(piece, 1)) as p1,
+               ST_EndPoint(ST_GeometryN(piece, ST_NumGeometries(piece))) as p2
         from (
-          select id, source_id, wg, overlap_m, share,
-                 ST_StartPoint(ST_GeometryN(ov, 1)) as p1,
-                 ST_EndPoint(ST_GeometryN(ov, ST_NumGeometries(ov))) as p2
+          select id, source_id, overlap_m, share,
+                 case when seg_rule then %(method)s else %(method_way)s end as method,
+                 case when seg_rule then share else way_share end as rule_share,
+                 case when seg_rule then seg_ov else way_ov end as piece,
+                 case when seg_rule then wg else sg end as other
           from (
-            select s.id, w.source_id, w.g as wg, ov, ST_Length(ov) as overlap_m,
-                   ST_Length(ov) / nullif(ST_Length(s.g), 0) as share
-            from osm_match_seg s
-            join osm_match_way w on ST_Intersects(s.g, w.b)
-            cross join lateral (select ST_CollectionExtract(ST_Intersection(s.g, w.b), 2) as ov) x
-          ) pair_overlap
-          where share >= %(share)s
-        ) pair_ends
-        where p1 is not null and p2 is not null and not ST_Equals(p1, p2)
-      ) pair_located
-      where f1 <> f2
+            select *, share >= %(share)s as seg_rule, ST_Length(way_ov) / way_len as way_share
+            from (
+              select s.id, w.source_id, s.g as sg, w.g as wg, w.len as way_len, seg_ov,
+                     ST_Length(seg_ov) as overlap_m, ST_Length(seg_ov) / nullif(s.len, 0) as share,
+                     case when ST_Length(seg_ov) / nullif(s.len, 0) < %(share)s and w.len >= %(min_way)s
+                          then ST_CollectionExtract(ST_Intersection(w.g, s.b), 2) end as way_ov
+              from osm_match_seg s
+              join osm_match_way w on ST_Intersects(s.g, w.b)
+              cross join lateral (select ST_CollectionExtract(ST_Intersection(s.g, w.b), 2) as seg_ov) x
+            ) pair_overlap
+          ) pair_shares
+          where seg_rule or way_share >= %(share)s
+        ) pair_rule
+      ) pair_ends
+      where p1 is not null and p2 is not null and not ST_Equals(p1, p2)
     ) pair_bearing
   ) pair_folded
 ) pair_diff
@@ -480,8 +552,8 @@ where bearing_diff <= %(bearing)s"""
 
 
 def match_achd_segments(conn, source=MATCH_SOURCE):
-    """Rebuild this source's rows in core.segment_match against the active ACHD
-    road segments (method buffer15_bearing20, in UTM 11N).
+    """Rebuild this source's rows in core.segment_match against the active ACHD road
+    segments (methods buffer15_bearing20 and way_in_buffer15_bearing20, in UTM 11N).
 
     Self-contained until the shared matcher lands (ingest/segment_match.py, being
     written alongside); swap this body for a call to it, keeping the signature.
@@ -489,26 +561,34 @@ def match_achd_segments(conn, source=MATCH_SOURCE):
     conn.execute("drop table if exists pg_temp.osm_match_way")
     conn.execute(
         """create temp table osm_match_way on commit drop as
-           select 'w' || osm_id as source_id, g, ST_Buffer(g, %s, 'quad_segs=4') as b
+           select 'w' || osm_id as source_id, g, ST_Buffer(g, %s, 'quad_segs=4') as b, ST_Length(g) as len
            from (select osm_id, ST_Transform(geom, 26911) as g from core.osm_way where active) w
            where ST_Length(g) > 0""",
         (MATCH_BUFFER_M,))
     conn.execute("create index on osm_match_way using gist (b)")
     conn.execute("analyze osm_match_way")
     conn.execute("drop table if exists pg_temp.osm_match_seg")
-    conn.execute("""create temp table osm_match_seg on commit drop as
-                    select id, ST_Transform(geom, 26911) as g from core.road_segment where active""")
+    conn.execute(
+        """create temp table osm_match_seg on commit drop as
+           select id, g, ST_Buffer(g, %s, 'quad_segs=4') as b, ST_Length(g) as len
+           from (select id, ST_Transform(geom, 26911) as g from core.road_segment where active) s""",
+        (MATCH_BUFFER_M,))
     conn.execute("create index on osm_match_seg using gist (g)")
     conn.execute("analyze osm_match_seg")
-    conn.execute("delete from core.segment_match where source = %s and method = %s", (source, MATCH_METHOD))
-    n = conn.execute(MATCH_SQL, {"source": source, "method": MATCH_METHOD, "share": MATCH_SHARE,
-                                 "bearing": MATCH_BEARING_DEG}).rowcount
+    conn.execute("delete from core.segment_match where source = %s and method in (%s, %s)",
+                 (source, MATCH_METHOD, MATCH_METHOD_WAY))
+    conn.execute(MATCH_SQL, {"source": source, "method": MATCH_METHOD, "method_way": MATCH_METHOD_WAY,
+                             "share": MATCH_SHARE, "bearing": MATCH_BEARING_DEG, "min_way": MATCH_MIN_WAY_M})
+    by_method = dict(conn.execute(
+        """select method, count(*) from core.segment_match where source = %s and method in (%s, %s) group by 1""",
+        (source, MATCH_METHOD, MATCH_METHOD_WAY)).fetchall())
     segs, ways = conn.execute(
         """select count(distinct road_segment_id), count(distinct source_id) from core.segment_match
-           where source = %s and method = %s""", (source, MATCH_METHOD)).fetchone()
+           where source = %s and method in (%s, %s)""", (source, MATCH_METHOD, MATCH_METHOD_WAY)).fetchone()
     conn.execute("drop table if exists pg_temp.osm_match_way")
     conn.execute("drop table if exists pg_temp.osm_match_seg")
-    return {"segment matches": n, "ACHD segments matched": segs, "ways matched": ways}
+    return {"segment matches": by_method.get(MATCH_METHOD, 0), "turn-bay matches": by_method.get(MATCH_METHOD_WAY, 0),
+            "ACHD segments matched": segs, "ways matched": ways}
 
 
 def load(conn, fetch, src, allow_shrink=False, work_parent=None):
@@ -585,15 +665,18 @@ def archive_name(path, md5, day):
 
 
 def extracts(folder):
-    """Archived extracts in the folder (not the inbox), newest first."""
+    """Extracts in the folder (not its inbox), newest first."""
     paths = [p for p in glob.glob(os.path.join(folder, "*")) if os.path.isfile(p) and _suffix(p)]
     return sorted(paths, key=os.path.getmtime, reverse=True)
 
 
-def prune(folder, keep=2):
-    """Keep the newest `keep` extracts (and their .md5 files)."""
+def prune(folder, keep=2, protect=()):
+    """Keep the newest `keep` extracts (and their .md5 files), and never the protected ones."""
+    protected = {os.path.abspath(p) for p in protect}
     removed = []
     for p in extracts(folder)[keep:]:
+        if os.path.abspath(p) in protected:
+            continue
         for q in (p, p + ".md5"):
             if os.path.exists(q):
                 os.remove(q)
@@ -608,9 +691,12 @@ def inbox_file(folder):
 
 
 def archive_file(path, folder, md5):
-    """Move a file from the inbox (or copy one from elsewhere) into the archive."""
+    """Move a file from the inbox (or copy one from elsewhere) into the archive. Either
+    way, and for a file already archived (a re-load), its time becomes now, which is
+    what pruning goes by."""
     if os.path.dirname(os.path.abspath(path)) == os.path.abspath(folder):
-        return path                                           # already archived (a re-load)
+        os.utime(path)
+        return path
     dest = os.path.join(folder, archive_name(path, md5, db.now()))
     inbox = os.path.join(folder, "inbox")
     if os.path.dirname(os.path.abspath(path)) == os.path.abspath(inbox):
@@ -620,15 +706,16 @@ def archive_file(path, folder, md5):
     else:
         shutil.copyfile(path, dest + ".part")
         os.replace(dest + ".part", dest)
-    os.utime(dest)                                            # pruning goes by when it was archived
+    os.utime(dest)
     return dest
 
 
-# ---- entry points ----------------------------------------------------------
+# ---- the by-hand loader (python3 -m ingest.osm_load) -----------------------
 
 def load_file(conn, path, force=False, allow_shrink=False):
-    """Load an extract the owner downloaded by hand, then archive it (when TVT_ARCHIVE is set).
-    Skipped when it's the extract loaded last time, unless force."""
+    """Load an extract the owner downloaded by hand, then archive it (when TVT_ARCHIVE is
+    set). Registers the source and logs the load in ops.fetch. Skipped when it's the
+    extract loaded last time, unless force."""
     if not _suffix(path):
         raise SystemExit(f"{path}: expected a .osm.pbf, .osm, .osm.bz2 or .osm.gz file")
     folder = archive_dir(required=False)
@@ -648,75 +735,8 @@ def load_file(conn, path, force=False, allow_shrink=False):
         kept = archive_file(path, folder, md5)
         mark_loaded(folder, md5, kept)
         stats["archived"] = os.path.basename(kept)
-        pruned = prune(folder)
+        pruned = prune(folder, protect=(kept,))
         if pruned:
             stats["pruned"] = ", ".join(pruned)
     stats["md5"] = md5[:8]
-    return stats
-
-
-def check_robots(url):
-    """(robots decision, crawl delay) for a URL we're about to fetch, or raise like http.get."""
-    host, rules, decision = http.robots_for(url)
-    if decision == "unavailable":
-        raise http.RobotsUnavailable(f"robots.txt at {host} couldn't be read; treating {url} as disallowed for now")
-    if rules is not None and not rules.allowed(url):
-        raise http.RobotsDisallowed(f"robots.txt at {host} disallows {url}")
-    return decision, (rules.crawl_delay() if rules else None) or 0
-
-
-def download(url, folder, md5, timeout=120):
-    """Stream the extract into the archive, checking robots.txt first and the MD5
-    after. Reuses an archived copy with the same MD5. Returns (path, http status, bytes)."""
-    for p in glob.glob(os.path.join(folder, f"*-{md5[:8]}.osm.pbf")):
-        if file_md5(p) == md5:
-            return p, None, 0
-    _, delay = check_robots(url)
-    time.sleep(max(delay, PAUSE_S))
-    dest = os.path.join(folder, archive_name(url, md5, db.now()))
-    h, size = hashlib.md5(usedforsecurity=False), 0
-    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as r, open(dest + ".part", "wb") as out:
-            status = r.status
-            while chunk := r.read(1 << 20):
-                h.update(chunk)
-                out.write(chunk)
-                size += len(chunk)
-        if h.hexdigest() != md5:
-            raise RuntimeError(f"downloaded extract's MD5 {h.hexdigest()} doesn't match the published {md5}")
-    except BaseException:
-        if os.path.exists(dest + ".part"):
-            os.remove(dest + ".part")
-        raise
-    os.replace(dest + ".part", dest)
-    return dest, status, size
-
-
-def run(conn, allow_shrink=False):
-    """The download route: Geofabrik's .md5, then the extract when it changed.
-    While Geofabrik's robots.txt disallows both, this stops at the first request,
-    logs the refusal in ops.fetch, and returns it."""
-    db.ensure_source(conn, SOURCE)
-    folder = archive_dir()
-    md5 = None
-    try:
-        with db.Fetch(conn, SOURCE["name"]) as f:
-            status, body, f.robots = http.get(MD5_URL, timeout=60)
-            f.http_status, f.bytes = status, len(body)
-            md5 = parse_md5(body.decode("ascii", "replace"))
-            if last_loaded(folder).get("md5") == md5:
-                f.records = 0
-                return {"skipped": "extract unchanged since the last load", "md5": md5[:8]}
-            path, status, size = download(URL, folder, md5)
-            f.http_status = status or f.http_status
-            f.bytes += size
-            stats = load(conn, f, path, allow_shrink, work_parent=folder)
-    except http.RobotsDisallowed as err:                    # includes RobotsUnavailable
-        return {"refused": str(err)}
-    mark_loaded(folder, md5, path)
-    pruned = prune(folder)
-    stats.update({"md5": md5[:8], "archived": os.path.basename(path)})
-    if pruned:
-        stats["pruned"] = ", ".join(pruned)
     return stats

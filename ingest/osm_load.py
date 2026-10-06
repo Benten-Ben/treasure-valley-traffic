@@ -3,12 +3,13 @@
     python3 -m ingest.osm_load --inbox          # the newest file in $TVT_ARCHIVE/osm/inbox/
     python3 -m ingest.osm_load --file PATH      # a .osm.pbf (or OSM XML) file anywhere
 
-Geofabrik's robots.txt disallows scripted downloads of its extracts, so until
-the owner decides otherwise, the weekly extract is downloaded in a browser,
-copied into the inbox, and loaded with this command. The file is then moved
-into $TVT_ARCHIVE/osm/ (the last two are kept). If its .md5 file sits next
-to it, the MD5 is checked first. Loading the same extract twice is skipped
-unless you pass --force.
+Geofabrik's robots.txt disallows scripted downloads of its extracts, so the
+weekly extract is downloaded by hand in a browser (owner, Oct 6, 2026),
+copied into the inbox, and loaded with this command, which is the only way
+OpenStreetMap data comes in. It registers the source, logs the load in
+ops.fetch, and moves the file into $TVT_ARCHIVE/osm/ (the last two are
+kept). If its .md5 file sits next to it, the MD5 is checked first. Loading
+the same extract twice is skipped unless you pass --force.
 """
 
 import argparse

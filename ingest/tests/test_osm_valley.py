@@ -1,7 +1,8 @@
 """Tests for the OpenStreetMap source (ingest/sources/osm_valley.py).
 
-Offline: tag values, lane expansion, what we keep, the osmium command lines,
-the archive (MD5 skip, pruning, the download's checks) and the robots refusal.
+Offline: tag values, lane expansion, what we keep (node kinds, junctions),
+the osmium command lines, the by-hand loader and its archive (MD5 skip,
+pruning), and that the source makes no requests and isn't registered.
 With osmium installed, the real pipeline runs over a synthetic fixture
 (ingest/tests/fixtures/osm_valley.osm: invented IDs, names and coordinates).
 
@@ -23,6 +24,7 @@ import tempfile
 import time
 import unittest
 from datetime import datetime, timezone
+from decimal import Decimal
 from unittest import mock
 
 from ingest import http
@@ -157,13 +159,66 @@ class KeepFilterTest(unittest.TestCase):
 
     def test_node_kinds(self):
         self.assertEqual(osm.node_kind({"highway": "traffic_signals"}), "traffic_signals")
-        self.assertEqual(osm.node_kind({"highway": "traffic_signals", "crossing": "traffic_signals"}), "traffic_signals")
+        self.assertEqual(osm.node_kind({"highway": "traffic_signals", "traffic_signals": "signal"}), "traffic_signals")
         self.assertEqual(osm.node_kind({"highway": "traffic_signals", "traffic_signals": "crossing"}), "crossing_signals")
         self.assertEqual(osm.node_kind({"highway": "crossing", "crossing": "traffic_signals"}), "crossing_signals")
         self.assertEqual(osm.node_kind({"highway": "crossing", "crossing:signals": "yes"}), "crossing_signals")
         self.assertEqual(osm.node_kind({"railway": "level_crossing"}), "level_crossing")
         for tags in ({"highway": "stop"}, {"highway": "crossing", "crossing": "marked"}, {"railway": "crossing"}):
             self.assertIsNone(osm.node_kind(tags), tags)
+
+    def test_fire_ramp_meter_blinker_and_rail_signals_are_skipped(self):
+        for value in ("emergency", "ramp_meter", "blinker", "level_crossing", " Ramp_Meter "):
+            tags = {"highway": "traffic_signals", "traffic_signals": value}
+            self.assertIsNone(osm.node_kind(tags), value)
+            self.assertIsNone(osm.node_kind(tags, at_junction=True), value)
+            self.assertTrue(osm.special_signal(tags), value)
+        self.assertFalse(osm.special_signal({"highway": "traffic_signals"}))
+
+    def test_a_signal_tagged_as_a_crossing_is_an_intersection_signal_only_at_a_junction(self):
+        tags = {"highway": "traffic_signals", "crossing": "traffic_signals"}
+        self.assertEqual(osm.node_kind(tags, at_junction=True), "traffic_signals")
+        self.assertEqual(osm.node_kind(tags, at_junction=False), "crossing_signals")
+        self.assertEqual(osm.node_kind(tags), "crossing_signals")                      # unknown: a crossing
+        self.assertEqual(osm.node_kind({**tags, "crossing": "marked", "crossing:signals": "yes"}, False),
+                         "crossing_signals")
+        self.assertTrue(osm.needs_junction(tags))
+        for other in ({"highway": "traffic_signals"}, {"highway": "crossing", "crossing": "traffic_signals"},
+                      {"highway": "traffic_signals", "traffic_signals": "crossing", "crossing": "traffic_signals"}):
+            self.assertFalse(osm.needs_junction(other), other)
+
+    def test_junctions(self):
+        self.assertTrue(osm.at_junction([(1, "Main St"), (2, "Elm St")]))                # two streets
+        self.assertTrue(osm.at_junction([(1, "Main St"), (2, None)]))                    # a named road and a driveway
+        self.assertTrue(osm.at_junction([(1, "Main St"), (2, "Main St"), (3, "Main St")]))
+        self.assertFalse(osm.at_junction([(1, "Main St"), (2, "Main St")]))              # a road split at the signal
+        self.assertFalse(osm.at_junction([(1, "Main St")]))
+        self.assertFalse(osm.at_junction([(1, "Main St"), (1, "Main St")]))              # a way through it twice
+        self.assertFalse(osm.at_junction([]))
+
+    def test_way_nodes_settle_junctions(self):
+        def node(i, **tags):
+            return json.dumps({"type": "Feature", "id": f"n{i}", "geometry": {"type": "Point", "coordinates": [0, 0]},
+                               "properties": {"@id": i, **tags}})
+
+        def way(i, nodes, **tags):
+            return json.dumps({"type": "Feature", "id": f"w{i}",
+                               "geometry": {"type": "LineString", "coordinates": [[0, 0], [1, 0]]},
+                               "properties": {"@id": i, "@way_nodes": nodes, **tags}})
+
+        both = {"highway": "traffic_signals", "crossing": "traffic_signals"}
+        lines = [node(1, **both), node(2, **both), node(3, highway="traffic_signals", traffic_signals="ramp_meter"),
+                 way(10, [5, 1, 6], highway="primary", name="Main St"),         # node 1: Main St only ...
+                 way(11, [6, 1], highway="footway"),                            # ... and a footway (not a road)
+                 way(12, [7, 2], highway="primary", name="Main St"),
+                 way(13, [2, 8], highway="primary", name="Main St"),             # node 2: Main St, split there ...
+                 way(14, [2, 9], highway="residential", name="Elm St")]          # ... and Elm St
+        ways, nodes, counts = osm.parse_features(lines)
+        self.assertEqual({n["osm_id"]: n["kind"] for n in nodes}, {1: "crossing_signals", 2: "traffic_signals"})
+        self.assertEqual(counts["special signals skipped"], 1)
+        self.assertEqual((counts["signal-and-crossing nodes mid-block"], counts["signal-and-crossing nodes at junctions"]),
+                         (1, 1))
+        self.assertNotIn("@way_nodes", ways[0]["tags"])
 
     def test_parse_features(self):
         lines = [
@@ -205,7 +260,7 @@ class OsmiumCommandsTest(unittest.TestCase):
                                    "n/crossing:signals=yes", "n/railway=level_crossing"])
         self.assertEqual(cmds[2], ["osmium", "export", "--output-format", "geojsonseq", "--format-option",
                                    "print_record_separator=false", "--geometry-types", "point,linestring",
-                                   "--attributes", "id,version,timestamp", "--add-unique-id", "type_id",
+                                   "--attributes", "id,version,timestamp,way_nodes", "--add-unique-id", "type_id",
                                    "--no-progress", "--overwrite", "--output", "/w/valley.geojsonseq",
                                    "/w/filtered.osm.pbf"])
 
@@ -213,11 +268,16 @@ class OsmiumCommandsTest(unittest.TestCase):
     def test_pipeline_on_the_fixture(self):
         ways, nodes, counts = osm.extract_features(FIXTURE)
         by_id = {w["osm_id"]: w for w in ways}
-        # 104 (residential, no lanes), 105 (footway), 109 (proposed) dropped; 110 is outside the box.
+        # 104 (residential, no lanes), 105 and 113 (footways), 109 (proposed) dropped; 110 is outside the box.
         self.assertEqual(sorted(by_id), [101, 102, 103, 106, 107, 108, 111, 112])
+        # 7 (signal and crossing where two streets meet) is an intersection signal; 1009 (the same
+        # tags mid-block, with only a footway crossing) is a crossing signal; 1011 and 1012 (a ramp
+        # meter and a fire-station signal) are skipped; 1006 is outside the box.
         self.assertEqual({n["osm_id"]: n["kind"] for n in nodes},
-                         {1001: "traffic_signals", 1002: "crossing_signals", 1003: "level_crossing",
-                          1004: "crossing_signals", 1007: "crossing_signals"})       # 1006 is outside the box
+                         {7: "traffic_signals", 1001: "traffic_signals", 1002: "crossing_signals",
+                          1003: "level_crossing", 1004: "crossing_signals", 1007: "crossing_signals",
+                          1009: "crossing_signals"})
+        self.assertEqual(counts["special signals skipped"], 2)
         self.assertEqual(by_id[112]["geom"]["coordinates"][0], [-117.06, 43.5])    # kept whole across the edge
         self.assertEqual((by_id[101]["osm_version"], by_id[101]["osm_timestamp"]),
                          (4, datetime(2026, 9, 4, tzinfo=timezone.utc)))
@@ -230,6 +290,7 @@ class OsmiumCommandsTest(unittest.TestCase):
 GEOFABRIK_ROBOTS = ("User-agent: *\nDisallow: *.osm.pbf\nDisallow: *.osm.bz2\nDisallow: *.osc.gz\n"
                     "Disallow: *.shp.zip\nDisallow: state.txt\nDisallow: *.state.txt\nDisallow: *updates*\n"
                     "Disallow: *.md5\n")      # download.geofabrik.de/robots.txt as read on Oct 6, 2026
+EXTRACT_URL = "https://download.geofabrik.de/north-america/us/idaho-latest.osm.pbf"
 
 
 class FakeConn:
@@ -252,6 +313,31 @@ class FakeConn:
         pass
 
 
+class ByHandOnlyTest(unittest.TestCase):
+    """Geofabrik's robots.txt disallows scripted downloads, so the source makes no requests
+    and isn't scheduled or run by `run all` (owner, Oct 6)."""
+
+    def test_geofabrik_robots_disallow_the_extract_and_its_md5(self):
+        r = http.Robots(GEOFABRIK_ROBOTS)
+        self.assertFalse(r.allowed(EXTRACT_URL))
+        self.assertFalse(r.allowed(EXTRACT_URL + ".md5"))
+        self.assertTrue(r.allowed(osm.PAGE))
+
+    def test_no_network_code(self):
+        for name in ("run", "download", "check_robots", "http", "urllib", "USER_AGENT"):
+            self.assertFalse(hasattr(osm, name), name)
+        with open(osm.__file__, encoding="utf-8") as f:
+            source = f.read()
+        self.assertNotIn("import urllib", source)
+        self.assertNotIn("http.get", source)
+        self.assertIsNone(osm.SOURCE["schedule"])
+
+    def test_not_a_registered_source(self):
+        from ingest.sources import SOURCES, STREAMS
+        self.assertNotIn("osm_valley", SOURCES)
+        self.assertNotIn("osm_valley", STREAMS)
+
+
 class ArchiveTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -266,46 +352,19 @@ class ArchiveTest(unittest.TestCase):
             f.write(data)
         return path
 
-    def test_geofabrik_robots_disallow_the_extract_and_its_md5(self):
-        r = http.Robots(GEOFABRIK_ROBOTS)
-        self.assertFalse(r.allowed(osm.URL))
-        self.assertFalse(r.allowed(osm.MD5_URL))
-        self.assertTrue(r.allowed("https://download.geofabrik.de/north-america/us/idaho.html"))
-
-    def test_a_robots_refusal_is_logged_and_returned(self):
+    def test_a_load_registers_the_source_and_logs_the_fetch(self):
+        src = self.write(os.path.join(self.folder, "inbox", "idaho-latest.osm.pbf"), b"pbf bytes")
         conn = FakeConn()
-        with mock.patch.object(osm.http, "get", side_effect=http.RobotsDisallowed("robots.txt disallows it")), \
-             mock.patch.object(osm, "download") as download:
-            stats = osm.run(conn)
-        self.assertEqual(stats, {"refused": "robots.txt disallows it"})
-        download.assert_not_called()
+        with mock.patch.object(osm, "load", return_value={"ways": 1}) as load:
+            osm.load_file(conn, src)
+        statements = [s for s, _ in conn.sql]
+        self.assertTrue(statements[0].startswith("insert into ops.source"))
+        self.assertEqual(conn.sql[0][1]["name"], "osm_valley")
+        self.assertTrue(any(s.startswith("insert into ops.fetch") for s in statements))
         update = [p for s, p in conn.sql if s.startswith("update ops.fetch")][0]
-        self.assertFalse(update[1])                                              # ok = false
-        self.assertIn("RobotsDisallowed", update[6])
-
-    def test_unchanged_md5_skips_the_download(self):
-        md5 = "0123456789abcdef0123456789abcdef"
-        osm.mark_loaded(self.folder, md5, os.path.join(self.folder, "idaho-20261001-01234567.osm.pbf"))
-        conn = FakeConn()
-        body = f"{md5}  idaho-latest.osm.pbf\n".encode()
-        with mock.patch.object(osm.http, "get", return_value=(200, body, "allowed")), \
-             mock.patch.object(osm, "download") as download:
-            stats = osm.run(conn)
-        self.assertEqual(stats["skipped"], "extract unchanged since the last load")
-        download.assert_not_called()
-
-    def test_a_changed_md5_downloads_and_loads(self):
-        conn = FakeConn()
-        body = b"fedcba9876543210fedcba9876543210  idaho-latest.osm.pbf\n"
-        path = os.path.join(self.folder, "idaho-20261006-fedcba98.osm.pbf")
-        with mock.patch.object(osm.http, "get", return_value=(200, body, "allowed")), \
-             mock.patch.object(osm, "download", return_value=(self.write(path), 200, 1)) as download, \
-             mock.patch.object(osm, "load", return_value={"ways": 3}) as load:
-            stats = osm.run(conn)
-        download.assert_called_once_with(osm.URL, self.folder, "fedcba9876543210fedcba9876543210")
-        self.assertEqual(load.call_args.args[2], path)
-        self.assertEqual(stats["ways"], 3)
-        self.assertEqual(osm.last_loaded(self.folder)["md5"], "fedcba9876543210fedcba9876543210")
+        self.assertTrue(update[1])                                               # ok
+        self.assertEqual((update[2], update[3], update[5]), (None, None, len(b"pbf bytes")))  # no request made
+        self.assertEqual(load.call_args.kwargs["work_parent"], self.folder)
 
     def test_inbox_file_is_loaded_archived_and_skipped_next_time(self):
         src = self.write(os.path.join(self.folder, "inbox", "idaho-latest.osm.pbf"), b"pbf bytes")
@@ -316,6 +375,7 @@ class ArchiveTest(unittest.TestCase):
         self.assertFalse(os.path.exists(src))
         self.assertTrue(stats["archived"].startswith("idaho-") and stats["archived"].endswith(f"-{md5[:8]}.osm.pbf"))
         self.assertTrue(os.path.exists(os.path.join(self.folder, stats["archived"])))
+        self.assertEqual(osm.last_loaded(self.folder)["md5"], md5)
         again = self.write(os.path.join(self.folder, "inbox", "idaho-latest.osm.pbf"), b"pbf bytes")
         with mock.patch.object(osm, "load") as load:
             self.assertEqual(osm.load_file(FakeConn(), again)["skipped"], "same extract as the last load")
@@ -336,34 +396,35 @@ class ArchiveTest(unittest.TestCase):
         self.assertEqual(osm.prune(self.folder), ["a-1.osm.pbf"])
         self.assertEqual(sorted(os.listdir(self.folder)), ["a-2.osm.pbf", "a-3.osm.pbf", "inbox"])
 
+    def test_reloading_an_archived_extract_never_prunes_it(self):
+        now = time.time()
+        paths = []
+        for i, data in enumerate([b"oldest", b"middle", b"newest"]):
+            p = self.write(os.path.join(self.folder, f"idaho-2026100{i + 1}-{hashlib.md5(data).hexdigest()[:8]}.osm.pbf"),
+                           data)
+            os.utime(p, (now - 100 + i, now - 100 + i))
+            paths.append(p)
+        osm.mark_loaded(self.folder, hashlib.md5(b"newest").hexdigest(), paths[2])
+        with mock.patch.object(osm, "load", return_value={"ways": 1}):
+            stats = osm.load_file(FakeConn(), paths[0], force=True)                # reload the oldest
+        self.assertTrue(os.path.exists(paths[0]))
+        self.assertEqual(osm.last_loaded(self.folder)["file"], os.path.basename(paths[0]))
+        self.assertEqual(stats["pruned"], os.path.basename(paths[1]))
+        self.assertEqual(osm.extracts(self.folder), [paths[0], paths[2]])        # the reload is now the newest
+        # Even with its time unchanged, the protected file stays.
+        os.utime(paths[0], (now - 1000, now - 1000))
+        self.write(os.path.join(self.folder, "idaho-20261009-aaaaaaaa.osm.pbf"))
+        self.assertEqual(osm.prune(self.folder, protect=(paths[0],)), [])
+        self.assertTrue(os.path.exists(paths[0]))
+
     def test_names_and_md5_files(self):
-        self.assertEqual(osm.archive_name(osm.URL, "fedcba98" + "0" * 24, T0), "idaho-20261006-fedcba98.osm.pbf")
+        self.assertEqual(osm.archive_name(EXTRACT_URL, "fedcba98" + "0" * 24, T0), "idaho-20261006-fedcba98.osm.pbf")
         self.assertEqual(osm.archive_name("/x/my extract.osm", "12345678" + "0" * 24, T0),
                          "my extract-20261006-12345678.osm")
         self.assertEqual(osm.parse_md5("ABCDEF0123456789abcdef0123456789  idaho-latest.osm.pbf\n"),
                          "abcdef0123456789abcdef0123456789")
         with self.assertRaises(ValueError):
             osm.parse_md5("<html>not found</html>")
-
-    def test_download_checks_robots_and_the_md5(self):
-        data = b"an extract"
-
-        class Response(io.BytesIO):
-            status = 200
-
-        with mock.patch.object(osm, "check_robots", return_value=("allowed", 0)) as robots, \
-             mock.patch.object(osm, "PAUSE_S", 0), \
-             mock.patch.object(osm.urllib.request, "urlopen", side_effect=lambda *a, **k: Response(data)):
-            with self.assertRaises(RuntimeError):
-                osm.download(osm.URL, self.folder, "0" * 32)
-            self.assertEqual([f for f in os.listdir(self.folder) if f != "inbox"], [])   # no .part left behind
-            path, status, size = osm.download(osm.URL, self.folder, hashlib.md5(data).hexdigest())
-        robots.assert_called_with(osm.URL)
-        self.assertEqual((status, size), (200, len(data)))
-        self.assertTrue(os.path.exists(path))
-        with mock.patch.object(osm, "check_robots") as robots:          # the same extract again: reused
-            self.assertEqual(osm.download(osm.URL, self.folder, hashlib.md5(data).hexdigest())[0], path)
-        robots.assert_not_called()
 
 
 DB_URL = os.environ.get("TVT_TEST_DATABASE_URL")
@@ -469,7 +530,7 @@ class DatabaseTest(unittest.TestCase):
             self.way(1, {"highway": "primary", "oneway": "yes"}, (-20, 6), (320, 6)),        # carriageway 6 m north
             self.way(2, {"highway": "primary", "oneway": "yes"}, (320, -6), (-20, -6)),      # and 6 m south, drawn the other way
             self.way(3, {"highway": "secondary"}, (150, -200), (150, 200)),                  # perpendicular street
-            self.way(4, {"highway": "primary"}, (0, 6), (60, 6)),                            # alongside only 20% of it
+            self.way(4, {"highway": "primary"}, (0, 6), (60, 6)),                            # alongside 20% of it, all of it close
             self.way(5, {"highway": "tertiary"}, (-20, 25), (320, 25)),                      # 25 m away
             self.way(6, {"highway": "tertiary"}, (0, -40), (300, 70)),                       # crossing at about 20°
         ]
@@ -481,15 +542,41 @@ class DatabaseTest(unittest.TestCase):
                 """select source_id, round(share::numeric, 2), round(bearing_diff::numeric, 1), method, confidence > 0.9
                    from core.segment_match where road_segment_id = %s order by source_id""", (segment_id,)).fetchall()
 
-        # Both carriageways match the centerline; the cross street, the short way, the far way and the
-        # diagonal don't.
+        # Both carriageways match the centerline on its share; way 4 on its own share (it lies wholly
+        # along the segment; the segment is within 15 m of it for 74 m, past its end by the buffer's
+        # round cap). The cross street, the far way and the diagonal don't.
         self.assertEqual(matches(seg), [(f"w{BASE_ID + 1}", 1, 0, "buffer15_bearing20", True),
-                                        (f"w{BASE_ID + 2}", 1, 0, "buffer15_bearing20", True)])
+                                        (f"w{BASE_ID + 2}", 1, 0, "buffer15_bearing20", True),
+                                        (f"w{BASE_ID + 4}", Decimal("0.25"), 0, "way_in_buffer15_bearing20", True)])
         # Ways 1, 5 and 6 lie within 15 m of the whole stub, but only way 3 runs along it: the bearing gate.
         self.assertEqual(matches(stub), [(f"w{BASE_ID + 3}", 1, 0, "buffer15_bearing20", True)])
-        self.assertEqual(stats, {"segment matches": 3, "ACHD segments matched": 2, "ways matched": 3})
+        self.assertEqual(stats, {"segment matches": 3, "turn-bay matches": 1, "ACHD segments matched": 2,
+                                 "ways matched": 4})
         # Re-running replaces the rows rather than adding to them.
-        self.assertEqual(osm.match_achd_segments(self.conn)["segment matches"], 3)
+        again = osm.match_achd_segments(self.conn)
+        self.assertEqual((again["segment matches"], again["turn-bay matches"]), (3, 1))
+
+    def test_a_turn_bay_way_matches_its_block(self):
+        block = self.segment((0, 0), (400, 0))           # an ACHD block, 400 m between junctions
+        ways = [
+            self.way(1, {"highway": "primary", "oneway": "yes", "lanes": "2"}, (-50, 6), (300, 6)),     # through lanes
+            self.way(2, {"highway": "primary", "oneway": "yes", "lanes": "3",
+                         "turn:lanes": "left|through|through"}, (300, 6), (400, 6)),                    # the bay: 25%
+            self.way(3, {"highway": "secondary"}, (400, -200), (400, 200)),                              # the cross street
+            self.way(4, {"highway": "secondary"}, (200, -11), (200, 11)),                                # a short crossing way
+            self.way(5, {"highway": "primary", "oneway": "yes"}, (350, -6), (365, -6)),                  # under 20 m
+        ]
+        self.quiet(osm.store, self.conn, None, T0, ways, [])
+        stats = osm.match_achd_segments(self.conn)
+        got = self.conn.execute(
+            """select source_id, method, round(share::numeric, 2), round(bearing_diff::numeric, 1),
+                      round(confidence::numeric, 2)
+               from core.segment_match where road_segment_id = %s order by source_id""", (block,)).fetchall()
+        # Shares measure the block within 15 m of each way (so 13.7 m past a way's end counts too):
+        # 314 m and 114 m of 400. The bay's confidence comes from its own share, 1.
+        self.assertEqual(got, [(f"w{BASE_ID + 1}", "buffer15_bearing20", Decimal("0.78"), 0, Decimal("0.78")),
+                               (f"w{BASE_ID + 2}", "way_in_buffer15_bearing20", Decimal("0.28"), 0, 1)])
+        self.assertEqual((stats["segment matches"], stats["turn-bay matches"]), (1, 1))
 
     @unittest.skipUnless(HAVE_OSMIUM, "needs osmium-tool")
     def test_loading_the_fixture(self):
@@ -499,7 +586,9 @@ class DatabaseTest(unittest.TestCase):
         f = Fetch()
         stats = self.quiet(osm.load, self.conn, f, FIXTURE)
         self.assertEqual((stats["ways"], stats["nodes traffic_signals"], stats["nodes crossing_signals"],
-                          stats["nodes level_crossing"], f.records), (8, 1, 3, 1, 13))
+                          stats["nodes level_crossing"], f.records), (8, 2, 4, 1, 15))
+        self.assertEqual(dict(self.conn.execute("select osm_id, kind from core.osm_node where osm_id in (7, 1009)").fetchall()),
+                         {7: "traffic_signals", 1009: "crossing_signals"})
         self.assertEqual(self.conn.execute("select count(*) from core.osm_lane where osm_id in (101, 102)").fetchone()[0], 8)
         self.assertEqual(self.conn.execute("select maxspeed, oneway from core.osm_way where osm_id = 101").fetchone(),
                          ("35 mph", "no"))
