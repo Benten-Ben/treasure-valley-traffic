@@ -58,7 +58,8 @@ def phasing(v):
 
 
 def control(crossing_type):
-    """COMPASS's Int_Type ('Full Signal', 'Half Signal', U-turn) as core.intersection.control."""
+    """COMPASS's intersection type (field CrossingTy, alias Int_Type: 'Full Signal', 'Half Signal',
+    'U-Turn') as core.intersection.control."""
     t = (arcgis.text(crossing_type) or "").lower()
     if "half" in t:
         return "half_signal"

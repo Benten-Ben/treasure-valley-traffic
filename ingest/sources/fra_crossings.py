@@ -18,6 +18,7 @@ leaves them blank. FRA's AADT is old on many crossings (years 1970-2024).
 """
 
 import json
+import time
 import urllib.parse
 
 from .. import db, http, signal_devices
@@ -226,19 +227,31 @@ def parse(rows):
     return out
 
 
-def fetch_rows():
-    """All rows, paging only if a page comes back full. Returns (rows, bytes, status, robots)."""
-    rows, nbytes, offset = [], 0, 0
-    while True:
+MAX_PAGES = 5        # 25,000 rows; Ada and Canyon have about 433
+
+
+def fetch_rows(pause_s=2.0):
+    """All rows, ordered by crossing number, paging only if a page comes back full.
+    Returns (rows, bytes, status, robots). A page that adds nothing new (a server ignoring
+    $offset) or too many pages fail the fetch rather than truncate it."""
+    rows, seen, nbytes, offset = [], set(), 0, 0
+    for i in range(MAX_PAGES):
+        if i:
+            time.sleep(pause_s)
         status, body, decision = http.get(query_url(offset), timeout=120, compressed=True)
         page = json.loads(body)
         if isinstance(page, dict):
             raise RuntimeError(f"SODA error: {str(page)[:300]}")
-        rows += page
+        new = [r for r in page if r.get("crossingid") not in seen]
+        seen.update(r.get("crossingid") for r in new)
+        rows += new
         nbytes += len(body)
         if len(page) < LIMIT:
             return rows, nbytes, status, decision
+        if not new:
+            raise RuntimeError(f"SODA page at offset {offset} repeated earlier rows")
         offset += LIMIT
+    raise RuntimeError(f"more than {MAX_PAGES} pages of {LIMIT}; not taken as a full snapshot")
 
 
 def store(conn, fetch_id, seen_at, parsed):

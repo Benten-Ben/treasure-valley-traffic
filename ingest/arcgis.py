@@ -1,9 +1,15 @@
 """Reading ArcGIS feature layers (ArcGIS Online and ArcGIS Server) for ingestors.
 
-Queries ask for Esri JSON in WGS84 (outSR=4326), every field, in pages of the
-layer's maximum record count, with a pause between requests. robots.txt and
-crawl-delay are handled by ingest/http.py. A network error or a 5xx is retried
-once after a pause (swidrdc.org sometimes resets connections).
+A layer is read in two steps: first the IDs of all its features
+(returnIdsOnly), then the features themselves in batches of BATCH by ID range
+(where=OBJECTID >= a AND OBJECTID <= b), as Esri JSON in WGS84 (outSR=4326),
+with a pause between requests. That doesn't depend on the server's default
+order, its page size or whether it honours resultOffset, and it gives a check:
+every listed ID must come back, exactly once. A layer that doesn't come back
+whole fails the fetch instead of looking smaller (a smaller snapshot would
+retire records). robots.txt and crawl-delay are handled by ingest/http.py. A
+network error or a 5xx is retried once after a pause (swidrdc.org sometimes
+resets connections).
 """
 
 import json
@@ -14,15 +20,20 @@ import urllib.parse
 
 from . import http
 
-PAGE = 2000          # the maxRecordCount of every layer we read
+BATCH = 500          # features per request: under every server's maxRecordCount (1,000 or 2,000)
 PAUSE_S = 2.0        # between requests to the same layer
 RETRY_WAIT_S = 10
+MAX_FEATURES = 50000 # more IDs than this isn't a layer we expect: fail
 
 
-def query_url(layer, offset=None, page=PAGE, order_by="OBJECTID", where="1=1"):
-    q = {"where": where, "outFields": "*", "returnGeometry": "true", "outSR": "4326", "f": "json"}
-    if offset is not None:          # paging only when the first answer was cut off
-        q.update({"orderByFields": order_by, "resultOffset": offset, "resultRecordCount": page})
+def ids_url(layer):
+    return layer + "/query?" + urllib.parse.urlencode({"where": "1=1", "returnIdsOnly": "true", "f": "json"})
+
+
+def query_url(layer, oid_field, lo, hi):
+    """Features with lo <= ID <= hi, every field, points in WGS84."""
+    q = {"where": f"{oid_field} >= {int(lo)} AND {oid_field} <= {int(hi)}", "outFields": "*",
+         "returnGeometry": "true", "outSR": "4326", "orderByFields": f"{oid_field} ASC", "f": "json"}
     return layer + "/query?" + urllib.parse.urlencode(q)
 
 
@@ -38,26 +49,50 @@ def get_once_retried(url, label, retry_wait_s=RETRY_WAIT_S):
         return http.get(url, timeout=120)
 
 
-def fetch_layer(layer, label, order_by="OBJECTID", page=PAGE, pause_s=PAUSE_S):
-    """Every feature of a layer. Returns (features, bytes, http status, robots decision).
+def object_id(attrs, oid_field):
+    """A feature's object ID (the field name's case varies: OBJECTID, objectid), or None."""
+    v = attrs.get(oid_field)
+    if v is None:
+        v = next((val for k, val in attrs.items() if k.lower() == oid_field.lower()), None)
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
 
-    The first request asks for everything; only if the server says the answer
-    was cut off (exceededTransferLimit) does it page through by offset."""
-    status, body, decision = get_once_retried(query_url(layer), label)
+
+def fetch_layer(layer, label, batch=BATCH, pause_s=PAUSE_S):
+    """Every feature of a layer, each once, in ID order. Returns (features, bytes, http status,
+    robots decision). Raises RuntimeError if the layer doesn't come back whole."""
+    status, body, decision = get_once_retried(ids_url(layer), label)
     data = _parse(body, layer)
-    features, nbytes = list(data.get("features") or []), len(body)
-    offset = len(features)
-    while data.get("exceededTransferLimit"):
+    nbytes = len(body)
+    oid_field = data.get("objectIdFieldName") or "OBJECTID"
+    ids = sorted({int(i) for i in data.get("objectIds") or []})
+    if len(ids) > MAX_FEATURES:
+        raise RuntimeError(f"{layer} lists {len(ids)} features, more than {MAX_FEATURES}")
+    wanted = set(ids)
+    got = {}
+    pending = ids
+    requests, max_requests = 0, 2 * (len(ids) // batch + 1) + 2
+    while pending:
+        requests += 1
+        if requests > max_requests:
+            raise RuntimeError(f"{layer}: {len(pending)} of {len(ids)} features still missing after "
+                               f"{requests - 1} requests")
+        chunk = pending[:batch]
         time.sleep(pause_s)
-        status, body, decision = get_once_retried(query_url(layer, offset, page, order_by), label)
+        status, body, decision = get_once_retried(query_url(layer, oid_field, chunk[0], chunk[-1]), label)
         data = _parse(body, layer)
-        batch = data.get("features") or []
         nbytes += len(body)
-        features += batch
-        offset += len(batch)
-        if not batch:
-            break
-    return features, nbytes, status, decision
+        for f in data.get("features") or []:
+            oid = object_id(f.get("attributes") or {}, oid_field)
+            if oid in wanted and oid not in got:
+                got[oid] = f
+        if not any(i in got for i in chunk):
+            raise RuntimeError(f"{layer}: none of IDs {chunk[0]}..{chunk[-1]} came back "
+                               "(the server ignored the query, or the layer changed while we read it)")
+        pending = [i for i in pending if i not in got]
+    return [got[i] for i in ids], nbytes, status, decision
 
 
 def _parse(body, layer):

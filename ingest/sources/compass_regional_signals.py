@@ -90,7 +90,7 @@ def parse(features):
 def run(conn):
     db.ensure_source(conn, SOURCE)
     with db.Fetch(conn, SOURCE["name"]) as f:
-        features, f.bytes, f.http_status, f.robots = arcgis.fetch_layer(LAYER, SOURCE["name"], order_by="objectid")
+        features, f.bytes, f.http_status, f.robots = arcgis.fetch_layer(LAYER, SOURCE["name"])
         records, devices = parse(features)
         f.records = len(records)
         signal_devices.check(conn, SOURCE["name"], len(devices))

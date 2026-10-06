@@ -8,10 +8,13 @@ numbers, streets and points.
 Run: python3 -m unittest discover -s ingest/tests -t .
 """
 
+import json
 import os
+import re
 import unittest
 import urllib.parse
 from datetime import datetime, timedelta, timezone
+from unittest import mock
 
 from ingest import arcgis, db, signal_devices, streets
 from ingest.db import version_hash
@@ -99,6 +102,24 @@ class FraTest(unittest.TestCase):
         self.assertIsNone(fra.geometry(fra_row(geocoded_lat_long=None, latitude="0", longitude="0")))
         self.assertIsNone(fra.geometry(fra_row(geocoded_lat_long=None, latitude=None, longitude=None)))
 
+    def test_paging_reads_to_a_short_page_and_refuses_a_repeated_one(self):
+        pages = {"0": [fra_row("999001A"), fra_row("999002B")], "2": [fra_row("999003C")]}
+        calls = []
+
+        def get(url, timeout=90, compressed=False):
+            calls.append(url)
+            offset = urllib.parse.parse_qs(urllib.parse.urlsplit(url).query)["$offset"][0]
+            return 200, json.dumps(pages.get(offset, pages["0"]) if not repeat else pages["0"]).encode(), "allowed"
+
+        with mock.patch.object(fra, "LIMIT", 2), mock.patch.object(fra.http, "get", get):
+            repeat = False
+            rows = fra.fetch_rows(pause_s=0)[0]
+            self.assertEqual([r["crossingid"] for r in rows], ["999001A", "999002B", "999003C"])
+            repeat, calls[:] = True, []
+            with self.assertRaises(RuntimeError):
+                fra.fetch_rows(pause_s=0)
+            self.assertEqual(len(calls), 2)
+
     def test_a_crossing_listed_twice_keeps_the_later_revision(self):
         parsed = fra.parse([fra_row(street="NEW NAME", revisiondate="2025-06-01T00:00:00.000"),
                             fra_row(street="OLD NAME", revisiondate="2024-01-01T00:00:00.000")])
@@ -136,10 +157,67 @@ class AchdSignalPointsTest(unittest.TestCase):
         for g in (None, {}, {"x": None, "y": 43}, {"x": "NaN", "y": 43}, {"x": 500, "y": 43}):
             self.assertIsNone(arcgis.point_geojson(g))
 
-    def test_only_cut_off_answers_are_paged(self):
-        self.assertNotIn("resultOffset", arcgis.query_url("https://x/FeatureServer/0"))
-        q = urllib.parse.parse_qs(urllib.parse.urlsplit(arcgis.query_url("https://x/MapServer/3", 2000, 2000, "objectid")).query)
-        self.assertEqual((q["resultOffset"], q["orderByFields"], q["outSR"], q["f"]), (["2000"], ["objectid"], ["4326"], ["json"]))
+    def test_query_urls(self):
+        q = urllib.parse.parse_qs(urllib.parse.urlsplit(arcgis.ids_url("https://x/FeatureServer/0")).query)
+        self.assertEqual((q["returnIdsOnly"], q["where"]), (["true"], ["1=1"]))
+        q = urllib.parse.parse_qs(urllib.parse.urlsplit(arcgis.query_url("https://x/MapServer/3", "objectid", 7, 9)).query)
+        self.assertEqual((q["where"], q["outSR"], q["orderByFields"], q["f"]),
+                         (["objectid >= 7 AND objectid <= 9"], ["4326"], ["objectid ASC"], ["json"]))
+
+
+class FakeLayer:
+    """An ArcGIS layer as a server serves it: IDs on request, features in its own order
+    (not ours), at most `cap` per answer. ignore_query answers every feature query with
+    the same first page (as if it ignored where and resultOffset); lose drops features."""
+
+    def __init__(self, order, cap=3, oid_field="OBJECTID", ignore_query=False, lose=()):
+        self.order, self.cap, self.oid_field = order, cap, oid_field
+        self.ignore_query, self.lose, self.calls = ignore_query, set(lose), 0
+
+    def get(self, url, timeout=90, compressed=False):
+        self.calls += 1
+        q = urllib.parse.parse_qs(urllib.parse.urlsplit(url).query)
+        if q.get("returnIdsOnly") == ["true"]:
+            body = {"objectIdFieldName": self.oid_field, "objectIds": self.order}
+        else:
+            sel = [i for i in self.order if i not in self.lose]
+            if not self.ignore_query:
+                lo, hi = (int(t) for t in re.findall(r"(?:>=|<=) (\d+)", q["where"][0]))
+                sel = [i for i in sel if lo <= i <= hi]
+            body = {"objectIdFieldName": self.oid_field, "exceededTransferLimit": len(sel) > self.cap,
+                    "features": [{"attributes": {self.oid_field: i, "Purpose": "TS"}, "geometry": {"x": -116.3, "y": 43.6}}
+                                 for i in sel[:self.cap]]}
+        return 200, json.dumps(body).encode(), "no_rules"
+
+
+class FetchLayerTest(unittest.TestCase):
+    def fetch(self, fake, **kw):
+        with mock.patch.object(arcgis.http, "get", fake.get):
+            return arcgis.fetch_layer("https://x/FeatureServer/15", "test", pause_s=0, **kw)
+
+    def ids(self, features, field="OBJECTID"):
+        return [f["attributes"][field] for f in features]
+
+    def test_an_unordered_server_with_small_pages_gives_every_feature_once(self):
+        features, nbytes, status, robots = self.fetch(FakeLayer([4, 1, 5, 2, 3], cap=3))
+        self.assertEqual(self.ids(features), [1, 2, 3, 4, 5])
+        self.assertEqual((status, robots), (200, "no_rules"))
+        fake = FakeLayer(list(range(2469, 0, -1)), cap=2000, oid_field="objectid")
+        self.assertEqual(self.ids(self.fetch(fake)[0], "objectid"), list(range(1, 2470)))
+        self.assertEqual(fake.calls, 1 + 5)                      # the IDs, then 500 at a time
+
+    def test_a_server_that_ignores_the_query_fails_instead_of_looping(self):
+        fake = FakeLayer([4, 1, 5, 2, 3], cap=3, ignore_query=True)
+        with self.assertRaises(RuntimeError):
+            self.fetch(fake, batch=2)
+        self.assertLessEqual(fake.calls, 4)
+
+    def test_a_listed_feature_that_never_comes_back_fails_the_fetch(self):
+        with self.assertRaises(RuntimeError):
+            self.fetch(FakeLayer([1, 2, 3, 4, 5], cap=10, lose=[5]))
+
+    def test_an_empty_layer_is_empty(self):
+        self.assertEqual(self.fetch(FakeLayer([]))[0], [])
 
 
 def compass_feature(oid, location, operator="Testtown", synchro=None, x=-116.5, y=43.6, **kw):
