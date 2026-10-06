@@ -55,3 +55,7 @@ Tick an item when it's built, with the date, or strike it if we drop it.
 | [ ] | Buses offset into their actual lane | After lanes | Lanes |
 | [ ] | An hour-long playback check on a recorded weekday hour | Runs after deploy, on the server's data | Deploy |
 | [ ] | Load the road-weather stations (WP16) from the 511 API's camera list and `core.weather_station` instead of the one-off private list, and show their readings on the layer | The API collector arrived while UI v2 was being built (Oct 6) | UI v2 finished |
+| [ ] | Lanes for Canyon County: a `segment_lanes` keyed on COMPASS pieces or OpenStreetMap ways, since Canyon has no ACHD segments | After the first OpenStreetMap load | OSM extract on the server |
+| [ ] | Link COMPASS's high-injury junctions to `core.intersection` (nearest within 40 m; they carry no `int_id`) | Both are built now; small | — |
+| [ ] | One ArcGIS reader: fold COMPASS's pager (`compass_layer.py`) into the shared `ingest/arcgis.py` | Works today; two code paths to maintain | — |
+| [ ] | Make `restricted` a real permission boundary (a separate database role the app can't read) | Policy only today: the app and ingestors share one role | Server change |
