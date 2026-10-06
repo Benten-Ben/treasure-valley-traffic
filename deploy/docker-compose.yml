@@ -72,20 +72,22 @@ services:
     volumes:
       - ${ARCHIVE_DIR:-/srv/tvt/archive}:/srv/archive
 
-  rwis:
-    # ITD's road-weather (RWIS) camera views (ingest/rwis_cameras.csv): the
-    # same code as the cameras service, polled every 5 minutes, since these
-    # views change every few minutes at most. Daily videos like the cameras'.
+  regional:
+    # Road-weather (RWIS) camera views statewide, plus Oregon DOT views in the
+    # regional ring: the same code as the cameras service, every 10 minutes,
+    # since these views change about every 15. The list is built from 511's
+    # camera list, a third-party copy, so it lives in the private files.
     build:
       context: ..
       dockerfile: ingest/Dockerfile.cameras
     restart: unless-stopped
-    command: ["python3", "-m", "ingest", "stream", "idaho511_frames", "--every", "300"]
+    command: ["python3", "-m", "ingest", "stream", "idaho511_frames", "--every", "600"]
     environment:
       TVT_ARCHIVE: /srv/archive
-      TVT_CAMERAS: /repo/ingest/rwis_cameras.csv
+      TVT_CAMERAS: /srv/private-data/regional-cameras.csv
     volumes:
       - ${ARCHIVE_DIR:-/srv/tvt/archive}:/srv/archive
+      - ${PRIVATE_DATA_DIR:-/srv/tvt/private/data}:/srv/private-data:ro
 
   app:
     build: ../app

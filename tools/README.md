@@ -12,7 +12,9 @@ source, so check before publishing anything derived from it.
 |---|---|
 | `collect_static.py` | Downloads OpenStreetMap signal locations, the ACHD camera inventory (228 cameras, duplicates removed), ITD AADT (latest year), and ITD monthly automatic-counter volumes for Ada and Canyon counties. Writes `data/static/` plus a `manifest.json` with fetch times and license notes. |
 | `compression_bench.py` | Encodes a camera's 1-per-minute frames as H.264, H.265 and AV1 at several quality levels and reports size vs the JPEGs and SSIM. Results are in docs/11. |
+| `lehd_flows.py` | Sums the Census Bureau's LODES commute data (public domain) into flows between Ada, Canyon and the counties around them (including Malheur County, Oregon), and by town: how many residents' jobs are in Ada or Canyon. Download steps are in its docstring; results are in docs/08. |
 | `gps_runs.py` | Analyzes GPX tracks from floating-car runs: travel time and stops per run, then per signal the share of runs stopped and the mean stop. `--estimate-cycle` infers cycle length from departure times (experimental). |
+| `test_lehd_flows.py` | Tests `lehd_flows.py` on tiny synthetic LODES files. |
 | `test_gps_runs.py` | Tests `gps_runs.py` on simulated runs through a synthetic coordinated corridor. |
 
 Tools for one-off checks of hosts whose robots.txt asks crawlers to stay

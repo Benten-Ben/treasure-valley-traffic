@@ -304,11 +304,13 @@ angles but aren't, or aren't reachable:
   different places, aimed at the pavement.
 
 **Road-weather views, recorded since Oct 5** (owner: "useful data when we
-have enough"). ITD's road-weather stations (RWIS) carry 2–4 cameras each,
-one per direction. The 10 stations in our area have 30 views
-([`ingest/rwis_cameras.csv`](../ingest/rwis_cameras.csv)): the I-84 Wye,
-Broadway, Eisenman, Kuna/Meridian, Northside, Caldwell and Simco Rd; SH-55
-Horseshoe Bend Hill; SH-21 Highland Valley Summit; and US-95 Ion Summit.
+have enough", wherever we have them). ITD's road-weather stations (RWIS)
+carry 2–4 cameras each, one per direction: 385 views at 130 stations
+statewide in 511's camera list (one-off copy, Oct 5), 30 of them at the 10
+stations in our area. A second service (`regional`) captures all of them,
+plus 4 Oregon DOT views near Ontario and Weiser, every 10 minutes into daily
+videos. Its list is built from 511's camera list, so it's kept with the
+private files.
 - Their images are 800×486 JPEGs with ITD's own caption: station,
   milepost, elevation, which way the view faces, and the station's capture
   time. Caldwell's two views showed 511's "no live feed" image on Oct 5.
@@ -319,13 +321,13 @@ Horseshoe Bend Hill; SH-21 Highland Valley Summit; and US-95 Ion Summit.
   Broadway's stayed at 8:19 PM. Unlike ACHD's cameras, a byte-level repeat
   check doesn't catch a stalled picture here; reading ITD's caption time
   will (stage 2 of the pipeline, §11.7).
-- A second service (`rwis`) captures them with the same code, every 5
-  minutes, into the same daily videos. A gap counts as gray only beyond
-  3 times a view's usual spacing.
-- Stations elsewhere in Idaho need their image IDs, which come with the 511
-  API key. The station sensors (pavement temperature, surface state, wind)
-  come through the same API and are the measured road conditions; the
-  images show what they look like.
+- A gap counts as gray only beyond 3 times a view's usual spacing.
+- **Volume:** about 37,000 new pictures a day (511 refreshes each view about
+  every 15 minutes) of about 60 KB: about 2 GB of JPEGs a day, kept 2 days,
+  plus the daily videos.
+- The station sensors (pavement temperature, surface state, wind) come
+  through the 511 API and are the measured road conditions; the images show
+  what they look like.
 
 ### Video archive instead of JPEGs
 

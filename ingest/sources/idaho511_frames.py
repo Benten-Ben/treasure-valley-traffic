@@ -8,9 +8,11 @@ byte-identical and dropped. Requests are spread evenly over the cycle: for
 34 cameras, about one every 1.5 s.
 
 The camera list comes from TVT_CAMERAS (default: the key cameras). ITD's
-road-weather (RWIS) views run as a second service with their own list
-(ingest/rwis_cameras.csv) and a slower poll, since they change every few
-minutes at most. Each service rolls up and prunes only its own cameras.
+road-weather (RWIS) views statewide, plus Oregon DOT views near Ontario, run
+as a second service with their own list and a slower poll, since they change
+about every 15 minutes. That list is built from 511's camera list, so it's
+kept with the private files. Each service rolls up and prunes only its own
+cameras.
 
 Frames are saved as JPEGs by local day, with an index.csv per folder, and
 each finished day is rolled up after midnight into one AV1 video per camera
