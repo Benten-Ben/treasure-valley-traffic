@@ -18,7 +18,14 @@ let dir: string;
 /** Load frames.ts and the frame route with a given TVT_FRAME_SOURCE and a fake database. */
 async function load(source: '511' | 'fixture') {
 	vi.resetModules();
-	vi.doMock('$app/env/private', () => ({ FRAMES_DIR: dir, TVT_FRAME_SOURCE: source, DATABASE_URL: 'postgres://unused' }));
+	// Live images off (CAMERA_IMAGES_ENABLED's default), so no body means today's capture.
+	vi.doMock('$app/env/private', () => ({
+		FRAMES_DIR: dir,
+		TVT_FRAME_SOURCE: source,
+		DATABASE_URL: 'postgres://unused',
+		CAMERA_IMAGES_ENABLED: false,
+		TVT_ARCHIVE: undefined
+	}));
 	// db()`select image_id …` → one view with image 752.
 	vi.doMock('#lib/server/db.js', () => ({ db: () => async () => [{ image_id: 752 }] }));
 	const frames = await import('./frames.js');
