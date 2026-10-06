@@ -156,6 +156,25 @@ def get(url, timeout=90, compressed=False):
         return r.status, body, decision
 
 
+def post(url, data, timeout=90):
+    """POST a form body (bytes, URL-encoded) with the same robots check and crawl-delay as get():
+    for read-only queries too long for a URL (ArcGIS servers on IIS refuse query strings over
+    about 2,000 characters). Returns (status, body bytes, robots decision)."""
+    host, rules, decision = robots_for(url)
+    if decision == "unavailable":
+        raise RobotsUnavailable(f"robots.txt at {host} couldn't be read; treating {url} as disallowed for now")
+    if rules is not None and not rules.allowed(url):
+        raise RobotsDisallowed(f"robots.txt at {host} disallows {url}")
+    delay = (rules.crawl_delay() if rules else None) or 0
+    wait = _last_hit.get(host, 0) + delay - time.time()
+    if wait > 0:
+        time.sleep(wait)
+    _last_hit[host] = time.time()
+    with _open(url, data=data, timeout=timeout,
+               headers={"Content-Type": "application/x-www-form-urlencoded"}) as r:
+        return r.status, r.read(), decision
+
+
 def get_json(url, timeout=90):
     status, body, decision = get(url, timeout)
     return status, json.loads(body), decision, len(body)

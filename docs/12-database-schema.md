@@ -273,6 +273,25 @@ stays in its own tables (ODbL, "© OpenStreetMap contributors"); only the
 road network's major and laned ways are kept, so residential street names
 come from ACHD, not OpenStreetMap.
 
+**COMPASS (built Oct 6, 2026, migration 0012).** Crashes are `obs.crash`,
+one row per ITD serial number. `crashed_at` is the reported local time, so
+the key is serial number plus time; with TimescaleDB it's a hypertable in
+1-year chunks. The people in them are `restricted.crash_unit`: the
+`restricted` schema of §12.8 (foreseen for Assessor data) now also holds
+these crash people. Only coded fields are kept: an age group, Idaho resident
+or not, and coded citations. Sex isn't collected, and nothing is copied to
+raw.record. `obs.crash.unit_types` is the one crash-level aggregate taken
+from it, and it may be published. Counts are `obs.traffic_count`, shaped as
+in §12.6 but keyed by source, the source's location key and `counted_on`;
+it adds `period` (what `counted_on` stands for), a nullable `direction`
+('both' or 'one_direction') and `count_type`. Growth is `core.taz` with
+`obs.taz_demographic` (zone, year, measure, kind: census, estimate or
+forecast), `obs.building_permit` and `core.plat`. The high-injury network is
+`core.hin_junction` and `core.hin_segment`. The congestion measures and
+commute travel times are internal until COMPASS answers. `ops.layer_signature`
+records each layer's count and highest object ID at its last full read, so
+monthly runs skip layers that haven't changed.
+
 ## 12.6 `obs`: time series (TimescaleDB)
 
 | Table | One row per | Key columns | Chunk | Compress after | Rows per year (est.) |
@@ -360,9 +379,12 @@ order); blank periods have no row. Road-weather stations are in
   tracks.
 - **No commercial traffic data:** Google, Waze, TomTom, HERE and Mapbox
   results are never stored.
-- **Ada County Assessor data:** "do not re-distribute". If we ever load it,
-  it goes in a separate `restricted` schema that's excluded from exports
-  and published tiles.
+- **Restricted data:** a separate `restricted` schema, excluded from exports
+  and published tiles; only aggregates leave it. It holds the people in
+  COMPASS's crash records (`restricted.crash_unit`, coded and coarsened,
+  since migration 0012) and, if we ever load it, Ada County Assessor data
+  ("do not re-distribute"). It's policy, not a permission boundary yet: the
+  app and ingestors connect as the same role.
 - **No basemap tiles:** those are static PMTiles files built by
   `basemap/`.
 

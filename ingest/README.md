@@ -21,6 +21,11 @@ prototype is [`tvt/`](../tvt)).
 | `compass_regional_signals` | open (COMPASS on swidrdc.org; internal until COMPASS answers) | weekly | `raw.record`, `core.signal_device` (1,076 devices: 586 traffic signals, the rest pedestrian signals, flashers and fire signals) |
 | `intersections` | derived (fetches nothing; by hand: `python3 -m ingest match-intersections [--dry-run]`) | daily | `core.intersection` (591: 585 active, 1 candidate, 5 retired by review in `ingest/intersection_reviews.json`), `core.approach`, `core.signal_device.intersection_id`, camera and OSM links in `core.source_link` (199 cameras), `core.rail_crossing.intersection_id` (nearest active signal within 300 m) |
 | `osm_valley` | open (OpenStreetMap, ODbL; credit "© OpenStreetMap contributors"); by hand only: Geofabrik's robots.txt disallows scripted downloads (Oct 6), so the owner downloads the Idaho extract in a browser into `$TVT_ARCHIVE/osm/inbox/`. Not a scheduled source; no download code | by hand, weekly (`python3 -m ingest.osm_load --inbox`) | `raw.record` (`w<id>`/`n<id>`: tags and a geometry hash), `core.osm_way` (major ways and every way with lanes), `core.osm_lane`, `core.osm_node` (intersection signals, crossing signals, level crossings), `core.segment_match` (ACHD segments: `buffer15_bearing20`, and `way_in_buffer15_bearing20` for turn-bay ways); extracts archived in `$TVT_ARCHIVE/osm/` (last two) |
+| `compass_crashes` | open (COMPASS hub, disclaimer only; swidrdc.org has no robots.txt) | monthly (unchanged layers skipped; 6 h back-off) | `raw.record`, `obs.crash` (174,038 crashes 2008-2025: local time, KABCO severity, pm_id/int_id, unit types), `restricted.crash_unit` (345,152 people: age group, Idaho resident or not, coded citations; no sex; never in `raw.record`; aggregates only), `core.hin_junction` (1,924), `core.hin_segment` (14,487) |
+| `compass_counts` | open (COMPASS hub) | monthly | `raw.record`, `obs.traffic_count` (latest short count on 4,387 segments from every agency; 115 permanent counters; earlier counts kept) |
+| `compass_growth` | open (COMPASS hub) | monthly (unchanged layers skipped) | `raw.record`, `core.taz` (2,498 zones), `obs.taz_demographic` (2020 Census, estimates 2022-26, forecasts 2030-55), `obs.building_permit` (174,244 since 2000; no addresses, parcels or comments) |
+| `compass_plats` | open (COMPASS hub) | weekly | `raw.record`, `core.plat` (1,061 development applications: homes planned, permitted and still to build; jobs) |
+| `compass_congestion` | open, internal use only (swidrdc.org only; not offered as open data) | monthly (unchanged layers skipped) | `raw.record`, `obs.congestion_measure` (47,293 segment-years 2018-2025), `obs.commute_travel_time` (16 commutes, AM and PM) |
 
 ```bash
 pip install -r ingest/requirements.txt
@@ -34,6 +39,8 @@ TVT_ARCHIVE=data/archive IDAHO511_API_KEY=... python3 -m ingest stream idaho511_
 python3 -m ingest backfill itd_wzdx data/archive/wzdx                     # load snapshots the database missed
 python3 -m ingest match-intersections --dry-run                         # rebuild core.intersection from the signal sources
 TVT_ARCHIVE=data/archive python3 -m ingest.osm_load --inbox             # OSM extract downloaded by hand (needs osmium-tool)
+TVT_COMPASS_MAX_PAGES=3 python3 -m ingest run compass_crashes          # dev only: at most 3 pages per layer, logged as failed
+TVT_COMPASS_FORCE=1 python3 -m ingest run compass_growth               # skip the freshness and change checks
 python3 -m unittest discover -s ingest/tests -t .
 ```
 
