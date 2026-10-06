@@ -319,7 +319,12 @@ class Chain:
         prev = None
         for r in history:
             r.step_in = prev.step if prev is not None else None
-            if r.route_source in (None, "path"):
+            if r.route_source == "path":
+                # A stored provisional route stands for the rest of its trip.
+                if r.trip_id != self.path_trip:
+                    self.near.clear()
+                self.path_trip, self.path_route = r.trip_id, r.route_id
+            elif r.route_source is None:
                 self._path(r)
             prev = r
         self.last = prev

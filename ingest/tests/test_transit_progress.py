@@ -136,6 +136,15 @@ class MatcherTest(unittest.TestCase):
         later = run(net, [fix(30 * i, 0, 100 + 200 * i, 0, trip="182273") for i in range(3, 6)], history=first)
         self.assertEqual([r.route_id for r in later], [None, "R1", "R1"])
 
+    def test_a_stored_provisional_route_holds_on_a_shared_street(self):
+        # R1 and R2 share the street north of y = 1500; the bus was labeled R1 before it got there.
+        net = network(("r1", "R1", [(0, 0), (0, 4000)]), ("r2", "R2", [(4, 1500), (4, 4000)]))
+        rows = run(net, [fix(30 * i, 0, 100 + 200 * i, 0, trip="182273") for i in range(7)])
+        self.assertEqual(rows[-1].route_source, "path")
+        recent = rows[-2:]                                    # all the history a later call loads may be shared-street rows
+        later = run(net, [fix(210 + 30 * i, 0, 1500 + 200 * i, 0, trip="182273") for i in range(3)], history=recent)
+        self.assertEqual([(r.route_id, r.route_source) for r in later], [("R1", "path")] * 3)
+
 
 class ThreadTest(unittest.TestCase):
     """How pending fixes join the rows already stored."""
