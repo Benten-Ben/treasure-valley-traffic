@@ -1,0 +1,25 @@
+# Live camera images in the app (docs/14 §14.6; the owner's OK, Q5, Oct 6).
+#
+# Turns CAMERA_IMAGES_ENABLED on and gives the app the capture archive's
+# frames and status files, read-only. Recorded cameras are then shown from the
+# archive, and other cameras are fetched from 511 Idaho on demand while someone
+# has them open (at most once a minute each, 12 cameras per 10 minutes,
+# stopping 3 minutes after the last look; nothing saved unless a frame is
+# chosen for calibration).
+#
+# Enable it by adding this file to COMPOSE_FILE in deploy/.env:
+#   COMPOSE_FILE=docker-compose.yml:compose.live-images.yml
+# Remove it again (and `docker compose up -d app`) to turn live images off,
+# for example if the site is ever opened more widely.
+#
+# Start the capture services first: they create cameras/status. If Docker
+# creates a missing folder for a bind mount, it belongs to root and the
+# capture services (uid 1000) can't write their status files there.
+services:
+  app:
+    environment:
+      CAMERA_IMAGES_ENABLED: "true"
+      TVT_ARCHIVE: /srv/archive
+    volumes:
+      - ${ARCHIVE_DIR:-/srv/tvt/archive}/cameras/jpeg:/srv/archive/cameras/jpeg:ro
+      - ${ARCHIVE_DIR:-/srv/tvt/archive}/cameras/status:/srv/archive/cameras/status:ro

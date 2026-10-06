@@ -136,6 +136,8 @@ services:
       # on whatever name it's reached by (LAN address or Tailscale name).
       PROTOCOL_HEADER: x-forwarded-proto
       HOST_HEADER: x-forwarded-host
+      # Live camera images stay off here (CAMERA_IMAGES_ENABLED is off unless
+      # set); compose.live-images.yml turns them on with the archive mounts.
     volumes:
       - ${FRAMES_DIR:?set FRAMES_DIR in deploy/.env}:/srv/frames
     depends_on:
