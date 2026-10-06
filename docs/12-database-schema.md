@@ -294,6 +294,24 @@ that changes it, and every source's after `achd_roads` changes ACHD's
 segments; by hand, `python3 -m ingest.segment_match`. Canyon County has no
 ACHD segments, so its lines stay unmatched and keep their own geometry.
 
+**`core.segment_lanes` (0017)** applies the lanes rule of
+[ch. 9 §9.3](09-base-map-data.md#93-streets-network-and-lanes), one row per
+active ACHD segment: `lanes_total` (through lanes both ways),
+`lanes_forward`/`lanes_backward` (along and against the segment's drawn
+direction, when known), `centre_turn_lane`, the winning `source`,
+`split_from`/`split_estimated` (where the direction split came from),
+`confidence` (the winning match's), every source's own reading in
+`candidates` (jsonb), and `conflict` when the sources trusted for the road
+class differ by more than one lane. State routes take HPMS first (its A and D
+routes read as above), ACHD arterials the Master Street Map (a whole
+cross-section: an odd count is read as a centre turn lane ⚠️) with
+OpenStreetMap's split when its total agrees, and collectors and local streets
+OpenStreetMap, else an assumed 1+1. COMPASS's 2 is unknown unless a trusted
+source agrees. Each source's best match (by share) is its own view
+(`core.segment_lanes_hpms`, `_msm`, `_compass`, `_osm`). It is a plain view:
+reading all 38,727 rows takes about 4 s. Since it uses OpenStreetMap, it is an
+ODbL derivative database if published.
+
 ## 12.6 `obs`: time series (TimescaleDB)
 
 | Table | One row per | Key columns | Chunk | Compress after | Rows per year (est.) |
