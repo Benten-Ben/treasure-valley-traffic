@@ -21,6 +21,19 @@ Tick an item when it's built, with the date, or strike it if we drop it.
   bus detoured), click to fly there.
 - [ ] **Search:** places, roads, cameras, routes.
 - [ ] **Coach marks:** a short first-visit tour.
+- [ ] **Intersections layer** (data built Oct 6, [DECISIONS](DECISIONS.md)):
+  one badge per signalized intersection with its operator, coordination
+  group and confidence; the review list of candidates; approaches with
+  right-turn lanes and phasing; cameras, counts and rail crossings attached.
+- [ ] **Rail crossings layer:** FRA crossings, gates and preemption where
+  known, the nearest signal and its distance, trains per day.
+- [ ] **Lanes from every source:** draw the lanes the lanes rule picks
+  (ch. 9 §9.3), each number labeled with its source, with disagreements
+  (e.g. Chinden's) flagged; builds on the lanes design above.
+- [ ] **Crashes and the high-injury network** (COMPASS, 2008–2025), and
+  **congestion measures** by year (internal until COMPASS answers).
+- [ ] **Growth context:** building permits, plats and traffic-zone forecasts
+  near corridors; Boise's development pipeline (after the core pieces).
 
 ## Later, once their prerequisites exist
 
