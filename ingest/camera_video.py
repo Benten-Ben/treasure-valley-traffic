@@ -1,7 +1,8 @@
 """Daily camera videos: one camera's JPEGs for one local day, rolled up into
 one AV1 video (docs/11 §11.5; format approved by the owner Oct 5).
 
-- **Codec:** SVT-AV1, preset 6, crf30, in MKV.
+- **Codec:** SVT-AV1, preset 6, crf30, a keyframe every 60 pictures, in MP4 (MKV until Oct 6, 2026: browsers
+  don't play MKV, so the video library needs MP4; old MKVs are remuxed, losslessly).
 - **Day:** local midnight to midnight (America/Boise), so a file is one
   calendar day as people read it. Daylight-saving days run 23 or 25 hours.
 - **A 60x time-lapse with true spacing:** one minute of the day is one second
@@ -12,15 +13,19 @@ one AV1 video (docs/11 §11.5; format approved by the owner Oct 5).
 - **A sidecar CSV** lists every frame: where it sits in the video, when it
   was fetched, and the original JPEG's size and SHA-256.
 
-The frame stream (sources/idaho511_frames.py) runs this after midnight. By hand:
+The frame stream (sources/idaho511_frames.py) runs this after midnight, and
+keeps the video library's index (index-<list>.json, read by the page in
+deploy/library/) up to date. By hand:
     python3 -m ingest rollup [--day YYYY-MM-DD] [--camera ID ...] [--force]
 
 Layout under TVT_ARCHIVE:
     cameras/jpeg/<image_id>/<YYYY-MM-DD>/<UTC time>.jpg and index.csv
-    cameras/video/<image_id>/<YYYY>/<image_id>-<YYYY-MM-DD>.mkv and .csv
+    cameras/video/<image_id>/<YYYY>/<image_id>-<YYYY-MM-DD>.mp4 and .csv
+    cameras/video/index-<list>.json
 """
 
 import csv
+import json
 import os
 import shutil
 import struct
@@ -35,7 +40,9 @@ TZ = ZoneInfo("America/Boise")
 SPEEDUP = 60          # one minute of the day per second of video
 GAP_S = 600           # a gap longer than this (or 3x the day's median spacing) shows as gray
 LAST_FRAME_S = 60     # how long a frame stays up before a gap turns gray
-CODEC = ["-c:v", "libsvtav1", "-preset", "6", "-crf", "30", "-g", "600"]
+# A keyframe every 60 pictures (about an hour of a key camera's day) so the library can seek
+# quickly; it cost nothing in a test on Oct 6 (1-2% smaller than every 600; docs/11 §11.5).
+CODEC = ["-c:v", "libsvtav1", "-preset", "6", "-crf", "30", "-g", "60"]
 WORKERS = 4            # encodes side by side
 INDEX = "index.csv"
 INDEX_FIELDS = ["fetched_at", "file", "bytes", "sha256"]
@@ -48,7 +55,12 @@ def jpeg_dir(root, cam, day):
 
 
 def video_path(root, cam, day):
-    return os.path.join(root, "cameras", "video", str(cam), f"{day:%Y}", f"{cam}-{day.isoformat()}.mkv")
+    return os.path.join(root, "cameras", "video", str(cam), f"{day:%Y}", f"{cam}-{day.isoformat()}.mp4")
+
+
+def legacy_path(root, cam, day):
+    """Where a day's video was written before Oct 6, 2026 (MKV)."""
+    return video_path(root, cam, day)[:-4] + ".mkv"
 
 
 def failed_path(root, cam, day):
@@ -149,10 +161,29 @@ def count_frames(path):
                      "-show_entries", "stream=nb_read_packets", "-of", "csv=p=0", path]).strip())
 
 
+def remux(src, out):
+    """Copy a video into MP4 without re-encoding, checking every frame made it."""
+    part = out + ".part"
+    _run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", src,
+          "-map", "0", "-c", "copy", "-movflags", "+faststart", "-f", "mp4", part])
+    want, got = count_frames(src), count_frames(part)
+    if want != got:
+        os.remove(part)
+        raise RuntimeError(f"remux of {src} has {got} frames, expected {want}")
+    os.replace(part, out)
+    return got
+
+
 def encode(root, cam, day, force=False):
-    """Roll one camera's day into a video. Returns stats, or None if there were no frames."""
+    """Roll one camera's day into a video. Returns stats, or None if there were no frames.
+    A day that already has an MKV from before Oct 6, 2026 is remuxed into MP4 instead."""
     src = jpeg_dir(root, cam, day)
     out = video_path(root, cam, day)
+    legacy = legacy_path(root, cam, day)
+    if os.path.exists(legacy) and not os.path.exists(out) and not force:
+        frames = remux(legacy, out)
+        os.remove(legacy)
+        return {"remuxed": frames, "video_bytes": os.path.getsize(out)}
     index = os.path.join(src, INDEX)
     if not os.path.exists(index):
         return None
@@ -181,7 +212,7 @@ def encode(root, cam, day, force=False):
               "-metadata", f"title=511 Idaho camera {cam}, {day.isoformat()} (America/Boise)",
               "-metadata", "comment=One second of video is one minute of the day: mm:ss reads as hh:mm. "
                            "Gray means no frames. Frame times are in the .csv beside this file.",
-              "-f", "matroska", part])
+              "-movflags", "+faststart", "-f", "mp4", part])
         frames = count_frames(part)
         if frames != len(entries):
             os.remove(part)
@@ -199,6 +230,8 @@ def encode(root, cam, day, force=False):
                             row["file"], row["bytes"], row["sha256"]])
     os.replace(sidecar + ".part", sidecar)
     os.replace(part, out)                                    # the video appears last: it marks the day done
+    if os.path.exists(legacy):
+        os.remove(legacy)
     jpeg_bytes = sum(int(r["bytes"]) for r in rows)
     video_bytes = os.path.getsize(out)
     return {"frames": len(rows), "gaps": len(entries) - len(rows), "jpeg_bytes": jpeg_bytes,
@@ -220,9 +253,28 @@ def _days(root, cams=None):
                 continue
 
 
+def _legacy_days(root, cams=None):
+    """(camera, day) for every MKV still waiting to be remuxed into MP4."""
+    base = os.path.join(root, "cameras", "video")
+    if not os.path.isdir(base):
+        return
+    for cam in sorted(os.listdir(base)):
+        if (cams is not None and cam not in cams) or not os.path.isdir(os.path.join(base, cam)):
+            continue
+        for year in sorted(os.listdir(os.path.join(base, cam))):
+            for name in sorted(os.listdir(os.path.join(base, cam, year))):
+                if name.endswith(".mkv") and name.startswith(f"{cam}-"):
+                    try:
+                        yield cam, date.fromisoformat(name[len(cam) + 1:-4])
+                    except ValueError:
+                        continue
+
+
 def pending(root, today, cams=None):
-    """(camera, day) pairs before today with JPEGs but no video yet (and no recorded failure)."""
-    return [(cam, day) for cam, day in _days(root, cams)
+    """(camera, day) pairs before today with JPEGs or an old MKV but no MP4 yet
+    (and no recorded failure)."""
+    days = sorted(set(_days(root, cams)) | set(_legacy_days(root, cams)))
+    return [(cam, day) for cam, day in days
             if day < today and not os.path.exists(video_path(root, cam, day))
             and not os.path.exists(failed_path(root, cam, day))]
 
@@ -270,3 +322,61 @@ def prune(root, today, keep_days, cams=None):
             shutil.rmtree(jpeg_dir(root, cam, day))
             removed.append((cam, day))
     return removed
+
+
+def _day_summary(csv_path):
+    """Frames, first and last frame times and the usual spacing (in video seconds) of one day's video."""
+    rows = [r for r in read_index(csv_path) if r["kind"] == "frame"]
+    if not rows:
+        return {"frames": 0}
+    at = [float(r["video_s"]) for r in rows]
+    gaps = sorted(b - a for a, b in zip(at, at[1:]))
+    return {"frames": len(rows), "first": rows[0]["local_time"], "last": rows[-1]["local_time"],
+            "first_s": at[0], "spacing_s": round(gaps[(len(gaps) - 1) // 2], 3) if gaps else None}
+
+
+def write_index(root, cams, name, title):
+    """Write cameras/video/index-<name>.json for the video library: this list's cameras
+    and, for each, every finished day (video and CSV paths relative to cameras/video,
+    sizes, frame counts, first and last frame). Days already summarized are reused.
+    cams: [(image_id, camera name)]. Returns the number of days listed."""
+    base = os.path.join(root, "cameras", "video")
+    path = os.path.join(base, f"index-{name}.json")
+    known = {}
+    try:
+        with open(path) as f:
+            for cam in json.load(f).get("cameras", []):
+                for d in cam.get("days", []):
+                    known[d["video"]] = d
+    except (OSError, ValueError):
+        pass
+    cameras, total = [], 0
+    for cam, label in cams:
+        days = []
+        cam_dir = os.path.join(base, str(cam))
+        for year in sorted(os.listdir(cam_dir)) if os.path.isdir(cam_dir) else []:
+            for fname in sorted(os.listdir(os.path.join(cam_dir, year))):
+                if not fname.endswith(".mp4"):
+                    continue
+                rel = f"{cam}/{year}/{fname}"
+                size = os.path.getsize(os.path.join(base, rel))
+                old = known.get(rel)
+                if old and old.get("bytes") == size:
+                    days.append(old)
+                    continue
+                csv_rel = rel[:-4] + ".csv"
+                try:
+                    summary = _day_summary(os.path.join(base, csv_rel))
+                except (OSError, KeyError, ValueError):
+                    summary = {}
+                days.append({"day": fname[len(str(cam)) + 1:-4], "video": rel, "csv": csv_rel, "bytes": size, **summary})
+        total += len(days)
+        cameras.append({"id": str(cam), "name": label, "days": days})
+    os.makedirs(base, exist_ok=True)
+    tmp = path + ".part"
+    with open(tmp, "w") as f:
+        json.dump({"list": name, "title": title, "timezone": "America/Boise", "speedup": SPEEDUP,
+                   "updated": datetime.now(timezone.utc).strftime(TS_FORMAT), "cameras": cameras}, f,
+                  separators=(",", ":"))
+    os.replace(tmp, path)
+    return total

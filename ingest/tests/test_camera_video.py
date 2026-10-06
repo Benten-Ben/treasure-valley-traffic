@@ -4,6 +4,7 @@ Run: python3 -m unittest discover -s ingest/tests -t .
 The encode test needs ffmpeg with libsvtav1 and is skipped without it.
 """
 
+import json
 import os
 import shutil
 import struct
@@ -41,7 +42,8 @@ class DayTest(unittest.TestCase):
 
     def test_paths(self):
         self.assertEqual(cv.video_path("/a", 656, date(2026, 10, 5)),
-                         os.path.join("/a", "cameras", "video", "656", "2026", "656-2026-10-05.mkv"))
+                         os.path.join("/a", "cameras", "video", "656", "2026", "656-2026-10-05.mp4"))
+        self.assertEqual(os.path.basename(cv.legacy_path("/a", 656, date(2026, 10, 5))), "656-2026-10-05.mkv")
         self.assertEqual(frames.frame_name(datetime(2026, 10, 6, 0, 15, 3, tzinfo=UTC)), "20261006T001503Z.jpg")
 
 
@@ -124,6 +126,40 @@ class FrameStoreTest(unittest.TestCase):
         self.assertEqual(cv.prune(self.root, today, 3), [("656", date(2026, 10, 1))])
         self.assertTrue(os.path.isdir(cv.jpeg_dir(self.root, "656", date(2026, 10, 4))))   # no video yet: kept
 
+    def test_old_mkv_days_are_pending_until_remuxed(self):
+        legacy = cv.legacy_path(self.root, "656", date(2026, 10, 1))
+        os.makedirs(os.path.dirname(legacy))
+        open(legacy, "w").close()                                                # its JPEGs are long gone
+        self.assertEqual(cv.pending(self.root, date(2026, 10, 6)), [("656", date(2026, 10, 1))])
+        open(cv.video_path(self.root, "656", date(2026, 10, 1)), "w").close()
+        self.assertEqual(cv.pending(self.root, date(2026, 10, 6)), [])
+
+    def test_library_index(self):
+        day = date(2026, 10, 5)
+        video = cv.video_path(self.root, "656", day)
+        os.makedirs(os.path.dirname(video))
+        with open(video, "wb") as f:
+            f.write(b"x" * 100)
+        with open(video[:-4] + ".csv", "w", newline="") as f:
+            f.write("video_s,kind,fetched_at,local_time,file,bytes,sha256\n0.000,gap,,,,,\n"
+                    "1100.700,frame,2026-10-06T00:20:42Z,2026-10-05T18:20:42-06:00,a.jpg,1,x\n"
+                    "1101.700,frame,2026-10-06T00:21:42Z,2026-10-05T18:21:42-06:00,b.jpg,1,x\n"
+                    "1103.700,frame,2026-10-06T00:23:42Z,2026-10-05T18:23:42-06:00,c.jpg,1,x\n")
+        self.assertEqual(cv.write_index(self.root, [(656, "Eagle & Fairview"), (752, "No videos yet")],
+                                        "key_cameras", "Key cameras"), 1)
+        with open(os.path.join(self.root, "cameras", "video", "index-key_cameras.json")) as f:
+            idx = json.load(f)
+        self.assertEqual(idx["title"], "Key cameras")
+        self.assertEqual([c["id"] for c in idx["cameras"]], ["656", "752"])
+        d = idx["cameras"][0]["days"][0]
+        self.assertEqual((d["day"], d["video"], d["csv"], d["bytes"], d["frames"], d["first_s"], d["spacing_s"]),
+                         ("2026-10-05", "656/2026/656-2026-10-05.mp4", "656/2026/656-2026-10-05.csv", 100, 3, 1100.7, 1.0))
+        self.assertEqual(d["first"], "2026-10-05T18:20:42-06:00")
+        os.remove(video[:-4] + ".csv")                                           # unchanged video: summary reused
+        cv.write_index(self.root, [(656, "Eagle & Fairview")], "key_cameras", "Key cameras")
+        with open(os.path.join(self.root, "cameras", "video", "index-key_cameras.json")) as f:
+            self.assertEqual(json.load(f)["cameras"][0]["days"][0]["frames"], 3)
+
     def test_rollup_due_after_five_past_midnight(self):
         at = lambda h, m: datetime(2026, 10, 6, h, m, tzinfo=cv.TZ)
         self.assertFalse(frames.rollup_due(at(0, 4)))
@@ -165,6 +201,19 @@ class EncodeTest(unittest.TestCase):
         self.assertEqual(index[1]["video_s"], "1140.000")                        # 19:00 -> 19 min into the video
         self.assertEqual(cv.encode(root, "656", day), {"skipped": "video exists"})
         self.assertEqual(cv.pending(root, date(2026, 10, 6)), [])
+
+        # A day rolled up before Oct 6, 2026 is an MKV: the next roll-up remuxes it, losslessly.
+        legacy = cv.legacy_path(root, "656", day)
+        subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-i", video, "-c", "copy", "-f", "matroska", legacy], check=True)
+        original = subprocess.run(["ffmpeg", "-loglevel", "error", "-i", video, "-map", "0:v", "-c", "copy",
+                                   "-f", "md5", "-"], capture_output=True, text=True).stdout
+        os.remove(video)
+        self.assertEqual(cv.pending(root, date(2026, 10, 6)), [("656", day)])
+        self.assertEqual(cv.encode(root, "656", day)["remuxed"], 7)
+        self.assertFalse(os.path.exists(legacy))
+        again = subprocess.run(["ffmpeg", "-loglevel", "error", "-i", video, "-map", "0:v", "-c", "copy",
+                                "-f", "md5", "-"], capture_output=True, text=True).stdout
+        self.assertEqual(again, original)                                         # the same AV1 bitstream
 
     def test_odd_sized_frames_are_cropped_to_even(self):
         root = tempfile.mkdtemp()

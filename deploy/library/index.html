@@ -1,0 +1,388 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Camera Video Library</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22%3E%3Crect width=%2216%22 height=%2216%22 rx=%224%22 fill=%22%232C8C99%22/%3E%3Cpath d=%22M6 4l6 4-6 4z%22 fill=%22%23FFFBF4%22/%3E%3C/svg%3E">
+<!--
+  The camera video library (owner, Oct 6, 2026): every finished day of every
+  recorded camera, played in the browser. Served by Caddy at /videos/ on the
+  LAN and tailnet only; the videos are 511 Idaho's pictures and stay private.
+  The archive keeps its clock layout (video mm:ss = clock hh:mm, docs/11
+  §11.5); this page plays it faster, 12 frames a second by default.
+  Data: files/index-<list>.json (written by the frame streams) and, per day,
+  the video and its frame CSV.
+-->
+<style>
+  :root {
+    --ink: #2B2A33; --ink-soft: #5D5A66; --panel: #FFFBF4; --panel-edge: #E3D7C4;
+    --ground: #EEE7DA; --accent: #F2A20C; --accent-2: #2C8C99; --alert: #D9467A;
+    --gap: #B9B4AA; --frame: #2C8C99;
+    --head: Fredoka, "Nunito", ui-rounded, system-ui, sans-serif;
+    --body: Overpass, system-ui, -apple-system, "Segoe UI", sans-serif;
+    --mono: "Overpass Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body { background: var(--ground); color: var(--ink); font: 15px/1.4 var(--body); }
+  .app { display: grid; grid-template-columns: 300px 1fr; height: 100vh; }
+  aside { background: var(--panel); border-right: 2px solid var(--panel-edge); display: flex; flex-direction: column; min-height: 0; }
+  aside header { padding: 14px 14px 8px; }
+  h1 { font: 600 20px/1.2 var(--head); margin: 0 0 8px; }
+  #search { width: 100%; padding: 8px 10px; border: 2px solid var(--panel-edge); border-radius: 10px; font: inherit; background: #fff; }
+  #search:focus { outline: 2px solid var(--accent-2); outline-offset: 1px; }
+  #list { overflow-y: auto; padding: 0 8px 12px; flex: 1; }
+  .group { font: 600 13px var(--head); color: var(--ink-soft); text-transform: uppercase; letter-spacing: .04em; margin: 12px 6px 4px; }
+  .cam { display: flex; justify-content: space-between; gap: 8px; width: 100%; text-align: left; border: 0; background: none;
+         padding: 7px 8px; border-radius: 8px; font: inherit; color: inherit; cursor: pointer; }
+  .cam:hover { background: var(--ground); }
+  .cam[aria-current="true"] { background: #FCE7BD; box-shadow: inset 3px 0 0 var(--accent); }
+  .cam small { color: var(--ink-soft); font: 12px var(--mono); white-space: nowrap; }
+  main { display: flex; flex-direction: column; min-width: 0; min-height: 0; padding: 14px 18px; gap: 10px; overflow-y: auto; }
+  .bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
+  h2 { font: 600 22px/1.2 var(--head); margin: 0; }
+  h2 small { font: 14px var(--mono); color: var(--ink-soft); margin-left: 6px; }
+  .card { background: var(--panel); border: 2px solid var(--panel-edge); border-radius: 16px; padding: 10px 12px; }
+  .stage { position: relative; background: #1d1c22; border-radius: 16px; overflow: hidden; border: 2px solid var(--panel-edge);
+           display: flex; align-items: center; justify-content: center; min-height: 200px; }
+  video { display: block; width: 100%; max-height: 68vh; background: #1d1c22; }
+  .hud { position: absolute; left: 10px; top: 10px; background: rgba(255,251,244,.92); border-radius: 10px; padding: 4px 10px;
+         font: 600 15px var(--mono); pointer-events: none; }
+  .hud.gap::before { content: "◌ "; color: var(--ink-soft); }
+  button.btn, select { font: inherit; border: 2px solid var(--panel-edge); background: #fff; color: var(--ink); border-radius: 10px;
+                       padding: 5px 10px; cursor: pointer; min-height: 34px; }
+  button.btn:hover { border-color: var(--accent-2); }
+  button.btn[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--ink); font-weight: 600; }
+  button.btn:focus-visible, select:focus-visible, .cam:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 1px; }
+  .seg { display: inline-flex; gap: 4px; }
+  .mono { font-family: var(--mono); }
+  .soft { color: var(--ink-soft); }
+  .timeline { position: relative; }
+  #coverage { display: block; width: 100%; height: 14px; border-radius: 6px; background: var(--gap); }
+  #clock { width: 100%; margin: 6px 0 0; accent-color: var(--accent); }
+  .ticks { display: flex; justify-content: space-between; font: 11px var(--mono); color: var(--ink-soft); }
+  .legend { display: flex; gap: 14px; font-size: 13px; color: var(--ink-soft); }
+  .legend i { display: inline-block; width: 18px; height: 10px; border-radius: 3px; vertical-align: middle; margin-right: 5px; }
+  .empty { padding: 40px; text-align: center; color: var(--ink-soft); }
+  .keys { font-size: 12px; color: var(--ink-soft); }
+  kbd { font: 11px var(--mono); border: 1px solid var(--panel-edge); border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; background: #fff; }
+  a { color: var(--accent-2); }
+  @media (max-width: 760px) {
+    .app { grid-template-columns: 1fr; grid-template-rows: auto 1fr; height: auto; min-height: 100vh; }
+    aside { border-right: 0; border-bottom: 2px solid var(--panel-edge); max-height: 40vh; }
+    main { padding: 12px 16px; }
+    button.btn, select { min-height: 44px; }
+    .keys { display: none; }
+  }
+  @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside>
+    <header>
+      <h1>Camera video library</h1>
+      <input id="search" type="search" placeholder="Search cameras or IDs  ( / )" aria-label="Search cameras" autocomplete="off">
+    </header>
+    <nav id="list" aria-label="Cameras"><p class="empty">Loading…</p></nav>
+  </aside>
+  <main id="main">
+    <div class="empty" id="welcome">Pick a camera on the left. Each video is one day, midnight to midnight, Boise time.</div>
+    <div id="viewer" hidden>
+      <div class="bar">
+        <h2 id="title"></h2>
+        <span class="seg">
+          <button class="btn" id="prevDay" title="Previous day ( [ )" aria-label="Previous day">◀</button>
+          <select id="day" aria-label="Day"></select>
+          <button class="btn" id="nextDay" title="Next day ( ] )" aria-label="Next day">▶</button>
+        </span>
+      </div>
+      <div class="stage">
+        <video id="video" playsinline muted preload="auto"></video>
+        <div class="hud" id="hud" aria-live="off" title="When we fetched this picture. The camera's own time is in its bar."></div>
+      </div>
+      <div class="card">
+        <div class="bar">
+          <span class="seg">
+            <button class="btn" id="play" aria-label="Play">▶ Play</button>
+            <button class="btn" id="stepBack" title="Previous picture ( ← )" aria-label="Previous picture">⏮</button>
+            <button class="btn" id="stepFwd" title="Next picture ( → )" aria-label="Next picture">⏭</button>
+          </span>
+          <span class="seg" id="speeds" role="group" aria-label="Speed"></span>
+          <span class="soft" id="speedNote"></span>
+        </div>
+        <div class="timeline" style="margin-top:10px">
+          <canvas id="coverage" height="14" aria-hidden="true"></canvas>
+          <input id="clock" type="range" min="0" max="1440" step="0.1" value="0" aria-label="Time of day">
+          <div class="ticks"><span>12 AM</span><span>6 AM</span><span>12 PM</span><span>6 PM</span><span>12 AM</span></div>
+        </div>
+        <div class="bar" style="margin-top:6px">
+          <span class="mono" id="frameInfo"></span>
+          <span class="legend"><span><i style="background:var(--frame)"></i>pictures</span><span><i style="background:var(--gap)"></i>no pictures (gray)</span></span>
+          <span id="downloads" class="soft"></span>
+        </div>
+      </div>
+      <p class="keys"><kbd>Space</kbd> play or pause · <kbd>←</kbd> <kbd>→</kbd> one picture · <kbd>↑</kbd> <kbd>↓</kbd> speed · <kbd>[</kbd> <kbd>]</kbd> day · <kbd>/</kbd> search.
+        Times are when we fetched each picture; the camera's own time is in its bar. Pictures from 511 Idaho (ACHD and ITD cameras): private, not for publishing.</p>
+    </div>
+  </main>
+</div>
+<script>
+"use strict";
+const TZ = "America/Boise";
+const FPS_CHOICES = [1, 4, 12, 16];
+const DEFAULT_FPS = 12;
+const MAX_RATE = 16;                       // Chrome's playbackRate limit
+const KNOWN_INDEXES = ["index-key_cameras.json", "index-regional-cameras.json"];
+const $ = (id) => document.getElementById(id);
+const video = $("video");
+const timeFmt = new Intl.DateTimeFormat("en-US", { timeZone: TZ, hour: "numeric", minute: "2-digit", second: "2-digit" });
+const dayFmt = new Intl.DateTimeFormat("en-US", { timeZone: "UTC", weekday: "short", month: "short", day: "numeric", year: "numeric" });
+
+const state = { groups: [], cams: new Map(), cam: null, day: null, rows: [], frames: [], midnightMs: 0, fps: DEFAULT_FPS, spacing: 1 };
+
+async function loadIndexes() {
+  let names = KNOWN_INDEXES;
+  try {
+    const r = await fetch("files/", { headers: { Accept: "application/json" } });
+    if (r.ok) {
+      const listing = await r.json();
+      const found = listing.map((f) => f.name).filter((n) => /^index-.*\.json$/.test(n));
+      if (found.length) names = found.sort();
+    }
+  } catch (_) { /* no listing: use the known names */ }
+  const groups = [];
+  for (const name of names) {
+    try {
+      const r = await fetch("files/" + name, { cache: "no-cache" });
+      if (!r.ok) continue;
+      const idx = await r.json();
+      const cams = idx.cameras.filter((c) => c.days.length);
+      cams.forEach((c) => state.cams.set(c.id, { ...c, group: idx.title }));
+      groups.push({ title: idx.title, cams });
+    } catch (_) { /* skip a broken index */ }
+  }
+  groups.sort((a, b) => (a.title === "Key cameras" ? -1 : b.title === "Key cameras" ? 1 : a.title.localeCompare(b.title)));
+  state.groups = groups;
+}
+
+function renderList(filter = "") {
+  const q = filter.trim().toLowerCase();
+  const list = $("list");
+  list.textContent = "";
+  let shown = 0;
+  for (const g of state.groups) {
+    const cams = g.cams.filter((c) => !q || c.name.toLowerCase().includes(q) || c.id.includes(q));
+    if (!cams.length) continue;
+    const h = document.createElement("div");
+    h.className = "group";
+    h.textContent = `${g.title} (${cams.length})`;
+    list.append(h);
+    for (const c of cams) {
+      const b = document.createElement("button");
+      b.className = "cam";
+      b.dataset.id = c.id;
+      b.setAttribute("aria-current", String(state.cam && state.cam.id === c.id));
+      const name = document.createElement("span");
+      name.textContent = c.name;
+      const meta = document.createElement("small");
+      meta.textContent = `${c.id} · ${c.days.length}d`;
+      b.append(name, meta);
+      b.addEventListener("click", () => selectCamera(c.id));
+      list.append(b);
+      shown++;
+    }
+  }
+  if (!shown) list.innerHTML = `<p class="empty">${state.cams.size ? "No camera matches." : "No videos yet: the first day is made just after midnight."}</p>`;
+}
+
+function parseCsv(text) {
+  const [head, ...lines] = text.trim().split(/\r?\n/);
+  const keys = head.split(",");
+  return lines.map((l) => { const v = l.split(","); return Object.fromEntries(keys.map((k, i) => [k, v[i] ?? ""])); });
+}
+
+function dayLabel(d) { return dayFmt.format(new Date(d + "T12:00:00Z")); }
+
+async function selectCamera(id, day, t) {
+  const cam = state.cams.get(id);
+  if (!cam) return;
+  state.cam = cam;
+  document.querySelectorAll(".cam").forEach((b) => b.setAttribute("aria-current", String(b.dataset.id === id)));
+  $("welcome").hidden = true;
+  $("viewer").hidden = false;
+  $("title").innerHTML = "";
+  $("title").append(cam.name, Object.assign(document.createElement("small"), { textContent: `#${cam.id}` }));
+  const sel = $("day");
+  sel.textContent = "";
+  for (const d of [...cam.days].reverse()) sel.append(new Option(dayLabel(d.day), d.day));
+  await selectDay(day && cam.days.some((d) => d.day === day) ? day : cam.days[cam.days.length - 1].day, t);
+}
+
+async function selectDay(day, t) {
+  const d = state.cam.days.find((x) => x.day === day);
+  if (!d) return;
+  state.day = d;
+  $("day").value = day;
+  const r = await fetch("files/" + d.csv);
+  state.rows = r.ok ? parseCsv(await r.text()) : [];
+  state.rows.forEach((row) => { row.s = parseFloat(row.video_s); });
+  state.frames = state.rows.filter((row) => row.kind === "frame");
+  const first = state.frames[0];
+  state.midnightMs = first ? Date.parse(first.fetched_at) - first.s * 60000 : Date.parse(day + "T06:00:00Z");
+  const gaps = state.frames.slice(1).map((f, i) => f.s - state.frames[i].s).sort((a, b) => a - b);
+  state.spacing = gaps.length ? Math.max(0.05, gaps[Math.floor((gaps.length - 1) / 2)]) : 1;
+  video.src = "files/" + d.video;
+  $("downloads").innerHTML = `<a href="files/${d.video}" download>video</a> · <a href="files/${d.csv}" download>picture list (CSV)</a>`;
+  renderSpeeds();
+  drawCoverage();
+  const start = t != null ? t : first ? first.s : 0;
+  video.addEventListener("loadedmetadata", () => {
+    $("clock").max = String(Math.round(video.duration * 10) / 10);
+    video.currentTime = Math.min(start, video.duration || start);
+    applyRate();
+    update();
+  }, { once: true });
+  writeHash();
+}
+
+function rateFor(fps) { return Math.min(MAX_RATE, Math.max(0.0625, fps * state.spacing)); }
+
+function applyRate() {
+  const rate = rateFor(state.fps);
+  video.playbackRate = rate;
+  video.defaultPlaybackRate = rate;
+  const real = rate / state.spacing;
+  const perSec = rate;                                   // minutes of the day per second
+  $("speedNote").textContent = `${real < state.fps - 0.05 ? "≈" + real.toFixed(1) + " fps (browser's fastest)" : state.fps + " fps"} · ${perSec >= 1 ? Math.round(perSec) + " min" : Math.round(perSec * 60) + " s"} of the day per second`;
+}
+
+function renderSpeeds() {
+  const box = $("speeds");
+  box.textContent = "";
+  for (const f of FPS_CHOICES) {
+    const b = document.createElement("button");
+    b.className = "btn";
+    b.textContent = `${f} fps`;
+    b.setAttribute("aria-pressed", String(f === state.fps));
+    b.addEventListener("click", () => { state.fps = f; renderSpeeds(); applyRate(); writeHash(); });
+    box.append(b);
+  }
+}
+
+function drawCoverage() {
+  const c = $("coverage");
+  const w = (c.width = Math.max(300, Math.round(c.clientWidth * devicePixelRatio)));
+  const h = (c.height = Math.round(14 * devicePixelRatio));
+  const ctx = c.getContext("2d");
+  const total = Number($("clock").max) || 1440;
+  ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue("--gap");
+  ctx.fillRect(0, 0, w, h);
+  ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue("--frame");
+  for (let i = 0; i < state.rows.length; i++) {
+    const row = state.rows[i];
+    if (row.kind !== "frame") continue;
+    const end = i + 1 < state.rows.length ? state.rows[i + 1].s : total;
+    const x0 = (row.s / total) * w, x1 = Math.max(x0 + 1, (end / total) * w);
+    ctx.fillRect(x0, 0, x1 - x0, h);
+  }
+}
+
+function rowAt(t) {
+  let lo = 0, hi = state.rows.length - 1, found = null;
+  while (lo <= hi) { const mid = (lo + hi) >> 1; if (state.rows[mid].s <= t + 1e-6) { found = mid; lo = mid + 1; } else hi = mid - 1; }
+  return found;
+}
+
+function update() {
+  const t = video.currentTime || 0;
+  const clockMs = state.midnightMs + t * 60000;
+  const i = rowAt(t);
+  const row = i == null ? null : state.rows[i];
+  const hud = $("hud");
+  if (row && row.kind === "frame") {
+    hud.classList.remove("gap");
+    hud.textContent = timeFmt.format(new Date(Date.parse(row.fetched_at)));
+    const n = state.frames.indexOf(row) + 1;
+    $("frameInfo").textContent = `Picture ${n} of ${state.frames.length} · fetched ${timeFmt.format(new Date(Date.parse(row.fetched_at)))}`;
+  } else {
+    hud.classList.add("gap");
+    hud.textContent = timeFmt.format(new Date(clockMs));
+    $("frameInfo").textContent = `No pictures around ${timeFmt.format(new Date(clockMs))} · ${state.frames.length} pictures this day`;
+  }
+  if (document.activeElement !== $("clock")) $("clock").value = String(t);
+  $("play").textContent = video.paused ? "▶ Play" : "❚❚ Pause";
+  $("play").setAttribute("aria-label", video.paused ? "Play" : "Pause");
+}
+
+function step(dir) {
+  video.pause();
+  const t = video.currentTime;
+  const target = dir > 0 ? state.frames.find((f) => f.s > t + 0.01) : [...state.frames].reverse().find((f) => f.s < t - 0.01);
+  if (target) video.currentTime = target.s + 0.001;
+}
+
+function shiftDay(dir) {
+  if (!state.cam) return;
+  const i = state.cam.days.findIndex((d) => d.day === state.day.day);
+  const next = state.cam.days[i + dir];
+  if (next) selectDay(next.day);
+}
+
+function writeHash() {
+  if (!state.cam || !state.day) return;
+  const p = new URLSearchParams({ cam: state.cam.id, day: state.day.day, fps: String(state.fps) });
+  if (video.currentTime) p.set("t", video.currentTime.toFixed(1));
+  history.replaceState(null, "", "#" + p.toString());
+}
+
+function readHash() {
+  const p = new URLSearchParams(location.hash.slice(1));
+  const fps = Number(p.get("fps"));
+  if (FPS_CHOICES.includes(fps)) state.fps = fps;
+  return { cam: p.get("cam"), day: p.get("day"), t: p.has("t") ? Number(p.get("t")) : null };
+}
+
+$("search").addEventListener("input", (e) => renderList(e.target.value));
+$("day").addEventListener("change", (e) => selectDay(e.target.value));
+$("prevDay").addEventListener("click", () => shiftDay(-1));
+$("nextDay").addEventListener("click", () => shiftDay(1));
+$("play").addEventListener("click", () => (video.paused ? video.play() : video.pause()));
+$("stepBack").addEventListener("click", () => step(-1));
+$("stepFwd").addEventListener("click", () => step(1));
+$("clock").addEventListener("input", (e) => { video.currentTime = Number(e.target.value); });
+$("clock").addEventListener("change", writeHash);
+video.addEventListener("timeupdate", update);
+video.addEventListener("seeked", update);
+video.addEventListener("play", update);
+video.addEventListener("pause", () => { update(); writeHash(); });
+video.addEventListener("ratechange", () => { if (Math.abs(video.playbackRate - rateFor(state.fps)) > 0.01) applyRate(); });
+window.addEventListener("resize", drawCoverage);
+document.addEventListener("keydown", (e) => {
+  const tag = (e.target.tagName || "").toLowerCase();
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  if (e.key === "/" && tag !== "input") { e.preventDefault(); $("search").focus(); return; }
+  if (tag === "input" && e.target.type !== "range" || tag === "select" || tag === "textarea") return;
+  if (!state.cam) return;
+  if (e.key === " " && tag !== "button") { e.preventDefault(); video.paused ? video.play() : video.pause(); }
+  else if (e.key === "ArrowLeft") { e.preventDefault(); step(-1); }
+  else if (e.key === "ArrowRight") { e.preventDefault(); step(1); }
+  else if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+    e.preventDefault();
+    const i = FPS_CHOICES.indexOf(state.fps) + (e.key === "ArrowUp" ? 1 : -1);
+    if (i >= 0 && i < FPS_CHOICES.length) { state.fps = FPS_CHOICES[i]; renderSpeeds(); applyRate(); writeHash(); }
+  }
+  else if (e.key === "[") shiftDay(-1);
+  else if (e.key === "]") shiftDay(1);
+});
+
+(async () => {
+  const wanted = readHash();
+  await loadIndexes();
+  renderList();
+  if (wanted.cam && state.cams.has(wanted.cam)) selectCamera(wanted.cam, wanted.day, wanted.t);
+})();
+</script>
+</body>
+</html>

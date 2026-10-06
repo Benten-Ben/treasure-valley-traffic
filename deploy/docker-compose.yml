@@ -159,6 +159,9 @@ services:
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - ${TILES_DIR:?set TILES_DIR in deploy/.env}:/srv/tiles:ro
+      # The video library page (/videos/) and, read-only, the camera videos it plays.
+      - ./library:/srv/library:ro
+      - ${ARCHIVE_DIR:-/srv/tvt/archive}/cameras/video:/srv/videos:ro
       - caddy-data:/data
       # Caddy asks the VM's Tailscale daemon for the tailnet certificate.
       - /var/run/tailscale/tailscaled.sock:/var/run/tailscale/tailscaled.sock

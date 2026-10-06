@@ -107,13 +107,26 @@ def rollup_due(now_local):
     return now_local - midnight >= ROLLUP_AFTER
 
 
-def _rollup_and_prune(root, items, today, own, log):
+# Headings for each capture list in the video library (deploy/library/).
+LIBRARY_TITLES = {"key_cameras": "Key cameras", "regional-cameras": "Road weather and Oregon"}
+
+
+def update_library(root, cams, list_name, log):
+    try:
+        camera_video.write_index(root, cams, list_name, LIBRARY_TITLES.get(list_name, list_name))
+    except Exception as err:
+        log(f"video library index not written: {err}")
+
+
+def _rollup_and_prune(root, items, today, own, log, library=None):
     try:
         done, failed = camera_video.rollup(root, items, log=log)
         removed = camera_video.prune(root, today, KEEP_JPEG_DAYS, own)
         log(f"roll-up finished: {done} videos, {failed} failed; {len(removed)} old JPEG days deleted")
     except Exception as err:
         log(f"roll-up stopped: {err}")
+    if library:
+        update_library(root, *library, log)
 
 
 def stream(every=POLL_S):
@@ -132,6 +145,8 @@ def stream(every=POLL_S):
         print(f"{tag}: {message}", flush=True)
 
     log(f"{len(cams)} cameras every {every} s, saving to {root}/cameras")
+    list_name = os.path.splitext(os.path.basename(path))[0]
+    update_library(root, cams, list_name, log)
     last = last_digests(root, cams, camera_video.local_day(datetime.now(timezone.utc)))
     counts, new_per_cam, samples = Counter(), Counter(), []
     report_at = time.time() + REPORT_EVERY_S
@@ -209,7 +224,8 @@ def stream(every=POLL_S):
             due = camera_video.pending(root, today, own)
             if due:
                 log(f"rolling up {len(due)} camera days")
-                worker = threading.Thread(target=_rollup_and_prune, args=(root, due, today, own, log), daemon=True)
+                worker = threading.Thread(target=_rollup_and_prune, daemon=True,
+                                          args=(root, due, today, own, log, (cams, list_name)))
                 worker.start()
 
         if time.time() >= robots_at:

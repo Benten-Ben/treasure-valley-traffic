@@ -15,6 +15,27 @@
 		file_server
 	}
 
+	# The camera video library (deploy/library/). The videos are 511 Idaho's
+	# pictures, so the site stays on the LAN and tailnet. Videos and their
+	# picture-time CSVs come read-only from the archive; the frame streams
+	# rewrite the index-*.json files after each roll-up.
+	redir /videos /videos/
+	handle_path /videos/files/* {
+		root * /srv/videos
+		encode zstd gzip
+		@index path /index-*.json
+		@media not path /index-*.json
+		header @index Cache-Control "no-cache"
+		header @media Cache-Control "public, max-age=3600"
+		file_server browse
+	}
+	handle_path /videos/* {
+		root * /srv/library
+		encode zstd gzip
+		header Cache-Control "no-cache"
+		file_server
+	}
+
 	handle {
 		encode zstd gzip
 		reverse_proxy app:3000

@@ -471,10 +471,18 @@ JPEG, 752 about 32 KB.
 
 **The archive format (owner, Oct 5):**
 
-- **Codec:** AV1 via SVT-AV1, preset 6, crf30.
-- **Container:** MKV, one file per camera per day, rolled up from the
+- **Codec:** AV1 via SVT-AV1, preset 6, crf30, with a keyframe every 60
+  pictures (since Oct 6; was 600). A test on Oct 6 found more keyframes
+  cost nothing (Oct 5 evening, two cameras: 600 → 60 came out 1–2%
+  smaller), and seeking needs at most 60 pictures decoded instead of 600:
+  in Chromium on the cloud machine, a seek in the HD camera's evening took
+  up to 9.6 s with one keyframe.
+- **Container:** MP4, one file per camera per day, rolled up from the
   JPEGs after midnight
-  ([`ingest/camera_video.py`](../ingest/camera_video.py)).
+  ([`ingest/camera_video.py`](../ingest/camera_video.py)). MKV until
+  Oct 6: browsers don't play MKV, and the video library needs them to. The
+  next roll-up remuxes an old MKV into MP4 without re-encoding (the same
+  AV1 bitstream, checked by a test).
 - **Originals:** keep the JPEGs 2 days (today and yesterday), then delete
   them once their video exists (owner, Oct 5). Measuring needs 24–48 hours.
 - **Getting a frame back:** every frame can be pulled out of the video as an
@@ -483,7 +491,7 @@ JPEG, 752 about 32 KB.
   across the 26 evening-rush frames of camera 656, SSIM 0.979 on average
   (lowest 0.973) and PSNR 41 dB (lowest 40 dB). At 2x zoom every vehicle is
   still distinct; fine texture such as lane-marking edges is slightly
-  softer. (`ffmpeg -i day.mkv -fps_mode passthrough frame%04d.png` writes
+  softer. (`ffmpeg -i day.mp4 -fps_mode passthrough frame%04d.png` writes
   them all; frame 1 is the gray lead-in when the day starts with a gap.)
 
 **The encoder version matters** (checked on the server, Oct 5, evening-rush
@@ -575,9 +583,20 @@ about 5,000), and one video per camera per day to watch.
   and 30 frames a second came out the same size, within 0.02% (evening
   rush, both cameras). Speed is only a timing label, so a faster copy can
   be made from the archive in a second without re-encoding, with
-  bit-for-bit the same pictures (`ffmpeg -itsscale 0.0417 -i day.mkv -c
-  copy fast.mkv` plays a day in about a minute). The archive keeps the 60x
+  bit-for-bit the same pictures (`ffmpeg -itsscale 0.0417 -i day.mp4 -c
+  copy fast.mp4` plays a day in about a minute). The archive keeps the 60x
   clock layout; faster viewing is a player setting or a quick copy.
+- **The video library** (owner, Oct 6): `/videos/` on the site (LAN and
+  tailnet only, since these are 511's pictures) lists every recorded camera
+  and day and plays them in the browser at **12 pictures a second** by
+  default (1, 4, 12 or 16 to choose), with a clock slider, a strip showing
+  when there were pictures, picture-by-picture stepping, and each picture's
+  fetch time from the CSV. For the key cameras 12 pictures a second is about
+  10x (10 minutes of the day a second, a day in about 2½ minutes). Road-weather
+  views change every 10–15 minutes, and browsers play at most 16x, so they
+  top out near 1.6 pictures a second (a day in 90 s). The page is
+  [`deploy/library/index.html`](../deploy/library/index.html); the frame
+  streams write its index (`cameras/video/index-<list>.json`).
 
 ## 11.6 Open questions for the owner
 
