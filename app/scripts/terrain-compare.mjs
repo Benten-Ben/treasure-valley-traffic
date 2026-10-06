@@ -21,7 +21,7 @@
  *
  * Usage:
  *   node scripts/terrain-compare.mjs --before terrain.pmtiles --after terrain-webp-20261006.pmtiles \
- *     [--tiles DIR] [--app http://127.0.0.1:5218] [--only foothills-z13] [--kinds hillshade,app-3d]
+ *     [--tiles DIR] [--app http://127.0.0.1:5218] [--zooms 10,13,15] [--only foothills-z13] [--kinds hillshade,app-3d]
  */
 import { chromium } from '@playwright/test';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -39,6 +39,7 @@ const { values: args } = parseArgs({
 		app: { type: 'string' },
 		out: { type: 'string' },
 		only: { type: 'string' },
+		zooms: { type: 'string', default: '10,13,15' },
 		kinds: { type: 'string', default: 'hillshade,app-2d,app-3d' },
 		width: { type: 'string', default: '900' },
 		height: { type: 'string', default: '600' }
@@ -61,7 +62,7 @@ const PLACES = [
 	{ name: 'foothills', lon: -116.175, lat: 43.6478, bearing: 25 },
 	{ name: 'valley', lon: -116.42, lat: 43.53, bearing: 20 }
 ];
-const ZOOMS = [10, 13, 15];
+const ZOOMS = args.zooms.split(',').map(Number);
 const views = PLACES.flatMap((p) => ZOOMS.map((z) => ({ ...p, z, id: `${p.name}-z${z}` }))).filter(
 	(v) => !args.only || args.only.split(',').includes(v.id)
 );

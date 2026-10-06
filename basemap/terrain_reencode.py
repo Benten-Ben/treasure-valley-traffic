@@ -7,11 +7,11 @@ tile for tile, without going back to the DEM:
 
   1. Read every tile of the input PMTiles (a small v3 reader below; stdlib only).
   2. Decode the PNG, round each elevation to a step that depends on the zoom
-     (default about 1 m up to z11, 0.5 m at z12-13, 0.2 m from z14), and
-     encode the tile as lossless WebP. Rounding happens on the encoded integer
-     (0.1 m units, offset 10,000 m), so the error is exact: at most half the
-     step. Each new tile is decoded again and checked against what was meant
-     to be written.
+     (by default 1 m up to z10, 0.5 m at z11, 0.4 m at z12, 0.2 m at z13,
+     and no rounding from z14), and encode the tile as lossless WebP.
+     Rounding happens on the encoded integer (0.1 m units, offset 10,000 m),
+     so the error is exact: at most half the step. Each new tile is decoded
+     again and checked against what was meant to be written.
   3. Write the tiles to MBTiles with the input's metadata (now `format: webp`)
      and convert with `pmtiles convert`, then put the input's exact bounds and
      center back into the new header.
@@ -36,7 +36,8 @@ Usage:
       --manifest-out data/dev/t/manifest.json
       # also write a manifest copy (next to the output) that uses the new file
   python3.12 basemap/terrain_reencode.py IN --steps=-11:1,12-13:0.5,14-:0.2
-      # rounding per zoom range, in metres (0 = keep every 0.1 m step)
+      # rounding per zoom range, in metres (0 = keep every 0.1 m step); this
+      # one is the first guess, which terraced flat ground at z13 and z15
   python3.12 basemap/terrain_reencode.py IN --check OUT --sample 0
       # only compare an existing output with its input (0 = every tile)
 """
@@ -237,7 +238,13 @@ class PMTiles:
 
 UNIT = 0.1               # Mapbox terrain-RGB: height = -10000 + value * 0.1 m
 OFFSET_UNITS = 100000    # the 10,000 m offset in units; a multiple of every allowed step
-DEFAULT_STEPS = "-11:1,12-13:0.5,14-:0.2"
+# Tuned by before/after screenshots (Oct 6, docs/14 §14.10 WP17). Rounding shows as contour
+# lines on flat ground once the step is large next to a pixel: MapLibre's hillshade sees a
+# step of s over a pixel of p metres, and boosts slopes more the lower the zoom. These steps
+# keep that about where the source's own 0.1 m steps are at z14. z14 is not rounded: every
+# view from z14 in (cameras, intersections, calibrating) is drawn from it, and 0.2 m there
+# drew faint contours across the flat valley floor even at the app's shading.
+DEFAULT_STEPS = "-10:1,11:0.5,12:0.4,13:0.2,14-:0"
 
 
 def parse_steps(text):

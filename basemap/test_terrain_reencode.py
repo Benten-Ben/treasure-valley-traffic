@@ -294,8 +294,11 @@ class TileIdTest(unittest.TestCase):
 class StepsTest(unittest.TestCase):
     def test_default(self):
         steps = T.parse_steps(T.DEFAULT_STEPS)
-        self.assertEqual([T.step_units(steps, z) for z in range(6, 16)], [10] * 6 + [5, 5, 2, 2])
-        self.assertEqual(T.describe_steps(steps, 6, 14), "1 m at z6-11, 0.5 m at z12-13, 0.2 m at z14")
+        self.assertEqual([T.step_units(steps, z) for z in range(6, 16)], [10] * 5 + [5, 4, 2, 0, 0])
+        self.assertEqual(T.describe_steps(steps, 6, 14),
+                         "1 m at z6-10, 0.5 m at z11, 0.4 m at z12, 0.2 m at z13, unrounded at z14")
+        # Every default step divides 10,000 m, so rounded heights stay on whole multiples.
+        self.assertTrue(all(units == 0 or T.OFFSET_UNITS % units == 0 for *_, units in steps))
 
     def test_bad(self):
         for text in ("6-11:0.25", "6-11:-1", "6-11:1,10-12:0.5", "x:1", "12-6:1", "6-11:0.3"):
