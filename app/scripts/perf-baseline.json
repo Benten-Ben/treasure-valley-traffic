@@ -1,0 +1,580 @@
+{
+  "mode": "budget",
+  "at": "2026-10-06T16:09:46.389Z",
+  "commit": "57e6d33",
+  "url": "http://127.0.0.1:5201",
+  "browser": "chromium 141.0.7390.37",
+  "os": "Linux 6.18.44-fc-v70 x64",
+  "gpu": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+  "throttle": {
+    "latencyMs": 40,
+    "mbps": 25
+  },
+  "runs": 5,
+  "tilesServer": "vite preview with the Caddy mirror (src/lib/server/tiles-static.ts)",
+  "results": {
+    "S1": {
+      "default": {
+        "median": {
+          "requests": 61,
+          "bytes": 8635319,
+          "terrainBytes": 7690010,
+          "jsGzipBytes": 347274,
+          "apiGzipBytes": 35672,
+          "duplicates": 0,
+          "cached": 8,
+          "failed": 0,
+          "firstDataStartS": 4.029540999999881,
+          "firstDemResponseS": 0.5993990000001759,
+          "settledMs": 3937
+        },
+        "byKind": {
+          "other": {
+            "requests": 1,
+            "bytes": 904
+          },
+          "js": {
+            "requests": 14,
+            "bytes": 347274
+          },
+          "css": {
+            "requests": 3,
+            "bytes": 26838
+          },
+          "manifest": {
+            "requests": 1,
+            "bytes": 699
+          },
+          "fonts": {
+            "requests": 2,
+            "bytes": 34632
+          },
+          "basemap": {
+            "requests": 8,
+            "bytes": 197887
+          },
+          "terrain": {
+            "requests": 23,
+            "bytes": 7690010
+          },
+          "imagery": {
+            "requests": 2,
+            "bytes": 33518
+          },
+          "buildings": {
+            "requests": 1,
+            "bytes": 16757
+          },
+          "sprites": {
+            "requests": 2,
+            "bytes": 17158
+          },
+          "glyphs": {
+            "requests": 3,
+            "bytes": 233970
+          },
+          "api": {
+            "requests": 1,
+            "bytes": 35672
+          }
+        },
+        "runs": [
+          {
+            "requests": 61,
+            "bytes": 8635319,
+            "terrainBytes": 7690010,
+            "jsGzipBytes": 347274,
+            "apiGzipBytes": 35672,
+            "duplicates": 0,
+            "cached": 8,
+            "failed": 0,
+            "firstDataStartS": 4.2526230000003125,
+            "firstDemResponseS": 0.7509140000001935,
+            "settledMs": 4215
+          },
+          {
+            "requests": 61,
+            "bytes": 8635319,
+            "terrainBytes": 7690010,
+            "jsGzipBytes": 347274,
+            "apiGzipBytes": 35672,
+            "duplicates": 0,
+            "cached": 8,
+            "failed": 0,
+            "firstDataStartS": 3.453074000000015,
+            "firstDemResponseS": 0.5993990000001759,
+            "settledMs": 3675
+          },
+          {
+            "requests": 61,
+            "bytes": 8635319,
+            "terrainBytes": 7690010,
+            "jsGzipBytes": 347274,
+            "apiGzipBytes": 35672,
+            "duplicates": 0,
+            "cached": 8,
+            "failed": 0,
+            "firstDataStartS": 4.029540999999881,
+            "firstDemResponseS": 0.5831259999999929,
+            "settledMs": 3937
+          },
+          {
+            "requests": 61,
+            "bytes": 8635319,
+            "terrainBytes": 7690010,
+            "jsGzipBytes": 347274,
+            "apiGzipBytes": 35672,
+            "duplicates": 0,
+            "cached": 8,
+            "failed": 0,
+            "firstDataStartS": 4.290777000000162,
+            "firstDemResponseS": 0.6106760000002396,
+            "settledMs": 4219
+          },
+          {
+            "requests": 61,
+            "bytes": 8635319,
+            "terrainBytes": 7690010,
+            "jsGzipBytes": 347274,
+            "apiGzipBytes": 35672,
+            "duplicates": 0,
+            "cached": 8,
+            "failed": 0,
+            "firstDataStartS": 3.4170979999998963,
+            "firstDemResponseS": 0.5390210000000479,
+            "settledMs": 3344
+          }
+        ]
+      },
+      "z14p60": {
+        "median": {
+          "requests": 81,
+          "bytes": 7789192,
+          "terrainBytes": 6469718,
+          "jsGzipBytes": 347274,
+          "apiGzipBytes": 35672,
+          "duplicates": 6,
+          "cached": 9,
+          "failed": 3,
+          "firstDataStartS": 4.055460999999923,
+          "firstDemResponseS": 0.5706400000003669,
+          "settledMs": 3965
+        },
+        "byKind": {
+          "other": {
+            "requests": 1,
+            "bytes": 904
+          },
+          "js": {
+            "requests": 14,
+            "bytes": 347274
+          },
+          "css": {
+            "requests": 3,
+            "bytes": 26838
+          },
+          "manifest": {
+            "requests": 1,
+            "bytes": 699
+          },
+          "fonts": {
+            "requests": 2,
+            "bytes": 34632
+          },
+          "basemap": {
+            "requests": 13,
+            "bytes": 467694
+          },
+          "terrain": {
+            "requests": 36,
+            "bytes": 6813304
+          },
+          "imagery": {
+            "requests": 2,
+            "bytes": 33518
+          },
+          "buildings": {
+            "requests": 5,
+            "bytes": 143429
+          },
+          "sprites": {
+            "requests": 2,
+            "bytes": 17158
+          },
+          "glyphs": {
+            "requests": 3,
+            "bytes": 233970
+          },
+          "api": {
+            "requests": 1,
+            "bytes": 35672
+          }
+        },
+        "runs": [
+          {
+            "requests": 81,
+            "bytes": 7443809,
+            "terrainBytes": 6102021,
+            "jsGzipBytes": 347274,
+            "apiGzipBytes": 35672,
+            "duplicates": 6,
+            "cached": 9,
+            "failed": 3,
+            "firstDataStartS": 4.055460999999923,
+            "firstDemResponseS": 0.6001479999999901,
+            "settledMs": 3965
+          },
+          {
+            "requests": 79,
+            "bytes": 6708691,
+            "terrainBytes": 5366903,
+            "jsGzipBytes": 347274,
+            "apiGzipBytes": 35672,
+            "duplicates": 6,
+            "cached": 9,
+            "failed": 5,
+            "firstDataStartS": 3.4084179999999833,
+            "firstDemResponseS": 0.5605319999999665,
+            "settledMs": 3319
+          },
+          {
+            "requests": 81,
+            "bytes": 7789192,
+            "terrainBytes": 6469718,
+            "jsGzipBytes": 347274,
+            "apiGzipBytes": 35672,
+            "duplicates": 6,
+            "cached": 9,
+            "failed": 3,
+            "firstDataStartS": 4.860458000000108,
+            "firstDemResponseS": 0.5343990000001213,
+            "settledMs": 4772
+          },
+          {
+            "requests": 84,
+            "bytes": 8214542,
+            "terrainBytes": 6872754,
+            "jsGzipBytes": 347274,
+            "apiGzipBytes": 35672,
+            "duplicates": 7,
+            "cached": 8,
+            "failed": 1,
+            "firstDataStartS": 3.6593649999999798,
+            "firstDemResponseS": 0.64721899999995,
+            "settledMs": 3579
+          },
+          {
+            "requests": 83,
+            "bytes": 8155092,
+            "terrainBytes": 6813304,
+            "jsGzipBytes": 347274,
+            "apiGzipBytes": 35672,
+            "duplicates": 7,
+            "cached": 9,
+            "failed": 1,
+            "firstDataStartS": 4.723948000000291,
+            "firstDemResponseS": 0.5706400000003669,
+            "settledMs": 4646
+          }
+        ]
+      }
+    },
+    "S2": {
+      "median": {
+        "requests": 71,
+        "networkRequests": 26,
+        "cacheHits": 45,
+        "wireBytes": 7690407,
+        "terrainWireBytes": 7690010,
+        "settledMs": 3558
+      },
+      "runs": [
+        {
+          "requests": 69,
+          "networkRequests": 22,
+          "cacheHits": 47,
+          "wireBytes": 6196332,
+          "terrainWireBytes": 6195935,
+          "settledMs": 2508
+        },
+        {
+          "requests": 71,
+          "networkRequests": 26,
+          "cacheHits": 45,
+          "wireBytes": 7690407,
+          "terrainWireBytes": 7690010,
+          "settledMs": 3558
+        },
+        {
+          "requests": 71,
+          "networkRequests": 26,
+          "cacheHits": 45,
+          "wireBytes": 7690407,
+          "terrainWireBytes": 7690010,
+          "settledMs": 4028
+        },
+        {
+          "requests": 71,
+          "networkRequests": 26,
+          "cacheHits": 45,
+          "wireBytes": 7690407,
+          "terrainWireBytes": 7690010,
+          "settledMs": 4064
+        },
+        {
+          "requests": 71,
+          "networkRequests": 26,
+          "cacheHits": 45,
+          "wireBytes": 7690407,
+          "terrainWireBytes": 7690010,
+          "settledMs": 3192
+        }
+      ],
+      "profile": "persistent (disk cache)"
+    },
+    "S3": {
+      "streets": {
+        "median": {
+          "coldRequests": 3,
+          "coldBytes": 41965,
+          "warmRequests": 0,
+          "warmNetworkRequests": 0
+        },
+        "runs": [
+          {
+            "coldRequests": 3,
+            "coldBytes": 41965,
+            "warmRequests": 0,
+            "warmNetworkRequests": 0
+          },
+          {
+            "coldRequests": 3,
+            "coldBytes": 41965,
+            "warmRequests": 0,
+            "warmNetworkRequests": 0
+          },
+          {
+            "coldRequests": 3,
+            "coldBytes": 41965,
+            "warmRequests": 0,
+            "warmNetworkRequests": 0
+          },
+          {
+            "coldRequests": 3,
+            "coldBytes": 41965,
+            "warmRequests": 0,
+            "warmNetworkRequests": 0
+          },
+          {
+            "coldRequests": 3,
+            "coldBytes": 41965,
+            "warmRequests": 0,
+            "warmNetworkRequests": 0
+          }
+        ]
+      },
+      "transit": {
+        "median": {
+          "coldRequests": 6,
+          "coldBytes": 55547,
+          "warmRequests": 2,
+          "warmNetworkRequests": 2
+        },
+        "runs": [
+          {
+            "coldRequests": 6,
+            "coldBytes": 55546,
+            "warmRequests": 2,
+            "warmNetworkRequests": 2
+          },
+          {
+            "coldRequests": 6,
+            "coldBytes": 55547,
+            "warmRequests": 2,
+            "warmNetworkRequests": 2
+          },
+          {
+            "coldRequests": 6,
+            "coldBytes": 55547,
+            "warmRequests": 2,
+            "warmNetworkRequests": 2
+          },
+          {
+            "coldRequests": 6,
+            "coldBytes": 55546,
+            "warmRequests": 2,
+            "warmNetworkRequests": 2
+          },
+          {
+            "coldRequests": 6,
+            "coldBytes": 55547,
+            "warmRequests": 2,
+            "warmNetworkRequests": 2
+          }
+        ]
+      },
+      "cameras": {
+        "median": {
+          "coldRequests": 3,
+          "coldBytes": 41965,
+          "warmRequests": 0,
+          "warmNetworkRequests": 0
+        },
+        "runs": [
+          {
+            "coldRequests": 3,
+            "coldBytes": 41965,
+            "warmRequests": 0,
+            "warmNetworkRequests": 0
+          },
+          {
+            "coldRequests": 3,
+            "coldBytes": 41965,
+            "warmRequests": 0,
+            "warmNetworkRequests": 0
+          },
+          {
+            "coldRequests": 2,
+            "coldBytes": 30800,
+            "warmRequests": 0,
+            "warmNetworkRequests": 0
+          },
+          {
+            "coldRequests": 3,
+            "coldBytes": 41965,
+            "warmRequests": 0,
+            "warmNetworkRequests": 0
+          },
+          {
+            "coldRequests": 3,
+            "coldBytes": 41965,
+            "warmRequests": 0,
+            "warmNetworkRequests": 0
+          }
+        ]
+      }
+    },
+    "S6": {
+      "median": {
+        "returnLegRequests": 55,
+        "returnLegTileRefetches": 46,
+        "returnLegManifestRequests": 1,
+        "returnLegWireBytes": 4979461,
+        "centreErrorDeg": 0,
+        "zoomError": 0,
+        "mapsCreated": null,
+        "settledMs": 3543
+      },
+      "runs": [
+        {
+          "returnLegRequests": 57,
+          "returnLegTileRefetches": 46,
+          "returnLegManifestRequests": 1,
+          "returnLegWireBytes": 4979461,
+          "centreErrorDeg": 0,
+          "zoomError": 0,
+          "mapsCreated": null,
+          "settledMs": 3872
+        },
+        {
+          "returnLegRequests": 53,
+          "returnLegTileRefetches": 46,
+          "returnLegManifestRequests": 1,
+          "returnLegWireBytes": 4979461,
+          "centreErrorDeg": 0,
+          "zoomError": 0,
+          "mapsCreated": null,
+          "settledMs": 3375
+        },
+        {
+          "returnLegRequests": 58,
+          "returnLegTileRefetches": 46,
+          "returnLegManifestRequests": 1,
+          "returnLegWireBytes": 4979461,
+          "centreErrorDeg": 0,
+          "zoomError": 0,
+          "mapsCreated": null,
+          "settledMs": 3687
+        },
+        {
+          "returnLegRequests": 55,
+          "returnLegTileRefetches": 46,
+          "returnLegManifestRequests": 1,
+          "returnLegWireBytes": 4979461,
+          "centreErrorDeg": 0,
+          "zoomError": 0,
+          "mapsCreated": null,
+          "settledMs": 3543
+        },
+        {
+          "returnLegRequests": 55,
+          "returnLegTileRefetches": 46,
+          "returnLegManifestRequests": 1,
+          "returnLegWireBytes": 4979461,
+          "centreErrorDeg": 0,
+          "zoomError": 0,
+          "mapsCreated": null,
+          "settledMs": 3285
+        }
+      ]
+    }
+  },
+  "offsite": [],
+  "targets": [
+    {
+      "name": "cold first load ≤ 6 MB (default view)",
+      "value": "8.64 MB",
+      "ok": false
+    },
+    {
+      "name": "cold first load ≤ 50 requests",
+      "value": 61,
+      "ok": false
+    },
+    {
+      "name": "0 duplicate byte ranges",
+      "value": 0,
+      "ok": true
+    },
+    {
+      "name": "data fetches start before the first DEM response",
+      "value": "4.03 s vs 0.60 s",
+      "ok": false
+    },
+    {
+      "name": "every request same-origin",
+      "value": 0,
+      "ok": true
+    },
+    {
+      "name": "toggling loaded streets: 0 requests",
+      "value": 0,
+      "ok": true
+    },
+    {
+      "name": "toggling loaded transit: 0 requests",
+      "value": 2,
+      "ok": false
+    },
+    {
+      "name": "toggling loaded cameras: 0 requests",
+      "value": 0,
+      "ok": true
+    },
+    {
+      "name": "return leg: 0 refetched tiles",
+      "value": 46,
+      "ok": false
+    },
+    {
+      "name": "return leg: 0 manifest requests",
+      "value": 1,
+      "ok": false
+    },
+    {
+      "name": "view restored (centre < 1e-6°, zoom < 0.01)",
+      "value": "0 °, 0",
+      "ok": true
+    }
+  ]
+}

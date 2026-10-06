@@ -1,7 +1,7 @@
 import { error } from '@sveltejs/kit';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join, normalize, resolve, sep } from 'node:path';
-import { FRAMES_DIR } from '$app/env/private';
+import { FRAMES_DIR, TVT_FRAME_SOURCE } from '$app/env/private';
 
 const USER_AGENT =
 	'treasure-valley-traffic/0.2 (public-interest research; +https://github.com/Benten-Ben/treasure-valley-traffic)';
@@ -26,11 +26,36 @@ export function jpegSize(buf: Uint8Array): { width: number; height: number } | n
 	return null;
 }
 
-/** Fetch the current image for a view once and keep it as a reference frame. */
-export async function captureFrame(viewId: number, imageId: number) {
+/** Folder of seeded frames used in fixture mode (written by `npm run seed`). */
+export const FIXTURE_DIR = '_fixture';
+
+/**
+ * Fixture mode (TVT_FRAME_SOURCE=fixture): a seeded frame instead of 511, so
+ * tests and build agents never reach 511. Looks for view-<id>.jpg, then
+ * image-<imageId>.jpg, then default.jpg in FRAMES_DIR/_fixture.
+ */
+async function fixtureFrame(viewId: number, imageId: number): Promise<Uint8Array> {
+	for (const name of [`view-${viewId}.jpg`, `image-${imageId}.jpg`, 'default.jpg']) {
+		try {
+			return new Uint8Array(await readFile(join(root(), FIXTURE_DIR, name)));
+		} catch {
+			/* try the next one */
+		}
+	}
+	error(503, `Fixture mode (TVT_FRAME_SOURCE=fixture) has no seeded frame in ${FIXTURE_DIR}/: run npm run seed`);
+}
+
+/** The current image's bytes: from 511 Idaho, or the seeded fixture in fixture mode. */
+async function sourceFrame(viewId: number, imageId: number): Promise<Uint8Array> {
+	if (TVT_FRAME_SOURCE === 'fixture') return fixtureFrame(viewId, imageId);
 	const res = await fetch(imageUrl(imageId), { headers: { 'User-Agent': USER_AGENT } });
 	if (!res.ok) error(502, `511 Idaho answered ${res.status} for image ${imageId}`);
-	const buf = new Uint8Array(await res.arrayBuffer());
+	return new Uint8Array(await res.arrayBuffer());
+}
+
+/** Fetch the current image for a view once and keep it as a reference frame. */
+export async function captureFrame(viewId: number, imageId: number) {
+	const buf = await sourceFrame(viewId, imageId);
 	const size = jpegSize(buf);
 	if (!size) error(502, `511 Idaho's image ${imageId} isn't a readable JPEG`);
 	const stamp = new Date().toISOString().replace(/[:.]/g, '-');
