@@ -20,6 +20,7 @@
 	import { Loop } from '#lib/map/loop.js';
 	import { Picker } from '#lib/map/picker.js';
 	import { Overlay } from '#lib/overlay/overlay.svelte.js';
+	import { installScene } from '#lib/scene/install.svelte.js';
 	import { parseLayerList, sameSet } from '#lib/state/layers.svelte.js';
 	import { SelectionState } from '#lib/state/selection.svelte.js';
 	import Chrome from '#lib/ui/Chrome.svelte';
@@ -48,6 +49,8 @@
 	});
 	app.picker.addSource(app.overlay);
 	app.layers = new LayerManager(app, LAYER_DEFS);
+	// The 3D scene (WP9): app.scene(), a lazy chunk never requested before the first idle.
+	const uninstallScene = installScene(app);
 	setAppCtx(app);
 	app.install();
 	app.layersInfo = () => ({
@@ -92,6 +95,7 @@
 	}
 
 	onDestroy(() => {
+		uninstallScene();
 		app.layers.destroy();
 		app.overlay.detach();
 		app.picker.detach();
