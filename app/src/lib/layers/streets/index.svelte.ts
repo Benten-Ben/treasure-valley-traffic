@@ -57,7 +57,7 @@ export class StreetsModule implements LayerModule {
 		scope.on('error', (e) => {
 			if ((e as { sourceId?: string }).sourceId !== ROADS_SOURCE) return;
 			this.status = 'stale';
-			this.error = `Some road tiles failed to load: ${(e as { error?: Error }).error?.message ?? 'unknown error'}`;
+			this.error = `Some road tiles failed to load: ${e.error?.message ?? 'unknown error'}`;
 		});
 		this.status = 'ready';
 		this.updatedAt = Date.now();
