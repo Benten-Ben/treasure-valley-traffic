@@ -6,7 +6,9 @@ one AV1 video (docs/11 §11.5; format approved by the owner Oct 5).
   calendar day as people read it. Daylight-saving days run 23 or 25 hours.
 - **A 60x time-lapse with true spacing:** one minute of the day is one second
   of video, so the video's mm:ss reads as the clock's hh:mm (7:30 into the
-  video is 7:30 AM). Gaps of more than 10 minutes show as plain gray.
+  video is 7:30 AM). Gaps longer than 10 minutes, or 3 times the camera's
+  usual spacing if that's longer (road-weather views change less often),
+  show as plain gray.
 - **A sidecar CSV** lists every frame: where it sits in the video, when it
   was fetched, and the original JPEG's size and SHA-256.
 
@@ -31,7 +33,7 @@ from zoneinfo import ZoneInfo
 
 TZ = ZoneInfo("America/Boise")
 SPEEDUP = 60          # one minute of the day per second of video
-GAP_S = 600           # a gap longer than this shows as gray
+GAP_S = 600           # a gap longer than this (or 3x the day's median spacing) shows as gray
 LAST_FRAME_S = 60     # how long a frame stays up before a gap turns gray
 CODEC = ["-c:v", "libsvtav1", "-preset", "6", "-crf", "30", "-g", "600"]
 WORKERS = 4            # encodes side by side
@@ -99,20 +101,23 @@ def plan(rows, day):
     """The video's entries as (video_s, duration_s, kind, row), kind 'frame' or 'gap'.
 
     A frame fetched at local time T sits at (T - midnight) / 60 seconds. A frame
-    stays up until the next one; if that's more than GAP_S away, it stays up for
+    stays up until the next one; if that's more than the gap threshold away
+    (GAP_S, or 3 times the day's median spacing if longer), it stays up for
     LAST_FRAME_S and a gray gap fills the rest. Likewise before the first frame
     and after the last."""
     start, end = day_bounds(day)
     rows = sorted(rows, key=lambda r: r["fetched_at"])
     times = [parse_ts(r["fetched_at"]) for r in rows]
     at = lambda t: (t - start).total_seconds() / SPEEDUP
+    spacings = sorted((b - a).total_seconds() for a, b in zip(times, times[1:]))
+    gap_s = max(GAP_S, 3 * spacings[(len(spacings) - 1) // 2]) if spacings else GAP_S   # lower median
     entries = []
-    if times and (times[0] - start).total_seconds() > GAP_S:
+    if times and (times[0] - start).total_seconds() > gap_s:
         entries.append((0.0, "gap", None))
     for i, (t, row) in enumerate(zip(times, rows)):
         entries.append((at(t), "frame", row))
         following = times[i + 1] if i + 1 < len(times) else end
-        if (following - t).total_seconds() > GAP_S:
+        if (following - t).total_seconds() > gap_s:
             entries.append((at(t + timedelta(seconds=LAST_FRAME_S)), "gap", None))
     ends = [e[0] for e in entries[1:]] + [at(end)]
     return [(s, e - s, kind, row) for (s, kind, row), e in zip(entries, ends)]
@@ -198,12 +203,14 @@ def encode(root, cam, day, force=False):
             "video_bytes": video_bytes, "ratio": round(jpeg_bytes / video_bytes, 1)}
 
 
-def _days(root):
-    """(camera, day) for every JPEG day folder."""
+def _days(root, cams=None):
+    """(camera, day) for every JPEG day folder, optionally only for some cameras."""
     base = os.path.join(root, "cameras", "jpeg")
     if not os.path.isdir(base):
         return
     for cam in sorted(os.listdir(base)):
+        if cams is not None and cam not in cams:
+            continue
         for name in sorted(os.listdir(os.path.join(base, cam))):
             try:
                 yield cam, date.fromisoformat(name)
@@ -211,9 +218,9 @@ def _days(root):
                 continue
 
 
-def pending(root, today):
+def pending(root, today, cams=None):
     """(camera, day) pairs before today with JPEGs but no video yet (and no recorded failure)."""
-    return [(cam, day) for cam, day in _days(root)
+    return [(cam, day) for cam, day in _days(root, cams)
             if day < today and not os.path.exists(video_path(root, cam, day))
             and not os.path.exists(failed_path(root, cam, day))]
 
@@ -253,10 +260,10 @@ def rollup(root, items, force=False, log=print, workers=WORKERS):
     return done, failed
 
 
-def prune(root, today, keep_days):
+def prune(root, today, keep_days, cams=None):
     """Delete JPEG day folders older than keep_days whose video is done."""
     removed = []
-    for cam, day in list(_days(root)):
+    for cam, day in list(_days(root, cams)):
         if day <= today - timedelta(days=keep_days) and os.path.exists(video_path(root, cam, day)):
             shutil.rmtree(jpeg_dir(root, cam, day))
             removed.append((cam, day))

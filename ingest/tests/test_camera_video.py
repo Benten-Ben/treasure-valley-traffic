@@ -65,6 +65,14 @@ class PlanTest(unittest.TestCase):
         self.assertAlmostEqual(entries[2][1], 1.0)                              # frame 2 stays up 60 s (1 s of video)
         self.assertAlmostEqual(entries[-1][0] + entries[-1][1], 24 * 60)        # the video ends at midnight
 
+    def test_slow_cameras_get_a_longer_gap_threshold(self):
+        # a road-weather view: a frame every 15 minutes, then 2 hours with none
+        minutes = list(range(0, 300, 15)) + [420, 435]
+        rows = [row(self.midnight + timedelta(hours=8, minutes=m)) for m in minutes]
+        kinds = [e[2] for e in cv.plan(rows, self.day)]
+        self.assertEqual(kinds.count("gap"), 3)                                 # before, the 2-hour hole, after
+        self.assertEqual(kinds[1:21], ["frame"] * 20)                           # 15-minute spacing isn't a gap
+
     def test_durations_add_up_to_the_day(self):
         rows = [row(self.midnight + timedelta(seconds=40 + 59 * i)) for i in range(1464)]
         entries = cv.plan(rows, self.day)
@@ -112,6 +120,7 @@ class FrameStoreTest(unittest.TestCase):
         open(done, "w").close()
         open(cv.failed_path(self.root, "656", date(2026, 10, 4)), "w").close()
         self.assertEqual(cv.pending(self.root, today), [])                      # done, and failed (not retried)
+        self.assertEqual(cv.pending(self.root, date(2026, 10, 6), {"752"}), [])  # another service's cameras
         self.assertEqual(cv.prune(self.root, today, 3), [("656", date(2026, 10, 1))])
         self.assertTrue(os.path.isdir(cv.jpeg_dir(self.root, "656", date(2026, 10, 4))))   # no video yet: kept
 

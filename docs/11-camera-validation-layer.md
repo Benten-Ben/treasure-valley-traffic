@@ -303,6 +303,30 @@ angles but aren't, or aren't reachable:
   at Kuna/Meridian (3 views) are about 400 m from the nearest key cameras:
   different places, aimed at the pavement.
 
+**Road-weather views, recorded since Oct 5** (owner: "useful data when we
+have enough"). ITD's road-weather stations (RWIS) carry 2–4 cameras each,
+one per direction. The 10 stations in our area have 30 views
+([`ingest/rwis_cameras.csv`](../ingest/rwis_cameras.csv)): the I-84 Wye,
+Broadway, Eisenman, Kuna/Meridian, Northside, Caldwell and Simco Rd; SH-55
+Horseshoe Bend Hill; SH-21 Highland Valley Summit; and US-95 Ion Summit.
+- Their images are 800×486 JPEGs with ITD's own caption: station,
+  milepost, elevation, which way the view faces, and the station's capture
+  time. Caldwell's two views showed 511's "no live feed" image on Oct 5.
+- **Cadence (Oct 5, 8:57 and 9:10 PM):** 511 refreshes its copies about
+  every 15 minutes and re-stamps its own time bar each time, so all 28 live
+  views changed bytes within 12 minutes. The stations' own pictures also
+  update about every 15 minutes (the Wye: 8:49 → 9:04 PM), but some stall:
+  Broadway's stayed at 8:19 PM. Unlike ACHD's cameras, a byte-level repeat
+  check doesn't catch a stalled picture here; reading ITD's caption time
+  will (stage 2 of the pipeline, §11.7).
+- A second service (`rwis`) captures them with the same code, every 5
+  minutes, into the same daily videos. A gap counts as gray only beyond
+  3 times a view's usual spacing.
+- Stations elsewhere in Idaho need their image IDs, which come with the 511
+  API key. The station sensors (pavement temperature, surface state, wind)
+  come through the same API and are the measured road conditions; the
+  images show what they look like.
+
 ### Video archive instead of JPEGs
 
 Inter-frame video codecs store a full frame occasionally and only the

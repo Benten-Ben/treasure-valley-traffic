@@ -72,6 +72,21 @@ services:
     volumes:
       - ${ARCHIVE_DIR:-/srv/tvt/archive}:/srv/archive
 
+  rwis:
+    # ITD's road-weather (RWIS) camera views (ingest/rwis_cameras.csv): the
+    # same code as the cameras service, polled every 5 minutes, since these
+    # views change every few minutes at most. Daily videos like the cameras'.
+    build:
+      context: ..
+      dockerfile: ingest/Dockerfile.cameras
+    restart: unless-stopped
+    command: ["python3", "-m", "ingest", "stream", "idaho511_frames", "--every", "300"]
+    environment:
+      TVT_ARCHIVE: /srv/archive
+      TVT_CAMERAS: /repo/ingest/rwis_cameras.csv
+    volumes:
+      - ${ARCHIVE_DIR:-/srv/tvt/archive}:/srv/archive
+
   app:
     build: ../app
     restart: unless-stopped

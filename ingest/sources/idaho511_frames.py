@@ -7,6 +7,11 @@ a little faster than it changes, so no snapshot is missed. Repeats are
 byte-identical and dropped. Requests are spread evenly over the cycle: for
 34 cameras, about one every 1.5 s.
 
+The camera list comes from TVT_CAMERAS (default: the key cameras). ITD's
+road-weather (RWIS) views run as a second service with their own list
+(ingest/rwis_cameras.csv) and a slower poll, since they change every few
+minutes at most. Each service rolls up and prunes only its own cameras.
+
 Frames are saved as JPEGs by local day, with an index.csv per folder, and
 each finished day is rolled up after midnight into one AV1 video per camera
 (ingest/camera_video.py). JPEGs are deleted after KEEP_JPEG_DAYS, once
@@ -100,14 +105,13 @@ def rollup_due(now_local):
     return now_local - midnight >= ROLLUP_AFTER
 
 
-def _rollup_and_prune(root, items, today):
+def _rollup_and_prune(root, items, today, own, log):
     try:
-        done, failed = camera_video.rollup(root, items, log=lambda m: print(f"idaho511_frames: {m}", flush=True))
-        removed = camera_video.prune(root, today, KEEP_JPEG_DAYS)
-        print(f"idaho511_frames: roll-up finished: {done} videos, {failed} failed; "
-              f"{len(removed)} old JPEG days deleted", flush=True)
+        done, failed = camera_video.rollup(root, items, log=log)
+        removed = camera_video.prune(root, today, KEEP_JPEG_DAYS, own)
+        log(f"roll-up finished: {done} videos, {failed} failed; {len(removed)} old JPEG days deleted")
     except Exception as err:
-        print(f"idaho511_frames: roll-up stopped: {err}", flush=True)
+        log(f"roll-up stopped: {err}")
 
 
 def stream(every=POLL_S):
@@ -116,8 +120,15 @@ def stream(every=POLL_S):
     root = os.environ.get("TVT_ARCHIVE")
     if not root:
         sys.exit("set TVT_ARCHIVE: camera frames and videos are kept there")
-    cams = load_cameras()
-    print(f"idaho511_frames: {len(cams)} cameras every {every} s, saving to {root}/cameras", flush=True)
+    path = os.environ.get("TVT_CAMERAS") or CAMERAS_FILE
+    cams = load_cameras(path)
+    own = {str(cam) for cam, _ in cams}
+    tag = f"idaho511_frames[{os.path.splitext(os.path.basename(path))[0]}]"
+
+    def log(message):
+        print(f"{tag}: {message}", flush=True)
+
+    log(f"{len(cams)} cameras every {every} s, saving to {root}/cameras")
     last = last_digests(root, cams, camera_video.local_day(datetime.now(timezone.utc)))
     counts, new_per_cam, samples = Counter(), Counter(), []
     report_at = time.time() + REPORT_EVERY_S
@@ -128,13 +139,13 @@ def stream(every=POLL_S):
         today = datetime.now(camera_video.TZ).date()
 
         if shutil.disk_usage(root).free < MIN_FREE_BYTES:
-            camera_video.prune(root, today, 1)
+            camera_video.prune(root, today, 1, own)
         if shutil.disk_usage(root).free < MIN_FREE_BYTES:
             if not paused:
-                print(f"idaho511_frames: PAUSED: under {MIN_FREE_BYTES / 2**30:.0f} GB free in {root}", flush=True)
+                log(f"PAUSED: under {MIN_FREE_BYTES / 2**30:.0f} GB free in {root}")
             paused = True
         elif paused:
-            print("idaho511_frames: resumed: disk space is back", flush=True)
+            log("resumed: disk space is back")
             paused = False
 
         for i, (cam, _) in enumerate(cams if not paused else []):
@@ -176,10 +187,10 @@ def stream(every=POLL_S):
             new_per_cam[cam] += 1
 
         if (worker is None or not worker.is_alive()) and rollup_due(datetime.now(camera_video.TZ)):
-            due = camera_video.pending(root, today)
+            due = camera_video.pending(root, today, own)
             if due:
-                print(f"idaho511_frames: rolling up {len(due)} camera days", flush=True)
-                worker = threading.Thread(target=_rollup_and_prune, args=(root, due, today), daemon=True)
+                log(f"rolling up {len(due)} camera days")
+                worker = threading.Thread(target=_rollup_and_prune, args=(root, due, today, own, log), daemon=True)
                 worker.start()
 
         if time.time() >= robots_at:
@@ -188,11 +199,11 @@ def stream(every=POLL_S):
         if time.time() >= report_at:
             quiet = [cam for cam, _ in cams if not new_per_cam[cam]]
             free = shutil.disk_usage(root).free / 2**30
-            print("idaho511_frames: last hour: "
-                  + ", ".join(f"{k} {v:.0f}" for k, v in counts.items())
-                  + f"; {free:.0f} GB free"
-                  + (f"; no new frames from {quiet}" if quiet else "")
-                  + (f"; e.g. {samples}" if samples else ""), flush=True)
+            log("last hour: "
+                + ", ".join(f"{k} {v:.0f}" for k, v in counts.items())
+                + f"; {free:.0f} GB free"
+                + (f"; no new frames from {quiet}" if quiet else "")
+                + (f"; e.g. {samples}" if samples else ""))
             counts, new_per_cam, samples = Counter(), Counter(), []
             report_at = time.time() + REPORT_EVERY_S
 
