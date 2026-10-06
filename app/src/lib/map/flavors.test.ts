@@ -19,6 +19,7 @@ import {
 	GROUND,
 	hiddenBaseLabels,
 	HILLSHADE_PAINT,
+	keepDrapeFresh,
 	IMAGERY_LAYERS,
 	VALLEY_OVERRIDES,
 	type FlavorMap,
@@ -129,6 +130,8 @@ describe('flavors', () => {
 		const parks = row('Parks, woods');
 		expect([valley.park_a, valley.park_b, valley.wood_a, valley.wood_b]).toEqual(hexes(parks[0]));
 		for (const k of ['park_a', 'park_b', 'wood_a', 'wood_b'] as const) expect(clay[k]).toBe(hexes(parks[1])[0]);
+		// Scrub and grassland (the Foothills) go with the woods, in the pale woods green.
+		expect([valley.scrub_a, valley.scrub_b, clay.scrub_a, clay.scrub_b]).toEqual([valley.wood_a, valley.wood_a, clay.wood_a, clay.wood_a]);
 		const other = row('Other land use');
 		expect(other[0]).toBe('as `light`');
 		for (const k of ['hospital', 'industrial', 'school', 'pedestrian', 'sand', 'beach', 'aerodrome', 'zoo', 'military'] as const) {
@@ -284,6 +287,42 @@ describe('flavors', () => {
 		expect([earth(v), earth(c)]).toEqual([GROUND.valley, GROUND.clay]);
 		expect(paintOf(c.layers.find((l) => l.id === 'hillshade')!)).toEqual(HILLSHADE_PAINT.clay);
 		expect(paintOf(c.layers.find((l) => l.id === BUILDINGS_LAYER)!)).toMatchObject({ 'fill-extrusion-color': BUILDINGS_PAINT.clay.color, 'fill-extrusion-opacity': BUILDINGS_PAINT.clay.opacity });
+	});
+
+	it('keeps the terrain drape fresh through the crossfade, then lets go', () => {
+		let t = 0;
+		const handlers = new Set<() => void>();
+		let released = 0;
+		let repaints = 0;
+		let terrain: object | null = {};
+		const map = {
+			on: (_: 'render', fn: () => void) => handlers.add(fn),
+			off: (_: 'render', fn: () => void) => handlers.delete(fn),
+			triggerRepaint: () => void repaints++,
+			getTerrain: () => terrain,
+			terrain: { tileManager: { releaseAllRTT: () => void released++ } }
+		};
+		const frame = (dt: number) => {
+			t += dt;
+			for (const f of [...handlers]) f();
+		};
+		keepDrapeFresh(map, 450, () => t);
+		expect([released, repaints, handlers.size]).toEqual([1, 1, 1]);
+		// Every frame of the fade releases the cached drape and asks for the next.
+		for (let i = 0; i < 4; i++) frame(100);
+		expect([released, repaints, handlers.size]).toEqual([5, 5, 1]);
+		// Past the end: one last release and frame (the final colors), then it stops.
+		frame(100);
+		expect([released, repaints, handlers.size]).toEqual([6, 6, 0]);
+		frame(100);
+		expect([released, repaints]).toEqual([6, 6]);
+		// Without terrain there's no drape to release; cancelling stops it early.
+		terrain = null;
+		const stop = keepDrapeFresh(map, 450, () => t);
+		frame(16);
+		expect(released).toBe(6);
+		stop();
+		expect(handlers.size).toBe(0);
 	});
 
 	it('refuses to diff flavors that build different layers', () => {

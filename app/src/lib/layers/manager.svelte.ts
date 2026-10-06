@@ -7,6 +7,7 @@ import {
 	CLAY_HIDDEN,
 	FLAVOR_FADE_MS,
 	hiddenBaseLabels,
+	keepDrapeFresh,
 	prefersReducedMotion,
 	type FlavorName
 } from '#lib/map/flavors.js';
@@ -213,6 +214,7 @@ export class LayerManager {
 	destroy(): void {
 		this.#destroyed = true;
 		this.#stopEffects?.();
+		this.#stopDrape?.();
 		for (const f of this.#cleanup.splice(0)) f();
 		for (const f of Object.values(this.#unpick)) f?.();
 		for (const m of Object.values(this.modules)) m?.destroy();
@@ -371,6 +373,8 @@ export class LayerManager {
 
 	/** Whether a flavor was applied to this map yet (the first goes in instantly, before the first frame). */
 	#flavored = false;
+	/** Stops keeping the terrain drape fresh after a crossfade. */
+	#stopDrape: (() => void) | null = null;
 
 	#applyBase() {
 		const map = this.#map;
@@ -386,7 +390,12 @@ export class LayerManager {
 		const flavor = this.flavor;
 		if (manifest) {
 			const duration = !this.#flavored || prefersReducedMotion() ? 0 : FLAVOR_FADE_MS;
-			applyFlavor(map, flavorDiff(manifest), flavor, { duration });
+			if (applyFlavor(map, flavorDiff(manifest), flavor, { duration }) && duration) {
+				// Frames for the whole crossfade, and a drape that follows it (terrain caches it otherwise).
+				this.#ctx.loop.tween('flavor', duration + 100);
+				this.#stopDrape?.();
+				this.#stopDrape = keepDrapeFresh(map, duration + 100);
+			}
 			this.#flavored = true;
 		}
 		const hidden = hiddenBaseLabels(flavor, s.labels);

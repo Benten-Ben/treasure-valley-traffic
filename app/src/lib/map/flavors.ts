@@ -62,8 +62,6 @@ const OTHER_LANDUSE = [
 	'industrial',
 	'school',
 	'pedestrian',
-	'scrub_a',
-	'scrub_b',
 	'glacier',
 	'sand',
 	'beach',
@@ -103,6 +101,10 @@ export const VALLEY_OVERRIDES: Partial<Flavor> = {
 	park_b: '#b9d88f',
 	wood_a: '#cbddae',
 	wood_b: '#a9cf85',
+	// Scrub, grassland and grass (most of the Foothills) share Protomaps' park layer with the
+	// woods; light's teal (#99d2bb) fights the sand, so they take the pale woods green.
+	scrub_a: '#cbddae',
+	scrub_b: '#cbddae',
 	water: '#7cc4e4',
 	buildings: '#e4dacb',
 	...fill(MAJOR_ROADS, '#ffffff'),
@@ -120,6 +122,8 @@ export const CLAY_OVERRIDES: Partial<Flavor> = {
 	park_b: '#e4e8d6',
 	wood_a: '#e4e8d6',
 	wood_b: '#e4e8d6',
+	scrub_a: '#e4e8d6',
+	scrub_b: '#e4e8d6',
 	...fill(OTHER_LANDUSE, '#eee8de'),
 	water: '#c9dce3',
 	buildings: '#e9e2d6',
@@ -256,6 +260,49 @@ export function applyFlavor(map: FlavorMap, diff: readonly PaintChange[], name: 
 	}
 	applied.set(map, name);
 	return n;
+}
+
+/** The parts of a map the drape keeper needs (tests pass a fake). */
+export interface DrapedMap {
+	on(type: 'render', fn: () => void): unknown;
+	off(type: 'render', fn: () => void): unknown;
+	triggerRepaint(): void;
+	getTerrain(): unknown;
+	readonly terrain?: { tileManager: { releaseAllRTT(): void } } | null;
+}
+
+/**
+ * Keep the terrain drape in step with a paint transition for `ms`.
+ *
+ * With terrain on, MapLibre (6.12) draws fill, line, raster and hillshade
+ * layers into a cached texture per terrain tile, and redraws a texture only
+ * when its tiles, zoom, visible layers or feature state change, or once right
+ * after a style change. A paint transition's later frames change none of
+ * those, so the drape would keep the transition's first frame (the old
+ * flavor) until the map next moved. While the crossfade runs, this releases
+ * the cached textures after every frame, and once more after it ends, so the
+ * drape shows each step and then the final colors. Returns a cancel.
+ */
+export function keepDrapeFresh(map: DrapedMap, ms: number, now: () => number = () => performance.now()): () => void {
+	const until = now() + ms;
+	let done = false;
+	const release = () => {
+		if (map.getTerrain()) map.terrain?.tileManager.releaseAllRTT();
+	};
+	const onRender = () => {
+		release();
+		if (now() >= until) stop();
+		map.triggerRepaint();
+	};
+	const stop = () => {
+		if (done) return;
+		done = true;
+		map.off('render', onRender);
+	};
+	map.on('render', onRender);
+	release();
+	map.triggerRepaint();
+	return stop;
 }
 
 /**
