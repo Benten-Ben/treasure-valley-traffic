@@ -128,6 +128,8 @@ python3 -m ingest stream idaho511_frames   # key-camera frames (needs TVT_ARCHIV
 python3 -m ingest stream itd_wzdx         # ITD work zones every 5 min (needs TVT_ARCHIVE)
 python3 -m ingest stream idaho511_api     # the 511 API (needs TVT_ARCHIVE and IDAHO511_API_KEY)
 python3 -m ingest rollup --day 2026-10-05  # daily camera videos by hand (normally automatic)
+python3 -m ingest match-intersections --dry-run   # rebuild intersections from the signal sources
+python3 -m ingest.osm_load --inbox         # OSM extract downloaded by hand (needs TVT_ARCHIVE, osmium)
 python3 -m unittest discover -s ingest/tests -t .
 ```
 

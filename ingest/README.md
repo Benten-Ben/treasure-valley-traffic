@@ -15,6 +15,12 @@ prototype is [`tvt/`](../tvt)).
 | `vrt_realtime` | open (VRT, CC BY 3.0) | stream, every 30 s | each changed feed archived in `$TVT_ARCHIVE/vrt-gtfs-rt/<date>/`; bus positions in `obs.vehicle_position` |
 | `itd_wzdx` | open (ITD's WZDx feed on 511 Idaho; may be republished, crediting ITD) | stream, every 5 min | each changed snapshot archived in `$TVT_ARCHIVE/wzdx/<date>/`; every work zone's versions in `raw.record`; cleaned rows in `evt.event` (fixes listed per row; [docs/08 §8.8](../docs/08-data-inventory.md#88-itds-work-zone-feed-checked-against-the-wzdx-spec-oct-6-2026)) |
 | `idaho511_api` | API key (`IDAHO511_API_KEY`; 511 Idaho developer terms; not republished) | stream, per endpoint: events and signs 2 min, weather and advisories 5, truck restrictions and winter roads 15, cameras hourly, the rest daily; at most 8 calls a minute | changed responses archived in `$TVT_ARCHIVE/idaho511/<endpoint>/<date>/`; versions in `raw.record` (one source per endpoint, `idaho511_<endpoint>`); `evt.event` (events, advisories, truck restrictions), `core.message_sign` + `evt.sign_message`, `core.weather_station` + `obs.weather_reading`; the regional capture list in `$TVT_ARCHIVE/lists/` |
+| `fra_crossings` | open (FRA on data.transportation.gov, public domain; robots allows /resource/, Crawl-delay 1) | weekly | `raw.record` (by crossing number, without Socrata's computed-region columns), `core.rail_crossing` (433 in Ada and Canyon; 197 closed, kept and flagged), `core.source_link` |
+| `achd_signal_points` | open (ACHD's 2022 layers on ArcGIS Online, frozen Aug 2, 2022; no robots rules) | monthly | `raw.record` (`<layer>:<OBJECTID>`), `core.signal_device` (2,469 signal poles, 182 pedestrian signals, 33 school flashers, 68 fire signals) |
+| `compass_signals` | open (COMPASS on ArcGIS Online; no license, "meant only for reference": internal until COMPASS answers) | weekly | `raw.record` (`synchro:<id>`, else `loc:<operator>:<location>`), `core.signal_device` (585 signalized intersections with operator, coordination and per-approach lanes, phasing and modelled volumes) |
+| `compass_regional_signals` | open (COMPASS on swidrdc.org; internal until COMPASS answers) | weekly | `raw.record`, `core.signal_device` (1,076 devices: 586 traffic signals, the rest pedestrian signals, flashers and fire signals) |
+| `intersections` | derived (fetches nothing; by hand: `python3 -m ingest match-intersections [--dry-run]`) | daily | `core.intersection` (591: 585 active, 1 candidate, 5 retired by review in `ingest/intersection_reviews.json`), `core.approach`, `core.signal_device.intersection_id`, camera and OSM links in `core.source_link` (199 cameras), `core.rail_crossing.intersection_id` (nearest active signal within 300 m) |
+| `osm_valley` | open (OpenStreetMap, ODbL; credit "© OpenStreetMap contributors"); by hand only: Geofabrik's robots.txt disallows scripted downloads (Oct 6), so the owner downloads the Idaho extract in a browser into `$TVT_ARCHIVE/osm/inbox/`. Not a scheduled source; no download code | by hand, weekly (`python3 -m ingest.osm_load --inbox`) | `raw.record` (`w<id>`/`n<id>`: tags and a geometry hash), `core.osm_way` (major ways and every way with lanes), `core.osm_lane`, `core.osm_node` (intersection signals, crossing signals, level crossings), `core.segment_match` (ACHD segments: `buffer15_bearing20`, and `way_in_buffer15_bearing20` for turn-bay ways); extracts archived in `$TVT_ARCHIVE/osm/` (last two) |
 
 ```bash
 pip install -r ingest/requirements.txt
@@ -26,6 +32,8 @@ python3 -m ingest backfill vrt_realtime data/archive/vrt-gtfs-rt          # relo
 TVT_ARCHIVE=data/archive python3 -m ingest stream itd_wzdx                # ITD work zones, every 5 min
 TVT_ARCHIVE=data/archive IDAHO511_API_KEY=... python3 -m ingest stream idaho511_api   # the 511 API (key never committed)
 python3 -m ingest backfill itd_wzdx data/archive/wzdx                     # load snapshots the database missed
+python3 -m ingest match-intersections --dry-run                         # rebuild core.intersection from the signal sources
+TVT_ARCHIVE=data/archive python3 -m ingest.osm_load --inbox             # OSM extract downloaded by hand (needs osmium-tool)
 python3 -m unittest discover -s ingest/tests -t .
 ```
 
