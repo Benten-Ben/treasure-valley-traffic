@@ -38,6 +38,7 @@ historical data layers.
 
 - [`docs/DECISIONS.md`](docs/DECISIONS.md): decisions made with the owner,
   plus pending questions.
+- [`docs/SOURCES.md`](docs/SOURCES.md): every data source we've considered, what's in use, and what's left.
 - [`HANDOFF.md`](HANDOFF.md): how the cloud and local Claude sessions work
   together.
 - [`CLAUDE.md`](CLAUDE.md): rules for any Claude session in this repo.

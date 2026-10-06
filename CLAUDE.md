@@ -14,6 +14,7 @@ our own base map with live and historical data layers.
   `docs/11` (camera validation layer).
 - Decisions: `docs/DECISIONS.md`. Read it before proposing anything
   structural.
+- Data sources still to do: `docs/SOURCES.md`.
 - How the two Claude sessions work together: `HANDOFF.md`.
 
 ## How we work with the owner
@@ -90,6 +91,7 @@ README.md               research summary and index
 docs/01-08              research chapters (signals, local system, data, playbook, AI, automation, DIY data, inventory)
 docs/09-13              platform: base-map data, architecture, camera layer, DB schema (draft), visual design
 docs/DECISIONS.md       decision log + pending questions + owner actions
+docs/SOURCES.md         data source backlog: what's in use, what's left, suggested order
 docs/data/README.md     what the reference datasets are (kept privately, not published)
 app/                    SvelteKit + MapLibre map (the platform front end)
 basemap/                builds self-hosted map layers into data/tiles/ (served at /tiles/)
