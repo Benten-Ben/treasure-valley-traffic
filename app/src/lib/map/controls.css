@@ -1,0 +1,147 @@
+/*
+ * The map's own controls, restyled for the chrome (docs/14 §14.3 "Regions",
+ * "Bottom corners"; WP3). MapLibre's NavigationControl is gone (the camera
+ * widget, CameraWidget.svelte, replaces it); what stays is the scale (bottom
+ * left) and the compact (i) attribution (bottom right), outside the toolbar
+ * box, in ch. 13's cream-card look. Selectors start at `main` so they win
+ * over maplibre-gl.css whatever order the two load in.
+ */
+
+/* --- corners ------------------------------------------------------------------------ */
+main .maplibregl-ctrl-bottom-left .maplibregl-ctrl {
+	margin: 0 0 16px 16px;
+}
+main .maplibregl-ctrl-bottom-right .maplibregl-ctrl {
+	margin: 0 16px 16px 0;
+}
+
+/* --- scale: an ink bracket on a cream tab, numbers in Overpass Mono ------------------- */
+main .maplibregl-ctrl.maplibregl-ctrl-scale {
+	box-sizing: border-box;
+	min-height: 20px;
+	padding: 1px 7px 0;
+	border: 2px solid var(--ink);
+	border-top: 0;
+	border-radius: 0 0 7px 7px;
+	background: var(--panel);
+	box-shadow: 0 3px 0 rgb(60 45 20 / 0.12);
+	color: var(--ink);
+	font: 600 11px/17px var(--font-mono);
+	font-variant-numeric: tabular-nums;
+}
+
+/* --- attribution: a round (i) that opens into a card --------------------------------- */
+main .maplibregl-ctrl.maplibregl-ctrl-attrib {
+	box-sizing: border-box;
+	/* Open, it stays clear of the toolbar in the bottom centre (it wraps instead). */
+	max-width: max(160px, calc(50vw - 240px));
+	padding: 6px 12px;
+	border: 2px solid var(--panel-edge);
+	border-radius: 16px;
+	background: var(--panel);
+	box-shadow: 0 3px 0 rgb(60 45 20 / 0.12);
+	color: var(--ink-soft);
+	font: 12px/1.45 var(--font-body);
+}
+main .maplibregl-ctrl.maplibregl-ctrl-attrib.maplibregl-compact {
+	box-sizing: content-box;
+	min-width: 32px;
+	min-height: 32px;
+	padding: 0;
+	border-radius: 18px;
+}
+main .maplibregl-ctrl.maplibregl-ctrl-attrib.maplibregl-compact-show {
+	padding: 6px 40px 6px 12px;
+}
+main .maplibregl-ctrl-bottom-left > .maplibregl-ctrl-attrib.maplibregl-compact-show,
+main .maplibregl-ctrl-top-left > .maplibregl-ctrl-attrib.maplibregl-compact-show {
+	padding: 6px 12px 6px 40px;
+}
+main .maplibregl-ctrl-attrib .maplibregl-ctrl-attrib-inner {
+	line-height: 20px;
+}
+main .maplibregl-ctrl-attrib a {
+	color: var(--ink);
+	text-decoration: underline;
+	text-decoration-color: var(--panel-edge);
+}
+main .maplibregl-ctrl-attrib a:hover {
+	text-decoration-color: currentColor;
+}
+main .maplibregl-ctrl-attrib .maplibregl-ctrl-attrib-button {
+	top: 0;
+	width: 32px;
+	height: 32px;
+	border-radius: 50%;
+	background-color: var(--panel);
+	background-position: center;
+	background-size: 22px 22px;
+	background-repeat: no-repeat;
+	/* Phosphor's Info icon, duotone (MIT), in ink. */
+	background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256' fill='%232b2a33'%3E%3Cpath d='M224,128a96,96,0,1,1-96-96A96,96,0,0,1,224,128Z' opacity='0.2'/%3E%3Cpath d='M144,176a8,8,0,0,1-8,8,16,16,0,0,1-16-16V128a8,8,0,0,1,0-16,16,16,0,0,1,16,16v40A8,8,0,0,1,144,176Zm88-48A104,104,0,1,1,128,24,104.11,104.11,0,0,1,232,128Zm-16,0a88,88,0,1,0-88,88A88.1,88.1,0,0,0,216,128ZM124,96a12,12,0,1,0-12-12A12,12,0,0,0,124,96Z'/%3E%3C/svg%3E");
+}
+main .maplibregl-ctrl-attrib.maplibregl-compact-show .maplibregl-ctrl-attrib-button {
+	background-color: var(--ground);
+}
+main .maplibregl-ctrl-attrib .maplibregl-ctrl-attrib-button:focus-visible {
+	outline: none;
+	box-shadow:
+		0 0 0 2px var(--ink),
+		0 0 0 5px var(--accent);
+}
+main .maplibregl-ctrl-attrib .maplibregl-ctrl-attrib-button:focus:not(:focus-visible) {
+	box-shadow: none;
+}
+
+/* --- MapHost's Map / Aerial switch, beside the camera widget's column ---------------- */
+main > div.views.card {
+	top: 76px;
+	right: 64px;
+}
+
+/* --- phone: the sheet and tab bar own the bottom of the screen ------------------------ */
+@media (max-width: 599px) {
+	main .maplibregl-ctrl.maplibregl-ctrl-scale {
+		display: none;
+	}
+	/* The attribution moves to the top left, under the chips (the sheet covers the bottom). */
+	main .maplibregl-ctrl-bottom-right {
+		top: 106px;
+		right: auto;
+		bottom: auto;
+		left: 0;
+	}
+	main .maplibregl-ctrl-bottom-right .maplibregl-ctrl {
+		margin: 0 0 0 8px;
+	}
+	main .maplibregl-ctrl-bottom-right .maplibregl-ctrl-attrib-button {
+		right: auto;
+		left: 0;
+	}
+	main .maplibregl-ctrl-bottom-right > .maplibregl-ctrl-attrib.maplibregl-compact-show {
+		padding: 6px 12px 6px 40px;
+	}
+	main .maplibregl-ctrl.maplibregl-ctrl-attrib.maplibregl-compact,
+	main .maplibregl-ctrl-attrib .maplibregl-ctrl-attrib-button {
+		min-width: 44px;
+		min-height: 44px;
+		width: 44px;
+		height: 44px;
+		border-radius: 22px;
+	}
+	main .maplibregl-ctrl.maplibregl-ctrl-attrib.maplibregl-compact-show {
+		box-sizing: border-box;
+		width: auto;
+		/* Clear of the Map / Aerial switch at the top right. */
+		max-width: calc(100vw - 176px);
+		padding-left: 52px;
+	}
+	main > div.views.card {
+		top: 106px;
+		right: 8px;
+	}
+	main > div.views.card button {
+		min-height: 44px;
+		min-width: 64px;
+	}
+}

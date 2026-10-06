@@ -139,7 +139,8 @@ export class ViewHistory {
 		if (!map) return;
 		if (this.#o.reducedMotion()) {
 			if (this.#o.canPush()) this.push();
-			map.jumpTo(options);
+			const { center, zoom, bearing, pitch, roll, padding } = options;
+			map.jumpTo({ center, zoom, bearing, pitch, roll, ...(typeof padding === 'object' ? { padding } : {}) });
 		} else map.flyTo(options);
 	}
 

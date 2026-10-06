@@ -122,7 +122,7 @@ describe('view history', () => {
 		const h = new ViewHistory({ reducedMotion: () => true });
 		h.attach(f.map as unknown as Map);
 		h.fly({ zoom: 14 });
-		expect(f.map.jumpTo).toHaveBeenCalledWith({ zoom: 14 });
+		expect(f.map.jumpTo).toHaveBeenCalledWith(expect.objectContaining({ zoom: 14 }));
 		expect(f.cam.zoom).toBe(14);
 		expect(h.back()).toBe(true);
 		expect(f.cam).toEqual(view(10));
