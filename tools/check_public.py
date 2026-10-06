@@ -50,7 +50,8 @@ IMAGE_EXT = {
 LABEL = r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
 TS_NET = re.compile(rf"(?<![\w.-]){LABEL}(?:\.{LABEL})*\.ts\.net\b", re.I)
 IPV4 = re.compile(r"(?<![\w.])(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})(?!\.?\d)(?!/\d)")
-TS_IPV6 = re.compile(r"\bfd7a:115c:a1e0:[0-9a-f:]*", re.I)
+# An address, not the range written as a prefix (fd7a:115c:a1e0::/48).
+TS_IPV6 = re.compile(r"\bfd7a:115c:a1e0:[0-9a-f:]*(?![0-9a-f:]*/\d)", re.I)
 TS_KEY = re.compile(r"\btskey-[a-z]+-[A-Za-z0-9]{6,}")
 PRIVATE_KEY = re.compile(r"-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----")
 

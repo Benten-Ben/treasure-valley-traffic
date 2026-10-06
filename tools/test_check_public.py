@@ -37,7 +37,7 @@ class CheckPublicTest(unittest.TestCase):
         self.root = tempfile.mkdtemp()
         run_git(self.root, "init", "-q")
         self.write("README.md", "Reach the server at <machine>.<tailnet>" + TS + " or *" + TS + ".\n"
-                   "The tailnet range is 100.64.0.0/10; the LAN is 10.0.0.0/8 and 192.168.1.1.\n"
+                   "The tailnet ranges are 100.64.0.0/10 and " + "fd7a" + ":115c:a1e0::/48; the LAN is 10.0.0.0/8 and 192.168.1.1.\n"
                    "Version 1.100.64.1.2 isn't an address. 100.63.255.255 is outside the range.\n")
         self.write("app/src/lib/assets/favicon.svg", "<svg xmlns='http://www.w3.org/2000/svg'/>")
         self.write("deploy/.env.example", "POSTGRES_PASSWORD=change-me\n")
