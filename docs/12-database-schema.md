@@ -241,6 +241,7 @@ into the image, so a slightly moved camera keeps its zones.
 |---|---|---|---|---|---|
 | `obs.vehicle_position` | Bus GPS ping | `ts`, `vehicle_id`, `trip_id`, `route_id`, `geom`, `bearing`, `speed` | 1 day | 7 days | ~30 M |
 | `obs.weather` | Station report | `ts`, `station`, `visibility_m`, `temp_c`, `wind_ms`, `precip_mm`, `present_weather` | 30 days | 30 days | small |
+| `obs.weather_reading` (built Oct 6, migration 0010) | ITD road-weather station reading (511 API) | `station_id`, `ts`, air, surface and dew-point °F, humidity, wind, precipitation, visibility, surface status and friction, `status` | 7 days | 14 days | ~6.5 M (127 stations, every ~15 min) |
 | `obs.camera_frame` | Kept frame | `taken_at` (from the 511 bar), `fetched_at`, `view_id`, `archive_file`, `frame_index`, `quality` flags, `scene_hash` | 1 day | 7 days | ~110 M (all cameras) |
 | `obs.camera_measurement` | Frame × zone | `taken_at`, `view_id`, `zone_id`, `pipeline_version`, `vehicles`, `occupancy`, `queue_back_m`, `signal_color` | 1 day | 7 days | ~600 M (all cameras, ~6 zones) |
 | `obs.traffic_count` | Count × direction | `counted_on`, `station_id`, `direction`, `count_24h`, `am_peak`, `pm_peak`, `count_type` | (plain table) | — | small |
@@ -303,8 +304,17 @@ Built Oct 6, 2026 in `db/migrations/0009_events.sql` for ITD's work zones
 so an unchanged poll writes nothing) and `updated_at` (when the row's
 content last changed). `declared` holds the published start and end after
 the fixes listed in `attributes.fixes`. A work zone that leaves the feed
-and later returns keeps its first-seen time. `evt.sign_message` waits for
-the 511 API's message signs.
+and later returns keeps its first-seen time.
+
+The 511 API's events, advisories and truck restrictions use the same
+table (sources `idaho511_event`, `idaho511_alerts`,
+`idaho511_truckrestrictions`; kinds `roadwork`, `closure`, `incident`,
+`info`, `advisory`, `truck_restriction`). Their `attributes.ers_id` is the
+number WZDx uses for the same event. Migration 0010 built
+`evt.sign_message` with `sign_id text` (511's sign ID, in a new
+`core.message_sign`) and `messages text[]` (the rotating messages, in
+order); blank periods have no row. Road-weather stations are in
+`core.weather_station`.
 
 ## 12.8 What this schema deliberately leaves out
 

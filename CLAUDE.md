@@ -123,6 +123,7 @@ python3 db/migrate.py                  # apply db/migrations/
 python3 -m ingest run all              # camera list + views
 python3 -m ingest stream idaho511_frames   # key-camera frames (needs TVT_ARCHIVE)
 python3 -m ingest stream itd_wzdx         # ITD work zones every 5 min (needs TVT_ARCHIVE)
+python3 -m ingest stream idaho511_api     # the 511 API (needs TVT_ARCHIVE and IDAHO511_API_KEY)
 python3 -m ingest rollup --day 2026-10-05  # daily camera videos by hand (normally automatic)
 python3 -m unittest discover -s ingest/tests -t .
 ```

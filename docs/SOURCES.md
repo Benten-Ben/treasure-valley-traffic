@@ -17,7 +17,8 @@ Last updated Oct 6, 2026.
 | ACHD camera inventory | 228 cameras in `core.camera`, refreshed daily (`achd_cameras`) | Oct 5 |
 | 511 Idaho camera images | 34 key cameras fetched every 50 s into daily AV1 videos (`cameras` service); calibrations in the app | Oct 5 |
 | ITD road-weather (RWIS) camera views | All 385 views at 130 stations statewide, plus 4 Oregon DOT views near Ontario and Weiser, every 10 min into daily videos (`regional` service) | Oct 5–6 |
-| 511 Idaho camera list | One-off copies (Oct 5), kept privately; the source of the camera IDs above until the 511 API key arrives | Oct 5 |
+| 511 Idaho camera list | One-off copies (Oct 5), kept privately; replaced on Oct 6 by the API's camera list (hourly), which rebuilds the road-weather capture list | Oct 5 |
+| 511 Idaho API | All 11 endpoints (`idaho511` service, at most 8 calls a minute): events, advisories and truck restrictions (`evt.event`), message signs (`evt.sign_message`), road-weather readings from 127 stations (`obs.weather_reading`), winter road conditions, the camera list and the rest versioned; not republished | Oct 6 |
 | Valley Regional Transit GTFS and GTFS-realtime | Routes, stops, shapes daily; bus positions every 30 s, archived raw; unlabeled trips matched to routes by path | Oct 5 |
 | ACHD road centerlines | 38,727 Ada County segments with posted speed, class, one-way, level; the Streets lens | Oct 5 |
 | ACHD counts and turning-movement tables | One-time private copy (owner-approved, Oct 5); not loaded into the database yet | Oct 5 |
@@ -35,7 +36,6 @@ Last updated Oct 6, 2026.
 | Volumes | ACHD `Traffic_Counts` layer | Checked Oct 5: 3,880 count locations, no counts | Locations only; the counts are in the private table copy | Open GIS |
 | Safety | ITD crash points, 461,521 crashes 2005–2023 | Not started | High-crash intersections, before/after studies | Open GIS |
 | Events | ACHD live roadwork, incidents, message signs | Not started | Same | Open GIS |
-| Events and weather | 511 Idaho API: events, message signs, road-weather sensor readings (pavement temperature, surface state, wind), road conditions, restrictions; the official camera list | Key received Oct 6 (ITD is fine with our use); reference captured privately; scripts to be decided | The measured road conditions behind the road-weather pictures; replaces the one-off camera list | Free key; 10 calls per 60 s |
 | Network | ACHD signal-asset points (2022): 2,469 signal points, 182 pedestrian signals, 33 school flashers | Not started | The backbone: intersections that tie cameras, counts, crashes and bus delay together | Open |
 | Network | OpenStreetMap signals and lane tags (`lanes`, `turn:lanes`) | In the map tiles only | Signal locations; lane counts and turn lanes where mapped | ODbL |
 | Network | ITD HPMS road inventory | Not started | Through lanes by direction, turn lanes, lane width, medians on state and major roads | Open GIS |
@@ -84,4 +84,4 @@ Last updated Oct 6, 2026.
 2. **Crashes** (ITD).
 3. **Work zones and incidents** (ITD WZDx: recording since Oct 6; ACHD live layers).
 4. **Traffic volumes** (ITD AADT, counters, hourly reports).
-5. **The 511 API** (key received Oct 6): road-weather sensor readings first.
+5. **The 511 API**: recording since Oct 6.

@@ -35,7 +35,7 @@ import time
 import traceback
 from datetime import datetime, timedelta, timezone
 
-from .. import db, http
+from .. import db, events, http
 
 URL = "https://511.idaho.gov/api/wzdx"
 POLL_S = 300
@@ -142,37 +142,7 @@ def store(conn, feed, seen_at, fetch_id=None):
     features = [f for f in feed.get("features", []) if f.get("id") is not None]
     new_v, _, removed_v = db.upsert_records(
         conn, SOURCE["name"], ((str(f["id"]), f, f.get("geometry")) for f in features), fetch_id, seen_at)
-    counts = {"new": 0, "changed": 0, "unchanged": 0}
-    for f in features:
-        r = clean(f)
-        state = conn.execute(
-            """insert into evt.event (source, source_id, kind, geom, declared, observed, active,
-                                      description, attributes, content_hash, updated_at)
-               values (%(source)s, %(source_id)s, %(kind)s,
-                       case when %(geom)s::text is null then null
-                            else ST_SetSRID(ST_GeomFromGeoJSON(%(geom)s), 4326) end,
-                       case when %(start)s::timestamptz is null then null
-                            else tstzrange(%(start)s, %(end)s, '[)') end,
-                       tstzrange(%(seen)s, null, '[)'), true,
-                       %(description)s, %(attributes)s, %(hash)s, %(seen)s)
-               on conflict (source, source_id) do update set
-                 kind = excluded.kind, geom = excluded.geom, declared = excluded.declared,
-                 description = excluded.description, attributes = excluded.attributes,
-                 content_hash = excluded.content_hash, active = true,
-                 observed = case when evt.event.active then evt.event.observed
-                                 else tstzrange(lower(evt.event.observed), null, '[)') end,
-                 updated_at = case when evt.event.content_hash = excluded.content_hash and evt.event.active
-                                   then evt.event.updated_at else excluded.updated_at end
-               returning (xmax = 0) as inserted, updated_at = %(seen)s as touched""",
-            {"source": SOURCE["name"], "source_id": r["source_id"], "kind": r["kind"],
-             "geom": json.dumps(r["geom"]) if r["geom"] else None, "start": r["start"], "end": r["end"],
-             "seen": seen_at, "description": r["description"], "attributes": json.dumps(r["attributes"]),
-             "hash": r["content_hash"]}).fetchone()
-        counts["new" if state[0] else "changed" if state[1] else "unchanged"] += 1
-    counts["gone"] = conn.execute(
-        """update evt.event set active = false, observed = tstzrange(lower(observed), %s, '[)'), updated_at = %s
-           where source = %s and active and not (source_id = any(%s))""",
-        (seen_at, seen_at, SOURCE["name"], [str(f["id"]) for f in features])).rowcount
+    counts = events.upsert(conn, SOURCE["name"], (clean(f) for f in features), seen_at)
     counts["versions_added"], counts["versions_removed"] = new_v, removed_v
     return counts
 

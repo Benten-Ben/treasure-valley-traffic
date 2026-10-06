@@ -137,8 +137,8 @@ pipeline will never rely on them:
   - the CSV's 20 non-ACHD rows (2 ITD cameras and 18 road-weather views),
     which came entirely from that list.
 
-When the 511 key arrives, the pipeline's camera list comes from the
-official API. Camera health comes from our own monitor reading the 511
+Since Oct 6, 2026 the camera list comes from the official API (hourly,
+`idaho511_api`), which also rebuilds the road-weather capture list. Camera health comes from our own monitor reading the 511
 timestamp bar.
 
 **Quality notes:**

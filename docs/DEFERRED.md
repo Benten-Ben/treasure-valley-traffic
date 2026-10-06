@@ -41,3 +41,4 @@ Tick an item when it's built, with the date, or strike it if we drop it.
 | [ ] | deck.gl for heavy analysis layers (crash hexbins and similar) | deck.gl doesn't run on MapLibre 6 yet | A deck.gl release that supports MapLibre 6 |
 | [ ] | Buses offset into their actual lane | After lanes | Lanes |
 | [ ] | An hour-long playback check on a recorded weekday hour | Runs after deploy, on the server's data | Deploy |
+| [ ] | Load the road-weather stations (WP16) from the 511 API's camera list and `core.weather_station` instead of the one-off private list, and show their readings on the layer | The API collector arrived while UI v2 was being built (Oct 6) | UI v2 finished |

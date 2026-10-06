@@ -139,6 +139,23 @@ redistribution. Read it before building on the API. **Oct 6, 2026:** the
 owner has the key, and ITD is fine with our use. The full API reference
 (11 endpoints) is kept with the private files.
 
+**First call to each endpoint (Oct 6, 2026, 15:57 UTC):**
+
+| Endpoint | Returned | Notes |
+|---|---|---|
+| Events | 179 statewide, 42 in the valley: 154 roadwork, 24 closures, 1 notice | All from ERS, 511's event system; `SourceId` is the number WZDx uses for the same event (120 of them link to WZDx work zones) |
+| Message signs | 67 statewide, 21 in the valley; 15 showing something (variable speed limits, an exit closure, wildlife warnings) | Blank signs say `NO_MESSAGE` |
+| Weather stations | 127 road-weather stations, 9 in the valley | Air, pavement and dew-point temperatures, humidity, wind, precipitation, visibility, surface status and friction; all stations updated within the same minute, about every 15 minutes. Each names its camera, and all 127 match the camera list |
+| Winter road conditions | 237 stretches | All "No Report" in October |
+| Cameras | 664 cameras, 937 views (730 enabled) | ACHD 215, ITD 265, road-weather 130, Oregon 8 and a few from neighbors; all 34 key cameras and all 389 road-weather capture views are in it |
+| Advisories | None | |
+| Truck restrictions | 75 | 67 are also in Events, with restriction values (length, width, height, weight) |
+| Mountain passes, rest areas, runaway-truck ramps, weigh stations | 32, 29, 7, 22 | Change rarely |
+
+Responses are gzip-compressed and rebuilt on every request (a new ETag
+each time), like WZDx. **Collected since Oct 6** by the `idaho511` service
+([ingest/](../ingest/README.md)).
+
 ## 8.7 Most useful next additions
 
 1. **VRT bus positions:** log the real-time feed on weekdays to measure bus

@@ -125,6 +125,7 @@ def stream(every=POLL_S):
     path = os.environ.get("TVT_CAMERAS") or CAMERAS_FILE
     cams = load_cameras(path)
     own = {str(cam) for cam, _ in cams}
+    list_mtime = os.stat(path).st_mtime
     tag = f"idaho511_frames[{os.path.splitext(os.path.basename(path))[0]}]"
 
     def log(message):
@@ -139,6 +140,22 @@ def stream(every=POLL_S):
     while True:
         started = time.monotonic()
         today = datetime.now(camera_video.TZ).date()
+
+        # The road-weather list is rebuilt from 511's camera list (idaho511_api); pick up changes.
+        try:
+            mtime = os.stat(path).st_mtime
+            if mtime != list_mtime:
+                fresh = load_cameras(path)
+                added = sorted({c for c, _ in fresh} - {c for c, _ in cams})
+                dropped = sorted({c for c, _ in cams} - {c for c, _ in fresh})
+                if fresh:
+                    cams = fresh
+                    own |= {str(cam) for cam, _ in cams}     # dropped cameras' days still get rolled up
+                    if added or dropped:
+                        log(f"camera list changed: {len(cams)} cameras; added {added}, dropped {dropped}")
+                list_mtime = mtime
+        except (OSError, ValueError, KeyError) as err:
+            log(f"camera list unreadable, keeping the old one: {err}")
 
         if shutil.disk_usage(root).free < MIN_FREE_BYTES:
             camera_video.prune(root, today, 1, own)

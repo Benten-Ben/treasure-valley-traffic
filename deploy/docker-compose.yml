@@ -75,6 +75,25 @@ services:
       db:
         condition: service_healthy
 
+  idaho511:
+    # Polls the 511 Idaho API's 11 endpoints on their own cadences, at most 8 calls a
+    # minute: events and signs every 2 min, road-weather readings every 5, the camera
+    # list hourly (which rebuilds the regional capture list). Key from deploy/.env.
+    build:
+      context: ..
+      dockerfile: ingest/Dockerfile
+    restart: unless-stopped
+    command: ["python3", "-m", "ingest", "stream", "idaho511_api"]
+    environment:
+      DATABASE_URL: postgres://tvt:${POSTGRES_PASSWORD}@db:5432/tvt
+      TVT_ARCHIVE: /srv/archive
+      IDAHO511_API_KEY: ${IDAHO511_API_KEY:-}
+    volumes:
+      - ${ARCHIVE_DIR:-/srv/tvt/archive}:/srv/archive
+    depends_on:
+      db:
+        condition: service_healthy
+
   cameras:
     # Key-camera frames from 511 Idaho (ingest/key_cameras.csv), each fetched
     # every 50 s. JPEGs by local day, rolled up after midnight into one AV1 video
@@ -92,8 +111,9 @@ services:
   regional:
     # Road-weather (RWIS) camera views statewide, plus Oregon DOT views in the
     # regional ring: the same code as the cameras service, every 10 minutes,
-    # since these views change about every 15. The list is built from 511's
-    # camera list, a third-party copy, so it lives in the private files.
+    # since these views change about every 15. The idaho511 service rebuilds the
+    # list from 511's camera list (on the server only; it's 511's data), and this
+    # service picks up changes without a restart.
     build:
       context: ..
       dockerfile: ingest/Dockerfile.cameras
@@ -101,10 +121,9 @@ services:
     command: ["python3", "-m", "ingest", "stream", "idaho511_frames", "--every", "600"]
     environment:
       TVT_ARCHIVE: /srv/archive
-      TVT_CAMERAS: /srv/private-data/regional-cameras.csv
+      TVT_CAMERAS: /srv/archive/lists/regional-cameras.csv
     volumes:
       - ${ARCHIVE_DIR:-/srv/tvt/archive}:/srv/archive
-      - ${PRIVATE_DATA_DIR:-/srv/tvt/private/data}:/srv/private-data:ro
 
   app:
     build: ../app
