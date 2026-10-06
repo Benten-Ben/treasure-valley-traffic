@@ -10,9 +10,17 @@
 		"prepare": "svelte-kit sync || echo ''",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
-		"test": "vitest run"
+		"test": "vitest run",
+		"test:e2e": "playwright test",
+		"perf": "node scripts/perf.mjs",
+		"seed": "node scripts/seed-dev.ts",
+		"db": "node scripts/db.mjs",
+		"bundle-budget": "node scripts/bundle-budget.mjs",
+		"dev:wp": "node scripts/harness-env.mjs -- vite dev --port {port} --strictPort",
+		"preview:wp": "node scripts/e2e-server.mjs"
 	},
 	"devDependencies": {
+		"@playwright/test": "1.56.1",
 		"@sveltejs/adapter-node": "^6.0.0",
 		"@sveltejs/kit": "^3.0.0",
 		"@sveltejs/vite-plugin-svelte": "^7.2.0",
