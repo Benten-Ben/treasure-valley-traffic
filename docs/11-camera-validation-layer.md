@@ -420,11 +420,23 @@ JPEG, 752 about 32 KB.
 
 **Recommendation (confirmed by the midday and evening-rush retests):**
 
-- **Codec:** AV1 via SVT-AV1, preset 6, crf30.
+- **Codec:** AV1 via SVT-AV1, preset 6, crf30 (approved by the owner,
+  Oct 5).
 - **Container:** MKV with real per-frame timestamps, as a batch roll-up per
-  camera per hour.
+  camera. Per day rather than per hour (proposed Oct 5, see below).
 - **Originals:** keep the JPEGs only until they've been measured
   (24–48 h).
+
+**Hourly or daily files?** Each file starts with a full frame, which costs
+about 3.5–4.3 ordinary frames (evening rush, both cameras). With 60 frames
+an hour, that's about 4–5% of an hourly file. A daily file needs only an
+occasional full frame for seeking, so it's about 4–5% smaller. Because the
+JPEGs are kept 24–48 h for measuring anyway, a nightly roll-up adds no
+risk: if it fails, it runs again from the JPEGs the next night. Daily files
+also mean 24 times fewer files (about 210 a day for every camera, not about
+5,000), and one video per camera per day to watch. Hourly files would only
+matter if archived video were needed within the hour, or if the JPEGs were
+kept for less than a day.
 
 ## 11.6 Open questions for the owner
 
