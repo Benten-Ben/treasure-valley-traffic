@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { gzipSync } from 'node:zlib';
-import { tilesHandler, TILES_CACHE_CONTROL } from './tiles-static.js';
+import { parseRange, tilesHandler, TILES_CACHE_CONTROL } from './tiles-static.js';
 
 // A small fixture folder shaped like data/tiles.
 let dir: string;
@@ -34,11 +34,11 @@ afterAll(async () => {
 });
 
 /** Raw fetch (no automatic decompression), so Content-Encoding can be checked. */
-async function get(path: string, headers: Record<string, string> = {}) {
+async function get(path: string, headers: Record<string, string> = {}, method = 'GET') {
 	const { request } = await import('node:http');
 	return new Promise<{ status: number; headers: Record<string, string | string[] | undefined>; body: Buffer }>(
 		(ok, fail) => {
-			const req = request(`${base}${path}`, { headers }, (res) => {
+			const req = request(`${base}${path}`, { headers, method }, (res) => {
 				const chunks: Buffer[] = [];
 				res.on('data', (c) => chunks.push(c));
 				res.on('end', () => ok({ status: res.statusCode ?? 0, headers: res.headers, body: Buffer.concat(chunks) }));
@@ -76,11 +76,13 @@ describe('the /tiles/ server mirrors Caddy', () => {
 		expect(JSON.parse(r.body.toString()).basemap.built).toBe('2026-10-05');
 	});
 
-	it('answers other files with public, max-age=3600, an ETag, and working ranges', async () => {
+	it('answers other files with public, max-age=3600, a strong ETag, and working ranges', async () => {
 		const full = await get('/valley.pmtiles');
 		expect(full.status).toBe(200);
 		expect(full.headers['cache-control']).toBe('public, max-age=3600');
-		expect(full.headers['etag']).toBeTruthy();
+		// Caddy's form: "<mtime ns, base 36><size, base 36>", not a weak W/ tag (pmtiles ignores those).
+		expect(full.headers['etag']).toMatch(new RegExp(`^"[0-9a-z]+${archive.length.toString(36)}"$`));
+		expect(full.headers['accept-ranges']).toBe('bytes');
 		const part = await get('/valley.pmtiles', { range: 'bytes=100-199' });
 		expect(part.status).toBe(206);
 		expect(part.headers['content-range']).toBe(`bytes 100-199/${archive.length}`);
@@ -90,7 +92,29 @@ describe('the /tiles/ server mirrors Caddy', () => {
 		expect(again.status).toBe(304);
 	});
 
-	it('answers 404 for missing files, and for a missing tiles folder', async () => {
+	it('handles suffix ranges, unsatisfiable ranges, If-Range and HEAD like Go', async () => {
+		const tail = await get('/valley.pmtiles', { range: 'bytes=-96' });
+		expect(tail.status).toBe(206);
+		expect(tail.headers['content-range']).toBe(`bytes ${archive.length - 96}-${archive.length - 1}/${archive.length}`);
+		expect(tail.body.equals(archive.subarray(archive.length - 96))).toBe(true);
+		const past = await get('/valley.pmtiles', { range: `bytes=${archive.length}-` });
+		expect(past.status).toBe(416);
+		expect(past.headers['content-range']).toBe(`bytes */${archive.length}`);
+		const stale = await get('/valley.pmtiles', { range: 'bytes=0-9', 'if-range': '"not-it"' });
+		expect(stale.status).toBe(200);
+		expect(stale.body.length).toBe(archive.length);
+		const head = await get('/valley.pmtiles', { range: 'bytes=0-9' }, 'HEAD');
+		expect(head.status).toBe(206);
+		expect(head.headers['content-length']).toBe('10');
+		expect(head.body.length).toBe(0);
+		expect((await get('/valley.pmtiles', {}, 'POST')).status).toBe(405);
+		expect(parseRange('bytes=5-2', 10)).toBeNull();
+		expect(parseRange('bytes=0-1,4-5', 10)).toBeNull();
+	});
+
+	it('answers 404 for missing files, paths outside the folder, and a missing tiles folder', async () => {
+		expect((await get('/../package.json')).status).toBe(404);
+		expect((await get('/%2e%2e/%2e%2e/etc/passwd')).status).toBe(404);
 		expect((await get('/nope.pmtiles')).status).toBe(404);
 		const handler = tilesHandler(join(dir, 'does-not-exist'));
 		const res = { statusCode: 0, setHeader() {}, end() {} };
