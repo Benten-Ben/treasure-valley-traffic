@@ -21,7 +21,7 @@
 	const exploring = $derived(app.modes.current === 'explore');
 	/** What the Look does right now, in words. */
 	const now = $derived.by(() => {
-		if (!exploring) return 'Map look while this mode is open';
+		if (!exploring) return 'Kept while this mode is open, with the photo in full color';
 		if (base.look === 'auto') return flavor === 'clay' ? 'Now Clay: a data layer is on' : 'Now Map: no data layer is on';
 		return base.look === 'clay' ? 'Clay, whatever is on' : 'Map, whatever is on';
 	});

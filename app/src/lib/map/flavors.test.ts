@@ -20,6 +20,8 @@ import {
 	hiddenBaseLabels,
 	HILLSHADE_PAINT,
 	keepDrapeFresh,
+	photoSaturation,
+	setTrueColorPhoto,
 	IMAGERY_LAYERS,
 	VALLEY_OVERRIDES,
 	type FlavorMap,
@@ -277,6 +279,26 @@ describe('flavors', () => {
 		setAerial(map as never, manifest, 'http://x', true);
 		expect(b3d()).toBe(AERIAL_BUILDING_OPACITY);
 		for (const id of IMAGERY_LAYERS) expect(sat(id)).toBe(AERIAL_SATURATION.clay);
+		// A mode (calibrating) wants the photo as it is, whatever the flavor; leaving mutes it again.
+		setTrueColorPhoto(m, true);
+		expect(photoSaturation(map)).toBe(0);
+		for (const id of IMAGERY_LAYERS) expect(sat(id)).toBe(0);
+		applyFlavor(m, diff, 'valley');
+		applyFlavor(m, diff, 'clay');
+		for (const id of IMAGERY_LAYERS) expect(sat(id), 'still full color in the mode').toBe(0);
+		setTrueColorPhoto(m, false);
+		expect(photoSaturation(map)).toBe(AERIAL_SATURATION.clay);
+		for (const id of IMAGERY_LAYERS) expect(sat(id)).toBe(AERIAL_SATURATION.clay);
+	});
+
+	it("adds the imagery with the photo's saturation of the moment", () => {
+		const style = buildStyle(manifest, 'http://x');
+		const map = fakeMap(style.layers);
+		const m = map as unknown as FlavorMap;
+		applyFlavor(m, flavorDiff(manifest), 'clay', { force: true });
+		setTrueColorPhoto(m, true);
+		setAerial(map as never, manifest, 'http://x', true);
+		for (const id of IMAGERY_LAYERS) expect((map.getLayer(id) as { paint: Paint }).paint['raster-saturation']).toBe(0);
 	});
 
 	it('builds the style in either flavor, with the same layers', () => {

@@ -81,7 +81,7 @@ export interface LayersInfo {
 	errors: Record<string, string | null>;
 	/** The Base look wants Clay (Clay, or Auto with a layer on). */
 	clay: boolean;
-	/** The flavor the map is drawn in now: the wanted one while exploring, Valley in a mode. */
+	/** The flavor the map is drawn in now (a mode keeps the one it found). */
 	flavor: FlavorName;
 	selection: { kind: string; id: string; layer: string; title: string } | null;
 	/** WP1's lens-era fields, kept for its specs: the layer acted on last, and whether Transit and Cameras loaded. */
@@ -354,9 +354,9 @@ export class LayerManager {
 
 	// --- the base look ------------------------------------------------------------------
 
-	/** The flavor the map should be drawn in now (reactive): in a mode the base belongs to the mode, in Valley. */
+	/** The flavor the Base look wants (reactive): Clay, or Auto with a data layer on; otherwise Valley. */
 	get flavor(): FlavorName {
-		return this.#ctx.modes.current === 'explore' && this.base.clay(this.set.enabled.length > 0) ? 'clay' : 'valley';
+		return this.base.clay(this.set.enabled.length > 0) ? 'clay' : 'valley';
 	}
 
 	/** Whether a flavor was applied to this map yet (the first goes in instantly, before the first frame). */
@@ -374,9 +374,14 @@ export class LayerManager {
 		const set = (id: string, on: boolean) => {
 			if (map.getLayer(id) && map.getLayoutProperty(id, 'visibility') !== vis(on)) map.setLayoutProperty(id, 'visibility', vis(on));
 		};
-		// The flavor (§14.5): a 350 ms crossfade, instant under reduced motion and the first time.
 		// (The flavors module loads with the basemap style, so it's here whenever a map is.)
 		const kit = flavorKit();
+		// In a mode the base belongs to the mode (calibration turns Aerial on). It keeps the flavor it
+		// found: switching would lay the basemap out again, which drops its cached tiles, and the way
+		// back must find them (the persistent spec). It sees the photo in full color, though.
+		kit.setTrueColorPhoto(map, !exploring);
+		if (!exploring) return;
+		// The flavor (§14.5): a 350 ms crossfade, instant under reduced motion and the first time.
 		const flavor = this.flavor;
 		if (manifest) {
 			const duration = !this.#flavored || kit.prefersReducedMotion() ? 0 : kit.FLAVOR_FADE_MS;
@@ -391,8 +396,6 @@ export class LayerManager {
 		// Clay's hidden labels, which "Labels: fewer" hides in either flavor.
 		const hidden = kit.hiddenBaseLabels(flavor, s.labels);
 		for (const id of kit.CLAY_HIDDEN) set(id, !hidden.has(id));
-		// In a mode the rest of the base belongs to the mode (calibration turns Aerial on).
-		if (!exploring) return;
 		set(BUILDINGS_LAYER, s.buildings);
 		const m = this.#ctx.manifest;
 		if (m?.terrain) {

@@ -190,8 +190,8 @@ export function aerialAfter(m: BasemapManifest): string {
  * The imagery sources and layers: NAIP, plus the sharper detail file around
  * the cameras. In Clay the photo is muted (§14.5).
  */
-function imagery(m: BasemapManifest, origin: string, visible: boolean, flavor: FlavorName = 'valley') {
-	const paint = { 'raster-saturation': flavorKit().AERIAL_SATURATION[flavor] };
+function imagery(m: BasemapManifest, origin: string, visible: boolean, saturation = 0) {
+	const paint = { 'raster-saturation': saturation };
 	const sources: StyleSpecification['sources'] = {};
 	const out: LayerSpecification[] = [];
 	if (!m.imagery) return { sources, layers: out };
@@ -244,7 +244,7 @@ export type MapLike = Pick<
 export function addAerial(map: MapLike, m: BasemapManifest, origin: string): boolean {
 	if (!m.imagery) return false;
 	if (map.getLayer(IMAGERY_LAYERS[0])) return true;
-	const { sources, layers: imageryLayers } = imagery(m, origin, false, flavorKit().appliedFlavor(map));
+	const { sources, layers: imageryLayers } = imagery(m, origin, false, flavorKit().photoSaturation(map));
 	for (const [id, src] of Object.entries(sources)) if (!map.getSource(id)) map.addSource(id, src);
 	const order = map.getLayersOrder();
 	const i = order.indexOf(aerialAfter(m));
@@ -331,7 +331,7 @@ export function buildStyle(m: BasemapManifest, origin: string, aerial = false, f
 	}
 
 	if (aerial) {
-		const img = imagery(m, origin, true, flavor);
+		const img = imagery(m, origin, true, flavorKit().AERIAL_SATURATION[flavor]);
 		Object.assign(style.sources, img.sources);
 		middle.push(...img.layers);
 	}
@@ -386,7 +386,7 @@ export function buildStyle(m: BasemapManifest, origin: string, aerial = false, f
  */
 export function flavorLayers(m: BasemapManifest, flavor: FlavorName): LayerSpecification[] {
 	const layers = buildStyle(m, '', false, flavor).layers;
-	const img = imagery(m, '', false, flavor).layers;
+	const img = imagery(m, '', false, flavorKit().AERIAL_SATURATION[flavor]).layers;
 	if (!img.length) return layers;
 	const at = layers.findIndex((l) => l.id === aerialAfter(m));
 	return [...layers.slice(0, at + 1), ...img, ...layers.slice(at + 1)];

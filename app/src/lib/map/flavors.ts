@@ -215,10 +215,28 @@ export function clayPaintDiff(valley: readonly LayerSpecification[], clay: reado
 export type FlavorMap = Pick<Map, 'getLayer' | 'setPaintProperty' | 'getLayoutProperty'>;
 
 const applied = new WeakMap<object, FlavorName>();
+const trueColor = new WeakMap<object, boolean>();
 
 /** The flavor last applied to this map (Valley, which the style is built in, until then). */
 export function appliedFlavor(map: object): FlavorName {
 	return applied.get(map) ?? 'valley';
+}
+
+/** The aerial photo's saturation on this map now: muted in Clay, unless a mode wants it as it is. */
+export function photoSaturation(map: object): number {
+	return trueColor.get(map) ? 0 : AERIAL_SATURATION[appliedFlavor(map)];
+}
+
+/**
+ * Show the aerial photo in full color whatever the flavor (a mode such as
+ * calibrating, which matches the photo against a camera's picture), or back
+ * as the flavor has it. A constant raster paint change: nothing is laid out
+ * again.
+ */
+export function setTrueColorPhoto(map: FlavorMap, on: boolean): void {
+	trueColor.set(map, on);
+	const set = map.setPaintProperty.bind(map) as (layer: string, key: string, v: unknown) => void;
+	for (const id of IMAGERY_LAYERS) if (map.getLayer(id)) set(id, 'raster-saturation', photoSaturation(map));
 }
 
 /** Whether the aerial photo shows on this map. */
@@ -243,6 +261,7 @@ export function applyFlavor(map: FlavorMap, diff: readonly PaintChange[], name: 
 		if (!map.getLayer(ch.layer)) continue;
 		let value = ch[name];
 		if (aerial && ch.layer === BUILDINGS_LAYER && ch.property === 'fill-extrusion-opacity') value = AERIAL_BUILDING_OPACITY;
+		if (trueColor.get(map) && IMAGERY_LAYERS.includes(ch.layer) && ch.property === 'raster-saturation') value = 0;
 		set(ch.layer, `${ch.property}-transition`, { duration, delay: 0 });
 		set(ch.layer, ch.property, value);
 		n++;

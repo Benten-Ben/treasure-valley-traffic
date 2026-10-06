@@ -365,7 +365,7 @@ test.describe('flavors', () => {
 		await expect(pop.getByText('Now Clay: a data layer is on')).toBeVisible();
 	});
 
-	test('a mode owns the base: calibrating draws the Map look, and leaving brings Clay back', { tag: '@wp4' }, async ({ page }) => {
+	test('a mode keeps the flavor it found and shows the photo in full color; leaving mutes it again', { tag: '@wp4' }, async ({ page }) => {
 		test.setTimeout(300_000);
 		const key = seeds().seeds.find((s) => s.kind === 'key')!;
 		await page.goto('/#map=14/43.6/-116.3/0/30&layers=transit,cameras');
@@ -376,8 +376,14 @@ test.describe('flavors', () => {
 		await page.waitForURL(/\/calibrate\//);
 		await mapReady(page);
 		expect(await page.evaluate(() => (globalThis as any).__tvt.mode)).toBe('calibrate');
-		expect((await info(page)).flavor).toBe('valley');
-		expect(await paint(page, 'earth', 'fill-color')).toBe(GROUND.valley);
+		// No basemap re-layout in a mode (it would drop the tiles the way back needs): Clay stays,
+		// labels as they were, but the calibrator's photo isn't muted.
+		expect((await info(page)).flavor).toBe('clay');
+		expect(await paint(page, 'earth', 'fill-color')).toBe(GROUND.clay);
+		for (const id of CLAY_HIDDEN) expect(await vis(page, id)).toBe('none');
+		expect(await vis(page, 'aerial')).toBe('visible');
+		expect(await paint(page, 'aerial', 'raster-saturation')).toBe(0);
+		await page.screenshot({ path: screenPath('wp4-calibrate-photo.png') });
 		await page.goBack();
 		await page.waitForURL((u) => !u.pathname.startsWith('/calibrate'));
 		await mapReady(page);
@@ -385,6 +391,9 @@ test.describe('flavors', () => {
 		expect((await info(page)).flavor).toBe('clay');
 		expect(await paint(page, 'earth', 'fill-color')).toBe(GROUND.clay);
 		for (const id of CLAY_HIDDEN) expect(await vis(page, id)).toBe('none');
+		// Aerial off again, and muted again for when it's next on in Clay.
+		expect(await vis(page, 'aerial')).toBe('none');
+		expect(await paint(page, 'aerial', 'raster-saturation')).toBe(-0.7);
 		// Flavors add no layers: the style holds the same ones, plus the aerial layers calibrating added.
 		const after = await page.evaluate(() => (globalThis as any).__tvt.map.getLayersOrder());
 		expect(after.filter((id: string) => !ids.includes(id) && !id.startsWith('aerial'))).toEqual([]);
