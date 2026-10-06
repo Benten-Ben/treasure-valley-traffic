@@ -315,6 +315,8 @@ test.describe('flavors', () => {
 		const card = page.getByRole('region', { name: 'Selected road' });
 		await expect(card).toBeVisible();
 		await expect(card.locator('.speed-sign .num')).toHaveText(String(spot!.speed));
+		// "Collector · Boise", never "Collector·Boise".
+		await expect(card.locator('.meta')).not.toContainText(/\S·|·\S/);
 		const swatch = await card.locator('.swatch').evaluate((el) => getComputedStyle(el).backgroundColor);
 		// The slate ramp (§14.5), as the swatch's computed color; 20 mph and under share the first shade.
 		const slate = ['#c3cfdf', '#b2c4db', '#a2b8d5', '#94adcd', '#87a1c3', '#7d96b6', '#748aa7', '#6d7f97', '#6a7b91', '#68788c', '#657284'];

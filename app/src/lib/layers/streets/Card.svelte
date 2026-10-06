@@ -14,8 +14,9 @@
 <div class="speed-line">
 	<span class="speed-sign"><small>SPEED LIMIT</small><b class="num">{street.speed ?? '?'}</b></span>
 	<p class="meta">
-		{street.class ?? 'Unknown class'}{#if street.community} · {street.community}{/if}<br />
-		{oneWayText(street)}{#if street.elevated} · bridge or overpass{/if}{#if street.private} · private{/if}
+		<!-- The separators are expressions: Svelte trims the spaces at the edges of a block's text. -->
+		{street.class ?? 'Unknown class'}{#if street.community}{' · '}{street.community}{/if}<br />
+		{oneWayText(street)}{#if street.elevated}{' · bridge or overpass'}{/if}{#if street.private}{' · private'}{/if}
 	</p>
 </div>
 <p class="credit">Source: ACHD road centerlines <i class="swatch small" style:background={speedColor(street.speed, ramp)}></i></p>
