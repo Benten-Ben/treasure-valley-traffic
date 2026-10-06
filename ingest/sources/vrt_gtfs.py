@@ -6,14 +6,16 @@ loaded into core.transit_*. Rows missing from a newer feed are marked
 inactive rather than deleted.
 
 Route colors: VRT's own GTFS colors are four shared tier colors, so routes
-can't be told apart by them. Each route gets one of our eight map colors
-instead, chosen so routes that share streets differ. The palette is the
-validated categorical palette; eight hues can't all be told apart at once,
-so neighbors also avoid the pairs it flags as confusable, and the route
-number always travels with the color. The downtown core is left
-out, and so are the other hubs (Towne Square), since every route serving a
-hub meets there anyway. A route keeps its color for good, so colors don't
-shift when routes come and go.
+can't be told apart by them. Each route gets one of our 13 map colors
+instead (ingest/route_colors.py), chosen so routes drawn side by side never
+clash, and the route number always travels with the color. After loading,
+each run calls ingest/transit_ribbons.py, which rebuilds the side-by-side
+ribbons and the colors only when the shapes or the set of dormant routes
+changed (docs/14 §14.4). A route keeps its color unless a new neighbor makes
+it clash. If the ribbon build fails, the previous ribbons stay, and routes
+without a color get one against today's proximity rule (neighbors_from_db:
+routes running together outside the hubs, which every route serving a hub
+meets anyway).
 
 Note (Oct 2026): the live feed's trip IDs don't match this file's (the file
 seems to predate the Oct 1, 2026 service change), so the realtime recorder
@@ -25,9 +27,9 @@ import hashlib
 import io
 import os
 import zipfile
-from collections import Counter, defaultdict
+from collections import defaultdict
 
-from .. import db, http
+from .. import db, http, route_colors
 
 URL = "https://www.valleyregionaltransit.org/GTFS/vrt_transit1.zip"
 
@@ -42,15 +44,7 @@ SOURCE = {
     "notes": "Routes, stops, shapes and trips; the zip is archived as published.",
 }
 
-# The validated categorical palette (8 hues, fixed order), on the cream map.
-ROUTE_PALETTE = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948"]
-# Pairs the palette validator fails when the two sit side by side (normal-vision
-# ΔE < 15 or colorblind ΔE < 8 on the cream map): orange with yellow, pink,
-# green and red, and pink with red. Neighbors avoid these as well as matches.
-CONFUSABLE = {frozenset(p) for p in [("#eb6834", "#eda100"), ("#eb6834", "#e87ba4"), ("#eb6834", "#008300"),
-                                     ("#eb6834", "#e34948"), ("#e87ba4", "#e34948")]}
-INK = "#2b2a33"
-NEAR_M = 40            # routes within this distance of each other run "together"...
+NEAR_M = 40           # routes within this distance of each other run "together"...
 SHARED_MIN_M = 300     # ...for at least this long, outside the hubs
 HUB_ROUTES = 6         # a stop served by this many routes is a hub (Main Street Station, Towne Square)...
 HUB_RADIUS_M = 900     # ...and everything within this distance of it is left out: all its routes meet there
@@ -132,74 +126,6 @@ def route_order(routes):
     return [r["route_id"] for r in sorted(routes, key=key)]
 
 
-def clash(a, b):
-    """Two route colors that can't sit side by side: the same, or easily confused."""
-    return a == b or frozenset((a, b)) in CONFUSABLE
-
-
-def assign_colors(order, neighbors, existing, palette=ROUTE_PALETTE, max_steps=200_000):
-    """Colors for routes that don't have one yet; existing colors are kept.
-
-    First an exact search for a coloring where no two neighbors (routes
-    sharing streets) clash, trying the least-used colors first so the palette
-    is spread evenly. If none exists (or the search runs long), each new
-    route takes the color that clashes least with its neighbors instead."""
-    fixed = {r: c for r, c in existing.items() if c}
-    todo = [r for r in order if r not in fixed]
-    found = _search(todo, neighbors, dict(fixed), palette, [max_steps])
-    if found is not None:
-        return found
-    colors = dict(fixed)
-    for r in sorted(todo, key=lambda r: (-len(neighbors.get(r, ())), order.index(r))):
-        near = [colors[n] for n in neighbors.get(r, ()) if n in colors]
-        overall = Counter(colors.values())
-        colors[r] = min(palette, key=lambda c: (sum(n == c for n in near), sum(clash(c, n) for n in near),
-                                                overall[c], palette.index(c)))
-    return colors
-
-
-def _search(todo, neighbors, colors, palette, budget):
-    """Backtracking with DSATUR order: color next the route whose neighbors
-    already use the most distinct colors. Returns colors, or None."""
-    if not todo:
-        return colors
-    def saturation(r):
-        return len({colors[n] for n in neighbors.get(r, ()) if n in colors})
-    r = max(todo, key=lambda r: (saturation(r), len(neighbors.get(r, ()))))
-    near = {colors[n] for n in neighbors.get(r, ()) if n in colors}
-    overall = Counter(colors.values())
-    for c in sorted(palette, key=lambda c: (overall[c], palette.index(c))):
-        if any(clash(c, n) for n in near):
-            continue
-        budget[0] -= 1
-        if budget[0] < 0:
-            return None
-        colors[r] = c
-        found = _search([x for x in todo if x != r], neighbors, colors, palette, budget)
-        if found is not None:
-            return found
-        del colors[r]
-    return None
-
-
-def _luminance(hex_color):
-    def channel(v):
-        v /= 255
-        return v / 12.92 if v <= 0.04045 else ((v + 0.055) / 1.055) ** 2.4
-    r, g, b = (int(hex_color[i:i + 2], 16) for i in (1, 3, 5))
-    return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b)
-
-
-def contrast(a, b):
-    la, lb = sorted((_luminance(a), _luminance(b)), reverse=True)
-    return (la + 0.05) / (lb + 0.05)
-
-
-def badge_text_color(color):
-    """White or ink, whichever reads better on the route color."""
-    return "#ffffff" if contrast(color, "#ffffff") >= contrast(color, INK) else INK
-
-
 def archive_zip(data, version):
     base = os.environ.get("TVT_ARCHIVE")
     if not base:
@@ -275,12 +201,33 @@ def store(conn, feed):
             [{**t, "v": v} for t in feed["trips"]])
 
     existing = dict(conn.execute("select route_id, color from core.transit_route").fetchall())
-    colors = assign_colors(route_order(feed["routes"]), neighbors_from_db(conn), existing)
-    for route_id, color in colors.items():
+    from .. import transit_ribbons      # imported here: it imports this module (route_order)
+    ribbons = transit_ribbons.run(conn)
+    if ribbons.get("ribbons") not in ("built", "unchanged"):
+        assign_missing_colors(conn, feed)
+    after = dict(conn.execute("select route_id, color from core.transit_route").fetchall())
+    stats = {"routes": len(feed["routes"]), "stops": len(feed["stops"]), "shapes": len(feed["shapes"]),
+             "trips": len(feed["trips"]),
+             "new colors": sum(1 for r, c in after.items() if c and c != existing.get(r))}
+    stats.update({k: v for k, v in ribbons.items() if k in ("ribbons", "build", "error", "colors changed")})
+    return stats
+
+
+def assign_missing_colors(conn, feed):
+    """Without a ribbon build: color only the routes that have no palette color
+    yet, against today's proximity rule, and keep every other color."""
+    rows = conn.execute("select route_id, color from core.transit_route where active").fetchall()
+    stored = dict(rows)
+    missing = [r for r, c in rows if c not in route_colors.PALETTE]
+    if not missing:
+        return
+    fixed = {r: c for r, c in stored.items() if c in route_colors.PALETTE}
+    order = [r for r in route_order([r for r in feed["routes"] if r["route_id"] in stored]) if r in missing]
+    colors, _ = route_colors.assign(order, neighbors_from_db(conn), stored, mode="minimal", fixed=fixed,
+                                    n_routes=len(stored))
+    for route_id in missing:
         conn.execute("update core.transit_route set color = %s, text_color = %s where route_id = %s",
-                     (color, badge_text_color(color), route_id))
-    return {"routes": len(feed["routes"]), "stops": len(feed["stops"]), "shapes": len(feed["shapes"]),
-            "trips": len(feed["trips"]), "new colors": len(set(colors) - {r for r, c in existing.items() if c})}
+                     (colors[route_id], route_colors.badge_text_color(colors[route_id]), route_id))
 
 
 def run(conn):

@@ -10,6 +10,7 @@ import unittest
 import zipfile
 from datetime import datetime, timezone
 
+from ingest import route_colors
 from ingest.sources import vrt_gtfs, vrt_realtime
 
 
@@ -50,29 +51,37 @@ class StaticFeedTest(unittest.TestCase):
 
 
 class ColorTest(unittest.TestCase):
+    """The route palette as vrt_gtfs uses it (ingest/route_colors.py; the rest is in test_route_colors.py)."""
+
     def test_neighbors_differ_and_existing_colors_stay(self):
         nb = {"a": {"b", "c"}, "b": {"a", "c"}, "c": {"a", "b"}, "d": set()}
-        colors = vrt_gtfs.assign_colors(["a", "b", "c", "d"], nb, {"a": "#e34948"})
+        colors, _ = route_colors.assign(["a", "b", "c", "d"], nb, {"a": "#e34948"})
         self.assertEqual(colors["a"], "#e34948")
         self.assertEqual(len({colors["a"], colors["b"], colors["c"]}), 3)
         self.assertEqual(set(colors), {"a", "b", "c", "d"})
 
     def test_neighbors_avoid_confusable_colors(self):
         orange = "#eb6834"
-        colors = vrt_gtfs.assign_colors(["a", "b"], {"a": {"b"}, "b": {"a"}}, {"a": orange})
-        self.assertFalse(vrt_gtfs.clash(colors["a"], colors["b"]))
+        colors, _ = route_colors.assign(["a", "b"], {"a": {"b"}, "b": {"a"}}, {"a": orange})
+        self.assertFalse(route_colors.clash(colors["a"], colors["b"]))
         self.assertNotIn(colors["b"], {orange, "#eda100", "#e87ba4", "#008300", "#e34948"})
 
     def test_too_many_mutual_neighbors_still_colors_everyone(self):
-        routes = [str(i) for i in range(10)]                     # 10 routes all sharing streets
+        routes = [str(i) for i in range(13)]                     # 13 routes all sharing streets
         nb = {r: set(routes) - {r} for r in routes}
-        colors = vrt_gtfs.assign_colors(routes, nb, {})
-        self.assertEqual(len(colors), 10)
-        self.assertEqual(len(set(colors.values())), 8)           # every color used; two clashes at most
+        colors, _ = route_colors.assign(routes, nb, {})
+        self.assertEqual(len(colors), 13)
+        self.assertEqual(len(set(colors.values())), 13)          # every color used
 
     def test_badge_text_reads_on_the_color(self):
-        self.assertEqual(vrt_gtfs.badge_text_color("#4a3aa7"), "#ffffff")   # violet: white text
-        self.assertEqual(vrt_gtfs.badge_text_color("#eda100"), vrt_gtfs.INK)  # yellow: ink text
+        self.assertEqual(route_colors.badge_text_color("#4a3aa7"), "#ffffff")       # violet: white text
+        self.assertEqual(route_colors.badge_text_color("#eda100"), route_colors.INK)  # yellow: ink text
+
+    def test_vrt_gtfs_uses_the_13_slot_palette(self):
+        self.assertIs(vrt_gtfs.route_colors, route_colors)
+        self.assertEqual(len(route_colors.PALETTE), 13)
+        for gone in ("CONFUSABLE", "clash", "assign_colors", "ROUTE_PALETTE"):
+            self.assertFalse(hasattr(vrt_gtfs, gone), gone)
 
 
 class RealtimeTest(unittest.TestCase):
