@@ -12,12 +12,22 @@
 -- int_id is its intersection key ('ACHD_213', 'INT_0605'). Both are null
 -- where COMPASS has a placeholder ('#NYA', 'Int-Related', '_', ...).
 
--- Person-level data, kept for aggregates only (docs/12 §12.8). Exports, tiles
--- and the app never read this schema, and no table outside it holds a row per
--- person.
+-- Data we may keep but never publish, for aggregates only (docs/12 §12.8, which
+-- foresaw it for Assessor data): from here, the people in crashes. Exports,
+-- tiles and the app never read this schema, and no table outside it holds a
+-- row per person.
 create schema if not exists restricted;
 comment on schema restricted is
   'Person-level data, for aggregates only. Never exported, tiled or served; nothing here is copied to raw.record.';
+
+-- What a layer looked like at its last full read, so a run can skip a layer
+-- that hasn't changed (ingest/sources/compass_layer.py).
+create table ops.layer_signature (
+  source        text primary key references ops.source,
+  signature     jsonb not null,       -- {"count": .., "max_oid": .., "last_edit": ..}
+  read_at       timestamptz not null, -- last full read
+  checked_at    timestamptz not null  -- last check, read or not
+);
 
 -- Crashes ---------------------------------------------------------------------
 
@@ -80,7 +90,7 @@ end $$;
 -- COMPASS's "crash details". Coded fields only, coarsened where a value could
 -- single someone out: an age group rather than the age, Idaho resident or not
 -- rather than the state or country, citation descriptions without numbers.
--- The source has no names; free text and ITD's unit IDs aren't kept.
+-- The source has no names; sex, free text and ITD's unit IDs aren't fetched.
 create table restricted.crash_unit (
   serial_number        text not null,            -- obs.crash.serial_number
   unit_number          smallint not null,        -- the unit (vehicle, pedestrian, cyclist) within the crash
@@ -93,7 +103,6 @@ create table restricted.crash_unit (
   contributing_factor  text,
   injury               text check (injury in ('K', 'A', 'B', 'C', 'O')),  -- KABCO
   age_group            text check (age_group in ('0-15', '16-20', '21-24', '25-34', '35-44', '45-54', '55-64', '65-74', '75+')),
-  sex                  text check (sex in ('M', 'F')),
   idaho_resident       boolean,
   protection_device    text,
   ejection             text,
@@ -180,12 +189,14 @@ create index hin_segment_pm_id on core.hin_segment (pm_id);
 -- with a source-side location key until core.count_station exists, and the
 -- precision of the date). COMPASS's tables hold each location's latest count
 -- from every agency; runs keep the earlier counts as newer ones replace them.
+-- Counts in different directions at one place have different location keys,
+-- so `direction` isn't part of the key and may be unknown (null).
 create table obs.traffic_count (
   source               text not null references ops.source,
   location_key         text not null,            -- the source's location: 'pm:<pm_id>', or 'loc:<agency>|<road>|<location>' (lower case)
   counted_on           date not null,            -- first day of the period counted
   period               text not null check (period in ('day', 'month', 'year')),  -- what counted_on stands for
-  direction            text not null check (direction in ('both', 'one_direction')),  -- both summed, or one only (a one-way street, one side of a divided highway)
+  direction            text check (direction in ('both', 'one_direction')),  -- both summed, or one only (a one-way street, one side of a divided highway)
   count_type           text not null check (count_type in ('short', 'permanent')),  -- portable short count, or a permanent counter (ATR)
   count_24h            int,                      -- vehicles a day: ADT for a short count, AADT for a permanent counter
   am_peak              int,                      -- not in COMPASS's tables
@@ -196,7 +207,7 @@ create table obs.traffic_count (
   pm_id                text,                     -- COMPASS segment; COMPASS's tables have no coordinates
   first_seen           timestamptz not null,
   last_seen            timestamptz not null,
-  primary key (source, location_key, counted_on, direction)
+  primary key (source, location_key, counted_on)
 );
 create index traffic_count_pm_id on obs.traffic_count (pm_id);
 

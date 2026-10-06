@@ -16,6 +16,10 @@ Field notes, checked Oct 6, 2026:
   grpqtr = group quarters, hh = households, jobs; '...census'/'...cens' are
   the 2020 Census, 'est' (before or after the year) an estimate, 'f' a
   forecast. rjobs25 (2025 jobs) has no marker: counted as an estimate ⚠️.
+  The request names the zone's fields and every demographic field the layer
+  describes, so a new estimate year is picked up without editing this file.
+- Group quarters aren't given after 2024 (total minus household population
+  gives them).
 - Permits run through 2025 (9,150 that year), none yet for 2026: COMPASS adds
   a year at a time. Its statistics queries see only 97,684 of the rows, which
   is why the permits looked as if they stopped in 2023; plain counts and paging
@@ -42,6 +46,7 @@ SOURCE = {
     "url": cl.BASE + "CompassMembers/",
     "access": "open",
     "schedule": "30 days",
+    "retry_after": cl.RETRY_AFTER,
     "license": cl.HUB_LICENSE,
     "credit": cl.CREDIT,
     "notes": "Zones: 2020 Census, estimates 2022-2026, forecasts to 2055. Permits 2000 on, added a year at a time.",
@@ -79,35 +84,49 @@ def taz_field(name):
     return 2000 + int(m[3]), MEASURES[m[1]], "forecast" if m[4] == "f" else "estimate"
 
 
+def zone_fields(meta):
+    """The zone's own fields and every demographic field the layer has (so a new estimate year
+    is picked up), named explicitly."""
+    return ["tazid_curr", *TAZ_COLUMNS.values()] + sorted(f for f in meta.fields if taz_field(f))
+
+
 def taz_rows(props):
-    """(zone row, [demographic rows], [fields not understood])."""
+    """(zone row, [demographic rows], [fields not understood], conflicts). Two fields for the same
+    year, measure and kind ('tpopest27' and 'tpop27est') give one value; if they disagree, the
+    first by field name is kept and the conflict counted."""
     taz_id = integer(props.get("tazid_curr"))
     zone = {"taz_id": taz_id, **{col: text(props.get(f)) for col, f in TAZ_COLUMNS.items()}}
-    values, unknown = [], []
-    for name, v in props.items():
+    values, unknown, conflicts = {}, [], 0
+    for name, v in sorted(props.items()):
         parsed = taz_field(name)
         if parsed:
+            if integer(v) is None:
+                continue
+            if parsed in values:
+                conflicts += values[parsed]["value"] != integer(v)
+                continue
             year, measure, kind = parsed
-            if integer(v) is not None:
-                values.append({"taz_id": taz_id, "year": year, "measure": measure, "kind": kind, "value": integer(v)})
+            values[parsed] = {"taz_id": taz_id, "year": year, "measure": measure, "kind": kind, "value": integer(v)}
         elif name.lower() not in ("objectid", "tazid_curr", "shape__area", "shape__length") \
                 and name not in TAZ_COLUMNS.values():
             unknown.append(name)
-    return zone, values, unknown
+    return zone, list(values.values()), unknown, conflicts
 
 
 def store_taz(conn, fetch_id, seen_at, got):
     pairs, repeats, suffixed = cl.keyed(got.rows, key=lambda r: str(integer(r[0].get("tazid_curr")) or ""),
-                                        content=lambda r: cl.without(r[0]))
+                                        content=lambda r: cl.content(r[0], r[1], got.oid))
     pairs = [(k, r) for k, r in pairs if k and "#" not in k]          # a zone ID must be a number, once
-    stats = cl.store_records(conn, TAZ["name"], [(k, cl.without(p), g) for k, (p, g) in pairs],
+    cl.check_share(got, len(pairs), cl.current_records(conn, TAZ["name"]), "zones")
+    stats = cl.store_records(conn, TAZ["name"], [(k, cl.without(p, got.oid), g) for k, (p, g) in pairs],
                              fetch_id, seen_at, got.complete)
-    zones, values, unknown = [], [], set()
+    zones, values, unknown, conflicts = [], [], set(), 0
     for _, (p, g) in pairs:
-        zone, vals, unk = taz_rows(p)
+        zone, vals, unk, conf = taz_rows(p)
         zones.append({**zone, "geom": g})
         values += vals
         unknown.update(unk)
+        conflicts += conf
     cl.upsert(conn, "core.taz", ["taz_id"], zones, seen_at, geom="multi")
     # The current release replaces each fetched zone's values.
     conn.execute("delete from obs.taz_demographic where taz_id = any(%s)", ([z["taz_id"] for z in zones],))
@@ -115,8 +134,8 @@ def store_taz(conn, fetch_id, seen_at, got):
         cur.executemany("""insert into obs.taz_demographic (taz_id, year, measure, kind, value)
                            values (%(taz_id)s, %(year)s, %(measure)s, %(kind)s, %(value)s)""", values)
     retired = cl.retire(conn, "core.taz", seen_at) if got.complete else 0
-    out = {**stats, "stored": len(zones), "values": len(values), "repeats or bad ids": repeats + suffixed,
-           "retired": retired}
+    out = {**stats, "stored": len(zones), "values": len(values), "conflicting values": conflicts,
+           "repeats or bad ids": repeats + suffixed, "retired": retired}
     if unknown:
         out["fields not understood"] = ",".join(sorted(unknown))
     return out
@@ -159,10 +178,12 @@ def permit_row(props):
 
 
 def store_permits(conn, fetch_id, seen_at, got):
-    pairs, repeats, suffixed = cl.keyed(got.rows, key=lambda r: permit_key(r[0]), content=lambda r: cl.without(r[0]))
-    stats = cl.store_records(conn, PERMITS["name"], [(k, cl.without(p), g) for k, (p, g) in pairs],
-                             fetch_id, seen_at, got.complete)
+    pairs, repeats, suffixed = cl.keyed(got.rows, key=lambda r: permit_key(r[0]),
+                                        content=lambda r: cl.content(r[0], r[1], got.oid))
     rows = [{"permit_key": k, **permit_row(p), "geom": g} for k, (p, g) in pairs]
+    cl.check_share(got, sum(1 for r in rows if r["year"]), cl.current_records(conn, PERMITS["name"]), "permits")
+    stats = cl.store_records(conn, PERMITS["name"], [(k, cl.without(p, got.oid), g) for k, (p, g) in pairs],
+                             fetch_id, seen_at, got.complete)
     cl.upsert(conn, "obs.building_permit", ["permit_key"], rows, seen_at, geom="point")
     retired = cl.retire(conn, "obs.building_permit", seen_at) if got.complete else 0
     return {**stats, "stored": len(rows), "exact repeats dropped": repeats, "keys suffixed": suffixed,
@@ -171,7 +192,7 @@ def store_permits(conn, fetch_id, seen_at, got):
 
 
 LAYERS = [
-    cl.Layer("zones", TAZ, TAZ_PATH, ["*"], store_taz),
+    cl.Layer("zones", TAZ, TAZ_PATH, zone_fields, store_taz),
     cl.Layer("permits", PERMITS, PERMIT_PATH, PERMIT_FIELDS, store_permits),
 ]
 

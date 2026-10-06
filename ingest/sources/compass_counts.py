@@ -23,7 +23,9 @@ stay. The tables have no location ID:
 Field notes, checked Oct 6, 2026:
 - pm_id has placeholders: '#NYA', '#nya', '01 needs PMID' (16 rows; null).
 - onetwoway is '2' (both directions summed) or '1' (one direction: one side
-  of a divided highway, or a one-way street).
+  of a divided highway, or a one-way street); read as a number, and anything
+  else is stored as null and reported. Counts in different directions at one
+  place differ in their location key (the ATRs' pm_id), not in `direction`.
 - No coordinates: join to core.compass_segment by pm_id.
 """
 
@@ -40,6 +42,7 @@ SOURCE = {
     "url": cl.BASE + SERVICE,
     "access": "open",
     "schedule": "30 days",
+    "retry_after": cl.RETRY_AFTER,
     "license": cl.HUB_LICENSE,
     "credit": cl.CREDIT,
     "notes": "Every agency's latest count, Canyon County's included. ACHD's rows overlap our private copy of its tables.",
@@ -52,7 +55,7 @@ ATR = cl.layer_source("compass_count_atr", "COMPASS ATR Latest Table Count Data"
 
 PORTABLE_FIELDS = ["objectid", "pm_id", "road", "location", "agency", "onetwoway", "mon", "month", "year", "total"]
 ATR_FIELDS = ["objectid", "pm_id", "road", "location", "agency", "onetwoway", "year", "avgtot"]
-DIRECTION = {"1": "one_direction", "2": "both"}
+DIRECTION = {1: "one_direction", 2: "both"}       # onetwoway, read as a number ('2', '2.0', 2)
 
 
 def location_text(props):
@@ -80,7 +83,7 @@ def count_row(props, count_type):
     return {
         "counted_on": date(year, month if monthly else 1, 1),
         "period": "month" if monthly else "year",
-        "direction": DIRECTION.get(text(props.get("onetwoway")) or "", "both"),
+        "direction": DIRECTION.get(integer(props.get("onetwoway"))),        # None when unknown
         "count_type": count_type,
         "count_24h": integer(props.get("total" if count_type == "short" else "avgtot")),
         "agency": text(props.get("agency")),
@@ -92,9 +95,8 @@ def count_row(props, count_type):
 
 def count_store(source, count_type, location_key):
     def store(conn, fetch_id, seen_at, got):
-        pairs, repeats, suffixed = cl.keyed([p for p, _ in got.rows], key=location_key, content=cl.without)
-        stats = cl.store_records(conn, source["name"], [(k, cl.without(p), None) for k, p in pairs],
-                                 fetch_id, seen_at, got.complete)
+        pairs, repeats, suffixed = cl.keyed([p for p, _ in got.rows], key=location_key,
+                                            content=lambda p: cl.content(p, None, got.oid))
         rows, no_year = [], 0
         for k, p in pairs:
             row = count_row(p, count_type)
@@ -102,10 +104,16 @@ def count_store(source, count_type, location_key):
                 rows.append({"source": source["name"], "location_key": k, **row})
             else:
                 no_year += 1
-        cl.upsert(conn, "obs.traffic_count", ["source", "location_key", "counted_on", "direction"], rows,
-                  seen_at, active=False)
-        return {**stats, "stored": len(rows), "without year": no_year, "exact repeats dropped": repeats,
-                "keys suffixed": suffixed, "pm_id placeholders": sum(
+        cl.check_share(got, len(rows), cl.current_records(conn, source["name"]), source["name"])
+        stats = cl.store_records(conn, source["name"], [(k, cl.without(p, got.oid), None) for k, p in pairs],
+                                 fetch_id, seen_at, got.complete)
+        cl.upsert(conn, "obs.traffic_count", ["source", "location_key", "counted_on"], rows, seen_at, active=False)
+        unknown = sum(1 for r in rows if r["direction"] is None)
+        if unknown:
+            print(f"{source['name']}: {unknown} counts with an unknown onetwoway (direction stored as null)",
+                  flush=True)
+        return {**stats, "stored": len(rows), "without year": no_year, "direction unknown": unknown,
+                "exact repeats dropped": repeats, "keys suffixed": suffixed, "pm_id placeholders": sum(
                     1 for p, _ in got.rows if text(p.get("pm_id")) and not pm_id(p.get("pm_id")))}
     return store
 

@@ -11,16 +11,17 @@ from . import camera_video, db
 from .sources import SOURCES, STREAMS
 
 
-def due(conn, name, schedule):
+def due(conn, name, schedule, retry_after="1 hour"):
     """Due when the last good fetch is older than the schedule. After a failure,
-    wait at least min(schedule, 1 hour) before trying again."""
+    wait at least min(schedule, retry_after) before trying again (a source's
+    SOURCE["retry_after"]; 1 hour unless it says otherwise)."""
     return conn.execute(
         """select (max(started_at) filter (where ok) is null
                    or max(started_at) filter (where ok) + %s::interval <= now())
               and (max(started_at) is null
-                   or max(started_at) + least(%s::interval, interval '1 hour') <= now())
+                   or max(started_at) + least(%s::interval, %s::interval) <= now())
            from ops.fetch where source = %s""",
-        (schedule, schedule, name)).fetchone()[0]
+        (schedule, schedule, retry_after, name)).fetchone()[0]
 
 
 def run_one(conn, name):
@@ -42,7 +43,7 @@ def serve(check_every_s):
                         continue
                     db.ensure_source(conn, s)
                     conn.commit()
-                    if due(conn, name, s["schedule"]):
+                    if due(conn, name, s["schedule"], s.get("retry_after", "1 hour")):
                         try:
                             run_one(conn, name)
                         except Exception:

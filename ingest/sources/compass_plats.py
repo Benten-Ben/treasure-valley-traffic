@@ -9,8 +9,11 @@ fetched.
 Field notes, checked Oct 6, 2026:
 - Kept current: 56 applications dated 2026, 11 since Sep 1 (hence weekly).
   One is dated in the future (Oct 28, 2026); 67 have no date.
-- The layer is edited in place (OBJECTIDs 55-5435 for 1,061 rows) and
-  ProjectID isn't unique (65 repeated, 105 empty), so OBJECTID is the key.
+- The layer has no GlobalID field (its description, Oct 6, 2026), ProjectID
+  isn't unique (65 repeated, 105 empty), and the layer is edited in place
+  (OBJECTIDs 55-5435 for 1,061 rows), so its OBJECTID field is the key.
+  If COMPASS ever reloads the layer, every plat gets a new key: the old rows
+  are retired and new ones added.
 - appdate is a day at midnight UTC; agency, type, status and landusetype are
   coded (agency codes read 'City of Caldwell').
 """
@@ -26,6 +29,7 @@ SOURCE = {
     "url": cl.BASE + PATH,
     "access": "open",
     "schedule": "7 days",
+    "retry_after": cl.RETRY_AFTER,
     "license": cl.HUB_LICENSE,
     "credit": cl.CREDIT,
     "notes": "Kept current by COMPASS (several new applications a month). Comments not fetched.",
@@ -64,9 +68,10 @@ def plat_row(props):
 
 
 def store(conn, fetch_id, seen_at, got, today=None):
-    items = [(integer(p.get("objectid")), p, g) for p, g in got.rows]
+    items = [(integer(p.get(got.oid)), p, g) for p, g in got.rows]      # attribute names are lower case
     items = [i for i in items if i[0] is not None]
-    stats = cl.store_records(conn, PLATS["name"], [(oid, cl.without(p), g) for oid, p, g in items],
+    cl.check_share(got, len(items), cl.current_records(conn, PLATS["name"]), "plats")
+    stats = cl.store_records(conn, PLATS["name"], [(oid, cl.without(p, got.oid), g) for oid, p, g in items],
                              fetch_id, seen_at, got.complete)
     rows = [{"object_id": oid, **plat_row(p), "geom": g} for oid, p, g in items]
     cl.upsert(conn, "core.plat", ["object_id"], rows, seen_at, geom="multi")

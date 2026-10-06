@@ -8,9 +8,12 @@ its disclaimer only), monthly:
   ITD's serial number. The police agency's case number isn't fetched.
 - 2 crash details (345,152 rows, one per person) -> restricted.crash_unit
   only (never raw.record), coded fields only and coarsened (age group, Idaho
-  resident or not); obs.crash gets each crash's unit types from it.
+  resident or not; sex isn't fetched: owner, Oct 6); obs.crash gets each
+  crash's unit types from it (publishable: ITD publishes involvement per
+  crash too).
 - 3 HIN_Junctions (1,924) -> core.hin_junction; 4 HIN_Segments (14,487) ->
-  core.hin_segment.
+  core.hin_segment. Every field is listed except the editor's names and the
+  spatial-join bookkeeping.
 
 Field notes, checked Oct 6, 2026:
 - accident_date holds the calendar day at midnight UTC; the time is in
@@ -54,6 +57,7 @@ SOURCE = {
     "url": cl.BASE + SERVICE,
     "access": "open",
     "schedule": "30 days",
+    "retry_after": cl.RETRY_AFTER,
     "license": cl.HUB_LICENSE,
     "credit": cl.CREDIT,
     "notes": ("Ada and Canyon, 2008 on (ITD's crash reports). Person-level details go to the restricted "
@@ -76,10 +80,58 @@ CRASH_FIELDS = ["objectid", "serialnumber", "accident_date", "accidentdate", "ac
                 "street1", "street2", "referencestreet", "intersectiondistance", "directionfromintersection",
                 "laneofimpact", "segmentcode", "milepost", "statehighway", "countyname", "cityname", "agency",
                 "latitude", "longitude", "pmid", "int_id"]          # not agencycaseid (the police case number)
-# Not unitid (ITD's unit ID), person (a count), seating (always 'Y') or the crash-level fields.
+# Not sex (owner, Oct 6: not needed, so not collected), unitid (ITD's unit ID), person (a count),
+# seating (always 'Y') or the crash-level fields.
 UNIT_FIELDS = ["objectid", "serialnumber", "unitnumber", "unittype", "direction", "action_", "event", "location",
-               "contributingfactors", "injury", "age", "sex", "residencestate", "protectiondevice", "ejection",
-               "citation"]
+               "contributingfactors", "injury", "age", "residencestate", "protectiondevice", "ejection", "citation"]
+# Every HIN field except objectid (always added), the editor's names, creation date and the
+# spatial-join bookkeeping (join_count, target_fid, objectid_1).
+JUNCTION_FIELDS = """
+    int_type roundabout roundabout_status roundabout_control_type roundabout_other_control_type
+    roundabout_previous_control_typ roundabout_approaches roundabout_driveways roundabout_functional_class
+    roundabout_lane_type roundabout_year_completed roundabout_icd total_crash_count type_ its_device aadt_mean
+    aadt_minor aadt_major lanes_minor lanes_major legs tpopcensus tazid_current high_risk_low_crashes
+    low_risk_high_crashes serious_injury_crash_count si_non_motorized si_motorcycle_involved si_alcohol_involved
+    si_drug_involved si_alcohol_drug_involved si_no_protection_device si_angle_event si_rear_end_event
+    si_overturn_event si_angle_turning_event si_head_on_turning_event si_pedestrian_event si_head_on_event
+    si_pedalcycle_event si_side_swipe_same_event fatal_crash_count fatal_non_motorized fatal_motorcycle_involved
+    fatal_alcohol_involved fatal_drug_involved fatal_alcohol_drug_involved fatal_no_protection_device
+    fatal_angle_event fatal_rear_end_event fatal_overturn_event fatal_angle_turning_event fatal_head_on_turning_event
+    fatal_pedestrian_event fatal_head_on_event fatal_pedalcycle_event fatal_side_swipe_same_event non_motorized_sum
+    motorcycle_involved_sum alcohol_involved_sum drug_involved_sum alcohol_drug_involved_sum no_protection_device_sum
+    angle_event_sum rear_end_event_sum overturn_event_sum angle_turning_event_sum head_on_turning_event_sum
+    pedestrian_event_sum head_on_event_sum pedalcycle_event_sum side_swipe_same_event_sum total_crash_rate
+    serious_injury_crash_rate fatal_crash_rate fatal_group injury_group ka_crashes ka_crash_rate ka_group
+    location_score risk_attr_score1 risk_attr_score2 risk_attr_score3 risk_attr_score4 risk_score equityscore_max
+    hin_demographic hin_score hin funcclass state hin_non_state hin_non_motorized non_motorized_all_crashes
+    non_motorized_k non_motorized_a location_score_nm risk_attr_score1_nm risk_attr_score2_nm risk_attr_score3_nm
+    risk_attr_score4_nm risk_score_nm hin_score_nm globalid editdate""".split()
+SEGMENT_FIELDS = """
+    l_addfrom l_addto r_addfrom r_addto stpredir stprefix stname stsuffix stpostdir stpostmod strtconcat l_commname
+    r_commname l_zip4 r_zip4 permid postspeed emergspeed oneway funcclass private county pm_id direction majorroad
+    state lanes impact check_ city miles dup globalid aadt_mean avg_speed max_speed postspd bikefacility_type
+    sidewalk_type excess_speed excess_speeding_corridor id_asc_pav_typ_id id_lane_wid id_med_type_name id_med_width
+    id_shldr_type_name id_left_unpav_shldr_wid l_shoulder_width id_rgt_unpav_shldr_wid r_shoulder_width
+    id_terr_type_name total_crash_count total_crash_rate high_risk_low_crashes low_risk_high_crashes
+    serious_injury_crash_count si_non_motorized si_motorcycle_involved si_alcohol_involved si_drug_involved
+    si_alcohol_drug_involved si_no_protection_device si_angle_event si_rear_end_event si_overturn_event
+    si_angle_turning_event si_head_on_turning_event si_pedestrian_event si_head_on_event si_pedalcycle_event
+    si_side_swipe_same_event fatal_crash_count fatal_non_motorized fatal_motorcycle_involved fatal_alcohol_involved
+    fatal_drug_involved fatal_alcohol_drug_involved fatal_no_protection_device fatal_angle_event fatal_rear_end_event
+    fatal_overturn_event fatal_angle_turning_event fatal_head_on_turning_event fatal_pedestrian_event
+    fatal_head_on_event fatal_pedalcycle_event fatal_side_swipe_same_event non_motorized_sum motorcycle_involved_sum
+    alcohol_involved_sum drug_involved_sum alcohol_drug_involved_sum no_protection_device_sum angle_event_sum
+    rear_end_event_sum overturn_event_sum angle_turning_event_sum head_on_turning_event_sum pedestrian_event_sum
+    head_on_event_sum pedalcycle_event_sum side_swipe_same_event_sum serious_injury_crash_rate fatal_crash_rate
+    fatal_group injury_group ka_crashes ka_crash_rate ka_group expected_crashes excess excess_pct location_score
+    risk_attr_score1 risk_attr_score2 risk_attr_score3 risk_attr_score4 risk_attr_score5 risk_attr_score6
+    risk_attr_score7 risk_attr_score8 risk_attr_score9 risk_attr_score10 risk_attr_score11 risk_attr_score12
+    risk_attr_score13 risk_attr_score14 risk_attr_score15 risk_score equityscore_max hin_demographic hin_score
+    non_motorized_k non_motorized_a non_motorized_all_crashes location_score_nm risk_attr_score1_nm
+    risk_attr_score2_nm risk_attr_score3_nm risk_attr_score4_nm risk_attr_score5_nm risk_attr_score6_nm
+    risk_attr_score7_nm risk_attr_score8_nm risk_attr_score9_nm risk_attr_score10_nm risk_attr_score11_nm
+    risk_attr_score12_nm risk_attr_score13_nm risk_attr_score14_nm risk_attr_score15_nm risk_score_nm hin_score_nm
+    hin hin_non_state hin_non_motorized globalid_2 editdate""".split()
 
 # --- crashes ------------------------------------------------------------------
 
@@ -199,10 +251,11 @@ def store_crashes(conn, fetch_id, seen_at, got):
         else:
             no_id += 1
     pairs, repeats, suffixed = cl.keyed(parsed, key=lambda t: t[2]["serial_number"],
-                                        content=lambda t: cl.without(t[0]))
-    stats = cl.store_records(conn, CRASHES["name"], [(k, cl.without(p), g) for k, (p, g, _) in pairs],
-                             fetch_id, seen_at, got.complete)
+                                        content=lambda t: cl.content(t[0], t[1], got.oid))
     rows = [{**row, "serial_number": k} for k, (_, _, row) in pairs if row["crashed_at"]]
+    cl.check_share(got, len(rows), cl.current_records(conn, CRASHES["name"]), "crashes")
+    stats = cl.store_records(conn, CRASHES["name"], [(k, cl.without(p, got.oid), g) for k, (p, g, _) in pairs],
+                             fetch_id, seen_at, got.complete)
     # The time is part of the key: a crash whose reported time changed loses its old row first.
     moved = conn.execute(
         """delete from obs.crash c using unnest(%s::text[], %s::timestamptz[]) as n(serial, t)
@@ -258,7 +311,6 @@ def citation(v):
 def unit_row(props):
     """One person, coded and coarsened. Nothing here is free text or an identifier."""
     cited, cite = citation(props.get("citation"))
-    sex = (text(props.get("sex")) or "").upper()
     direction = (text(props.get("direction")) or "").upper()
     return {
         "serial_number": text(props.get("serialnumber")),
@@ -271,7 +323,6 @@ def unit_row(props):
         "contributing_factor": text((text(props.get("contributingfactors")) or "").lstrip(", ")),
         "injury": INJURY.get((text(props.get("injury")) or "").lower()),
         "age_group": age_group(props.get("age")),
-        "sex": sex if sex in ("M", "F") else None,
         "idaho_resident": resident(props.get("residencestate")),
         "protection_device": text(props.get("protectiondevice")),
         "ejection": text(props.get("ejection")),
@@ -302,6 +353,8 @@ def store_units(conn, fetch_id, seen_at, got):
         else:
             skipped += 1
     people = number_people(rows)
+    current = conn.execute("select count(*) from restricted.crash_unit").fetchone()[0]
+    cl.check_share(got, len(people), current, "crash people")
     cl.upsert(conn, "restricted.crash_unit", ["serial_number", "unit_number", "seq"], people, seen_at, active=False)
     deleted = 0
     if got.complete:
@@ -374,13 +427,13 @@ def hin_row(props, columns, drop=HIN_DROP):
 
 
 def hin_store(source, table, id_field, columns, geom_kind):
-    drop = HIN_DROP | {id_field}
-
     def store(conn, fetch_id, seen_at, got):
+        drop = HIN_DROP | {id_field, got.oid}
         items = [(text(p.get(id_field)), p, g) for p, g in got.rows]
         no_id = sum(1 for k, _, _ in items if not k)
         pairs, repeats, suffixed = cl.keyed([i for i in items if i[0]], key=lambda i: i[0],
-                                            content=lambda i: cl.without(i[1], *drop))
+                                            content=lambda i: cl.content(i[1], i[2], *drop))
+        cl.check_share(got, len(pairs), cl.current_records(conn, source["name"]), source["name"])
         stats = cl.store_records(conn, source["name"], [(k, cl.without(p, *drop), g) for k, (_, p, g) in pairs],
                                  fetch_id, seen_at, got.complete)
         rows = [{"global_id": k, **hin_row(p, columns, drop), "geom": g} for k, (_, p, g) in pairs]
@@ -394,9 +447,9 @@ def hin_store(source, table, id_field, columns, geom_kind):
 LAYERS = [
     cl.Layer("crashes", CRASHES, SERVICE + "/0", CRASH_FIELDS, store_crashes),
     cl.Layer("people", UNITS, SERVICE + "/2", UNIT_FIELDS, store_units, geometry=False),
-    cl.Layer("hin junctions", JUNCTIONS, SERVICE + "/3", ["*"],
+    cl.Layer("hin junctions", JUNCTIONS, SERVICE + "/3", JUNCTION_FIELDS,
              hin_store(JUNCTIONS, "core.hin_junction", "globalid", JUNCTION_COLUMNS, "point")),
-    cl.Layer("hin segments", SEGMENTS, SERVICE + "/4", ["*"],
+    cl.Layer("hin segments", SEGMENTS, SERVICE + "/4", SEGMENT_FIELDS,
              hin_store(SEGMENTS, "core.hin_segment", "globalid_2", SEGMENT_COLUMNS, "multi")),
 ]
 

@@ -1,11 +1,14 @@
 """Tests for the COMPASS sources (ingest/sources/compass_*.py), on small synthetic records
 (made-up values in COMPASS's formats; no record is copied from its layers).
 
-The offline tests cover paging, the dev page cap, retries and pacing, parsing
-(ArcGIS dates, codes, placeholders), key stability, the restricted person
-rows and the zones' census/estimate/forecast split. The database tests run
-only against a scratch database named by TVT_TEST_DATABASE_URL (a clone with
-migration 0012); they work inside one transaction and roll it back.
+The offline tests cover paging, retries and pacing, the dev page cap, parsing
+(ArcGIS dates, codes, placeholders), key stability, the removal guard, the
+restricted person rows and the zones' census/estimate/forecast split. The
+database tests run only against a scratch database named by
+TVT_TEST_DATABASE_URL (a clone with migration 0012): the store tests work
+inside one transaction and roll it back; the run tests (fetch logging,
+per-layer skips, change checks) commit rows for sources named test_compass_*
+and delete them afterwards.
 
 Run: python3 -m unittest discover -s ingest/tests -t .
 """
@@ -15,7 +18,9 @@ import os
 import random
 import unittest
 import urllib.error
+import urllib.parse
 from datetime import date, datetime, timezone
+from http.client import IncompleteRead
 
 from ingest import http
 from ingest.sources import (compass_congestion, compass_counts, compass_crashes, compass_growth, compass_layer as cl,
@@ -26,8 +31,8 @@ MS_2025_01_15 = 1736899200000
 MS_2025_08_20 = 1755648000000
 
 
-def page(n, start=0, exceeded=None, geojson=False):
-    feats = [{"properties" if geojson else "attributes": {"objectid": start + i}, "geometry": None} for i in range(n)]
+def page(n, start=0, exceeded=None, geojson=False, oid="objectid"):
+    feats = [{"properties" if geojson else "attributes": {oid: start + i}, "geometry": None} for i in range(n)]
     data = {"features": feats}
     if exceeded is not None:
         if geojson:
@@ -38,7 +43,7 @@ def page(n, start=0, exceeded=None, geojson=False):
 
 
 class FakeServer:
-    """Serves the given page bodies in order and records the requested URLs."""
+    """Serves the given bodies in order (raising any that are exceptions) and records the URLs."""
 
     def __init__(self, *bodies):
         self.bodies, self.urls = list(bodies), []
@@ -51,15 +56,15 @@ class FakeServer:
         return 200, body, "no_rules"
 
 
-def read(server, limit=None, page_size=3, geometry=False):
+def read(server, limit=None, page_size=3, geometry=False, **kw):
     return cl.read("X/FeatureServer/0", ["objectid"], geometry, limit=limit, get=server, sleep=lambda s: None,
-                   page=page_size)
+                   page=page_size, **kw)
 
 
 class PagingTest(unittest.TestCase):
     def test_stops_on_a_short_page(self):
         server = FakeServer(page(3, 0, exceeded=True), page(3, 3, exceeded=True), page(1, 6))
-        got = read(server)
+        got = read(server, expected=7)
         self.assertEqual([p["objectid"] for p, _ in got.rows], list(range(7)))
         self.assertEqual((got.pages, got.complete), (3, True))
         self.assertIn("resultOffset=6", server.urls[-1])
@@ -73,30 +78,39 @@ class PagingTest(unittest.TestCase):
         got = read(FakeServer(page(2, 0, exceeded=True), page(2, 2, exceeded=True, geojson=True), page(1, 4)))
         self.assertEqual(len(got.rows), 5)
 
-    def test_server_error_in_the_body_raises(self):
-        with self.assertRaises(RuntimeError):
-            read(FakeServer(json.dumps({"error": {"code": 400, "message": "Invalid query"}}).encode()))
+    def test_a_read_that_disagrees_with_the_count_fails(self):
+        with self.assertRaises(cl.IncompleteLayer):
+            read(FakeServer(page(3, 0, exceeded=True), page(1, 3)), expected=5)
 
-    def test_query_asks_for_pages_in_objectid_order(self):
-        url = cl.query_url("A/FeatureServer/0", ["objectid", "pm_id"], 4000, True)
-        self.assertIn("orderByFields=objectid", url)
-        self.assertIn("resultOffset=4000", url)
-        self.assertIn("outSR=4326", url)
-        self.assertIn("f=geojson", url)
-        self.assertIn("outFields=objectid,pm_id", url)
-        self.assertIn("f=json", cl.query_url("A/FeatureServer/4", ["objectid"], 0, False))
+    def test_pages_go_by_the_layers_objectid_field_and_names_are_read_in_lower_case(self):
+        server = FakeServer(page(2, 0, oid="OBJECTID_1"))
+        got = read(server, oid="objectid_1")
+        self.assertIn("orderByFields=objectid_1", server.urls[0])
+        self.assertEqual([p["objectid_1"] for p, _ in got.rows], [0, 1])
+
+    def test_client_side_gis_errors_raise_without_retrying(self):
+        server = FakeServer(json.dumps({"error": {"code": 400, "message": "Invalid query"}}).encode())
+        with self.assertRaises(RuntimeError):
+            read(server)
+        self.assertEqual(len(server.urls), 1)
+
+    def test_page_urls(self):
+        url = cl.page_url("A/FeatureServer/0", ["objectid", "pm_id"], 4000, True)
+        q = urllib.parse.parse_qs(urllib.parse.urlsplit(url).query)
+        self.assertEqual((q["orderByFields"], q["resultOffset"], q["outSR"], q["f"], q["outFields"]),
+                         (["objectid"], ["4000"], ["4326"], ["geojson"], ["objectid,pm_id"]))
+        self.assertIn("f=json", cl.page_url("A/FeatureServer/4", ["objectid"], 0, False))
 
 
 class PageCapTest(unittest.TestCase):
     def test_the_cap_stops_early_and_marks_the_read_incomplete(self):
         server = FakeServer(*(page(3, 3 * i, exceeded=True) for i in range(5)))
-        got = read(server, limit=2)
+        got = read(server, limit=2, expected=15)          # no count check on a capped read
         self.assertEqual((got.pages, len(got.rows), got.complete), (2, 6, False))
         self.assertEqual(len(server.urls), 2)
 
     def test_a_layer_that_fits_under_the_cap_is_complete(self):
-        got = read(FakeServer(page(2, 0)), limit=3)
-        self.assertTrue(got.complete)
+        self.assertTrue(read(FakeServer(page(2, 0)), limit=3).complete)
 
     def test_the_cap_comes_from_the_environment(self):
         old = os.environ.pop(cl.MAX_PAGES_ENV, None)
@@ -106,62 +120,31 @@ class PageCapTest(unittest.TestCase):
             self.assertEqual(cl.max_pages(), 3)
             for bad in ("0", "x", "-1"):
                 os.environ[cl.MAX_PAGES_ENV] = bad
-                with self.assertRaises(SystemExit):
+                with self.assertRaises(ValueError):
                     cl.max_pages()
         finally:
             os.environ.pop(cl.MAX_PAGES_ENV, None)
             if old is not None:
                 os.environ[cl.MAX_PAGES_ENV] = old
 
-    def test_an_incomplete_run_marks_nothing_removed(self):
-        seen = []
-
-        def store(conn, fetch_id, seen_at, got):
-            seen.append(got.complete)
-            return {}
-
-        class Conn:
-            def execute(self, *a, **k):
-                return self
-
-            def fetchone(self):
-                return (1,)
-
-            def commit(self):
-                pass
-
-            def rollback(self):
-                pass
-
-        def reader(path, fields, geometry, limit=None):
-            return read(FakeServer(*(page(3, 3 * i, exceeded=True) for i in range(5))), limit=limit)
-
-        os.environ[cl.MAX_PAGES_ENV] = "2"
-        try:
-            stats = cl.run(Conn(), {"name": "m", "title": "t", "url": "u", "access": "open"},
-                           [cl.Layer("l", {"name": "s", "title": "t", "url": "u", "access": "open"}, "p", [], store)],
-                           reader=reader)
-        finally:
-            os.environ.pop(cl.MAX_PAGES_ENV, None)
-        self.assertEqual(seen, [False])
-        self.assertEqual(stats["l capped at pages"], 2)
-
 
 class RetryTest(unittest.TestCase):
     def call(self, *responses):
         server, sleeps = FakeServer(*responses), []
-        result = cl.get_retried("https://swidrdc.org/x", get=server, sleep=sleeps.append)
+        result = cl.get_json("https://swidrdc.org/x", get=server, sleep=sleeps.append)
         return result, len(server.urls), sleeps
 
     def test_resets_are_retried_twice(self):
         result, calls, sleeps = self.call(ConnectionResetError("reset by peer"), b"{}")
-        self.assertEqual((result[1], calls, sleeps), (b"{}", 2, [10]))
+        self.assertEqual((result[1], calls, sleeps), ({}, 2, [10]))
         result, calls, sleeps = self.call(ConnectionResetError("1"), ConnectionResetError("2"), b"{}")
-        self.assertEqual((result[1], calls, sleeps), (b"{}", 3, [10, 30]))
+        self.assertEqual((result[1], calls, sleeps), ({}, 3, [10, 30]))
 
-    def test_an_unreadable_robots_txt_is_retried(self):
-        _, calls, _ = self.call(http.RobotsUnavailable("couldn't read"), b"{}")
-        self.assertEqual(calls, 2)
+    def test_truncated_garbled_and_server_error_bodies_are_retried(self):
+        for bad in (IncompleteRead(b'{"feat'), b'{"features": [', http.RobotsUnavailable("couldn't read"),
+                    json.dumps({"error": {"code": 500, "message": "Unable to complete operation."}}).encode()):
+            _, calls, _ = self.call(bad, b'{"count": 3}')
+            self.assertEqual(calls, 2, bad)
 
     def test_a_third_failure_gives_up(self):
         with self.assertRaises(OSError):
@@ -172,6 +155,25 @@ class RetryTest(unittest.TestCase):
             self.call(urllib.error.HTTPError("u", 404, "Not Found", {}, None))
         with self.assertRaises(http.RobotsDisallowed):
             self.call(http.RobotsDisallowed("no"))
+
+
+class LongQueryTest(unittest.TestCase):
+    def test_long_queries_go_as_a_form_post(self):
+        calls = []
+        saved = cl.http.get, cl.http.post, cl.PACER
+        cl.http.get = lambda url, timeout=None: calls.append(("get", url)) or (200, b"{}", "no_rules")
+        cl.http.post = lambda url, data, timeout=None: calls.append(("post", url, data)) or (200, b"{}", "no_rules")
+        cl.PACER = cl.Pacer(gap=0)
+        try:
+            short = cl.page_url("A/FeatureServer/3", ["objectid", "int_type"], 0, True)
+            long = cl.page_url("A/FeatureServer/3", ["objectid"] + compass_crashes.JUNCTION_FIELDS, 0, True)
+            cl.paced_get(short)
+            cl.paced_get(long)
+        finally:
+            cl.http.get, cl.http.post, cl.PACER = saved
+        self.assertEqual(calls[0], ("get", short))
+        self.assertEqual(calls[1][:2], ("post", cl.BASE + "A/FeatureServer/3/query"))
+        self.assertIn(b"outFields=objectid,int_type,roundabout", calls[1][2])
 
 
 class PacerTest(unittest.TestCase):
@@ -188,6 +190,32 @@ class PacerTest(unittest.TestCase):
         now[0] += 2.0                      # slow processing in between: no extra wait
         pacer.wait()
         self.assertEqual(slept, [1.5])
+
+
+class GuardTest(unittest.TestCase):
+    def test_removals_need_most_of_the_layer_and_half_of_whats_current(self):
+        complete = cl.Read(complete=True, expected=100)
+        cl.check_share(complete, 90, 100, "x")
+        with self.assertRaises(cl.IncompleteLayer):
+            cl.check_share(complete, 89, 0, "x")                  # under 90% of the count
+        with self.assertRaises(cl.IncompleteLayer):
+            cl.check_share(cl.Read(complete=True), 40, 100, "x")  # under half of what's current
+        cl.check_share(cl.Read(complete=False, expected=100), 0, 100, "x")   # capped: removes nothing anyway
+
+    def test_rows_without_their_key_retire_nothing(self):
+        class Conn:                                   # 5 plats current; nothing may be written
+            def execute(self, sql, args=None):
+                if not sql.lstrip().startswith("select"):
+                    raise AssertionError(f"wrote before the check: {sql[:40]}")
+                return self
+
+            def fetchone(self):
+                return (5,)
+
+        # The reviewed case: an answer whose rows lack the key field (e.g. renamed) stores nothing.
+        with self.assertRaises(cl.IncompleteLayer):
+            compass_plats.store(Conn(), None, None, cl.Read(rows=[({"projectid": "x"}, None)], complete=True,
+                                                            expected=1))
 
 
 class ValuesTest(unittest.TestCase):
@@ -223,7 +251,7 @@ class ValuesTest(unittest.TestCase):
 
 
 def crash(**over):
-    props = {"serialnumber": "08C900001", "accident_date": MS_2008_06_01, "accidentdate": "6/1/2008 16:45",
+    props = {"serialnumber": "TEST-C1", "accident_date": MS_2008_06_01, "accidentdate": "6/1/2008 16:45",
              "accidenttime": "16:45", "severity": "Property Dmg Report", "units": 1, "person": 1, "fatalities": 0,
              "injuries": 0, "light": "Day", "weather": "Clear", "roadsurfaceconditions": "Dry",
              "workzonerelated": "N", "intersectionrelated": "N", "street1": "Example Blvd",
@@ -293,9 +321,16 @@ class KeyTest(unittest.TestCase):
             again, _, _ = cl.keyed(items, key=lambda i: i["k"])
             self.assertEqual(sorted(map(repr, again)), sorted(map(repr, first)))
 
+    def test_a_repeat_must_match_in_geometry_too(self):
+        here = {"type": "Point", "coordinates": [-116.6, 43.6]}
+        there = {"type": "Point", "coordinates": [-116.5, 43.6]}
+        rows = [({"objectid": 1, "k": "a"}, here), ({"objectid": 2, "k": "a"}, here), ({"objectid": 3, "k": "a"}, there)]
+        pairs, dropped, suffixed = cl.keyed(rows, key=lambda r: r[0]["k"], content=lambda r: cl.content(*r))
+        self.assertEqual((len(pairs), dropped, suffixed), (2, 1, 1))     # OBJECTID alone doesn't make a record new
+
     def test_people_keep_their_seq_whatever_the_order(self):
-        rows = [compass_crashes.unit_row({"serialnumber": "S1", "unitnumber": 1, "age": a, "sex": s,
-                                          "unittype": "Car"}) for a, s in ((30, "M"), (8, "F"), (30, "M"), (70, "F"))]
+        rows = [compass_crashes.unit_row({"serialnumber": "S1", "unitnumber": 1, "age": a, "unittype": t})
+                for a, t in ((30, "Car"), (8, "Car"), (30, "Car"), (70, "Pickup"))]
         first = {(r["serial_number"], r["unit_number"], r["seq"]): r["content_hash"]
                  for r in compass_crashes.number_people(rows)}
         self.assertEqual(len(first), 4)                       # identical people still get their own rows
@@ -333,17 +368,17 @@ class RestrictedTest(unittest.TestCase):
     PERSON = {"serialnumber": "TEST-S1", "unitnumber": 1, "unittype": "Pedestrian", "direction": "w",
               "action_": "Going Straight", "event": "Pedestrian", "location": "Nonjunction",
               "contributingfactors": ",Failed to Yield", "injury": "Suspected Serious Injury", "age": 37,
-              "sex": "#NAME?", "residencestate": "Testlandia", "protectiondevice": "None", "ejection": "Not Ejected",
+              "sex": "F", "residencestate": "Testlandia", "protectiondevice": "None", "ejection": "Not Ejected",
               "citation": "4242-ZZTEST"}
 
     def test_people_are_coded_and_coarsened(self):
         r = compass_crashes.unit_row(self.PERSON)
-        self.assertEqual((r["age_group"], r["sex"], r["idaho_resident"], r["injury"]), ("35-44", None, False, "A"))
-        self.assertEqual((r["cited"], r["citation"]), (None, None))       # a bare number: maybe a ticket number
+        self.assertEqual((r["age_group"], r["idaho_resident"], r["injury"]), ("35-44", False, "A"))
+        self.assertEqual((r["cited"], r["citation"]), (None, None))       # not a coded citation: maybe a ticket number
         self.assertEqual((r["direction"], r["contributing_factor"]), ("W", "Failed to Yield"))
-        self.assertNotIn("Testlandia", json.dumps(r))
-        self.assertNotIn("37", json.dumps(r))
-        self.assertNotIn("ZZTEST", json.dumps(r))
+        text = json.dumps(r)
+        for kept_out in ("Testlandia", "37", "ZZTEST", '"F"', "sex"):
+            self.assertNotIn(kept_out, text)
 
     def test_citations_ages_residence(self):
         c = compass_crashes.citation
@@ -358,25 +393,30 @@ class RestrictedTest(unittest.TestCase):
 
     def test_identifying_fields_are_never_requested(self):
         self.assertNotIn("agencycaseid", compass_crashes.CRASH_FIELDS)
-        for f in ("unitid", "person", "seating", "street1"):
+        for f in ("sex", "unitid", "person", "seating", "street1"):
             self.assertNotIn(f, compass_crashes.UNIT_FIELDS)
         for f in ("address", "parcel_no", "comment", "created_user", "last_edited_user"):
             self.assertNotIn(f, compass_growth.PERMIT_FIELDS)
         self.assertNotIn("comments", compass_plats.FIELDS)
+        for fields in (compass_crashes.JUNCTION_FIELDS, compass_crashes.SEGMENT_FIELDS,
+                       compass_growth.zone_fields(cl.Meta(fields={"tazid_curr", "creator", "editor", "hh30f"}))):
+            self.assertNotIn("*", fields)
+            self.assertFalse({"creator", "editor"} & set(fields))
 
     def test_person_rows_only_have_restricted_columns(self):
         r = compass_crashes.number_people([compass_crashes.unit_row(self.PERSON)])[0]
         self.assertEqual(set(r), {"serial_number", "unit_number", "seq", "unit_type", "direction", "action", "event",
-                                  "location", "contributing_factor", "injury", "age_group", "sex", "idaho_resident",
+                                  "location", "contributing_factor", "injury", "age_group", "idaho_resident",
                                   "protection_device", "ejection", "cited", "citation", "content_hash"})
 
-    def test_terms(self):
+    def test_terms_and_schedules(self):
         self.assertIn("restricted", compass_crashes.UNITS["notes"])
         for s in (compass_congestion.SOURCE, compass_congestion.MEASURES, compass_congestion.COMMUTES):
             self.assertEqual(s["license"], cl.INTERNAL_LICENSE)
             self.assertIn("internal use", s["notes"])
         for m in (compass_crashes, compass_counts, compass_growth, compass_plats, compass_congestion):
             self.assertEqual(m.SOURCE["credit"], "COMPASS and COMPASS member agencies")
+            self.assertEqual(m.SOURCE["retry_after"], "6 hours")
         self.assertEqual(compass_plats.SOURCE["schedule"], "7 days")
 
 
@@ -402,12 +442,17 @@ class TazTest(unittest.TestCase):
         for other in TAZ_OTHER:
             self.assertIsNone(f(other), other)
 
+    def test_requested_fields_follow_the_layer(self):
+        meta = cl.Meta(fields=set(TAZ_OTHER + TAZ_FIELDS + ["tpopest27", "creator"]))
+        fields = compass_growth.zone_fields(meta)
+        self.assertIn("tpopest27", fields)                 # a new estimate year is picked up
+        self.assertEqual(set(fields), set(TAZ_OTHER + TAZ_FIELDS + ["tpopest27"]) - {"objectid"})
+
     def test_census_estimate_forecast_split(self):
         props = {**{n: 100 + i for i, n in enumerate(TAZ_FIELDS)}, "objectid": 2, "tazid_curr": 1212.0,
                  "tazname": "1212", "county": "Ada", "zipcode": "83642", "notes_chg": " "}
-        zone, values, unknown = compass_growth.taz_rows(props)
-        self.assertEqual((zone["taz_id"], zone["name"], zone["notes"]), (1212, "1212", None))
-        self.assertEqual(unknown, [])
+        zone, values, unknown, conflicts = compass_growth.taz_rows(props)
+        self.assertEqual((zone["taz_id"], zone["name"], zone["notes"], unknown, conflicts), (1212, "1212", None, [], 0))
         kinds = {}
         for v in values:
             kinds.setdefault(v["kind"], set()).add(v["year"])
@@ -415,8 +460,12 @@ class TazTest(unittest.TestCase):
                                  "forecast": {2030, 2035, 2040, 2045, 2050, 2055}})
         self.assertEqual(len(values), len(TAZ_FIELDS))
         self.assertEqual(len({(v["year"], v["measure"], v["kind"]) for v in values}), len(values))
-        zone, values, unknown = compass_growth.taz_rows({"tazid_curr": 1, "tpopest27": 5, "newfield": 1})
-        self.assertEqual(unknown, ["newfield"])
+
+    def test_two_fields_for_one_value(self):
+        _, values, unknown, conflicts = compass_growth.taz_rows({"tazid_curr": 1, "tpopest27": 5, "tpop27est": 6,
+                                                                 "hhest27": 2, "hh27est": 2, "newfield": 1})
+        self.assertEqual((len(values), conflicts, unknown), (2, 1, ["newfield"]))
+        self.assertEqual([v["value"] for v in values if v["measure"] == "population"], [6])   # first by name
 
 
 class CountsTest(unittest.TestCase):
@@ -426,27 +475,34 @@ class CountsTest(unittest.TestCase):
                                       "year": 2025.0, "total": 499.6}, "short")
         self.assertEqual((r["pm_id"], r["counted_on"], r["period"], r["direction"], r["count_24h"]),
                          (None, date(2025, 11, 1), "month", "both", 500))
-        r = compass_counts.count_row({"pm_id": "000000002000", "onetwoway": "1", "year": 2024.0,
+        r = compass_counts.count_row({"pm_id": "000000002000", "onetwoway": "1.0", "year": 2024.0,
                                       "avgtot": 20000.0, "month": 3}, "permanent")
         self.assertEqual((r["counted_on"], r["period"], r["direction"], r["count_24h"], r["pm_id"]),
                          (date(2024, 1, 1), "year", "one_direction", 20000, "000000002000"))
         self.assertIsNone(compass_counts.count_row({"total": 5}, "short"))
+        self.assertEqual([compass_counts.count_row({"year": 2024, "onetwoway": v}, "short")["direction"]
+                          for v in (2.0, "1", "3", "x", None)], ["both", "one_direction", None, None, None])
 
 
 DB_URL = os.environ.get("TVT_TEST_DATABASE_URL")
+SKIP_DB = "set TVT_TEST_DATABASE_URL to a scratch database (a clone with migration 0012)"
 
 
-@unittest.skipUnless(DB_URL, "set TVT_TEST_DATABASE_URL to a scratch database (a clone with migration 0012)")
+def _db_ready():
+    import psycopg
+    with psycopg.connect(DB_URL) as c:
+        if not c.execute("select to_regclass('ops.layer_signature') is not null").fetchone()[0]:
+            raise unittest.SkipTest("ops.layer_signature is missing: apply migration 0012")
+    return psycopg
+
+
+@unittest.skipUnless(DB_URL, SKIP_DB)
 class DatabaseTest(unittest.TestCase):
-    """Against a real (scratch) database, inside one transaction that is rolled back."""
+    """Store functions against a real (scratch) database, inside one transaction that is rolled back."""
 
     @classmethod
     def setUpClass(cls):
-        import psycopg
-        cls.psycopg = psycopg
-        with psycopg.connect(DB_URL) as c:
-            if not c.execute("select to_regclass('restricted.crash_unit') is not null").fetchone()[0]:
-                raise unittest.SkipTest("restricted.crash_unit is missing: apply migration 0012")
+        cls.psycopg = _db_ready()
 
     def setUp(self):
         self.conn = self.psycopg.connect(DB_URL)
@@ -484,12 +540,13 @@ class DatabaseTest(unittest.TestCase):
         leaked = self.one("""select count(*) from raw.record where payload::text like '%%Testlandia%%'
                                or payload::text like '%%ZZTEST%%'""")[0]
         self.assertEqual(leaked, 0)
-        # No table outside `restricted` has a person-level column.
+        # No table outside `restricted` has a person-level column, and no table has sex at all.
         outside = self.one("""select string_agg(table_schema || '.' || table_name || '.' || column_name, ', ')
                               from information_schema.columns
-                              where table_schema not in ('restricted', 'pg_catalog', 'information_schema')
-                                and column_name in ('age_group', 'sex', 'idaho_resident', 'citation', 'cited',
-                                                    'protection_device', 'ejection')""")[0]
+                              where table_schema not in ('pg_catalog', 'information_schema')
+                                and (column_name = 'sex' or (table_schema <> 'restricted' and column_name in
+                                     ('age_group', 'idaho_resident', 'citation', 'cited', 'protection_device',
+                                      'ejection')))""")[0]
         self.assertIsNone(outside)
 
     def test_a_changed_time_moves_the_crash(self):
@@ -510,10 +567,12 @@ class DatabaseTest(unittest.TestCase):
         older = {"pm_id": "#NYA", "road": "Test Rd", "location": "e/o Nowhere", "agency": "TESTAGENCY",
                  "onetwoway": "2", "month": 5, "year": 2023, "total": 100}
         store(self.conn, None, self.seen, cl.Read(rows=[(older, None)], complete=False))
-        store(self.conn, None, self.seen, cl.Read(rows=[({**older, "year": 2025, "total": 140}, None)], complete=False))
-        rows = self.conn.execute("""select counted_on, count_24h, pm_id from obs.traffic_count
+        stats = store(self.conn, None, self.seen,
+                      cl.Read(rows=[({**older, "year": 2025, "total": 140, "onetwoway": "9"}, None)], complete=False))
+        self.assertEqual(stats["direction unknown"], 1)
+        rows = self.conn.execute("""select counted_on, count_24h, pm_id, direction from obs.traffic_count
                                     where location_key = 'loc:testagency|test rd|e/o nowhere' order by 1""").fetchall()
-        self.assertEqual(rows, [(date(2023, 5, 1), 100, None), (date(2025, 5, 1), 140, None)])
+        self.assertEqual(rows, [(date(2023, 5, 1), 100, None, "both"), (date(2025, 5, 1), 140, None, None)])
 
     def test_zone_values_are_replaced_by_the_current_release(self):
         poly = {"type": "Polygon", "coordinates": [[[-116.3, 43.6], [-116.29, 43.6], [-116.29, 43.61], [-116.3, 43.6]]]}
@@ -525,6 +584,144 @@ class DatabaseTest(unittest.TestCase):
                                     where taz_id = 99999 order by 1, 2""").fetchall()
         self.assertEqual(rows, [(2024, "population", "estimate", 10), (2030, "jobs", "forecast", 9)])
         self.assertEqual(self.one("select GeometryType(geom) from core.taz where taz_id = 99999")[0], "MULTIPOLYGON")
+
+
+class FakeLayers:
+    """A fake swidrdc.org for whole runs: layer descriptions, counts, highest OBJECTIDs and pages."""
+
+    def __init__(self, layers):
+        self.layers, self.urls, self.fail = layers, [], set()   # path -> list of attribute dicts
+
+    def __call__(self, url, timeout=None):
+        self.urls.append(url)
+        parts = urllib.parse.urlsplit(url)
+        q = {k: v[0] for k, v in urllib.parse.parse_qs(parts.query).items()}
+        path = parts.path.split("/rest/services/", 1)[1].removesuffix("/query")
+        rows = self.layers[path]
+        if not parts.path.endswith("/query"):
+            body = {"objectIdField": "objectid", "fields": [{"name": "objectid"}, {"name": "v"}]}
+        elif q.get("returnCountOnly") == "true":
+            body = {"count": len(rows)}
+        elif q.get("orderByFields", "").endswith(" DESC"):
+            body = {"features": [{"attributes": {"objectid": max(r["objectid"] for r in rows)}}]}
+        else:
+            if path in self.fail:
+                raise urllib.error.HTTPError(url, 404, "gone", {}, None)
+            start, n = int(q["resultOffset"]), int(q["resultRecordCount"])
+            body = {"features": [{"attributes": r} for r in rows[start:start + n]]}
+        return 200, json.dumps(body).encode(), "no_rules"
+
+    def pages_read(self, path):
+        return sum(1 for u in self.urls if path + "/query" in u and "resultOffset" in u)
+
+
+@unittest.skipUnless(DB_URL, SKIP_DB)
+class RunTest(unittest.TestCase):
+    """Whole module runs against a fake server: fetch logging, per-layer skips, change checks, the
+    dev cap and the back-off. These commit rows for test_compass_* sources and remove them after."""
+
+    MODULE = {"name": "test_compass_module", "title": "test", "url": "u", "access": "open", "schedule": "30 days",
+              "retry_after": "6 hours"}
+
+    @classmethod
+    def setUpClass(cls):
+        cls.psycopg = _db_ready()
+
+    def setUp(self):
+        self.conn = self.psycopg.connect(DB_URL)
+        self.cleanup()
+        self.saved = cl.CHECK_MIN_ROWS, os.environ.pop(cl.MAX_PAGES_ENV, None), os.environ.pop(cl.FORCE_ENV, None)
+        cl.CHECK_MIN_ROWS = 2                              # so a 3-row layer gets the change check
+
+    def tearDown(self):
+        cl.CHECK_MIN_ROWS = self.saved[0]
+        os.environ.pop(cl.MAX_PAGES_ENV, None)
+        self.cleanup()
+        self.conn.close()
+
+    def cleanup(self):
+        self.conn.rollback()
+        for sql in ("delete from raw.record where source like 'test_compass_%%'",
+                    "delete from ops.layer_signature where source like 'test_compass_%%'",
+                    "delete from ops.fetch where source like 'test_compass_%%'",
+                    "delete from ops.source where name like 'test_compass_%%'"):
+            self.conn.execute(sql)
+        self.conn.commit()
+
+    @staticmethod
+    def layer(name, path):
+        def store(conn, fetch_id, seen_at, got):
+            cl.check_share(got, len(got.rows), cl.current_records(conn, f"test_compass_{name}"), name)
+            return cl.store_records(conn, f"test_compass_{name}", [(str(p["objectid"]), cl.without(p), None)
+                                                                   for p, _ in got.rows], fetch_id, seen_at,
+                                    got.complete)
+        return cl.Layer(name, cl.layer_source(f"test_compass_{name}", name, path), path, ["v"], store, geometry=False)
+
+    def run_module(self, server, *layers):
+        return cl.run(self.conn, self.MODULE, list(layers), get=server, sleep=lambda s: None)
+
+    def fetches(self, source):
+        return self.conn.execute("select ok, error, records from ops.fetch where source = %s order by id",
+                                 (source,)).fetchall()
+
+    def test_an_unchanged_layer_is_not_read_again(self):
+        server = FakeLayers({"A/0": [{"objectid": i, "v": i} for i in range(3)]})
+        a = self.layer("a", "A/0")
+        self.assertEqual(self.run_module(server, a)["a rows"], 3)
+        self.assertEqual(self.run_module(server, a), {"a unchanged": "count 3, highest OBJECTID 2"})
+        self.assertEqual(server.pages_read("A/0"), 1)
+        server.layers["A/0"].append({"objectid": 7, "v": 7})       # a new row: read again
+        self.assertEqual(self.run_module(server, a)["a rows"], 4)
+        self.assertEqual(server.pages_read("A/0"), 2)
+
+    def test_after_a_failure_only_the_failed_layer_is_read_again(self):
+        server = FakeLayers({"A/0": [{"objectid": 1, "v": 1}], "B/0": [{"objectid": 1, "v": 2}]})
+        a, b = self.layer("a", "A/0"), self.layer("b", "B/0")
+        server.fail.add("B/0")
+        with self.assertRaises(urllib.error.HTTPError):
+            self.run_module(server, a, b)
+        self.assertEqual([r[0] for r in self.fetches("test_compass_module")], [False])
+        server.fail.clear()
+        stats = self.run_module(server, a, b)
+        self.assertEqual((stats["a"], stats["b rows"]), ("done earlier", 1))
+        self.assertEqual((server.pages_read("A/0"), server.pages_read("B/0")), (1, 2))   # B: the failed try, then this
+        # After a good module run, the next one checks every layer again.
+        stats = self.run_module(server, a, b)
+        self.assertEqual((stats["a rows"], stats["b rows"]), (1, 1))
+
+    def test_a_capped_run_is_logged_as_failed_and_saves_no_signature(self):
+        server = FakeLayers({"A/0": [{"objectid": i, "v": i} for i in range(3)]})
+        os.environ[cl.MAX_PAGES_ENV] = "1"
+        old_page, cl.PAGE = cl.PAGE, 2
+        try:
+            stats = self.run_module(server, self.layer("a", "A/0"))
+        finally:
+            cl.PAGE = old_page
+        self.assertEqual(stats["a capped at pages"], 1)
+        for source in ("test_compass_module", "test_compass_a"):
+            ok, error, _ = self.fetches(source)[-1]
+            self.assertFalse(ok)
+            self.assertIn("capped", error)
+        self.assertIsNone(self.conn.execute("select 1 from ops.layer_signature where source = 'test_compass_a'")
+                          .fetchone())
+
+    def test_an_empty_answer_fails_and_removes_nothing(self):
+        server = FakeLayers({"A/0": [{"objectid": i, "v": i} for i in range(3)]})
+        a = self.layer("a", "A/0")
+        self.run_module(server, a)
+        server.layers["A/0"] = [{"objectid": 9, "v": 9}]          # a layer suddenly a third of its size
+        with self.assertRaises(cl.IncompleteLayer):
+            self.run_module(server, a)
+        self.assertEqual(cl.current_records(self.conn, "test_compass_a"), 3)
+
+    def test_a_failed_source_waits_its_retry_after(self):
+        from ingest.__main__ import due
+        cl.db.ensure_source(self.conn, self.MODULE)
+        self.conn.execute("""insert into ops.fetch (source, started_at, finished_at, ok)
+                             values ('test_compass_module', now() - interval '2 hours', now(), false)""")
+        self.conn.commit()
+        self.assertFalse(due(self.conn, "test_compass_module", "30 days", "6 hours"))
+        self.assertTrue(due(self.conn, "test_compass_module", "30 days"))          # the default: 1 hour
 
 
 if __name__ == "__main__":

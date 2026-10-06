@@ -41,6 +41,7 @@ SOURCE = {
     "url": cl.BASE + SERVICE,
     "access": "open",
     "schedule": "30 days",
+    "retry_after": cl.RETRY_AFTER,
     "license": cl.INTERNAL_LICENSE,
     "credit": cl.CREDIT,
     "notes": cl.INTERNAL_NOTE,
@@ -114,10 +115,11 @@ def store_measures(conn, fetch_id, seen_at, got):
     no_year = sum(1 for _, _, r in parsed if r["year"] is None)
     pairs, repeats, suffixed = cl.keyed([t for t in parsed if t[2]["year"] is not None],
                                         key=lambda t: f"{t[2]['year']}:{t[2]['segment_id']}",
-                                        content=lambda t: cl.without(t[0]))
-    stats = cl.store_records(conn, MEASURES["name"], [(k, cl.without(p), g) for k, (p, g, _) in pairs],
-                             fetch_id, seen_at, got.complete)
+                                        content=lambda t: cl.content(t[0], t[1], got.oid))
     rows = [{**r, "segment_id": k.split(":", 1)[1], "geom": g} for k, (_, g, r) in pairs]
+    cl.check_share(got, len(rows), cl.current_records(conn, MEASURES["name"]), "congestion measures")
+    stats = cl.store_records(conn, MEASURES["name"], [(k, cl.without(p, got.oid), g) for k, (p, g, _) in pairs],
+                             fetch_id, seen_at, got.complete)
     cl.upsert(conn, "obs.congestion_measure", ["year", "segment_id"], rows, seen_at, geom="multi")
     retired = cl.retire(conn, "obs.congestion_measure", seen_at) if got.complete else 0
     kinds = {}
@@ -151,9 +153,10 @@ def store_commutes(conn, fetch_id, seen_at, got):
     parsed = [(p, g, commute_row(p)) for p, g in got.rows]
     usable = [t for t in parsed if all(t[2][k] for k in COMMUTE_KEY)]
     pairs, repeats, suffixed = cl.keyed(usable, key=lambda t: "|".join(str(t[2][k]) for k in COMMUTE_KEY),
-                                        content=lambda t: cl.without(t[0]))
+                                        content=lambda t: cl.content(t[0], t[1], got.oid))
     pairs = [(k, t) for k, t in pairs if "#" not in k]          # one row per commute, route, period and year
-    stats = cl.store_records(conn, COMMUTES["name"], [(k, cl.without(p), g) for k, (p, g, _) in pairs],
+    cl.check_share(got, len(pairs), cl.current_records(conn, COMMUTES["name"]), "commutes")
+    stats = cl.store_records(conn, COMMUTES["name"], [(k, cl.without(p, got.oid), g) for k, (p, g, _) in pairs],
                              fetch_id, seen_at, got.complete)
     rows = [{**r, "geom": g} for _, (_, g, r) in pairs]
     cl.upsert(conn, "obs.commute_travel_time", list(COMMUTE_KEY), rows, seen_at, geom="multi")
