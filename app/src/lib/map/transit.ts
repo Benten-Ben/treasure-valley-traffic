@@ -1,11 +1,9 @@
-import type {
-	ExpressionSpecification,
-	GeoJSONSource,
-	Map,
-	MapGeoJSONFeature,
-	MapLayerMouseEvent
-} from 'maplibre-gl';
+import type { ExpressionSpecification, GeoJSONSource, MapGeoJSONFeature, MapLayerMouseEvent } from 'maplibre-gl';
 import type { Feature, FeatureCollection, LineString, Point } from 'geojson';
+import { MapScope } from '#lib/app/cleanup.js';
+import type { AppCtx } from '#lib/app/context.js';
+import { firstBasemapLabel } from '#lib/map/style.js';
+import { Poller } from '#lib/state/poll.svelte.js';
 
 /**
  * The Transit lens (docs/13 §13.5): Valley Regional Transit's routes in our
@@ -16,6 +14,11 @@ import type { Feature, FeatureCollection, LineString, Point } from 'geojson';
  * Positions arrive 35–50 s old (the feed refreshes every ~30 s), so a bus is
  * drawn where it last reported, never extrapolated, and a bus that goes quiet
  * for two minutes turns hollow.
+ *
+ * Adapted to the app context (WP1): the routes fetch starts at boot, the
+ * layers attach on `style.load`, vehicles are polled only while the lens is
+ * shown and the tab is visible, clicks count only in Explore, and `destroy()`
+ * removes everything it added. WP2 ports this to `#lib/layers/transit/`.
  */
 
 export interface TransitRoute {
@@ -132,11 +135,13 @@ function arrowImage(): ImageData {
 	return g.getImageData(0, 0, s, s);
 }
 
+
 type Handlers = {
 	onSelect: (v: Vehicle | null) => void;
 	onUpdate: (vehicles: Vehicle[], now: number) => void;
 	onError: (message: string | null) => void;
 };
+
 
 export class TransitLayer {
 	routes: TransitRoute[] = [];
@@ -146,112 +151,133 @@ export class TransitLayer {
 	private glides: Record<string, { from: [number, number]; to: [number, number] }> = {};
 	private glideStart = 0;
 	private frame = 0;
-	private timer: ReturnType<typeof setInterval> | undefined;
 	private visible = false;
 	private spot: string | null = null;
+	private scope: MapScope | null = null;
+	private destroyed = false;
+	/** Vehicles are polled only while the lens is shown and the tab is visible. */
+	readonly poller = new Poller((signal) => this.poll(signal), { interval: POLL_MS });
 
 	constructor(
-		private map: Map,
+		private app: AppCtx,
 		private on: Handlers
 	) {}
 
-	/** Fetch routes and stops and add the (hidden) layers. False if transit data isn't available. */
+	/**
+	 * Fetch routes and stops (at once, versioned by /api/meta) and add the
+	 * hidden layers when the style is ready. False if transit data isn't
+	 * available or the map isn't.
+	 */
 	async load(): Promise<boolean> {
-		const res = await fetch('/api/transit/routes');
-		if (!res.ok) {
-			const msg = (await res.json().catch(() => null))?.message ?? `HTTP ${res.status}`;
-			this.on.onError(`Transit unavailable: ${msg}`);
+		let data: { routes: TransitRoute[]; shapes: FeatureCollection; stops: FeatureCollection };
+		try {
+			const res = await fetch(await this.app.dataUrl('/api/transit/routes', 'gtfs'));
+			if (!res.ok) {
+				const msg = (await res.json().catch(() => null))?.message ?? `HTTP ${res.status}`;
+				this.on.onError(`Transit unavailable: ${msg}`);
+				return false;
+			}
+			data = await res.json();
+		} catch (e) {
+			this.on.onError(`Transit unavailable: ${e instanceof Error ? e.message : e}`);
 			return false;
 		}
-		const data = await res.json();
+		const map = await this.app.styleReady.catch(() => null);
+		if (!map || this.destroyed) return false;
 		this.routes = data.routes;
-		const map = this.map;
+		const scope = (this.scope = new MapScope(map));
 		const empty: FeatureCollection = { type: 'FeatureCollection', features: [] };
 		const credit = 'Valley Regional Transit (CC BY 3.0)';
-		map.addSource('transit-wash', {
+		scope.addSource('transit-wash', {
 			type: 'geojson',
 			data: { type: 'Polygon', coordinates: [[[-180, -85], [180, -85], [180, 85], [-180, 85], [-180, -85]]] }
 		});
-		map.addSource('transit-shapes', { type: 'geojson', data: data.shapes, attribution: credit });
-		map.addSource('transit-stops', { type: 'geojson', data: data.stops });
-		map.addSource('transit-trails', { type: 'geojson', data: empty });
-		map.addSource('transit-buses', { type: 'geojson', data: empty });
-		if (!map.hasImage('transit-arrow')) map.addImage('transit-arrow', arrowImage(), { pixelRatio: 2 });
+		scope.addSource('transit-shapes', { type: 'geojson', data: data.shapes, attribution: credit });
+		scope.addSource('transit-stops', { type: 'geojson', data: data.stops });
+		scope.addSource('transit-trails', { type: 'geojson', data: empty });
+		scope.addSource('transit-buses', { type: 'geojson', data: empty });
+		scope.addImage('transit-arrow', arrowImage(), { pixelRatio: 2 });
 
 		// Route lines, stops and trails go under the basemap's labels; buses on top of everything.
-		const firstLabel = map.getStyle().layers.find((l) => l.type === 'symbol' && !l.id.startsWith('cameras'))?.id;
+		const firstLabel = firstBasemapLabel(map);
 		const zoomWidth = (base: number): ExpressionSpecification =>
 			['interpolate', ['linear'], ['zoom'], 10, base * 0.6, 13, base, 16, base * 1.8];
 		const hidden = { visibility: 'none' as const };
-		map.addLayer({ id: L.wash, type: 'fill', source: 'transit-wash', layout: hidden,
+		scope.addLayer({ id: L.wash, type: 'fill', source: 'transit-wash', layout: hidden,
 			paint: { 'fill-color': '#f6f0e6', 'fill-opacity': 0.42 } }, firstLabel);
-		map.addLayer({ id: L.casing, type: 'line', source: 'transit-shapes',
+		scope.addLayer({ id: L.casing, type: 'line', source: 'transit-shapes',
 			layout: { ...hidden, 'line-cap': 'round', 'line-join': 'round' },
 			paint: { 'line-color': INK, 'line-opacity': 0.55, 'line-width': zoomWidth(5.5) } }, firstLabel);
-		map.addLayer({ id: L.routes, type: 'line', source: 'transit-shapes',
+		scope.addLayer({ id: L.routes, type: 'line', source: 'transit-shapes',
 			layout: { ...hidden, 'line-cap': 'round', 'line-join': 'round' },
 			paint: { 'line-color': ['get', 'color'], 'line-width': zoomWidth(3.5) } }, firstLabel);
-		map.addLayer({ id: L.trails, type: 'line', source: 'transit-trails', layout: { ...hidden, 'line-cap': 'round' },
+		scope.addLayer({ id: L.trails, type: 'line', source: 'transit-trails', layout: { ...hidden, 'line-cap': 'round' },
 			paint: { 'line-color': ['get', 'color'], 'line-opacity': ['get', 'opacity'], 'line-width': zoomWidth(4) } },
 			firstLabel);
-		map.addLayer({ id: L.stops, type: 'circle', source: 'transit-stops', minzoom: 14.5, layout: hidden,
+		scope.addLayer({ id: L.stops, type: 'circle', source: 'transit-stops', minzoom: 14.5, layout: hidden,
 			paint: { 'circle-radius': ['interpolate', ['linear'], ['zoom'], 14.5, 2.5, 18, 5], 'circle-color': CREAM,
 				'circle-stroke-color': INK, 'circle-stroke-width': 1.2 } }, firstLabel);
-		map.addLayer({ id: L.labels, type: 'symbol', source: 'transit-shapes', minzoom: 12,
+		scope.addLayer({ id: L.labels, type: 'symbol', source: 'transit-shapes', minzoom: 12,
 			layout: { ...hidden, 'symbol-placement': 'line', 'symbol-spacing': 320, 'text-field': ['get', 'shortName'],
 				'text-font': ['Noto Sans Medium'], 'text-size': 11, 'text-rotation-alignment': 'viewport' },
 			paint: { 'text-color': INK, 'text-halo-color': CREAM, 'text-halo-width': 2 } });
-		map.addLayer({ id: L.heading, type: 'symbol', source: 'transit-buses', filter: ['has', 'bearing'],
+		scope.addLayer({ id: L.heading, type: 'symbol', source: 'transit-buses', filter: ['has', 'bearing'],
 			layout: { ...hidden, 'icon-image': 'transit-arrow', 'icon-rotate': ['get', 'bearing'],
 				'icon-rotation-alignment': 'map', 'icon-offset': [0, -15], 'icon-allow-overlap': true,
 				'icon-ignore-placement': true },
 			paint: { 'icon-opacity': ['case', ['get', 'stale'], 0.35, 1] } });
-		map.addLayer({ id: L.buses, type: 'circle', source: 'transit-buses', layout: hidden,
+		scope.addLayer({ id: L.buses, type: 'circle', source: 'transit-buses', layout: hidden,
 			paint: {
 				'circle-radius': ['interpolate', ['linear'], ['zoom'], 10, 7, 13, 11, 17, 14],
 				'circle-color': ['case', ['get', 'stale'], CREAM, ['get', 'color']],
 				'circle-stroke-color': ['case', ['get', 'stale'], ['get', 'color'], CREAM],
 				'circle-stroke-width': ['case', ['get', 'stale'], 2.5, 2]
 			} });
-		map.addLayer({ id: L.numbers, type: 'symbol', source: 'transit-buses',
+		scope.addLayer({ id: L.numbers, type: 'symbol', source: 'transit-buses',
 			layout: { ...hidden, 'text-field': ['get', 'number'], 'text-font': ['Noto Sans Medium'],
 				'text-size': ['interpolate', ['linear'], ['zoom'], 10, 8, 13, 11, 17, 13],
 				'text-allow-overlap': true, 'text-ignore-placement': true },
 			paint: { 'text-color': ['case', ['get', 'stale'], INK, ['get', 'textColor']] } });
 
-		map.on('click', L.buses, (e: MapLayerMouseEvent) => {
+		const exploring = () => this.app.modes.current === 'explore';
+		scope.onLayer('click', L.buses, (e: MapLayerMouseEvent) => {
+			if (!exploring()) return;
 			const id = (e.features?.[0] as MapGeoJSONFeature | undefined)?.properties?.vehicleId;
 			this.on.onSelect(this.vehicles.find((v) => v.vehicleId === id) ?? null);
 		});
 		for (const id of [L.buses, L.routes]) {
-			map.on('mouseenter', id, () => (map.getCanvas().style.cursor = 'pointer'));
-			map.on('mouseleave', id, () => (map.getCanvas().style.cursor = ''));
+			scope.onLayer('mouseenter', id, () => {
+				if (exploring()) map.getCanvas().style.cursor = 'pointer';
+			});
+			scope.onLayer('mouseleave', id, () => {
+				if (exploring()) map.getCanvas().style.cursor = '';
+			});
 		}
-		map.on('click', L.routes, (e: MapLayerMouseEvent) => {
+		scope.onLayer('click', L.routes, (e: MapLayerMouseEvent) => {
+			if (!exploring()) return;
 			if (map.queryRenderedFeatures(e.point, { layers: [L.buses] }).length) return;
 			const id = (e.features?.[0] as MapGeoJSONFeature | undefined)?.properties?.routeId ?? null;
 			this.spotlight(this.spot === id ? null : id);
 		});
+		if (this.visible) this.setVisible(true);
 		return true;
 	}
 
 	setVisible(on: boolean) {
 		this.visible = on;
-		for (const id of TRANSIT_LAYERS)
-			if (this.map.getLayer(id)) this.map.setLayoutProperty(id, 'visibility', on ? 'visible' : 'none');
-		clearInterval(this.timer);
-		if (on) {
-			void this.poll();
-			this.timer = setInterval(() => void this.poll(), POLL_MS);
-		}
+		const map = this.scope?.map;
+		if (map) for (const id of TRANSIT_LAYERS) if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', on ? 'visible' : 'none');
+		if (on && map) this.poller.start();
+		else this.poller.stop();
 	}
 
 	/** Highlight one route (or none): the others dim. */
 	spotlight(routeId: string | null) {
 		this.spot = routeId;
+		const map = this.scope?.map;
+		if (!map) return;
 		const dim = (bright: number, faint: number): ExpressionSpecification | number =>
 			routeId === null ? bright : ['case', ['==', ['get', 'routeId'], routeId], bright, faint];
-		const map = this.map;
 		map.setPaintProperty(L.routes, 'line-opacity', dim(1, 0.15));
 		map.setPaintProperty(L.casing, 'line-opacity', dim(0.55, 0.08));
 		map.setPaintProperty(L.labels, 'text-opacity', dim(1, 0.15));
@@ -266,20 +292,27 @@ export class TransitLayer {
 		return this.spot;
 	}
 
+	/** Stop polling and animating, and remove every source, layer, image and handler this added. */
 	destroy() {
-		clearInterval(this.timer);
+		this.destroyed = true;
+		this.poller.stop();
 		cancelAnimationFrame(this.frame);
+		this.scope?.dispose();
+		this.scope = null;
 	}
 
-	private async poll() {
+	private async poll(signal: AbortSignal) {
 		try {
-			const res = await fetch('/api/transit/vehicles');
+			const res = await fetch('/api/transit/vehicles', { signal });
 			if (!res.ok) throw new Error(`HTTP ${res.status}`);
 			const data = await res.json();
+			if (signal.aborted || this.destroyed) return;
 			this.on.onError(null);
 			this.update(data.vehicles, data.now);
 		} catch (err) {
+			if (signal.aborted) return;
 			this.on.onError(`Live buses unavailable: ${err instanceof Error ? err.message : err}`);
+			throw err;
 		}
 	}
 
@@ -292,7 +325,7 @@ export class TransitLayer {
 		}
 		for (const id of Object.keys(this.glides))
 			if (!vehicles.some((v) => v.vehicleId === id)) delete this.glides[id];
-		(this.map.getSource('transit-trails') as GeoJSONSource | undefined)?.setData({
+		(this.scope?.map.getSource('transit-trails') as GeoJSONSource | undefined)?.setData({
 			type: 'FeatureCollection',
 			features: vehicles.flatMap((v) => trailSegments(v, now))
 		});
@@ -322,7 +355,8 @@ export class TransitLayer {
 			if (v.bearing !== null) props.bearing = v.bearing;
 			features.push({ type: 'Feature', geometry: { type: 'Point', coordinates: at }, properties: props });
 		}
-		(this.map.getSource('transit-buses') as GeoJSONSource | undefined)?.setData({ type: 'FeatureCollection', features });
-		if (t < 1 && this.visible) this.frame = requestAnimationFrame(this.animate);
+		(this.scope?.map.getSource('transit-buses') as GeoJSONSource | undefined)?.setData({ type: 'FeatureCollection', features });
+		if (t < 1 && this.visible && !this.destroyed) this.frame = requestAnimationFrame(this.animate);
 	};
 }
+

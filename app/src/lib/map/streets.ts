@@ -1,4 +1,7 @@
 import type { ExpressionSpecification, Map, MapGeoJSONFeature, MapLayerMouseEvent } from 'maplibre-gl';
+import { MapScope } from '#lib/app/cleanup.js';
+import type { AppCtx } from '#lib/app/context.js';
+import { firstBasemapLabel } from '#lib/map/style.js';
 
 /**
  * The Streets lens: every Ada County road from ACHD's centerlines, colored by
@@ -94,53 +97,96 @@ function chevron(): ImageData {
 	return g.getImageData(0, 0, w, h);
 }
 
-export function addStreetLayers(map: Map, origin: string, onSelect: (s: StreetProps | null) => void) {
-	map.addSource('roads', {
-		type: 'vector',
-		tiles: [`${origin}/api/tiles/roads/{z}/{x}/{y}`],
-		minzoom: 8,
-		maxzoom: 16,
-		attribution: 'Ada County Highway District'
-	});
-	map.addSource('streets-wash', {
-		type: 'geojson',
-		data: { type: 'Polygon', coordinates: [[[-180, -85], [180, -85], [180, 85], [-180, 85], [-180, -85]]] }
-	});
-	if (!map.hasImage('oneway-chevron')) map.addImage('oneway-chevron', chevron(), { pixelRatio: 2 });
-	const firstLabel = map.getStyle().layers.find((l) => l.type === 'symbol' && !l.id.startsWith('cameras'))?.id;
-	const hidden = { visibility: 'none' as const };
-	const speedStep = [
-		'step',
-		['coalesce', ['get', 'speed'], 0],
-		SPEED_BINS[0].color,
-		...SPEED_BINS.slice(1).flatMap((b) => [b.from, b.color])
-	] as unknown as ExpressionSpecification;
 
-	map.addLayer({ id: L.wash, type: 'fill', source: 'streets-wash', layout: hidden,
-		paint: { 'fill-color': '#f6f0e6', 'fill-opacity': 0.5 } }, firstLabel);
-	map.addLayer({ id: L.casing, type: 'line', source: 'roads', 'source-layer': 'roads',
-		layout: { ...hidden, 'line-cap': 'round', 'line-join': 'round' },
-		paint: { 'line-color': '#fffbf4', 'line-width': width(2), 'line-opacity': 0.9 } }, firstLabel);
-	map.addLayer({ id: L.speed, type: 'line', source: 'roads', 'source-layer': 'roads',
-		layout: { ...hidden, 'line-cap': 'round', 'line-join': 'round' },
-		paint: { 'line-color': speedStep, 'line-width': width() } }, firstLabel);
-	map.addLayer({ id: L.oneway, type: 'symbol', source: 'roads', 'source-layer': 'roads', minzoom: 14,
-		filter: ['!=', ['get', 'one_way'], 'both'],
-		layout: { ...hidden, 'symbol-placement': 'line', 'symbol-spacing': 90, 'icon-image': 'oneway-chevron',
-			'icon-rotate': ['case', ['==', ['get', 'one_way'], 'backward'], 180, 0],
-			'icon-rotation-alignment': 'map', 'icon-allow-overlap': true } });
-	map.addLayer({ id: L.labels, type: 'symbol', source: 'roads', 'source-layer': 'roads', minzoom: 13,
-		filter: ['in', ['get', 'class'], ['literal', ['Interstate', 'Principal Arterial', 'Minor Arterial', 'Collector']]],
-		layout: { ...hidden, 'symbol-placement': 'line', 'symbol-spacing': 280, 'text-field': ['to-string', ['get', 'speed']],
-			'text-font': ['Noto Sans Medium'], 'text-size': 11, 'text-rotation-alignment': 'viewport' },
-		paint: { 'text-color': '#2b2a33', 'text-halo-color': '#fffbf4', 'text-halo-width': 2 } });
+/**
+ * The Streets lens on the shared map, adapted to the app context (WP1): the
+ * roads source and its hidden layers attach on `style.load`, the tile URL
+ * carries the roads version from /api/meta, clicks count only in Explore, and
+ * `destroy()` removes everything it added. WP2 ports this to
+ * `#lib/layers/streets/`.
+ */
+export class StreetsLayer {
+	private scope: MapScope | null = null;
+	private visible = false;
+	private destroyed = false;
 
-	map.on('click', L.speed, (e: MapLayerMouseEvent) => {
-		const f = e.features?.[0] as MapGeoJSONFeature | undefined;
-		onSelect(f ? ({ ...f.properties, id: Number(f.id ?? f.properties?.id) } as StreetProps) : null);
-	});
-	map.on('mouseenter', L.speed, () => (map.getCanvas().style.cursor = 'pointer'));
-	map.on('mouseleave', L.speed, () => (map.getCanvas().style.cursor = ''));
+	constructor(
+		private app: AppCtx,
+		private onSelect: (s: StreetProps | null) => void
+	) {}
+
+	async load(): Promise<boolean> {
+		const tiles = await this.app.dataUrl(`${location.origin}/api/tiles/roads/{z}/{x}/{y}`, 'roads');
+		const map = await this.app.styleReady.catch(() => null);
+		if (!map || this.destroyed) return false;
+		const scope = (this.scope = new MapScope(map));
+		scope.addSource('roads', {
+			type: 'vector',
+			tiles: [tiles],
+			minzoom: 8,
+			maxzoom: 16,
+			attribution: 'Ada County Highway District'
+		});
+		scope.addSource('streets-wash', {
+			type: 'geojson',
+			data: { type: 'Polygon', coordinates: [[[-180, -85], [180, -85], [180, 85], [-180, 85], [-180, -85]]] }
+		});
+		scope.addImage('oneway-chevron', chevron(), { pixelRatio: 2 });
+		const firstLabel = firstBasemapLabel(map);
+		const hidden = { visibility: 'none' as const };
+		const speedStep = [
+			'step',
+			['coalesce', ['get', 'speed'], 0],
+			SPEED_BINS[0].color,
+			...SPEED_BINS.slice(1).flatMap((b) => [b.from, b.color])
+		] as unknown as ExpressionSpecification;
+
+		scope.addLayer({ id: L.wash, type: 'fill', source: 'streets-wash', layout: hidden,
+			paint: { 'fill-color': '#f6f0e6', 'fill-opacity': 0.5 } }, firstLabel);
+		scope.addLayer({ id: L.casing, type: 'line', source: 'roads', 'source-layer': 'roads',
+			layout: { ...hidden, 'line-cap': 'round', 'line-join': 'round' },
+			paint: { 'line-color': '#fffbf4', 'line-width': width(2), 'line-opacity': 0.9 } }, firstLabel);
+		scope.addLayer({ id: L.speed, type: 'line', source: 'roads', 'source-layer': 'roads',
+			layout: { ...hidden, 'line-cap': 'round', 'line-join': 'round' },
+			paint: { 'line-color': speedStep, 'line-width': width() } }, firstLabel);
+		scope.addLayer({ id: L.oneway, type: 'symbol', source: 'roads', 'source-layer': 'roads', minzoom: 14,
+			filter: ['!=', ['get', 'one_way'], 'both'],
+			layout: { ...hidden, 'symbol-placement': 'line', 'symbol-spacing': 90, 'icon-image': 'oneway-chevron',
+				'icon-rotate': ['case', ['==', ['get', 'one_way'], 'backward'], 180, 0],
+				'icon-rotation-alignment': 'map', 'icon-allow-overlap': true } });
+		scope.addLayer({ id: L.labels, type: 'symbol', source: 'roads', 'source-layer': 'roads', minzoom: 13,
+			filter: ['in', ['get', 'class'], ['literal', ['Interstate', 'Principal Arterial', 'Minor Arterial', 'Collector']]],
+			layout: { ...hidden, 'symbol-placement': 'line', 'symbol-spacing': 280, 'text-field': ['to-string', ['get', 'speed']],
+				'text-font': ['Noto Sans Medium'], 'text-size': 11, 'text-rotation-alignment': 'viewport' },
+			paint: { 'text-color': '#2b2a33', 'text-halo-color': '#fffbf4', 'text-halo-width': 2 } });
+
+		const exploring = () => this.app.modes.current === 'explore';
+		scope.onLayer('click', L.speed, (e: MapLayerMouseEvent) => {
+			if (!exploring()) return;
+			const f = e.features?.[0] as MapGeoJSONFeature | undefined;
+			this.onSelect(f ? ({ ...f.properties, id: Number(f.id ?? f.properties?.id) } as StreetProps) : null);
+		});
+		scope.onLayer('mouseenter', L.speed, () => {
+			if (exploring()) map.getCanvas().style.cursor = 'pointer';
+		});
+		scope.onLayer('mouseleave', L.speed, () => {
+			if (exploring()) map.getCanvas().style.cursor = '';
+		});
+		if (this.visible) this.setVisible(true);
+		return true;
+	}
+
+	setVisible(on: boolean) {
+		this.visible = on;
+		const map = this.scope?.map;
+		if (map) setStreetsVisible(map, on);
+	}
+
+	destroy() {
+		this.destroyed = true;
+		this.scope?.dispose();
+		this.scope = null;
+	}
 }
 
 export function setStreetsVisible(map: Map, on: boolean) {

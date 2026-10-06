@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { Marker, type GeoJSONSource, type ImageSource, type Map } from 'maplibre-gl';
-	import ValleyMap from '#lib/components/ValleyMap.svelte';
+	// The old calibrator (docs/14 §14.6): kept at /v1/calibrate/[id] until the
+	// owner has saved one calibration with the new one, on its own map.
+	import ValleyMap from '#lib/v1/ValleyMap.svelte';
 	import type { BasemapManifest } from '#lib/map/style.js';
 	import { MIN_PAIRS, footprint, groundHeight, project, solve, type Pair, type Pixel } from '#lib/calibration/solver.js';
 	import { drape, imageData } from '#lib/calibration/drape.js';
@@ -225,7 +227,7 @@
 	</section>
 
 	<section class="map-pane card">
-		<ValleyMap options={{ aerial: true, center: camera.pole, zoom: 19, pitch: 0, hash: false, pad: 0.15 }} onready={ready} />
+		<ValleyMap options={{ aerial: true, center: camera.pole, zoom: 19, pitch: 0, pad: 0.15 }} onready={ready} />
 		{#if map && !terrainReady}
 			<p class="warn">Terrain isn’t built yet, so ground heights aren’t available.</p>
 		{/if}

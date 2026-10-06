@@ -66,8 +66,12 @@ and per tag, and writes them to `data/dev/<wp>/e2e-summary.json`.
 - Evidence (screenshots, numbers) goes under `screenPath(name)`, which is
   `data/dev/screens/<wp>/`.
 - Expected-to-fail specs (`test.fail`) mark targets a later package meets:
-  `persistent` and the data-start check (WP1), the first-load budget (WP5).
-  The package that meets one removes its `test.fail` line.
+  the first-load budget (WP5). The package that meets one removes its
+  `test.fail` line (WP1 removed those of `persistent` and the data-start
+  check).
+- `mapReady(page)` with WP1's `__tvt.ready` also waits for a navigation the
+  browser has started (Back, Forward, a link) and for a mode being entered,
+  so it's safe to call right after `goBack()` or a click.
 
 ## Other tools
 

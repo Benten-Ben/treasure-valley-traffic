@@ -1,17 +1,18 @@
 <script lang="ts">
+	/**
+	 * A copy of the pre-v2 map component, kept only for the old calibrator at
+	 * /v1/calibrate/[id] (docs/14 §14.8). It creates its own map; the app's
+	 * shared map is MapHost. Delete with /v1 once the owner has saved a
+	 * calibration with the new calibrator.
+	 */
 	import 'maplibre-gl/dist/maplibre-gl.css';
 	import type { Map } from 'maplibre-gl';
 	import { onMount } from 'svelte';
 	import { createMap, MapUnavailable, type MapOptions } from '#lib/map/create.js';
-	import {
-		BUILDINGS_LAYER,
-		buildingOpacity,
-		IMAGERY_LAYERS,
-		type BasemapManifest
-	} from '#lib/map/style.js';
+	import { setAerial as applyAerial, type BasemapManifest } from '#lib/map/style.js';
 
 	let {
-		options = { hash: true },
+		options = {},
 		showViewSwitch = true,
 		onready
 	}: {
@@ -25,15 +26,10 @@
 	let hasImagery = $state(false);
 	let aerial = $state(false);
 	let map: Map | undefined;
+	let manifest: BasemapManifest | undefined;
 
 	function setAerial(on: boolean) {
-		aerial = on;
-		for (const id of IMAGERY_LAYERS) {
-			if (map?.getLayer(id)) map.setLayoutProperty(id, 'visibility', on ? 'visible' : 'none');
-		}
-		if (map?.getLayer(BUILDINGS_LAYER)) {
-			map.setPaintProperty(BUILDINGS_LAYER, 'fill-extrusion-opacity', buildingOpacity(on));
-		}
+		if (map && manifest) aerial = applyAerial(map, manifest, location.origin, on);
 	}
 
 	onMount(() => {
@@ -43,6 +39,7 @@
 				const made = await createMap(container, options);
 				if (cancelled) return made.map.remove();
 				map = made.map;
+				manifest = made.manifest;
 				hasImagery = Boolean(made.manifest.imagery);
 				aerial = Boolean(options.aerial && hasImagery);
 				map.once('load', () => map && onready?.(map, made.manifest));

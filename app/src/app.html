@@ -4,6 +4,15 @@
 		<meta charset="utf-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
 		<meta name="text-scale" content="scale" />
+		<link rel="icon" href="%sveltekit.assets%/favicon.svg" type="image/svg+xml" />
+		<!--
+			The map's boot (src/lib/app/boot.ts) fetches these two at module scope;
+			preloading them puts both in flight while the JavaScript parses
+			(docs/14 §14.8, "Boot"). crossorigin="anonymous" matches a plain
+			same-origin fetch(), so the preloaded responses are the ones used.
+		-->
+		<link rel="preload" href="/tiles/manifest.json" as="fetch" crossorigin="anonymous" />
+		<link rel="preload" href="/api/meta" as="fetch" crossorigin="anonymous" />
 		%sveltekit.head%
 	</head>
 	<body data-sveltekit-preload-data="hover">
