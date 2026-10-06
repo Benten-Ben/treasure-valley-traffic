@@ -58,6 +58,20 @@ services:
       db:
         condition: service_healthy
 
+  cameras:
+    # Key-camera frames from 511 Idaho (ingest/key_cameras.csv), each fetched
+    # every 50 s. JPEGs by local day, rolled up after midnight into one AV1 video
+    # per camera per day (ingest/camera_video.py). Needs no database.
+    build:
+      context: ..
+      dockerfile: ingest/Dockerfile
+    restart: unless-stopped
+    command: ["python3", "-m", "ingest", "stream", "idaho511_frames"]
+    environment:
+      TVT_ARCHIVE: /srv/archive
+    volumes:
+      - ${ARCHIVE_DIR:-/srv/tvt/archive}:/srv/archive
+
   app:
     build: ../app
     restart: unless-stopped

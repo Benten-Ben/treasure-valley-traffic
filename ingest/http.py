@@ -103,6 +103,12 @@ _robots = {}      # host -> Robots, or None for "no rules"
 _last_hit = {}    # host -> time of last request
 
 
+def forget_robots():
+    """Drop the cached robots.txt files, so a long-running stream reads them again
+    (RFC 9309 allows caching for up to 24 hours)."""
+    _robots.clear()
+
+
 def _open(url, data=None, timeout=90):
     req = urllib.request.Request(url, data=data, headers={"User-Agent": USER_AGENT})
     return urllib.request.urlopen(req, timeout=timeout)
