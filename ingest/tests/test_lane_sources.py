@@ -15,10 +15,11 @@ import re
 import unittest
 import urllib.parse
 from datetime import datetime, timezone
+from unittest import mock
 
 from ingest import arcgis
 from ingest.db import version_hash
-from ingest.sources import achd_msm, compass_centerline, itd_hpms
+from ingest.sources import achd_msm, achd_roads, compass_centerline, itd_hpms
 
 NOW = datetime(2026, 10, 6, 12, tzinfo=timezone.utc)
 
@@ -368,6 +369,40 @@ class CompassTest(unittest.TestCase):
         (b,), _, _ = compass_centerline.parse([centerline("Sam1", oid=5, globalid="{C-1}", Shape__Length=300.13,
                                                           miles=0.0512345671)])
         self.assertEqual(version_hash(a[1]), version_hash(b[1]))
+
+
+# --- ACHD roads changing: rematch everything ------------------------------------
+
+class FakeFetch:
+    def __init__(self, conn, source):
+        self.id, self.started_at = 1, NOW
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+class AchdRoadsRematchTest(unittest.TestCase):
+    def run_roads(self, stats):
+        with mock.patch.object(achd_roads, "fetch_all", return_value=([], 0, "no_rules")), \
+                mock.patch.object(achd_roads, "store", return_value=dict(stats)), \
+                mock.patch.object(achd_roads.db, "ensure_source"), mock.patch.object(achd_roads.db, "Fetch", FakeFetch), \
+                mock.patch.object(achd_roads.segment_match, "rematch_all",
+                                  return_value={"itd_hpms": {"matched lines": 3}, "osm_valley": {"ways matched": 2}}) as rm:
+            return achd_roads.run(object()), rm
+
+    def test_a_run_that_changes_the_segments_rematches_every_source(self):
+        stats, rm = self.run_roads({"segments": 5, "record versions new": 1, "removed": 0, "retired": 0})
+        rm.assert_called_once()
+        self.assertEqual((stats["itd_hpms rematched"], stats["osm_valley rematched"]), (3, 2))
+        for change in ("removed", "retired"):
+            self.assertTrue(achd_roads.changed({change: 2}))
+
+    def test_an_unchanged_run_rematches_nothing(self):
+        stats, rm = self.run_roads({"segments": 5, "record versions new": 0, "unchanged": 5, "removed": 0, "retired": 0})
+        rm.assert_not_called()
 
 
 # --- storing (database) --------------------------------------------------------

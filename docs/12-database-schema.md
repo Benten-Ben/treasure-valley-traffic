@@ -273,6 +273,27 @@ stays in its own tables (ODbL, "© OpenStreetMap contributors"); only the
 road network's major and laned ways are kept, so residential street names
 come from ACHD, not OpenStreetMap.
 
+**Lane inventories and segment matching (Oct 6, 2026; 0011, re-keyed in
+0016).** Three sources keep their own lane values, each in its own table:
+`core.hpms_section` (ITD HPMS: one row per layer and piece, keyed
+`<EventID>@<RouteID>:<FromMeasure>`, since one EventID can cover several
+pieces of a route), `core.msm_arterial` (ACHD's Master Street Map arterials:
+existing, funded and planned lanes, counting the whole cross-section) and
+`core.compass_segment` (COMPASS's RegionalCenterline, Ada and Canyon, keyed
+by globalid; `pm_id` names a travel-model link of several pieces and stays as
+the join to COMPASS's other data). `core.segment_match` records which ACHD
+segments each of their lines, and each OpenStreetMap way, lies along, by one
+shared matcher (`ingest/segment_match.py`, in UTM 11N): at least 60% of the
+segment within the line's buffer (15 m; 10 m with a street-name check for
+the Master Street Map), or else at least 60% of a line of 20 m or more within
+the segment's buffer (methods `way_in_…`), with bearings within 20°. `share`
+and `overlap_m` always measure the ACHD segment. One line can match many
+segments, and one segment several lines (both carriageways of a divided
+road). A source's matches are rewritten in one transaction after each run
+that changes it, and every source's after `achd_roads` changes ACHD's
+segments; by hand, `python3 -m ingest.segment_match`. Canyon County has no
+ACHD segments, so its lines stay unmatched and keep their own geometry.
+
 ## 12.6 `obs`: time series (TimescaleDB)
 
 | Table | One row per | Key columns | Chunk | Compress after | Rows per year (est.) |

@@ -130,6 +130,7 @@ python3 -m ingest stream idaho511_api     # the 511 API (needs TVT_ARCHIVE and I
 python3 -m ingest rollup --day 2026-10-05  # daily camera videos by hand (normally automatic)
 python3 -m ingest match-intersections --dry-run   # rebuild intersections from the signal sources
 python3 -m ingest.osm_load --inbox         # OSM extract downloaded by hand (needs TVT_ARCHIVE, osmium)
+python3 -m ingest.segment_match           # rematch lane sources and OSM to ACHD segments by hand
 python3 -m unittest discover -s ingest/tests -t .
 ```
 

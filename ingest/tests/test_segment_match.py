@@ -47,28 +47,42 @@ class RulesTest(unittest.TestCase):
         self.assertIsNone(sm.names_agree(None, "Sample Rd"))
 
     def measures(self, **kw):
-        c = {"share": 1.0, "chord_m": 100.0, "projected_m": 100.0, "seg_bearing": 0.0, "src_bearing": 180.0,
-             "seg_name": "Sample Rd", "src_name": "SAMPLE RD"}
+        c = {"share": 1.0, "line_len": 300.0, "line_share": None, "chord_m": 100.0, "projected_m": 100.0,
+             "chord_bearing": 0.0, "projected_bearing": 180.0, "seg_name": "Sample Rd", "src_name": "SAMPLE RD"}
         c.update(kw)
         return c
 
     def test_bearing_rule(self):
         self.assertEqual(sm.decide(self.measures(), "buffer15_bearing20"), (0.0, 1.0, "buffer15_bearing20"))
-        self.assertIsNone(sm.decide(self.measures(src_bearing=30), "buffer15_bearing20"))      # 30 degrees off
+        self.assertIsNone(sm.decide(self.measures(projected_bearing=30), "buffer15_bearing20"))  # 30 degrees off
         self.assertIsNone(sm.decide(self.measures(share=0.59), "buffer15_bearing20"))
         self.assertIsNone(sm.decide(self.measures(projected_m=20), "buffer15_bearing20"))      # crosses the line
         diff, conf, _ = sm.decide(self.measures(src_name="Other Rd"), "buffer15_bearing20")    # names disagree
         self.assertEqual(conf, 0.5)
-        diff, conf, _ = sm.decide(self.measures(src_name=None, share=0.8, src_bearing=9), "buffer15_bearing20")
-        self.assertEqual((diff, conf), (9.0, 0.72))
+        diff, conf, _ = sm.decide(self.measures(src_name=None, share=0.8, projected_bearing=9), "buffer15_bearing20")
+        self.assertEqual((diff, conf), (9.0, 0.79))                                          # 0.8 x cos 9
+
+    def test_the_lines_share(self):
+        # A short line lying along a long segment matches on its own share; its confidence uses that share.
+        bay = self.measures(share=0.25, line_len=60.0, line_share=1.0)
+        self.assertEqual(sm.decide(bay, "buffer15_bearing20"), (0.0, 1.0, "way_in_buffer15_bearing20"))
+        self.assertIsNone(sm.decide({**bay, "line_len": 19.0}, "buffer15_bearing20"))         # under 20 m
+        self.assertIsNone(sm.decide({**bay, "line_share": 0.5}, "buffer15_bearing20"))
+        self.assertIsNone(sm.decide({**bay, "projected_bearing": 45}, "buffer15_bearing20"))
+        # Under the name rule the line's share needs the bearing too.
+        self.assertEqual(sm.decide(bay, "buffer10_name"), (0.0, 1.0, "way_in_buffer10_name"))
+        self.assertEqual(sm.decide({**bay, "src_name": "SH-99"}, "buffer10_name"),
+                         (0.0, 1.0, "way_in_buffer10_bearing20"))
+        self.assertIsNone(sm.decide({**bay, "projected_m": 0}, "buffer10_name"))
+        self.assertIsNone(sm.decide({**bay, "src_name": "Other Rd"}, "buffer10_name"))
 
     def test_name_rule(self):
         self.assertEqual(sm.decide(self.measures(), "buffer10_name"), (0.0, 1.0, "buffer10_name"))
         self.assertIsNone(sm.decide(self.measures(src_name="Other Rd"), "buffer10_name"))      # a name mismatch rejects
         # Names that can't be compared fall back to the bearing rule, and say so.
-        self.assertEqual(sm.decide(self.measures(src_name="SH-99", src_bearing=5), "buffer10_name"),
-                         (5.0, 0.944, "buffer10_bearing20"))
-        self.assertIsNone(sm.decide(self.measures(src_name=None, src_bearing=40), "buffer10_name"))
+        self.assertEqual(sm.decide(self.measures(src_name="SH-99", projected_bearing=5), "buffer10_name"),
+                         (5.0, 0.996, "buffer10_bearing20"))
+        self.assertIsNone(sm.decide(self.measures(src_name=None, projected_bearing=40), "buffer10_name"))
         # A loop (zero-length chord) has no bearing, but agreeing names don't need one.
         self.assertEqual(sm.decide(self.measures(chord_m=0, projected_m=0), "buffer10_name"),
                          (None, 1.0, "buffer10_name"))
@@ -78,6 +92,11 @@ class RulesTest(unittest.TestCase):
                             "b": {"lines": 1, "matched lines": 0, "unmatched away from ACHD": 1}})
         self.assertEqual((total["lines"], total["matched lines"], total["matches"]), (4, 2, 5))
         self.assertEqual(total["match rate"], "50.0%")
+
+    def test_every_lane_source_and_osm_can_be_rematched(self):
+        self.assertEqual(sorted(sm.matchers()), ["achd_msm", "compass_centerline", "itd_hpms", "osm_valley"])
+        with self.assertRaises(ValueError):
+            sm.rematch_all(None, ["nonesuch"])
 
 
 DB_URL = os.environ.get("TVT_TEST_DATABASE_URL")
@@ -95,15 +114,17 @@ SEGMENTS = {     # id: (name, line) -- stand-ins for ACHD segments
     1: ("N Sample Rd", line((0, 0), (0, 300))),                 # a carriageway runs 7 m to each side
     2: ("W Cross St", line((-40, 150), (40, 150))),             # a cross street, 80 m
     3: ("W Stub St", line((-3, 150), (17, 150))),               # a 20 m cross stub, wholly within 15 m of the line
-    4: ("N Long Rd", line((1000, 0), (1000, 500))),             # 500 m, a source line covers 100 m of it
+    4: ("N Long Rd", line((1000, 0), (1000, 500))),             # 500 m; R covers 100 m of it
     5: ("W Example Ave", line((2000, 0), (2300, 0))),           # for the name rule
+    6: ("N Bend Rd", line((3000, 0), (3000, 500))),             # 500 m; T runs along 100 m of it, then turns away
 }
 LINES = {        # source_id: (name, line)
     "A": ("Sample Rd", line((7, -100), (7, 400))),               # ascending carriageway, 7 m east
     "D": ("Sample Rd", line((-7, 400), (-7, -100))),             # descending carriageway, 7 m west, drawn the other way
-    "R": ("Long Rd", line((1000, 200), (1000, 300))),            # covers 20% of segment 4
+    "R": ("Long Rd", line((1000, 200), (1000, 300))),            # wholly along segment 4, a fifth of its length
     "M1": ("EXAMPLE AVE", line((1990, 5), (2310, 5))),          # 5 m off, same name
     "M2": ("BRIDGE ST", line((1990, -5), (2310, -5))),          # 5 m off, another name
+    "T": ("Bend Rd", line((3000, 200), (3000, 300), (3200, 300))),   # 100 m along segment 6, then 200 m east
 }
 
 
@@ -135,9 +156,12 @@ class GeometryTest(unittest.TestCase):
     SEG_SQL = f"select * from (values {values_sql(SEGMENTS)}) s(id, name, geom)"
     LINES_SQL = f"select 'test' as source, * from (values {values_sql(LINES, source=True)}) l(source_id, name, geom)"
 
+    def found(self, near_m=15):
+        return {(c["road_segment_id"], c["source_id"]): c
+                for c in sm.candidates(self.conn, self.LINES_SQL, near_m=near_m, segments_sql=self.SEG_SQL)}
+
     def decided(self, method):
-        found = sm.candidates(self.conn, self.LINES_SQL, near_m=sm.METHODS[method]["near_m"], segments_sql=self.SEG_SQL)
-        return {(c["road_segment_id"], c["source_id"]): sm.decide(c, method) for c in found}
+        return {k: sm.decide(c, method) for k, c in self.found(sm.METHODS[method]["near_m"]).items()}
 
     def test_both_carriageways_7_m_away_match_the_one_centerline(self):
         got = self.decided("buffer15_bearing20")
@@ -149,14 +173,16 @@ class GeometryTest(unittest.TestCase):
         self.assertNotIn((2, "A"), got)                     # only 30 of its 80 m lie within 15 m: no candidate
         self.assertIsNone(got[(3, "A")])                    # wholly within 15 m, but it crosses the line
 
-    def test_a_20_percent_overlap_is_rejected(self):
-        found = sm.candidates(self.conn, self.LINES_SQL, near_m=15, segments_sql=self.SEG_SQL)
-        self.assertFalse([c for c in found if c["road_segment_id"] == 4])
-        share = self.conn.execute(
-            f"""select ST_Length(ST_Intersection(s.g, ST_Buffer(l.g, 15, 'endcap=flat'))) / ST_Length(s.g)
-                from (select ST_GeomFromText('{SEGMENTS[4][1]}', 26911) g) s,
-                     (select ST_GeomFromText('{LINES["R"][1]}', 26911) g) l""").fetchone()[0]
-        self.assertAlmostEqual(share, 0.2, places=3)
+    def test_a_20_percent_overlap_matches_only_on_the_lines_share(self):
+        found = self.found()
+        r = found[(4, "R")]
+        # 130 of segment 4's 500 m lie within 15 m of R (round ends): too little on the segment's share...
+        self.assertAlmostEqual(r["share"], 0.26, places=2)
+        self.assertAlmostEqual(r["line_share"], 1.0, places=3)
+        # ...but R lies wholly along the segment, so it matches on its own share; the share stays the segment's.
+        self.assertEqual(sm.decide(r, "buffer15_bearing20"), (0.0, 1.0, "way_in_buffer15_bearing20"))
+        # T runs along 100 m of segment 6, then turns away: neither share reaches 60%.
+        self.assertNotIn((6, "T"), found)
 
     def test_the_name_rule_rejects_another_street(self):
         got = self.decided("buffer10_name")
@@ -176,12 +202,16 @@ class GeometryTest(unittest.TestCase):
         seg_sql = "select id, name, geom from core.road_segment where achd_perm_id between -990099 and -990000"
         lines = self.LINES_SQL.replace("'test' as source", "'test_segment_match' as source")
         stats = sm.rematch(c, ["test_segment_match"], lines, segments_sql=seg_sql)["test_segment_match"]
-        self.assertEqual((stats["lines"], stats["matched lines"], stats["matches"]), (5, 4, 4))
-        self.assertEqual(stats["unmatched near ACHD"], 1)               # R: along segment 4, too short
-        rows = c.execute("""select road_segment_id, source_id, method from core.segment_match
-                            where source = 'test_segment_match' order by 2""").fetchall()
-        self.assertEqual(rows, [(ids[1], "A", "buffer15_bearing20"), (ids[1], "D", "buffer15_bearing20"),
-                                (ids[5], "M1", "buffer15_bearing20"), (ids[5], "M2", "buffer15_bearing20")])
+        self.assertEqual((stats["lines"], stats["matched lines"], stats["matches"], stats["matches on the line's share"]),
+                         (6, 5, 5, 1))
+        self.assertEqual(stats["unmatched near ACHD"], 1)               # T
+        rows = c.execute("""select road_segment_id, source_id, method, round(share::numeric, 2)
+                            from core.segment_match where source = 'test_segment_match' order by 2""").fetchall()
+        self.assertEqual([r[:3] for r in rows],
+                         [(ids[1], "A", "buffer15_bearing20"), (ids[1], "D", "buffer15_bearing20"),
+                          (ids[5], "M1", "buffer15_bearing20"), (ids[5], "M2", "buffer15_bearing20"),
+                          (ids[4], "R", "way_in_buffer15_bearing20")])
+        self.assertEqual(float(rows[-1][3]), 0.26)                      # R's row measures the ACHD segment
         # Rerun with only the A line: the old matches go, in the same transaction.
         only_a = lines.replace(values_sql(LINES, source=True), values_sql({"A": LINES["A"]}, source=True))
         sm.rematch(c, ["test_segment_match"], only_a, segments_sql=seg_sql)
