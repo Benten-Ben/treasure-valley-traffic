@@ -55,7 +55,7 @@
 <div class="map" bind:this={container}></div>
 
 {#if hasImagery}
-	<div class="views card" role="group" aria-label="Map view">
+	<div class="views card" class:in-mode={app.modes.current !== 'explore'} role="group" aria-label="Map view">
 		<button aria-pressed={!app.aerial} onclick={() => app.setAerial(false)}>Map</button>
 		<button aria-pressed={app.aerial} onclick={() => app.setAerial(true)}>Aerial</button>
 	</div>
@@ -100,12 +100,20 @@
 		background: var(--ink);
 		color: var(--panel);
 	}
+	/* On narrow screens a mode's panel takes the top of the screen. */
+	@media (max-width: 899px) {
+		.views.in-mode {
+			display: none;
+		}
+	}
 	.problem {
 		position: absolute;
 		top: 50%;
 		left: 50%;
 		z-index: 60;
 		transform: translate(-50%, -50%);
+		box-sizing: border-box;
+		width: max-content;
 		max-width: min(32rem, calc(100% - 2rem));
 		padding: 1rem 1.25rem;
 	}

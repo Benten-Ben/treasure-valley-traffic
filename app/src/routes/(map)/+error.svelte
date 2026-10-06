@@ -23,6 +23,7 @@
 		left: 50%;
 		z-index: 60;
 		transform: translate(-50%, -50%);
+		box-sizing: border-box;
 		width: min(26rem, calc(100% - 2rem));
 		padding: 1rem 1.25rem;
 	}
@@ -36,6 +37,13 @@
 	}
 	.pill {
 		display: inline-block;
+		border: 2px solid #d68d00;
+		border-radius: 999px;
+		padding: 6px 16px;
+		background: var(--accent);
+		color: var(--ink);
+		font: 600 14px var(--font-body);
 		text-decoration: none;
+		box-shadow: 0 3px 0 rgb(60 45 20 / 0.14);
 	}
 </style>

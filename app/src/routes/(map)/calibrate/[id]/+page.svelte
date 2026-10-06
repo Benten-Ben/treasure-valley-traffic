@@ -156,13 +156,18 @@
 		return docked ? { ...none, left: Math.round(r.right) } : { ...none, top: Math.round(r.bottom) };
 	}
 
-	/** Where to look: the solved footprint's centre and heading, else the pole, facing north. */
+	/**
+	 * Where to look: for a calibrated view, the middle of the part of its
+	 * footprint that was worked on (the pole and the pairs' ground points),
+	 * facing its solved heading; else the pole, facing north. (The whole
+	 * footprint runs 200 m out, more than z19 shows.)
+	 */
 	function target(v: View): { center: [number, number]; bearing: number } {
 		const cal = v.calibration;
 		if (!cal) return { center: camera.pole, bearing: 0 };
-		const ring = footprint(cal.pose, { width: cal.imageWidth, height: cal.imageHeight }, groundHeight(cal.pairs), 200);
-		const xs = ring.map((p) => p[0]);
-		const ys = ring.map((p) => p[1]);
+		const pts: [number, number][] = [camera.pole, ...cal.pairs.map((p: Pair) => [p.ground[0], p.ground[1]] as [number, number])];
+		const xs = pts.map((p) => p[0]);
+		const ys = pts.map((p) => p[1]);
 		return {
 			center: [(Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...ys) + Math.max(...ys)) / 2],
 			bearing: cal.pose.heading

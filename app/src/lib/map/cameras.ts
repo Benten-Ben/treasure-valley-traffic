@@ -2,8 +2,7 @@ import type { FeatureCollection } from 'geojson';
 import type { GeoJSONSource, MapGeoJSONFeature, MapLayerMouseEvent } from 'maplibre-gl';
 import { MapScope } from '#lib/app/cleanup.js';
 import type { AppCtx } from '#lib/app/context.js';
-import { drape, imageData } from '#lib/calibration/drape.js';
-import { footprint, type ImageSize, type Pose } from '#lib/calibration/solver.js';
+import type { ImageSize, Pose } from '#lib/calibration/solver.js';
 
 export type CameraStatus = 'calibrated' | 'uncalibrated' | 'no_image';
 export interface CameraProps {
@@ -203,6 +202,12 @@ export class CameraLayer {
 		if (!this.scope || this.draped || !this.calibrations.length) return;
 		this.draped = true;
 		const scope = (this.drapes = new MapScope(this.scope.map));
+		// The projection code loads only when someone asks for the images.
+		const [{ drape, imageData }, { footprint }] = await Promise.all([
+			import('#lib/calibration/drape.js'),
+			import('#lib/calibration/solver.js')
+		]);
+		if (this.drapes !== scope) return;
 		for (const c of this.calibrations) {
 			const pixels = await imageData(`/frames/${c.frame}`).catch(() => null);
 			if (!pixels || this.destroyed || this.drapes !== scope) return;

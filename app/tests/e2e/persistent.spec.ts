@@ -306,6 +306,39 @@ test.describe('persistent', () => {
 		expect(offsite).toEqual([]);
 	});
 
+	test('imagery loads only once Aerial is turned on, and its layers then stay', { tag: '@wp1' }, async ({ page }) => {
+		const imagery: string[] = [];
+		page.on('request', (r) => {
+			if (/\/tiles\/imagery[^/]*\.pmtiles/.test(r.url())) imagery.push(r.url());
+		});
+		await page.goto('/#map=15/43.6197/-116.3549/0/0');
+		await mapReady(page);
+		expect(imagery, 'imagery requests before Aerial').toEqual([]);
+		expect(await layersOrder(page)).not.toContain('aerial');
+		await page.getByRole('button', { name: 'Aerial' }).click();
+		await mapReady(page);
+		expect(imagery.length).toBeGreaterThan(0);
+		await page.getByRole('button', { name: 'Map', exact: true }).click();
+		await mapReady(page);
+		const layers = await layersOrder(page);
+		expect(layers).toEqual(expect.arrayContaining(['aerial', 'aerial-detail']));
+		expect(layers!.indexOf('aerial')).toBe(layers!.indexOf('hillshade') + 1);
+		expect(await page.evaluate(() => (globalThis as any).__tvt.map.getLayoutProperty('aerial', 'visibility'))).toBe('none');
+	});
+
+	test('a new deploy shows "New version: reload when convenient"', { tag: '@wp1' }, async ({ page }) => {
+		await page.goto('/');
+		await mapReady(page);
+		// Only SvelteKit's version file is answered by the test (no cache measurement here).
+		await page.route('**/_app/version.json', (r) => r.fulfill({ json: { version: 'a-newer-build' } }));
+		await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+		const toast = page.getByRole('status').filter({ hasText: 'New version: reload when convenient' });
+		await expect(toast).toBeVisible();
+		await page.screenshot({ path: screenPath('persistent-new-version.png') });
+		await toast.getByRole('button', { name: 'Dismiss' }).click();
+		await expect(toast).toHaveCount(0);
+	});
+
 	test('a lost WebGL context shows "Map paused" until it comes back', { tag: '@wp1' }, async ({ page }) => {
 		await page.goto('/');
 		await mapReady(page);
