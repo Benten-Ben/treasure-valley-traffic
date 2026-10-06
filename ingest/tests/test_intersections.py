@@ -171,13 +171,58 @@ class LinkTest(unittest.TestCase):
         links = ix.link_cameras(self.built, [(1, "Alpha & Beta", 30, 40), (2, "Beta & Kappa", 10, 10),
                                              (3, "Lambda & Mu", 5, 5), (4, "Alpha & Beta", 90, 0)])
         self.assertEqual(sorted(links), [1, 2])
-        self.assertEqual((links[1][0].name, links[1][1], links[1][2]), ("Alpha Ave & Beta St", 50.0, 1.0))
+        self.assertEqual(links[1][0].name, "Alpha Ave & Beta St")
+        self.assertEqual(links[1][1:], (50.0, 1.0, "nearest_80m_street"))
         self.assertEqual(links[2][2], 0.8)
 
-    def test_crossings_link_to_the_nearest_active_signal_within_200_m(self):
-        links = ix.link_crossings(self.built, [(1, 150, 0), (2, 250, 0), (3, 1015, 150), (4, 0, 400)])
+    def test_freeway_cameras_reach_their_interchange_signal_within_150_m(self):
+        links = ix.link_cameras(self.built, [(5, "I-99 & Omega", 9120, 0),       # 120 m from the Omega SPUI
+                                             (6, "I-99 & Theta", 10120, 0),      # 120 m, but not an interchange
+                                             (7, "Omega & Rho", 9120, 0),        # not a freeway camera
+                                             (8, "I-99 & Omega", 9160, 0)])      # 160 m: too far
+        self.assertEqual(sorted(links), [5])
+        self.assertEqual((links[5][0].name, links[5][1:]), ("Omega Spui", (120.0, 0.7, "interchange_150m")))
+
+    def test_crossings_link_to_the_nearest_active_signal_within_300_m(self):
+        links = ix.link_crossings(self.built, [(1, 150, 0), (2, 250, 0), (3, 1015, 150), (4, 0, 400), (5, 0, 280)])
         self.assertEqual({k: (b.name, d) for k, (b, d) in links.items()},
-                         {1: ("Alpha Ave & Beta St", 150.0), 2: ("Alpha & Gamma", 50.2)})
+                         {1: ("Alpha Ave & Beta St", 150.0), 2: ("Alpha & Gamma", 50.2),
+                          5: ("Alpha Ave & Beta St", 280.0)})
+
+
+class ReviewTest(unittest.TestCase):
+    def plan(self, *reviews):
+        return ix.plan(*layout(), ROADS, reviews=list(reviews))
+
+    def test_a_review_retires_its_intersection_and_nothing_links_to_it(self):
+        built, details = self.plan(
+            ix.Review("t1", "Pole group", "retired", "a roundabout now", 1012, 10, {"compass"}, ["achd_2022"]),
+            ix.Review("t2", "Regional point", "retired", "no type", 4005, 0, {"compass", "achd_2022", "osm"},
+                      ["compass_regional"]))
+        at = lambda x, y: min(built, key=lambda b: ix.dist(x, y, b.x, b.y))
+        self.assertEqual((at(1015, 8).status, at(1015, 8).reviewed_out), ("retired", True))
+        self.assertEqual(at(4000, 0).status, "retired")
+        self.assertNotIn(302, [d.id for b in built for d, _ in b.devices])     # the flasher by the retired point
+        self.assertEqual(details["counts"]["retired by review"], 2)
+        self.assertEqual([r.key for r, _ in details["reviews"]["applied"]], ["t1", "t2"])
+        self.assertEqual(ix.link_crossings(built, [(1, 1015, 100)]), {})
+
+    def test_new_evidence_from_a_reopen_source_lifts_the_review(self):
+        built, details = self.plan(
+            ix.Review("t3", "Poles and OSM", "candidate", "awaiting OSM", 8010, 5, {"compass", "osm"}, ["achd_2022"]),
+            ix.Review("t4", "Nowhere", "retired", "gone", 50000, 50000))
+        self.assertEqual(min(built, key=lambda b: ix.dist(8015, 6, b.x, b.y)).status, "active")
+        (r, b, gained), = details["reviews"]["reopened"]
+        self.assertEqual((r.key, gained), ("t3", ["osm"]))
+        self.assertEqual([r.key for r in details["reviews"]["unmatched"]], ["t4"])
+
+    def test_the_reviews_file_parses(self):
+        reviews = ix.load_reviews()
+        self.assertTrue(reviews)
+        for r in reviews:
+            self.assertIn(r.status, ("retired", "candidate", "active"))
+            self.assertTrue(r.reason)
+            self.assertTrue(400000 < r.x < 700000 and 4700000 < r.y < 4900000, r.key)     # in the valley, UTM 11N
 
 
 DB_URL = os.environ.get("TVT_TEST_DATABASE_URL")
@@ -251,7 +296,7 @@ class DatabaseTest(unittest.TestCase):
         crossing = c.execute(f"""insert into core.rail_crossing (crossing_id, geom) values ('TEST01X', {self.pt(120, 0)})
                                  returning id""").fetchone()[0]
 
-        stats, _ = ix.build(c, T0, AREA)
+        stats, _ = ix.build(c, T0, AREA, reviews=[])
         rows = self.intersections()
         self.assertEqual(len(rows), 2)
         main, cand = rows
@@ -274,10 +319,23 @@ class DatabaseTest(unittest.TestCase):
         self.assertEqual(c.execute("select intersection_id, round(signal_distance_m) from core.rail_crossing where id = %s",
                                    (crossing,)).fetchone(), (main[0], 120))
 
+        # A review retires the candidate: its row stays (same ID), its poles are unlinked, and reruns keep it so.
+        review = ix.Review("test", "Lone poles", "retired", "a roundabout now", self.x0 + 2010, self.y0 + 7,
+                           {"compass"}, ["achd_2022"])
+        for hour in (1, 2):
+            stats, _ = ix.build(c, T0 + timedelta(hours=hour), AREA, reviews=[review])
+            self.assertEqual([(r[0], r[2]) for r in self.intersections()], [(main[0], "active"), (cand[0], "retired")])
+            self.assertEqual((stats["new"], stats["retired"], stats["retired by review"]), (0, 0, 1))
+        self.assertEqual(c.execute("select count(*) from core.signal_device where id = any(%s) and intersection_id is not null",
+                                   (lone,)).fetchone(), (0,))
+        # Without the review it's scored as before.
+        ix.build(c, T0 + timedelta(hours=3), AREA, reviews=[])
+        self.assertEqual([r[2] for r in self.intersections()], ["active", "candidate"])
+
         # Rerun: the seed moves 5 m and the lone poles disappear. IDs hold; the candidate is retired, not deleted.
         c.execute(f"update core.signal_device set geom = {self.pt(10, 11)} where id = %s", (seed_id,))
         c.execute("update core.signal_device set active = false where id = any(%s)", (lone,))
-        stats, _ = ix.build(c, T0 + timedelta(days=1), AREA)
+        stats, _ = ix.build(c, T0 + timedelta(days=1), AREA, reviews=[])
         rows2 = self.intersections()
         self.assertEqual([r[0] for r in rows2], [main[0], cand[0]])
         self.assertEqual((rows2[0][2], rows2[1][2]), ("active", "retired"))
@@ -285,14 +343,14 @@ class DatabaseTest(unittest.TestCase):
 
         # The poles come back: the retired row is reused, found within 30 m.
         c.execute("update core.signal_device set active = true where id = any(%s)", (lone,))
-        stats, _ = ix.build(c, T0 + timedelta(days=2), AREA)
+        stats, _ = ix.build(c, T0 + timedelta(days=2), AREA, reviews=[])
         rows3 = self.intersections()
         self.assertEqual([(r[0], r[2]) for r in rows3], [(main[0], "active"), (cand[0], "candidate")])
         self.assertEqual(stats["new"], 0)
 
         # Without its Synchro ID, the seed keeps its row by distance.
         c.execute("update core.signal_device set attributes = attributes - 'synchro_id' where id = %s", (seed_id,))
-        ix.build(c, T0 + timedelta(days=3), AREA)
+        ix.build(c, T0 + timedelta(days=3), AREA, reviews=[])
         self.assertEqual(self.intersections()[0][0], main[0])
         self.assertIsNone(self.intersections()[0][5])
 
@@ -300,7 +358,7 @@ class DatabaseTest(unittest.TestCase):
         c.execute("update core.signal_device set active = false where id = any(%s)", ([seed_id, reg] + poles + lone,))
         c.execute("update core.osm_node set active = false where osm_id = 990000000001")
         with self.assertRaises(RuntimeError):
-            ix.build(c, T0 + timedelta(days=4), AREA)
+            ix.build(c, T0 + timedelta(days=4), AREA, reviews=[])
         self.assertEqual([r[2] for r in self.intersections()], ["active", "candidate"])
 
 

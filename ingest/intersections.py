@@ -33,7 +33,13 @@ stored and writes our own rows; it fetches nothing.
    and nothing current score only CONFIDENCE_OLD_PAIR (a signal since removed
    looks like that). Below ACTIVE_MIN an intersection is a 'candidate' (the
    review list).
-7. **Stable IDs:** built intersections take the ID of an existing row with the
+7. **Reviews:** decisions on candidates (owner's lead, Oct 6) live in
+   ingest/intersection_reviews.json. Each sets the status of the built
+   intersection nearest its point within REVIEW_M ('retired' with a reason,
+   or 'candidate'), until that intersection gains a source the review lists in
+   reopen_on; then the review stops applying and the report says so. Devices
+   aren't linked to an intersection a review retired.
+8. **Stable IDs:** built intersections take the ID of an existing row with the
    same ACHD Synchro ID, else of the nearest existing row within STABLE_M. Rows
    are never deleted; one whose sources are all gone is 'retired'. A build
    with less than MIN_SHARE of the intersections held is refused (an emptied
@@ -43,18 +49,29 @@ Then: COMPASS's per-approach fields go to core.approach (its northbound
 approach is the south leg); pedestrian signals, flashers and fire signals are
 linked to the nearest intersection within OTHER_ATTACH_M (not counted as
 evidence); each ACHD camera links to the nearest intersection within CAMERA_M
-whose name shares a street with the camera's (core.source_link); each rail
-crossing gets the nearest active signalized intersection within CROSSING_M.
+whose name shares a street with the camera's, and a freeway camera (an
+interstate in its name) otherwise to the nearest interchange signal within
+INTERCHANGE_CAMERA_M (core.source_link); each rail crossing gets the nearest
+active signalized intersection within CROSSING_M, with the distance, so an
+analysis can pick its own cut (e.g. 61 m, the MUTCD's 200 ft for preemption).
+
+Licensing: once OpenStreetMap signal nodes confirm or create intersections,
+core.intersection holds positions, evidence and (for OSM-only candidates)
+names derived from OpenStreetMap, so the table is an ODbL derivative
+database: credit "© OpenStreetMap contributors", and anything published from
+it stays ODbL. Until COMPASS answers, it's also internal only.
 
 Distances are in UTM 11N metres (EPSG:26911), as in transit_match.py.
 """
 
 import json
 import math
+import os
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 
 from . import db, streets
+from .transit_ribbons import to_utm
 
 UTM = 26911
 SNAP_M = 40
@@ -71,7 +88,10 @@ OSM_ATTACH_M = 60
 OTHER_ATTACH_M = 60
 STABLE_M = 30
 CAMERA_M = 80
-CROSSING_M = 200
+INTERCHANGE_CAMERA_M = 150     # a freeway camera to its interchange's signal (the SPUI reach)
+CROSSING_M = 300
+REVIEW_M = 50
+REVIEWS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "intersection_reviews.json")
 ACTIVE_MIN = 0.6
 SNAP_PENALTY = 0.1
 MIN_SHARE = 0.5                # a build with less than half the intersections held is refused
@@ -96,8 +116,9 @@ SOURCE = {
     "schedule": "1 day",
     "license": "derived",
     "credit": "COMPASS; Ada County Highway District; © OpenStreetMap contributors",
-    "notes": "Derived, fetches nothing: rebuilt from core.signal_device and core.osm_node. Internal until COMPASS "
-             "answers; once OpenStreetMap nodes are in it, an ODbL derivative database.",
+    "notes": "Derived, fetches nothing: rebuilt from core.signal_device and core.osm_node, with the reviews in "
+             "ingest/intersection_reviews.json. Internal until COMPASS answers; once OpenStreetMap nodes confirm "
+             "or create intersections, an ODbL derivative database (credit OpenStreetMap contributors).",
 }
 
 
@@ -148,6 +169,35 @@ class Existing:
 
 
 @dataclass
+class Review:
+    """A reviewed decision (ingest/intersection_reviews.json), its point in metres."""
+    key: str
+    name: str
+    status: str
+    reason: str
+    x: float
+    y: float
+    reopen_on: set = field(default_factory=lambda: {"compass"})
+    evidence: list = field(default_factory=list)
+    decided: str | None = None
+
+
+def load_reviews(path=REVIEWS_FILE):
+    """The reviews file as Review objects (points from 'lat,lon' keys to UTM 11N)."""
+    with open(path) as f:
+        data = json.load(f)
+    out = []
+    for r in data.get("reviews", []):
+        if r["status"] not in ("retired", "candidate", "active"):
+            raise ValueError(f"review {r['key']}: unknown status {r['status']!r}")
+        lat, lon = (float(v) for v in r["key"].split(","))
+        x, y = to_utm(lon, lat)
+        out.append(Review(r["key"], r.get("name", ""), r["status"], r.get("reason", ""), x, y,
+                          set(r.get("reopen_on", ["compass"])), list(r.get("evidence", [])), r.get("decided")))
+    return out
+
+
+@dataclass
 class Junction:
     x: float
     y: float
@@ -181,11 +231,17 @@ class Built:
     approaches: dict = field(default_factory=dict)
     confidence: float = 0.0
     status: str = "candidate"
+    review: Review | None = None                     # a reviewed decision that applies to it
     id: int | None = None
 
     @property
     def penalized(self):
         return self.snap_m is not None and self.snap_m > SNAP_M
+
+    @property
+    def reviewed_out(self):
+        """Retired by a review: kept as a row, but nothing links to it."""
+        return self.review is not None and self.review.status == "retired"
 
 
 # --- geometry --------------------------------------------------------------------------------
@@ -475,13 +531,14 @@ def score(b):
     return c, ("active" if c >= ACTIVE_MIN else "candidate")
 
 
-def plan(seeds, poles, regional, others, osm_nodes, roads, osm_roads=None):
+def plan(seeds, poles, regional, others, osm_nodes, roads, osm_roads=None, reviews=()):
     """Build the intersections from the inputs (pure: no database). Returns (built, stats).
 
     seeds: COMPASS Signalized_Intersections devices; poles: ACHD signal poles; regional:
     Regional_Signals traffic signals; others: pedestrian signals, flashers, fire signals
     (linked, not evidence); osm_nodes: OpenStreetMap traffic-signal nodes; roads: Roads of
-    ACHD centerlines (or None); osm_roads: Roads of OSM ways, used only to name candidates."""
+    ACHD centerlines (or None); osm_roads: Roads of OSM ways, used only to name candidates;
+    reviews: Review decisions (load_reviews())."""
     stats = Counter()
     built = [seed(d, roads) for d in seeds]
 
@@ -567,21 +624,45 @@ def plan(seeds, poles, regional, others, osm_nodes, roads, osm_roads=None):
         index.add(b)
         stats["candidates from OSM leftovers"] += 1
 
-    for o in others:
-        b, d = index.nearest(o.x, o.y, OTHER_ATTACH_M)
-        if b:
-            b.devices.append((o, round(d, 1)))
-            stats["other devices linked"] += 1
-
     for b in built:
         b.confidence, b.status = score(b)
         if not b.name.startswith(UNNAMED):
             b.streets |= set(_name_parts(b.name))
         b.streets.discard("")
+    reviews_done = apply_reviews(built, reviews)
+    stats["retired by review"] = sum(b.reviewed_out for b in built)
+
+    live = Index(b for b in built if not b.reviewed_out)
+    for o in others:
+        b, d = live.nearest(o.x, o.y, OTHER_ATTACH_M)
+        if b:
+            b.devices.append((o, round(d, 1)))
+            stats["other devices linked"] += 1
+
     stats["shared synchro ids"] = len(shared)
-    return built, {"counts": dict(stats), "shared_synchro": shared,
+    return built, {"counts": dict(stats), "shared_synchro": shared, "reviews": reviews_done,
                    "regional_by_operator": {k: tuple(v) for k, v in sorted(regional_by_operator.items())},
                    "regional_unmatched": [(r.attrs.get("operator"), r.name, r.source_id) for r in regional_unmatched]}
+
+
+def apply_reviews(built, reviews):
+    """Set the status of each reviewed intersection (the nearest within REVIEW_M), unless it has
+    gained one of the review's reopen_on sources since the review. Returns
+    {'applied': [(Review, Built)], 'reopened': [(Review, Built, gained)], 'unmatched': [Review]}."""
+    index = Index(built)
+    done = {"applied": [], "reopened": [], "unmatched": []}
+    for r in reviews:
+        b, _ = index.nearest(r.x, r.y, REVIEW_M, lambda b, d: b.review is None)
+        if b is None:
+            done["unmatched"].append(r)
+            continue
+        gained = sorted((b.evidence - set(r.evidence)) & r.reopen_on)
+        if gained:
+            done["reopened"].append((r, b, gained))
+            continue
+        b.review, b.status = r, r.status
+        done["applied"].append((r, b))
+    return done
 
 
 def assign_ids(built, existing):
@@ -613,9 +694,21 @@ def assign_ids(built, existing):
     return [e for e in existing if e.id not in used]
 
 
+def _interstate(core):
+    return (streets.route(core) or "").startswith("I ")
+
+
+def interchange(b):
+    """An interchange's signal: a SPUI, a ramp terminal, or a signal on an interstate's ramps."""
+    return b.spui or bool(set(streets.tokens(b.name)) & {"RAMP", "EXIT", "TERMINAL", "IC", "SPUI"}) \
+        or any(_interstate(s) for s in b.streets)
+
+
 def link_cameras(built, cameras):
-    """cameras: [(camera_id, name, x, y)]. -> {camera_id: (Built, distance, confidence)}: the nearest
-    intersection within CAMERA_M whose name shares a street with the camera's."""
+    """cameras: [(camera_id, name, x, y)]. -> {camera_id: (Built, distance, confidence, method)}: the
+    nearest intersection within CAMERA_M whose name shares a street with the camera's; failing
+    that, for a freeway camera (an interstate in its name), the nearest interchange signal within
+    INTERCHANGE_CAMERA_M that shares a street with it."""
     index = Grid(100.0)
     for b in built:
         if b.status != "retired":
@@ -623,14 +716,25 @@ def link_cameras(built, cameras):
     out = {}
     for cam_id, name, x, y in cameras:
         cam_streets = _name_parts(name)
+        freeway = any(_interstate(c) for c in cam_streets)
         best = None
-        for b in index.near(x, y, CAMERA_M):
+        for b in index.near(x, y, INTERCHANGE_CAMERA_M if freeway else CAMERA_M):
             d = dist(x, y, b.x, b.y)
-            if d <= CAMERA_M and streets.shares_street(cam_streets, b.streets) and (best is None or d < best[1]):
+            if not streets.shares_street(cam_streets, b.streets):
+                continue
+            if d <= CAMERA_M:
+                method = f"nearest_{CAMERA_M}m_street"
                 shared = sum(1 for c in cam_streets if any(streets.same_street(c, s) for s in b.streets))
-                best = (b, round(d, 1), 1.0 if shared >= 2 else 0.8)
+                conf = 1.0 if shared >= 2 else 0.8
+            elif freeway and d <= INTERCHANGE_CAMERA_M and interchange(b):
+                method, conf = f"interchange_{INTERCHANGE_CAMERA_M}m", 0.7
+            else:
+                continue
+            rank = (method != f"nearest_{CAMERA_M}m_street", d)      # a street match within 80 m first
+            if best is None or rank < best[0]:
+                best = (rank, (b, round(d, 1), conf, method))
         if best:
-            out[cam_id] = best
+            out[cam_id] = best[1]
     return out
 
 
@@ -737,7 +841,7 @@ def write(conn, built, retire, seen_at, area=None):
     conn.execute(f"""update core.signal_device set intersection_id = null, distance_m = null
                      where intersection_id is not null and source = any(%(sources)s) and {where}""",
                  {**params, "sources": DEVICE_SOURCES})
-    links = [(d.id, b.id, dd) for b in built for d, dd in b.devices]
+    links = [(d.id, b.id, dd) for b in built if not b.reviewed_out for d, dd in b.devices]
     if links:
         conn.execute("""update core.signal_device s set intersection_id = v.iid, distance_m = v.dist
                         from unnest(%s::bigint[], %s::bigint[], %s::real[]) as v(did, iid, dist) where s.id = v.did""",
@@ -747,7 +851,7 @@ def write(conn, built, retire, seen_at, area=None):
     ids = [b.id for b in built] + [e.id for e in retire]
     rows = [(b.id, a["leg"], a.get("right_turn_lanes"), a.get("left_turn_phasing"), a.get("right_turn_phasing"),
              json.dumps(a["volumes"]) if a.get("volumes") else None)
-            for b in built if b.seed is not None for a in b.approaches.values()]
+            for b in built if b.seed is not None and not b.reviewed_out for a in b.approaches.values()]
     keep = {(r[0], r[1]) for r in rows}
     stale = [(i, leg) for i, leg in conn.execute(
         "select intersection_id, leg from core.approach where source = %s and intersection_id = any(%s)",
@@ -772,7 +876,7 @@ def write(conn, built, retire, seen_at, area=None):
                          where l.source = %(src)s and l.entity = 'intersection' and l.source_id = 'n' || n.osm_id
                            and {where.replace('geom', 'n.geom')}""", {**params, "src": OSM_SOURCE})
         for b in built:
-            for n, d in b.osm:
+            for n, d in ([] if b.reviewed_out else b.osm):
                 conn.execute(
                     """insert into core.source_link (source, source_id, entity, entity_id, method, distance_m, confidence)
                        values (%s, %s, 'intersection', %s, %s, %s, %s)
@@ -801,13 +905,15 @@ def write_cameras(conn, built, area=None):
     all_sids = [s for v in source_ids.values() for s in v]
     conn.execute("delete from core.source_link where source = %s and entity = 'intersection' and source_id = any(%s)",
                  (CAMERA_SOURCE, all_sids))
-    for cam_id, (b, d, conf) in links.items():
+    for cam_id, (b, d, conf, method) in links.items():
         for sid in source_ids.get(cam_id, ()):
             conn.execute(
                 """insert into core.source_link (source, source_id, entity, entity_id, method, distance_m, confidence)
                    values (%s, %s, 'intersection', %s, %s, %s, %s)""",
-                (CAMERA_SOURCE, sid, b.id, f"nearest_{CAMERA_M}m_street", d, conf))
-    return {"cameras": len(cams), "cameras linked": len(links)}, links
+                (CAMERA_SOURCE, sid, b.id, method, d, conf))
+    by_method = Counter(m for _, _, _, m in links.values())
+    return {"cameras": len(cams), "cameras linked": len(links),
+            "cameras linked to interchanges": by_method[f"interchange_{INTERCHANGE_CAMERA_M}m"]}, links
 
 
 def write_crossings(conn, built, area=None):
@@ -824,10 +930,13 @@ def write_crossings(conn, built, area=None):
     return {"crossings near signals": len(links)}
 
 
-def build(conn, seen_at, area=None):
-    """The whole build in the caller's transaction (no commit). Returns (stats, details)."""
+def build(conn, seen_at, area=None, reviews=None):
+    """The whole build in the caller's transaction (no commit). Returns (stats, details).
+    reviews: Review list; by default the reviews file."""
     seeds, poles, regional, others, osm_nodes, roads, osm_roads, existing = load(conn, area)
-    built, details = plan(seeds, poles, regional, others, osm_nodes, roads, osm_roads)
+    if reviews is None:
+        reviews = load_reviews()
+    built, details = plan(seeds, poles, regional, others, osm_nodes, roads, osm_roads, reviews)
     alive = sum(e.status != "retired" for e in existing)
     if alive and len(built) < MIN_SHARE * alive:
         raise RuntimeError(f"only {len(built)} intersections built against {alive} held; refusing to retire the rest "
@@ -863,12 +972,23 @@ def report(conn, stats, details, out=print):
         out(f"\nCOMPASS points more than {SNAP_M} m from their named junction (kept in place, -{SNAP_PENALTY}):")
         for b in sorted(far, key=lambda b: -b.snap_m):
             out(f"  {b.name} ({b.operator}): {b.snap_m:.0f} m")
-    cands = sorted((b for b in built if b.status == "candidate"), key=lambda b: (-b.confidence, b.name))
-    out(f"\nCandidates (review list): {len(cands)}")
-    for b in cands:
+    def describe(b):
         kinds = Counter(d.kind for d, _ in b.devices)
-        out(f"  {b.confidence:.2f} {b.name} [{'+'.join(sorted(b.evidence))}] at {b.lat:.5f}, {b.lon:.5f}: "
-            + ", ".join(f"{k} {n}" for k, n in sorted(kinds.items())) + (f", OSM nodes {len(b.osm)}" if b.osm else ""))
+        return (f"{b.confidence:.2f} {b.name} [{'+'.join(sorted(b.evidence))}] at {b.lat:.5f}, {b.lon:.5f}: "
+                + ", ".join(f"{k} {n}" for k, n in sorted(kinds.items())) + (f", OSM nodes {len(b.osm)}" if b.osm else ""))
+
+    cands = sorted((b for b in built if b.status == "candidate" and b.review is None), key=lambda b: (-b.confidence, b.name))
+    out(f"\nCandidates to review: {len(cands)}")
+    for b in cands:
+        out(f"  {describe(b)}")
+    rv = details["reviews"]
+    out(f"\nReviews applied ({os.path.basename(REVIEWS_FILE)}): {len(rv['applied'])}")
+    for r, b in rv["applied"]:
+        out(f"  {r.status:9} {describe(b)}\n            {r.reason} ({r.decided})")
+    for r, b, gained in rv["reopened"]:
+        out(f"  NO LONGER APPLIES (gained {', '.join(gained)}): {r.key} {r.name!r}: {describe(b)}")
+    for r in rv["unmatched"]:
+        out(f"  NO INTERSECTION within {REVIEW_M} m: {r.key} {r.name!r}")
     if details["shared_synchro"]:
         out(f"\nSynchro IDs COMPASS lists on two points (left off both): {details['shared_synchro']}")
     out("\nRegional_Signals traffic signals within "
@@ -878,7 +998,12 @@ def report(conn, stats, details, out=print):
     for op, name, sid in details["regional_unmatched"]:
         out(f"  unmatched: {op} {name!r} ({sid})")
     links = details["camera_links"]
-    out(f"\nCameras linked: {len(links)} of {stats.get('cameras', 0)}")
+    methods = Counter(m for _, _, _, m in links.values())
+    out(f"\nCameras linked: {len(links)} of {stats.get('cameras', 0)} ("
+        + ", ".join(f"{m} {n}" for m, n in sorted(methods.items())) + ")")
+    for b, d, _, m in sorted(links.values(), key=lambda v: v[0].name):
+        if m.startswith("interchange"):
+            out(f"  {m}: {b.name}, {d:.0f} m")
     rows = conn.execute(
         """select r.crossing_id, r.street, r.railroad_code, r.warning, r.closed, r.position,
                   round(r.signal_distance_m::numeric), i.name
