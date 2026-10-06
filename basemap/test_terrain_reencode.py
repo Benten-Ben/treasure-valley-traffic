@@ -84,46 +84,160 @@ def tile_range(z, lon0, lat0, lon1, lat1):
     return range(tx(lon0), tx(lon1) + 1), range(ty(lat1), ty(lat0) + 1)
 
 
-def make_input(folder, size=128, zooms=(6, 7, 8)):
-    """A small terrain-RGB PMTiles like terrain.py's (MBTiles, then pmtiles convert), plus a
-    manifest. Two top-zoom tiles that follow each other on the Hilbert curve are identical, so
-    the archive has a run (run_length 2) for the reader to expand."""
-    mbtiles = os.path.join(folder, "in.mbtiles")
+def write_pmtiles(path, tiles, meta, tmp):
+    """tiles: {(z, x, y): bytes} -> a PMTiles file, the way terrain.py makes one (MBTiles, then
+    pmtiles convert)."""
+    mbtiles = os.path.join(tmp, os.path.basename(path) + ".mbtiles")
+    if os.path.exists(mbtiles):
+        os.remove(mbtiles)
     db = sqlite3.connect(mbtiles)
     db.executescript("create table metadata (name text, value text);"
                      "create table tiles (zoom_level integer, tile_column integer, tile_row integer, tile_data blob);")
+    db.executemany("insert into metadata values (?, ?)", meta.items())
+    for (z, x, y), data in tiles.items():
+        db.execute("insert into tiles values (?, ?, ?, ?)", (z, x, 2 ** z - 1 - y, data))
+    db.commit()
+    db.close()
+    subprocess.run(["pmtiles", "convert", "--quiet", f"--tmpdir={tmp}", mbtiles, path], check=True)
+    os.remove(mbtiles)
+
+
+def aligned_block(z, lon, lat):
+    """The 2 x 2 block of zoom-z tiles, aligned to even tile numbers, around a point. The Hilbert
+    curve visits such a block's four tiles one after another."""
+    xs, ys = tile_range(z, lon, lat, lon, lat)
+    x0, y0 = xs[0] & ~1, ys[0] & ~1
+    return [(z, x, y) for x in (x0, x0 + 1) for y in (y0, y0 + 1)]
+
+
+def make_input(folder, size=128, zooms=(6, 7, 8)):
+    """A small terrain-RGB PMTiles like terrain.py's, plus a manifest. Two top-zoom tiles that
+    follow each other on the Hilbert curve are identical, so the archive has a run
+    (run_length 2) for the reader to expand."""
     meta = {"name": "terrain", "format": "png", "type": "baselayer", "encoding": "mapbox",
             "bounds": "-116.6,43.4,-116.0,43.8", "center": "-116.3,43.6,7",
             "minzoom": str(min(zooms)), "maxzoom": str(max(zooms)),
             "attribution": "synthetic test terrain"}
-    db.executemany("insert into metadata values (?, ?)", meta.items())
-    # Per zoom, the 2 x 2 block (aligned to even tile numbers) around Boise. The Hilbert curve
-    # visits such a block's four tiles one after another, so two of them can form a run.
-    tiles = []
-    for z in zooms:
-        xs, ys = tile_range(z, -116.2, 43.6, -116.2, 43.6)
-        x0, y0 = xs[0] & ~1, ys[0] & ~1
-        tiles += [(z, x, y) for x in (x0, x0 + 1) for y in (y0, y0 + 1)]
+    tiles = [t for z in zooms for t in aligned_block(z, -116.2, 43.6)]
     ids = sorted(T.zxy_to_tileid(*t) for t in tiles if t[0] == max(zooms))
     flat = {T.tileid_to_zxy(t) for t in ids[1:3]}
-    values = {}
+    values, data = {}, {}
     for z, x, y in tiles:
         elev = np.full((size, size), 812.34) if (z, x, y) in flat else synthetic_elevation(z, x, y, size)
-        data, v = encode_png(elev)
-        values[(z, x, y)] = v
-        db.execute("insert into tiles values (?, ?, ?, ?)", (z, x, 2 ** z - 1 - y, data))
-    db.commit()
-    db.close()
+        data[(z, x, y)], values[(z, x, y)] = encode_png(elev)
     pm = os.path.join(folder, "terrain.pmtiles")
-    subprocess.run(["pmtiles", "convert", "--quiet", f"--tmpdir={folder}", mbtiles, pm], check=True)
-    os.remove(mbtiles)
-    manifest = {"bounds": [-117.05, 43.0, -115.95, 43.85], "zoom": 10,
+    write_pmtiles(pm, data, meta, folder)
+    manifest ={"bounds": [-117.05, 43.0, -115.95, 43.85], "zoom": 10,
                 "terrain": {"file": "terrain.pmtiles", "encoding": "mapbox", "tileSize": size,
                             "exaggeration": 1.3, "built": "2026-10-05", "attribution": "USGS 3DEP",
                             "source": "synthetic"}}
     with open(os.path.join(folder, "manifest.json"), "w") as f:
         json.dump(manifest, f)
     return pm, values
+
+
+# --- the browser's fixture (app/tests/e2e/terrain-fixture) ----------------------------------------
+# A small synthetic terrain, as PNG and as WebP made by terrain_reencode.py, so the e2e spec can
+# check that the browser decodes WebP terrain exactly like PNG. Rebuild it with
+#   python3.12 basemap/test_terrain_reencode.py --write-e2e-fixture app/tests/e2e/terrain-fixture
+
+E2E_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "app", "tests", "e2e", "terrain-fixture")
+E2E_POINT = (-116.15, 43.65)        # the Boise foothills
+E2E_ZOOMS = (10, 11, 12)
+E2E_SIZE = 256
+WORLD_M = 2 * math.pi * 6378137.0
+
+
+def e2e_elevation(mx, my, centre):
+    """Metres at Web Mercator metres: a tilted plane with one round hill, smooth enough that
+    MapLibre's sampling of it matches the formula to within a metre."""
+    cx, cy = centre
+    h = 900 + 0.01 * (mx - cx) - 0.008 * (my - cy)
+    return h + 180 * np.exp(-((mx - cx - 300) ** 2 + (my - cy + 200) ** 2) / (2 * 1200.0 ** 2))
+
+
+def e2e_tile_bounds(z, x, y):
+    size = WORLD_M / 2 ** z
+    minx = -WORLD_M / 2 + x * size
+    maxy = WORLD_M / 2 - y * size
+    return minx, maxy - size, minx + size, maxy
+
+
+def merc_to_lonlat(mx, my):
+    return math.degrees(mx / 6378137.0), math.degrees(2 * math.atan(math.exp(my / 6378137.0)) - math.pi / 2)
+
+
+def e2e_tiles():
+    """{(z, x, y): (Web Mercator bounds)}: the 2 x 2 block at the top zoom and its parents."""
+    top = aligned_block(max(E2E_ZOOMS), *E2E_POINT)
+    tiles = list(top)
+    for z in E2E_ZOOMS[:-1]:
+        shift = max(E2E_ZOOMS) - z
+        tiles += sorted({(z, x >> shift, y >> shift) for _, x, y in top})
+    return top, tiles
+
+
+def e2e_values(z, x, y, centre):
+    x0, y0, x1, y1 = e2e_tile_bounds(z, x, y)
+    res = (x1 - x0) / E2E_SIZE
+    mx = x0 + (np.arange(E2E_SIZE) + 0.5) * res
+    my = y1 - (np.arange(E2E_SIZE) + 0.5) * res
+    gx, gy = np.meshgrid(mx, my)
+    return e2e_elevation(gx, gy, centre)
+
+
+def e2e_extent():
+    top, _ = e2e_tiles()
+    b = [e2e_tile_bounds(*t) for t in top]
+    minx, miny = min(v[0] for v in b), min(v[1] for v in b)
+    maxx, maxy = max(v[2] for v in b), max(v[3] for v in b)
+    return (minx, miny, maxx, maxy), ((minx + maxx) / 2, (miny + maxy) / 2)
+
+
+def write_e2e_fixture(folder):
+    os.makedirs(folder, exist_ok=True)
+    (minx, miny, maxx, maxy), centre = e2e_extent()
+    data = {t: encode_png(e2e_values(*t, centre))[0] for t in e2e_tiles()[1]}
+    w, s = merc_to_lonlat(minx, miny)
+    e, n = merc_to_lonlat(maxx, maxy)
+    clon, clat = merc_to_lonlat(*centre)
+    meta = {"name": "terrain", "format": "png", "type": "baselayer", "encoding": "mapbox",
+            "bounds": f"{w + 1e-6:.7f},{s + 1e-6:.7f},{e - 1e-6:.7f},{n - 1e-6:.7f}",
+            "center": f"{clon:.7f},{clat:.7f},{max(E2E_ZOOMS)}",
+            "minzoom": str(min(E2E_ZOOMS)), "maxzoom": str(max(E2E_ZOOMS)),
+            "attribution": "synthetic test terrain (WP17)"}
+    png = os.path.join(folder, "synthetic.png.pmtiles")
+    webp = os.path.join(folder, "synthetic.webp.pmtiles")
+    for p in (png, webp):
+        if os.path.exists(p):
+            os.remove(p)
+    tmp = tempfile.mkdtemp(prefix="terrain_e2e_")
+    try:
+        write_pmtiles(png, data, meta, tmp)
+        with contextlib.redirect_stdout(io.StringIO()):
+            code = T.main([png, "--out", webp, "--steps=-:0", "--workers", "1", "--sample", "0", "--work", tmp])
+        if code:
+            raise RuntimeError("terrain_reencode failed on the e2e fixture")
+    finally:
+        shutil.rmtree(tmp)
+    # Points to sample, in the middle of the block (inside the fixture's view).
+    points = []
+    for fy in (0.3, 0.4, 0.5, 0.6, 0.7):
+        for fx in (0.3, 0.4, 0.5, 0.6, 0.7):
+            mx, my = minx + fx * (maxx - minx), maxy - fy * (maxy - miny)
+            lon, lat = merc_to_lonlat(mx, my)
+            points.append([round(lon, 7), round(lat, 7), round(float(e2e_elevation(mx, my, centre)), 3)])
+    info = {
+        "about": "Synthetic terrain-RGB for the WP17 e2e spec, made by basemap/test_terrain_reencode.py "
+                 "--write-e2e-fixture. Not real elevation data.",
+        "png": os.path.basename(png), "webp": os.path.basename(webp), "tileSize": E2E_SIZE,
+        "bounds": [round(v, 7) for v in (w, s, e, n)], "center": [round(clon, 7), round(clat, 7)],
+        "zoom": max(E2E_ZOOMS), "points": points,
+    }
+    with open(os.path.join(folder, "synthetic.json"), "w") as f:
+        json.dump(info, f, indent=1)
+        f.write("\n")
+    return info
 
 
 # --- PMTiles -------------------------------------------------------------------------------------
@@ -362,5 +476,32 @@ class ReencodeTest(unittest.TestCase):
         self.assertRegex(made[0], r"^terrain-webp-\d{8}\.pmtiles$")
 
 
+@needs_gdal
+class E2EFixtureTest(unittest.TestCase):
+    """The committed browser fixture is what the generator above describes."""
+
+    def test_fixture(self):
+        info = load_json(os.path.join(E2E_DIR, "synthetic.json"))
+        png = T.PMTiles(os.path.join(E2E_DIR, info["png"]))
+        webp = T.PMTiles(os.path.join(E2E_DIR, info["webp"]))
+        self.assertEqual(T.TILE_TYPES[png.header["tile_type"]], "png")
+        self.assertEqual(T.TILE_TYPES[webp.header["tile_type"]], "webp")
+        _, centre = e2e_extent()
+        ids = png.tile_ids()
+        self.assertEqual(sorted(ids), sorted(T.zxy_to_tileid(*t) for t in e2e_tiles()[1]))
+        self.assertEqual(set(ids), set(webp.tile_ids()))
+        for tid, at in ids.items():
+            z, x, y = T.tileid_to_zxy(tid)
+            a = T.rgb_to_units(T.decode_rgb(png.read_at(*at)))
+            b = T.rgb_to_units(T.decode_rgb(webp.read_at(*webp.tile_ids()[tid])))
+            self.assertTrue(np.array_equal(a, b), f"{z}/{x}/{y}: WebP isn't lossless")
+            want = np.round((e2e_values(z, x, y, centre) + 10000) * 10).astype(np.uint32)
+            self.assertTrue(np.array_equal(a, want), f"{z}/{x}/{y}: not the formula")
+        self.assertLess(os.path.getsize(png.path) + os.path.getsize(webp.path), 200_000, "keep it small")
+
+
 if __name__ == "__main__":
-    unittest.main()
+    if len(sys.argv) == 3 and sys.argv[1] == "--write-e2e-fixture":
+        print(json.dumps(write_e2e_fixture(sys.argv[2]), indent=1))
+    else:
+        unittest.main()
