@@ -11,8 +11,8 @@ Tick an item when it's built, with the date, or strike it if we drop it.
 
 - [ ] **Lanes** (designed in ch. 14 §14.7): lane counts, turn lanes and where
   they start, from OpenStreetMap (`lanes`, `turn:lanes`), drawn at real
-  width from about zoom 16. Needs a weekly download of Geofabrik's Idaho
-  extract on the server (owner OK, Oct 6), and comes after the 3D cameras.
+  width from about zoom 16. Needs a regular copy of Geofabrik's Idaho
+  extract on the server (owner OK, Oct 6), and comes after the 3D cameras. Geofabrik's robots.txt disallows scripted downloads (Oct 6), so a hand download loads it until Geofabrik answers.
 - [ ] **Full replay:** a time bar, playback at 60x and 600x, scrubbing to any
   moment. Builds on the tracks API this round adds. This round has the
   1–5 minute playback delay and Pause.

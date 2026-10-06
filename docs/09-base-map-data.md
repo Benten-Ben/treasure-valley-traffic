@@ -64,7 +64,7 @@ USGS 3D Elevation Program (3DEP) coverage, by the 3DEP index at each city:
 
 | Source | What | Format | License | Where |
 |---|---|---|---|---|
-| **OpenStreetMap** (Geofabrik Idaho) | Full street map with tags (lanes and turn lanes where mapped) | .osm.pbf, 123 MB | ODbL | download.geofabrik.de/north-america/us/idaho.html |
+| **OpenStreetMap** (Geofabrik Idaho) | Full street map with tags (lanes and turn lanes where mapped) | .osm.pbf, 123 MB | ODbL | download.geofabrik.de/north-america/us/idaho.html. Its robots.txt disallows automated downloads of every extract format, the update diffs and the checksums (checked Oct 6): loaded from a hand download until Geofabrik answers ([DECISIONS](DECISIONS.md)) |
 | **Overture Maps transportation** (release 2026-09-23.1) | 173,146 road segments in the valley box; speed limits on about 14k; stable IDs across releases; no lane-count field | GeoParquet (query in place) | ODbL | `s3://overturemaps-us-west-2/release/2026-09-23.1/theme=transportation/` |
 | ✅ **ITD HPMS** (federal highway inventory) | **Through lanes** by direction (19,801 records in the box, Oct 6), turn lanes (637, samples), lane width (92% the 12 ft default), median, shoulders, access control. Good on state routes; looks like defaults on ACHD arterials (Fairview Ave reads 1+1; it has 5 lanes), and Chinden's two carriageway records disagree west of Eagle Rd | Esri FeatureServer | Credit ITD | `gisp.itd.idaho.gov/server/rest/services/GDWarehouse/HPMS/FeatureServer/25` (through) and `/27` (turn) |
 | ITD road network (linear referencing system, LRS) | State system plus local roads, interchanges | FeatureServer | Credit ITD | `.../GDWarehouse/RoadNetwork_Primary/FeatureServer` |
@@ -104,11 +104,21 @@ uses it is a derivative database if it's ever published.
 
 | Source | Coverage | Resolution | License | Notes |
 |---|---|---|---|---|
-| **NAIP 2023** | Whole valley | 0.6 m, 4-band | Public domain | Cloud-optimized GeoTIFFs on Microsoft Planetary Computer (free). AWS copy is requester-pays. |
+| **NAIP 2025** (found Oct 6) | Whole valley (270 quarter-quads in the box), flown May 25–Jul 24, 2025 | **0.3 m**, 4-band | Public domain; USDA asks to be credited in derived products | Not yet on Planetary Computer. USDA's image service `apps.geo.fpac.usda.gov/geo-imagery/rest/services/naip/conus_naip/ImageServer` (no key; `exportImage` up to 15000×4100), an Idaho State University mirror, and county mosaics on USDA's Box (Ada 4.8 GB, Canyon 4.3 GB; probably MrSID). Lane lines, stop bars and crosswalk bars are crisp; mast arms mostly as shadows; ±4 m absolute spec ⚠️ (about 1.5 m at one site). The sharpest free option. |
+| **NAIP 2023** | Whole valley | 0.6 m, 4-band | Public domain | Cloud-optimized GeoTIFFs on Microsoft Planetary Computer (free). AWS copy is requester-pays. Our base map's aerial layer today. |
 | ACHD Ada County Imagery 2024/2025 | **Ada only**: 2024 the urban core (780 km², 3 inch, Apr 1–2, 2024); 2025 about 72% of Ada (3 inch in 267 sections, 6 inch in 500; undated, probably April 2025) | **3 inch** | **None stated**; really COMPASS's product (flown by GeoTerra "for use by the COMPASS members") | ImageServer; `exportImage` works, no tile cache. Shows lane arrows, stop bars and mast arms that NAIP doesn't. **View on request only** (owner, Oct 6); asked of ACHD and COMPASS. If they agree: a private copy of 300 m around signals and cameras only (about 95 km², 2–4 GB, one overnight fetch); not the whole county (50–120 GB, a product COMPASS sells). |
 | COMPASS orthophotos 2025 | Ada + Canyon | 3–6 inch | **Paid** ($350 per section) | compassidaho.org |
+| Ada County IT imagery caches 2019, 2022, 2024, 2025 | Ada | about 3 inch | None stated (2019 credits "Ada County IT") | `tiles.arcgis.com/tiles/dgGjZc6xAH5m5JyP/...`. Probably the same COMPASS program (same years and resolution; Meridian's 2019 imagery credits COMPASS) ⚠️, so treated like ACHD's: asked of COMPASS, not used meanwhile. |
+| USGS High Resolution Orthoimagery, Boise and surrounding cities | Boise, Eagle, Meridian, Star, Kuna, Caldwell | 0.15 m | CC BY 4.0 (INSIDE Idaho) | June 2013: a historical layer only |
 | Canyon County imagery | Canyon | — | Token required | — |
 | Esri World Imagery | Everywhere | Sub-meter | Esri license; API key outside ArcGIS | Avoid for an open stack |
+
+**Rule for imagery without a license** (owner, Oct 6, 2026): a city's or
+county's imagery that states no license may be used, with credit and a
+courtesy note asking the agency to confirm, unless there's reason to suspect
+it's someone else's licensed or paid product being reshared. ACHD's and Ada
+County's 3-inch imagery fall under that exception (probably COMPASS's paid
+orthophotos), so they wait for COMPASS's answer.
 
 ## 9.6 Parcels, zoning, land use, addresses
 
@@ -161,9 +171,7 @@ uses it is a derivative database if it's ever published.
 
 ## 9.9 Not yet verified
 
-- NAIP 2025 for Idaho.
 - OSM lane and signal coverage quality.
-- COMPASS services: unreachable from our sandbox.
 - Terms for ACHD's hub, imagery and Master Street Map.
 - Terms for Boise 3D Buildings.
 - ISU DTM resolution and terms.

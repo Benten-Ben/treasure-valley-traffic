@@ -81,7 +81,10 @@ Before every push, check the diff for these.
   aggregate-only publishing.
 - **Licenses:** credit "© OpenStreetMap contributors" (ODbL; derived
   databases we publish stay ODbL) and ITD; don't redistribute Ada County
-  Assessor data. ITD's WZDx work-zone feed is published for public use
+  Assessor data. A city's or county's imagery with no license stated may
+  be used with credit and a courtesy note, unless it's probably someone
+  else's licensed or paid product (ACHD's and Ada County's 3-inch imagery
+  is likely COMPASS's: ask first) (owner, Oct 6). ITD's WZDx work-zone feed is published for public use
   (WZDx asks for CC0), so we may republish it, raw or aggregated, with
   credit to ITD (owner, Oct 6).
 - Identify our client honestly (User-Agent with a link to this repo).
