@@ -12,6 +12,11 @@ whose bytes changed:
 The archive is written before the database, so a database outage loses
 nothing: `python3 -m ingest backfill vrt_realtime <archive dir>` reloads it.
 
+After each batch of positions is committed, the playback matcher
+(ingest/transit_progress.py) places the new fixes along their routes. It is
+isolated so it can never cost a position: it runs only after the commit,
+inside try/except with a rollback, with a 5 s budget and an advisory lock.
+
 Routes: VRT's live trip IDs don't match its published schedule (Oct 2026), and
 the feed leaves route_id empty. The route comes from, in order: the feed's
 route_id; the schedule's trip; or the route number inside the live trip ID
@@ -25,6 +30,7 @@ import re
 import sys
 import time
 import traceback
+from collections import Counter
 from datetime import datetime, timezone
 
 from .. import db, http
@@ -121,6 +127,39 @@ def store_positions(conn, rows):
         return max(cur.rowcount, 0)
 
 
+def match_progress(conn, rows, matcher=None):
+    """Place a just-committed batch of fixes along their routes, for playback
+    (ingest/transit_progress.py). Bus positions are the most valuable live data,
+    so this runs only after they're committed, and nothing it does can undo
+    them: any error is logged and rolled back, and the stream carries on.
+    Returns the matcher's stats, or None if it failed."""
+    try:
+        if matcher is None:
+            from .. import transit_progress     # imported here: it imports this module
+            matcher = transit_progress.after_batch
+        return matcher(conn, fresh={(r["vehicle_id"], r["ts"]) for r in rows})
+    except Exception:
+        print(f"vrt_realtime: playback matching failed (positions are stored):\n{traceback.format_exc()}",
+              flush=True)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return None
+
+
+def record_positions(conn, data, lookup, status=None, decision=None, matcher=None):
+    """Store one positions snapshot, then match it for playback. The positions are
+    committed (db.Fetch commits on exit) before the matcher starts, and the matcher
+    can't raise past match_progress. Returns (new fixes, matcher stats or None)."""
+    with db.Fetch(conn, SOURCE["name"]) as f:
+        f.http_status, f.robots, f.bytes = status, decision, len(data)
+        _, rows = parse_positions(data, lookup)
+        n = store_positions(conn, rows)
+        f.records = n
+    return n, match_progress(conn, rows, matcher)
+
+
 def archive_path(root, feed, when):
     day = os.path.join(root, "vrt-gtfs-rt", when.strftime("%Y-%m-%d"))
     return os.path.join(day, f"{feed}-{when.strftime('%H%M%S')}Z.pb")
@@ -145,6 +184,7 @@ def stream(every=30):
     print(f"vrt_realtime: polling every {every} s, archiving to {root}", flush=True)
     last, conn, lookup, lookup_at = {}, None, None, 0.0
     snapshots = inserted = 0
+    placed = Counter()
     report_at = time.time() + 600
     match_at, matched = time.time() + 60, None
     while True:
@@ -170,12 +210,12 @@ def stream(every=30):
                     conn.commit()
                 if lookup is None or time.time() - lookup_at > 3600:
                     lookup, lookup_at = load_lookup(conn), time.time()
-                with db.Fetch(conn, SOURCE["name"]) as f:
-                    f.http_status, f.robots, f.bytes = status, decision, len(data)
-                    _, rows = parse_positions(data, lookup)
-                    n = store_positions(conn, rows)
-                    f.records = n
+                n, progress = record_positions(conn, data, lookup, status, decision)
                 inserted += n
+                if progress:
+                    for k, v in progress.items():
+                        if k in ("rows", "deferred", "skipped (locked)"):
+                            placed[k] += v
             except Exception:
                 print(f"vrt_realtime: database write failed (archived; backfill later):\n{traceback.format_exc()}",
                       flush=True)
@@ -197,9 +237,12 @@ def stream(every=30):
             match_at = time.time() + 300
         if time.time() >= report_at:
             print(f"vrt_realtime: last 10 min: {snapshots} position snapshots, {inserted} new fixes"
-                  + (f"; route matching: " + ", ".join(f"{k} {v}" for k, v in matched.items()) if matched else ""),
+                  + (f"; route matching: " + ", ".join(f"{k} {v}" for k, v in matched.items()) if matched else "")
+                  + (f"; playback progress: " + ", ".join(f"{k} {v}" for k, v in sorted(placed.items()))
+                     if placed else ""),
                   flush=True)
             snapshots = inserted = 0
+            placed = Counter()
             report_at = time.time() + 600
         time.sleep(max(1.0, every - (time.time() - started)))
 
