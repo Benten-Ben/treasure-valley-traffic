@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { execFileSync } from 'node:child_process';
 import { appendFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -146,6 +147,18 @@ describe('Archive.services', () => {
 		expect((await a.services(NOW + 15_000))[0].imageIds).toEqual([656]);
 		// Unchanged files aren't read again: the listing, plus the one changed file.
 		expect(a.counts.reads - reads).toBe(2);
+	});
+
+	it("reads the file ingest's capture stream writes", async () => {
+		// ingest/sources/idaho511_frames.py's own writer, so the two sides can't drift apart.
+		const repo = join(import.meta.dirname, '..', '..', '..', '..');
+		const py =
+			'import sys; from ingest.sources.idaho511_frames import write_status; ' +
+			'write_status(sys.argv[1], "key_cameras", 50, [656, 674], paused_low_disk=True, now=float(sys.argv[2]))';
+		execFileSync('python3', ['-c', py, root, String(NOW / 1000 - 10)], { cwd: repo });
+		expect(await new Archive({ root }).services(NOW)).toEqual([
+			{ tag: 'key_cameras', cadenceS: 50, imageIds: [656, 674], heartbeat: NOW / 1000 - 10, pausedLowDisk: true, alive: true }
+		]);
 	});
 
 	it('has no services without a status folder or an archive', async () => {

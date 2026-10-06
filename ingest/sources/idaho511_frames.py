@@ -19,13 +19,20 @@ each finished day is rolled up after midnight into one AV1 video per camera
 (ingest/camera_video.py). JPEGs are deleted after KEEP_JPEG_DAYS, once
 their video exists.
 
+Each cycle also writes a status file, cameras/status/<list name>.json: the
+cadence, the image IDs, a heartbeat, and whether capture is paused for low
+disk or rolling up. The app reads it (read-only) to know which views are
+recorded and whether capture is alive (docs/14 §14.6, "Live images").
+
 The images are third-party copies: they stay on the server and are never
 published or committed.
 """
 
 import csv
 import hashlib
+import json
 import os
+import re
 import shutil
 import sys
 import threading
@@ -107,6 +114,38 @@ def rollup_due(now_local):
     return now_local - midnight >= ROLLUP_AFTER
 
 
+STATUS_VERSION = 1
+
+
+def status_path(root, tag):
+    """cameras/status/<tag>.json; the tag is the camera list's name, kept to safe characters."""
+    return os.path.join(root, "cameras", "status", re.sub(r"[^A-Za-z0-9_.-]", "_", tag) + ".json")
+
+
+def write_status(root, tag, cadence_s, image_ids, paused_low_disk=False, rolling_up=False, now=None):
+    """Write this capture service's status file atomically. Returns what was written.
+
+    The app reads these (app/src/lib/server/archive.ts): which images are recorded,
+    how often, and whether capture is alive (a heartbeat within 3 cadences)."""
+    now = time.time() if now is None else now
+    status = {
+        "version": STATUS_VERSION,
+        "tag": tag,
+        "cadence_s": cadence_s,
+        "image_ids": [int(i) for i in image_ids],
+        "heartbeat": round(now, 3),
+        "heartbeat_at": datetime.fromtimestamp(now, timezone.utc).strftime(camera_video.TS_FORMAT),
+        "paused_low_disk": bool(paused_low_disk),
+        "rolling_up": bool(rolling_up),
+    }
+    path = status_path(root, tag)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path + ".part", "w") as f:
+        json.dump(status, f, separators=(",", ":"))
+    os.replace(path + ".part", path)
+    return status
+
+
 # Headings for each capture list in the video library (deploy/library/).
 LIBRARY_TITLES = {"key_cameras": "Key cameras", "regional-cameras": "Road weather and Oregon"}
 
@@ -181,6 +220,14 @@ def stream(every=POLL_S):
         elif paused:
             log("resumed: disk space is back")
             paused = False
+
+        try:
+            write_status(root, list_name, every, [cam for cam, _ in cams], paused,
+                         rolling_up=worker is not None and worker.is_alive())
+        except OSError as err:
+            counts["status write errors"] += 1
+            if len(samples) < 3:
+                samples.append(f"status file: {err}")
 
         for i, (cam, _) in enumerate(cams if not paused else []):
             wait = started + i * every / len(cams) - time.monotonic()
