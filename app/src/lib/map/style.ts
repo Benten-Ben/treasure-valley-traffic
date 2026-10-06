@@ -1,42 +1,61 @@
 import type * as Protomaps from '@protomaps/basemaps';
 import type { LayerSpecification, LineLayerSpecification, Map, StyleSpecification } from 'maplibre-gl';
-import {
-	AERIAL_SATURATION,
-	appliedFlavor,
-	BUILDINGS_LAYER,
-	BUILDINGS_PAINT,
-	buildingOpacity,
-	clayPaintDiff,
-	flavorOf,
-	HILLSHADE_LAYER,
-	HILLSHADE_PAINT,
-	IMAGERY_LAYERS,
-	type FlavorName,
-	type PaintChange
-} from './flavors.js';
+import type * as Flavors from './flavors.js';
+import type { FlavorName, PaintChange } from './flavors.js';
 import { anchorLayer, ANCHORS } from './order.js';
-
-export { BUILDINGS_LAYER, buildingOpacity, IMAGERY_LAYERS };
 
 /** Where the basemap build (basemap/) publishes its output. Same origin, no third-party hosts. */
 export const TILES_PATH = '/tiles';
 
-let protomaps: typeof Protomaps | null = null;
+/** Layer ids of the aerial imagery, toggled together by the Map/Aerial switch (added on first use). */
+export const IMAGERY_LAYERS = ['aerial', 'aerial-detail'];
+
+/** Layer id of the 3D buildings. */
+export const BUILDINGS_LAYER = 'buildings-3d';
+
+/** Layer id of the hillshade. */
+export const HILLSHADE_LAYER = 'hillshade';
 
 /**
- * The Protomaps style module (about 16 KB gzip), loaded apart from the
- * initial JavaScript to keep it within its budget (docs/14 §14.9, WP2). The
- * import starts as soon as this module runs, in parallel with the manifest
- * fetch, and `loadManifest` resolves only once it's here, so `buildStyle`
- * (which needs it) can stay synchronous.
+ * Building opacity: cream blocks in Valley, see-through in Clay (docs/14
+ * §14.5), and lower still over the aerial photo in either flavor, where the
+ * photo's own roofs show through and buildings near the edge of a tilted view
+ * don't hide the ground points a calibration needs.
  */
-export const basemapReady: Promise<void> = import('@protomaps/basemaps').then((m) => {
+export const BUILDING_OPACITY = { valley: 0.9, clay: 0.55, aerial: 0.3 } as const;
+
+export function buildingOpacity(aerial: boolean, flavor: FlavorName = 'valley'): number {
+	return aerial ? BUILDING_OPACITY.aerial : BUILDING_OPACITY[flavor];
+}
+
+let protomaps: typeof Protomaps | null = null;
+let flavors: typeof Flavors | null = null;
+
+/**
+ * The Protomaps style module (about 16 KB gzip) and the base flavors
+ * (`#lib/map/flavors`), loaded apart from the initial JavaScript to keep it
+ * within its budget (docs/14 §14.9, WP2). The imports start as soon as this
+ * module runs, in parallel with the manifest fetch, and `loadManifest`
+ * resolves only once they're here, so `buildStyle` (which needs them) can
+ * stay synchronous.
+ */
+export const basemapReady: Promise<void> = Promise.all([import('@protomaps/basemaps'), import('./flavors.js')]).then(([m, f]) => {
 	protomaps = m;
+	flavors = f;
 });
 
 function basemap(): typeof Protomaps {
 	if (!protomaps) throw new Error('The basemap style module has not loaded yet: await basemapReady (loadManifest does).');
 	return protomaps;
+}
+
+/**
+ * The base flavors module, once `basemapReady` has resolved (it has whenever a
+ * map exists: the map is built from `buildStyle`).
+ */
+export function flavorKit(): typeof Flavors {
+	if (!flavors) throw new Error('The base flavors have not loaded yet: await basemapReady (loadManifest does).');
+	return flavors;
 }
 
 interface TileFile {
@@ -141,7 +160,7 @@ export function railLayers(l: LineLayerSpecification): LineLayerSpecification[] 
  */
 function basemapLayers(m: BasemapManifest, flavor: FlavorName): { below: LayerSpecification[]; labels: LayerSpecification[] } {
 	const { layers, namedFlavor } = basemap();
-	let base = layers('protomaps', flavorOf(namedFlavor(m.basemap.flavor), flavor), { lang: 'en' });
+	let base = layers('protomaps', flavorKit().flavorOf(namedFlavor(m.basemap.flavor), flavor), { lang: 'en' });
 	if (m.buildings) {
 		// Our extruded buildings take over from the basemap's flat footprints.
 		const minzoom = m.buildings.minzoom;
@@ -172,7 +191,7 @@ export function aerialAfter(m: BasemapManifest): string {
  * the cameras. In Clay the photo is muted (§14.5).
  */
 function imagery(m: BasemapManifest, origin: string, visible: boolean, flavor: FlavorName = 'valley') {
-	const paint = { 'raster-saturation': AERIAL_SATURATION[flavor] };
+	const paint = { 'raster-saturation': flavorKit().AERIAL_SATURATION[flavor] };
 	const sources: StyleSpecification['sources'] = {};
 	const out: LayerSpecification[] = [];
 	if (!m.imagery) return { sources, layers: out };
@@ -225,7 +244,7 @@ export type MapLike = Pick<
 export function addAerial(map: MapLike, m: BasemapManifest, origin: string): boolean {
 	if (!m.imagery) return false;
 	if (map.getLayer(IMAGERY_LAYERS[0])) return true;
-	const { sources, layers: imageryLayers } = imagery(m, origin, false, appliedFlavor(map));
+	const { sources, layers: imageryLayers } = imagery(m, origin, false, flavorKit().appliedFlavor(map));
 	for (const [id, src] of Object.entries(sources)) if (!map.getSource(id)) map.addSource(id, src);
 	const order = map.getLayersOrder();
 	const i = order.indexOf(aerialAfter(m));
@@ -242,7 +261,7 @@ export function addAerial(map: MapLike, m: BasemapManifest, origin: string): boo
 export function setAerial(map: MapLike, m: BasemapManifest, origin: string, on: boolean): boolean {
 	if (on && !addAerial(map, m, origin)) return false;
 	for (const id of IMAGERY_LAYERS) if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', on ? 'visible' : 'none');
-	if (map.getLayer(BUILDINGS_LAYER)) map.setPaintProperty(BUILDINGS_LAYER, 'fill-extrusion-opacity', buildingOpacity(on, appliedFlavor(map)));
+	if (map.getLayer(BUILDINGS_LAYER)) map.setPaintProperty(BUILDINGS_LAYER, 'fill-extrusion-opacity', buildingOpacity(on, flavorKit().appliedFlavor(map)));
 	return on;
 }
 
@@ -307,7 +326,7 @@ export function buildStyle(m: BasemapManifest, origin: string, aerial = false, f
 			id: HILLSHADE_LAYER,
 			type: 'hillshade',
 			source: 'hillshade',
-			paint: { ...HILLSHADE_PAINT[flavor] }
+			paint: { ...flavorKit().HILLSHADE_PAINT[flavor] }
 		});
 	}
 
@@ -332,7 +351,7 @@ export function buildStyle(m: BasemapManifest, origin: string, aerial = false, f
 			paint: {
 				// Buildings without a known height stay flat rather than getting a guessed one.
 				'fill-extrusion-height': ['coalesce', ['get', 'height'], 0],
-				'fill-extrusion-color': BUILDINGS_PAINT[flavor].color,
+				'fill-extrusion-color': flavorKit().BUILDINGS_PAINT[flavor].color,
 				'fill-extrusion-vertical-gradient': true,
 				'fill-extrusion-opacity': buildingOpacity(aerial && Boolean(m.imagery), flavor)
 			}
@@ -378,6 +397,6 @@ const diffs = new WeakMap<BasemapManifest, PaintChange[]>();
 /** The paint properties that differ between Valley and Clay for this manifest (computed once). */
 export function flavorDiff(m: BasemapManifest): PaintChange[] {
 	let d = diffs.get(m);
-	if (!d) diffs.set(m, (d = clayPaintDiff(flavorLayers(m, 'valley'), flavorLayers(m, 'clay'))));
+	if (!d) diffs.set(m, (d = flavorKit().clayPaintDiff(flavorLayers(m, 'valley'), flavorLayers(m, 'clay'))));
 	return d;
 }

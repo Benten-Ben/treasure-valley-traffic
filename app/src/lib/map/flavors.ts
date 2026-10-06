@@ -1,5 +1,8 @@
 import type { Flavor } from '@protomaps/basemaps';
 import type { LayerSpecification, Map } from 'maplibre-gl';
+import { BUILDING_OPACITY, BUILDINGS_LAYER, IMAGERY_LAYERS } from './style.js';
+
+export { BUILDINGS_LAYER, buildingOpacity, HILLSHADE_LAYER, IMAGERY_LAYERS } from './style.js';
 
 /**
  * The base flavors (docs/14 §14.5 "Base flavors"; §14.3 "Base").
@@ -19,8 +22,9 @@ import type { LayerSpecification, Map } from 'maplibre-gl';
  * shields are hidden in Clay (`CLAY_HIDDEN`). On Aerial, Clay lowers the
  * imagery's saturation instead.
  *
- * This module never imports the Protomaps style module at run time (it loads
- * lazily, apart from the initial JavaScript); `style.ts` builds the layers.
+ * `style.ts` loads this module with the Protomaps style module, apart from
+ * the initial JavaScript, and builds the layers; this module never imports
+ * the Protomaps module at run time itself.
  */
 
 export type FlavorName = 'valley' | 'clay';
@@ -28,12 +32,6 @@ export const FLAVOR_NAMES: readonly FlavorName[] = ['valley', 'clay'];
 
 /** The crossfade between flavors (ch. 13's lens switch: about 350 ms). */
 export const FLAVOR_FADE_MS = 350;
-
-/** The app's own base layers that the flavors also restyle (ids shared with style.ts). */
-export const HILLSHADE_LAYER = 'hillshade';
-export const BUILDINGS_LAYER = 'buildings-3d';
-/** Layer ids of the aerial imagery, toggled together by Aerial (added on first use). */
-export const IMAGERY_LAYERS = ['aerial', 'aerial-detail'];
 
 /** Ground colors: ch. 13's sand, and the clay surface every route color is validated against. */
 export const GROUND = { valley: '#eee7da', clay: '#f3ede2' } as const;
@@ -160,24 +158,15 @@ export const HILLSHADE_PAINT: Record<FlavorName, Record<string, unknown>> = {
 
 /** 3D buildings: cream blocks in Valley, light gray-cream and see-through in Clay. */
 export const BUILDINGS_PAINT: Record<FlavorName, { color: string; opacity: number }> = {
-	valley: { color: '#f8f4ec', opacity: 0.9 },
-	clay: { color: '#efe9df', opacity: 0.55 }
+	valley: { color: '#f8f4ec', opacity: BUILDING_OPACITY.valley },
+	clay: { color: '#efe9df', opacity: BUILDING_OPACITY.clay }
 };
 
-/**
- * Building opacity while Aerial is on, in either flavor: the photo's own roofs
- * show through, and buildings near the edge of a tilted view don't hide the
- * ground points a calibration needs.
- */
-export const AERIAL_BUILDING_OPACITY = 0.3;
+/** Building opacity while Aerial is on, in either flavor (see style.ts). */
+export const AERIAL_BUILDING_OPACITY = BUILDING_OPACITY.aerial;
 
 /** On Aerial, Clay mutes the photo instead of repainting the ground. */
 export const AERIAL_SATURATION: Record<FlavorName, number> = { valley: 0, clay: -0.7 };
-
-/** Building opacity for a flavor, with or without the aerial photo under them. */
-export function buildingOpacity(aerial: boolean, flavor: FlavorName = 'valley'): number {
-	return aerial ? AERIAL_BUILDING_OPACITY : BUILDINGS_PAINT[flavor].opacity;
-}
 
 // -- the diff ----------------------------------------------------------------------------------------
 

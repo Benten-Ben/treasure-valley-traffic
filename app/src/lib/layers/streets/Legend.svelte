@@ -21,7 +21,7 @@
 	<div class="bar" style:background={legendGradient(ramp)}></div>
 	<div class="ticks" aria-hidden="true">
 		{#each LEGEND_TICKS as t, i (t)}
-			<span class="tick" class:first={i === 0} style:left="{(legendPosition(t) * 100).toFixed(2)}%">{t}</span>
+			<span class="tick" class:first={i === 0} class:second={i === 1} style:left="{(legendPosition(t) * 100).toFixed(2)}%">{t}</span>
 		{/each}
 	</div>
 </div>
@@ -74,12 +74,18 @@
 		height: 3px;
 		background: var(--ink-soft);
 	}
-	/* "20" sits at the bar's start, so it can't crowd "25". */
+	/* 20 and 25 are only 13 px apart: "20" starts at the bar's start and "25" leans right. */
 	.tick.first {
 		transform: translateX(-6.67px);
 	}
 	.tick.first::before {
 		left: 6.67px;
+	}
+	.tick.second {
+		transform: translateX(-30%);
+	}
+	.tick.second::before {
+		left: 30%;
 	}
 	.notes {
 		margin: 4px 0 0;

@@ -1,17 +1,8 @@
 import type { Map } from 'maplibre-gl';
 import { untrack } from 'svelte';
 import type { AppCtx } from '#lib/app/context.js';
-import {
-	applyFlavor,
-	appliedFlavor,
-	CLAY_HIDDEN,
-	FLAVOR_FADE_MS,
-	hiddenBaseLabels,
-	keepDrapeFresh,
-	prefersReducedMotion,
-	type FlavorName
-} from '#lib/map/flavors.js';
-import { BUILDINGS_LAYER, flavorDiff } from '#lib/map/style.js';
+import type { FlavorName } from '#lib/map/flavors.js';
+import { BUILDINGS_LAYER, flavorDiff, flavorKit } from '#lib/map/style.js';
 import { ringSprite } from '#lib/overlay/sprites.js';
 import {
 	chooseLayers,
@@ -54,9 +45,6 @@ export interface BaseSettings {
 
 const BASE_KEY = 'base';
 const DEFAULT_BASE: BaseSettings = { look: 'auto', buildings: true, terrain: true, labels: 'full' };
-
-/** Basemap labels hidden by "Labels: fewer" (the same set Clay hides, §14.5). */
-export const FEWER_LABELS_HIDDEN: readonly string[] = CLAY_HIDDEN;
 
 const SELECTION_GROUP = 'selection';
 const SELECTION_RING = 'selection-ring';
@@ -288,7 +276,7 @@ export class LayerManager {
 			status,
 			errors,
 			clay: this.base.clay(this.set.enabled.length > 0),
-			flavor: this.#map ? appliedFlavor(this.#map) : 'valley',
+			flavor: this.#map ? flavorKit().appliedFlavor(this.#map) : 'valley',
 			selection: sel ? { kind: sel.kind, id: sel.id, layer: sel.layer, title: sel.title } : null,
 			lens: this.set.last,
 			transit: ready('transit'),
@@ -387,19 +375,22 @@ export class LayerManager {
 			if (map.getLayer(id) && map.getLayoutProperty(id, 'visibility') !== vis(on)) map.setLayoutProperty(id, 'visibility', vis(on));
 		};
 		// The flavor (§14.5): a 350 ms crossfade, instant under reduced motion and the first time.
+		// (The flavors module loads with the basemap style, so it's here whenever a map is.)
+		const kit = flavorKit();
 		const flavor = this.flavor;
 		if (manifest) {
-			const duration = !this.#flavored || prefersReducedMotion() ? 0 : FLAVOR_FADE_MS;
-			if (applyFlavor(map, flavorDiff(manifest), flavor, { duration }) && duration) {
+			const duration = !this.#flavored || kit.prefersReducedMotion() ? 0 : kit.FLAVOR_FADE_MS;
+			if (kit.applyFlavor(map, flavorDiff(manifest), flavor, { duration }) && duration) {
 				// Frames for the whole crossfade, and a drape that follows it (terrain caches it otherwise).
 				this.#ctx.loop.tween('flavor', duration + 100);
 				this.#stopDrape?.();
-				this.#stopDrape = keepDrapeFresh(map, duration + 100);
+				this.#stopDrape = kit.keepDrapeFresh(map, duration + 100);
 			}
 			this.#flavored = true;
 		}
-		const hidden = hiddenBaseLabels(flavor, s.labels);
-		for (const id of new Set([...CLAY_HIDDEN, ...FEWER_LABELS_HIDDEN])) set(id, !hidden.has(id));
+		// Clay's hidden labels, which "Labels: fewer" hides in either flavor.
+		const hidden = kit.hiddenBaseLabels(flavor, s.labels);
+		for (const id of kit.CLAY_HIDDEN) set(id, !hidden.has(id));
 		// In a mode the rest of the base belongs to the mode (calibration turns Aerial on).
 		if (!exploring) return;
 		set(BUILDINGS_LAYER, s.buildings);
