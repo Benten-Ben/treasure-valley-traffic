@@ -1,4 +1,5 @@
-"""python3 -m ingest sources | run NAME... | run all | serve | stream NAME | backfill NAME PATH | match-routes | rollup"""
+"""python3 -m ingest sources | run NAME... | run all | serve | stream NAME | backfill NAME PATH | match-routes |
+match-intersections | rollup"""
 
 import argparse
 import os
@@ -69,6 +70,9 @@ def main():
     bf.add_argument("path", help="archive folder, e.g. $TVT_ARCHIVE/vrt-gtfs-rt")
     mr = sub.add_parser("match-routes", help="put unlabeled bus trips on routes by their path (the transit stream does this)")
     mr.add_argument("--hours", type=int, default=24, help="how far back to look (default 24)")
+    mi = sub.add_parser("match-intersections",
+                        help="rebuild core.intersection from the signal sources (the 'intersections' source does this daily)")
+    mi.add_argument("--dry-run", action="store_true", help="build and report, then roll back")
     ru = sub.add_parser("rollup", help="roll camera JPEGs into daily videos (the frame stream does this nightly)")
     ru.add_argument("--day", type=date.fromisoformat, help="local day, YYYY-MM-DD (default: every finished day not yet done)")
     ru.add_argument("--camera", nargs="+", help="511 image IDs (default: all with frames that day)")
@@ -94,6 +98,21 @@ def main():
         with db.connect() as conn:
             stats = transit_match.run(conn, args.hours)
         print("match-routes: " + ", ".join(f"{k} {v}" for k, v in stats.items()), flush=True)
+        return
+    if args.cmd == "match-intersections":
+        from . import intersections
+        with db.connect() as conn:
+            if args.dry_run:
+                stats, details = intersections.build(conn, db.now())
+                intersections.report(conn, stats, details)
+                conn.rollback()
+                print("\n(dry run: nothing written)", flush=True)
+            else:
+                db.ensure_source(conn, intersections.SOURCE)
+                with db.Fetch(conn, intersections.SOURCE["name"]) as f:
+                    stats, details = intersections.build(conn, f.started_at)
+                    f.records = stats["intersections"]
+                intersections.report(conn, stats, details)       # after the commit: printing can't undo the build
         return
     if args.cmd == "rollup":
         root = os.environ.get("TVT_ARCHIVE") or sys.exit("set TVT_ARCHIVE")
