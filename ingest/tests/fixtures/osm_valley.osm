@@ -1,0 +1,151 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Synthetic OpenStreetMap-format fixture for ingest/tests/test_osm_valley.py.
+     Everything here is made up: IDs, names and coordinates are invented, not
+     copied from OpenStreetMap. Most features sit inside the valley box
+     (-117.05,43.00,-115.95,43.85); way 110 and node 1006 lie outside it, and
+     way 112 crosses its west edge. Objects are sorted by type and ID, as
+     osmium extract requires. -->
+<osm version="0.6" generator="hand-written">
+  <node id="1" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.4000000" lon="-116.4000000"/>
+  <node id="2" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.4000000" lon="-116.3950000"/>
+  <node id="3" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.4000000" lon="-116.3850000"/>
+  <node id="4" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.4020000" lon="-116.3900000"/>
+  <node id="5" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.4050000" lon="-116.3900000"/>
+  <node id="6" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.4200000" lon="-116.4000000"/>
+  <!-- a signal tagged as a crossing too, where Plain Street meets Odd Value Road: a junction -->
+  <node id="7" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.4300000" lon="-116.4000000">
+    <tag k="highway" v="traffic_signals"/>
+    <tag k="crossing" v="traffic_signals"/>
+  </node>
+  <node id="8" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.4200000" lon="-116.3900000"/>
+  <node id="9" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.4300000" lon="-116.3900000"/>
+  <!-- outside the box -->
+  <node id="20" version="1" timestamp="2026-09-01T00:00:00Z" lat="42.6000000" lon="-114.5000000"/>
+  <node id="21" version="1" timestamp="2026-09-01T00:00:00Z" lat="42.6100000" lon="-114.5000000"/>
+  <!-- across the west edge -->
+  <node id="30" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.5000000" lon="-117.0600000"/>
+  <node id="31" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.5000000" lon="-117.0400000"/>
+  <node id="40" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.4005000" lon="-116.3870000"/>
+  <node id="1001" version="3" timestamp="2026-09-02T00:00:00Z" lat="43.4000000" lon="-116.3900000">
+    <tag k="highway" v="traffic_signals"/>
+  </node>
+  <node id="1002" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.4000000" lon="-116.3880000">
+    <tag k="highway" v="crossing"/>
+    <tag k="crossing" v="traffic_signals"/>
+  </node>
+  <node id="1003" version="2" timestamp="2026-09-03T00:00:00Z" lat="43.4035000" lon="-116.3900000">
+    <tag k="railway" v="level_crossing"/>
+  </node>
+  <node id="1004" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.4000000" lon="-116.3800000">
+    <tag k="highway" v="traffic_signals"/>
+    <tag k="traffic_signals" v="crossing"/>
+  </node>
+  <node id="1005" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.4010000" lon="-116.3900000">
+    <tag k="highway" v="stop"/>
+  </node>
+  <node id="1006" version="1" timestamp="2026-09-01T00:00:00Z" lat="42.6050000" lon="-114.5000000">
+    <tag k="highway" v="traffic_signals"/>
+  </node>
+  <node id="1007" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.4100000" lon="-116.3700000">
+    <tag k="crossing" v="traffic_signals"/>
+  </node>
+  <node id="1008" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.4100000" lon="-116.3600000">
+    <tag k="amenity" v="cafe"/>
+    <tag k="name" v="Fixture Cafe"/>
+  </node>
+  <!-- a signal tagged as a crossing too, mid-block on the arterial (a footway crosses there) -->
+  <node id="1009" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.4000000" lon="-116.3870000">
+    <tag k="highway" v="traffic_signals"/>
+    <tag k="crossing" v="traffic_signals"/>
+  </node>
+  <node id="1011" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.4210000" lon="-116.3950000">
+    <tag k="highway" v="traffic_signals"/>
+    <tag k="traffic_signals" v="ramp_meter"/>
+  </node>
+  <node id="1012" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.4150000" lon="-116.3650000">
+    <tag k="highway" v="traffic_signals"/>
+    <tag k="traffic_signals" v="emergency"/>
+  </node>
+
+  <!-- a made-up arterial running east (two-way, then a one-way part) -->
+  <way id="101" version="4" timestamp="2026-09-04T00:00:00Z">
+    <nd ref="1"/><nd ref="2"/><nd ref="1001"/>
+    <tag k="highway" v="primary"/>
+    <tag k="name" v="Fixture Arterial"/>
+    <tag k="lanes" v="5"/>
+    <tag k="lanes:forward" v="2"/>
+    <tag k="lanes:backward" v="2"/>
+    <tag k="lanes:both_ways" v="1"/>
+    <tag k="turn:lanes:both_ways" v="left"/>
+    <tag k="turn:lanes:backward" v="through|through;right"/>
+    <tag k="maxspeed" v="35 mph"/>
+  </way>
+  <way id="102" version="1" timestamp="2026-09-01T00:00:00Z">
+    <nd ref="1001"/><nd ref="1002"/><nd ref="1009"/><nd ref="3"/><nd ref="1004"/>
+    <tag k="highway" v="primary"/>
+    <tag k="name" v="Fixture Arterial"/>
+    <tag k="oneway" v="yes"/>
+    <tag k="lanes" v="3"/>
+    <tag k="turn:lanes" v="left|through|through;right"/>
+  </way>
+  <way id="103" version="1" timestamp="2026-09-01T00:00:00Z">
+    <nd ref="1001"/><nd ref="1005"/><nd ref="4"/><nd ref="1003"/><nd ref="5"/>
+    <tag k="highway" v="residential"/>
+    <tag k="name" v="Sample Court"/>
+    <tag k="lanes" v="2"/>
+  </way>
+  <way id="104" version="1" timestamp="2026-09-01T00:00:00Z">
+    <nd ref="6"/><nd ref="7"/>
+    <tag k="highway" v="residential"/>
+    <tag k="name" v="Plain Street"/>
+  </way>
+  <way id="105" version="1" timestamp="2026-09-01T00:00:00Z">
+    <nd ref="8"/><nd ref="9"/>
+    <tag k="highway" v="footway"/>
+  </way>
+  <way id="106" version="2" timestamp="2026-09-01T00:00:00Z">
+    <nd ref="6"/><nd ref="8"/>
+    <tag k="highway" v="motorway"/>
+    <tag k="ref" v="I 999"/>
+    <tag k="lanes" v="3"/>
+    <tag k="layer" v="1"/>
+    <tag k="bridge" v="yes"/>
+    <tag k="width" v="12 m"/>
+  </way>
+  <way id="107" version="1" timestamp="2026-09-01T00:00:00Z">
+    <nd ref="7"/><nd ref="9"/>
+    <tag k="highway" v="secondary"/>
+    <tag k="name" v="Odd Value Road"/>
+    <tag k="lanes" v="2;3"/>
+  </way>
+  <way id="108" version="1" timestamp="2026-09-01T00:00:00Z">
+    <nd ref="5"/><nd ref="9"/>
+    <tag k="highway" v="tertiary_link"/>
+  </way>
+  <way id="109" version="1" timestamp="2026-09-01T00:00:00Z">
+    <nd ref="7"/><nd ref="8"/>
+    <tag k="highway" v="proposed"/>
+    <tag k="proposed" v="primary"/>
+    <tag k="lanes" v="4"/>
+  </way>
+  <way id="110" version="1" timestamp="2026-09-01T00:00:00Z">
+    <nd ref="20"/><nd ref="1006"/><nd ref="21"/>
+    <tag k="highway" v="primary"/>
+    <tag k="name" v="Faraway Highway"/>
+  </way>
+  <way id="111" version="1" timestamp="2026-09-01T00:00:00Z">
+    <nd ref="4"/><nd ref="8"/>
+    <tag k="highway" v="service"/>
+    <tag k="turn:lanes:forward" v="right"/>
+  </way>
+  <way id="112" version="1" timestamp="2026-09-01T00:00:00Z">
+    <nd ref="30"/><nd ref="31"/>
+    <tag k="highway" v="trunk"/>
+    <tag k="name" v="Edge Trunk"/>
+  </way>
+  <way id="113" version="1" timestamp="2026-09-01T00:00:00Z">
+    <nd ref="1009"/><nd ref="40"/>
+    <tag k="highway" v="footway"/>
+    <tag k="footway" v="crossing"/>
+  </way>
+</osm>
