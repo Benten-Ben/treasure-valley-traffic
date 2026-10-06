@@ -33,9 +33,9 @@ Last updated Oct 6, 2026.
 | Volumes | ITD hourly counter reports | Not started | Peak spreading and growth by hour | Open PDFs; need extracting |
 | Volumes | ACHD `Traffic_Counts` layer | Checked Oct 5: 3,880 count locations, no counts | Locations only; the counts are in the private table copy | Open GIS |
 | Safety | ITD crash points, 461,521 crashes 2005–2023 | Not started | High-crash intersections, before/after studies | Open GIS |
-| Events | ITD work zones (WZDx), about 220 in the valley | Not started | Explains slow days; a live layer | Open, no key |
+| Events | ITD work zones (WZDx): 703 statewide, 239 in Ada and Canyon (Oct 6) | Checked against the spec Oct 6 ([ch. 8 §8.8](08-data-inventory.md#88-itds-work-zone-feed-checked-against-the-wzdx-spec-oct-6-2026)); collector proposed, waiting on the owner | Explains slow days; lane closures; a live layer | Open, no key; may be republished, crediting ITD (owner, Oct 6) |
 | Events | ACHD live roadwork, incidents, message signs | Not started | Same | Open GIS |
-| Events and weather | 511 Idaho API: events, message signs, road-weather sensor readings (pavement temperature, surface state, wind), road conditions, restrictions; the official camera list | Waiting on the key | The measured road conditions behind the road-weather pictures; replaces the one-off camera list | Free key; 10 calls per 60 s |
+| Events and weather | 511 Idaho API: events, message signs, road-weather sensor readings (pavement temperature, surface state, wind), road conditions, restrictions; the official camera list | Key received Oct 6 (ITD is fine with our use); reference captured privately; scripts to be decided | The measured road conditions behind the road-weather pictures; replaces the one-off camera list | Free key; 10 calls per 60 s |
 | Network | ACHD signal-asset points (2022): 2,469 signal points, 182 pedestrian signals, 33 school flashers | Not started | The backbone: intersections that tie cameras, counts, crashes and bus delay together | Open |
 | Network | OpenStreetMap signals and lane tags (`lanes`, `turn:lanes`) | In the map tiles only | Signal locations; lane counts and turn lanes where mapped | ODbL |
 | Network | ITD HPMS road inventory | Not started | Through lanes by direction, turn lanes, lane width, medians on state and major roads | Open GIS |
@@ -84,4 +84,4 @@ Last updated Oct 6, 2026.
 2. **Crashes** (ITD).
 3. **Work zones and incidents** (ITD WZDx, ACHD live layers).
 4. **Traffic volumes** (ITD AADT, counters, hourly reports).
-5. **The 511 API** when the key arrives: road-weather sensor readings first.
+5. **The 511 API** (key received Oct 6): road-weather sensor readings first.

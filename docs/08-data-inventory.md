@@ -55,7 +55,7 @@ programmatic use, and none of them publishes a `robots.txt` restriction.
 | Source | What it gives | How to get it | Notes |
 |---|---|---|---|
 | **Valley Regional Transit GTFS** (new) | Static schedules, stops and route shapes, plus **GTFS-realtime vehicle positions, trip updates and alerts** | Static: `valleyregionaltransit.org/GTFS/vrt_transit1.zip`. Real-time: `s3.amazonaws.com/etatransit.gtfs/valleyregionaltransit.etaspot.net/position_updates.pb` (also `trip_updates.pb`, `alerts.pb`) | VRT: "We provide these files for public use." **Buses act as GPS probes**: their logged positions give real arterial travel times and signal delay on State St, Fairview and other bus routes. The feed was live but empty on a Sunday night. **Measured Oct 5, 2026 (weekday, 2–3:45 PM, 4,637 fixes from 34 buses):** each bus reports every 30 s (p10–p90: 26–35 s; 91% of gaps ≤35 s, 0.5% over a minute), about 4 s before the feed publishes it; a moving bus covers about 200 m between fixes (p90 440 m); 22% of fixes are stationary (stops, signals). No speed field, so speeds come from consecutive fixes. **Fleet coverage, checked Oct 5, 2026 (2–7 PM):** 42 buses reported at once at the peak (5:31 PM), exactly the 42 fixed-route buses NTD lists for peak service (Aug 2026), and 42 distinct buses over the afternoon, so the feed looks complete for the fleet. **Route labels are not complete:** 25% of fixes carry a trip ID that names no route, because the static schedule predates VRT's Oct 1 service changes. Matching those buses to route shapes puts them on routes 7, 8, 16, 28 and 40 (74–99% of their fixes within 40 m of one route), the routes that never appeared labeled. Route 30 was discontinued Oct 1 (VRT's service-changes page); R1 didn't appear. Since Oct 5 the transit stream does this matching every 5 minutes (`ingest/transit_match.py`), which leaves under 1% of fixes unlabeled. Licensed CC BY 3.0. |
-| **ITD work zones (WZDx)** (new) | 649 statewide work zones, **about 220 in the valley**, in a standard format | `https://511.idaho.gov/api/wzdx` | **No key needed** |
+| **ITD work zones (WZDx)** (new) | 703 statewide work zones on Oct 6, 2026, 239 of them touching Ada or Canyon, with lane-by-lane status on most, in the USDOT standard format (v4.1) | `https://511.idaho.gov/api/wzdx` | **No key needed.** Published for public use: we may republish it, raw or aggregated, crediting ITD (owner, Oct 6). Checked against the spec in [§8.8](#88-itds-work-zone-feed-checked-against-the-wzdx-spec-oct-6-2026). |
 | 511 Idaho official API | Events, cameras, message signs, weather stations, road conditions, restrictions, advisories | `https://511.idaho.gov/developers/doc` (see §8.6) | Free key; **10 calls per 60 s** (confirmed in the docs). Each call returns a whole resource. |
 | **511 Idaho camera images** (ACHD's cameras republished by ITD, plus ITD's own) | About 210 of ACHD's 228 cameras, plus ITD cameras; still images refreshed about once a minute | `https://511.idaho.gov/map/Cctv/<imageId>` (IDs from the official API) | 511 serves its own ITD-stamped copies from its own servers, lists ACHD as a provider, and its robots.txt allows this path. Owner decision Oct 5: legitimate. See [ch. 11](11-camera-validation-layer.md). |
 
@@ -135,7 +135,9 @@ Yes, there's an official API:
    key.
 
 The developer agreement shown at signup may restrict storage or
-redistribution. Read it before building on the API.
+redistribution. Read it before building on the API. **Oct 6, 2026:** the
+owner has the key, and ITD is fine with our use. The full API reference
+(11 endpoints) is kept with the private files.
 
 ## 8.7 Most useful next additions
 
@@ -146,9 +148,65 @@ redistribution. Read it before building on the API.
    state routes.
 3. **ACHD CSV export request:** counts plus turning movements, and in the
    same request, timing sheets and last-retimed dates.
-4. **511 API key:** official camera and event data.
+4. **511 API** (key received Oct 6, 2026): official camera and event data.
 5. **Boise airport fog history:** pair it with complaint dates or corridor
    travel times to test the video-detection-in-fog explanation.
+
+## 8.8 ITD's work-zone feed, checked against the WZDx spec (Oct 6, 2026)
+
+**The spec.** The Work Zone Data Exchange (WZDx) is USDOT's open format for
+work zones, in the public domain (CC0) and kept at
+[github.com/usdot-jpo-ode/wzdx](https://github.com/usdot-jpo-ode/wzdx).
+Its last version is 4.2 (Feb 2023). It has since become a formal standard,
+the Connected Work Zones (CWZ) Implementation Guide and Standard v01.00
+(ITE, AASHTO and NEMA with SAE, finalized Dec 2024;
+[ITE's validation report](https://www.ite.org/ITEORG/assets/File/CWZ_Validation_Report-final%20v01_00-260122.pdf)).
+A few states already publish CWZ feeds; Idaho doesn't yet.
+
+WZDx defines two feeds:
+
+- a **work zone feed**: closures, lanes, detours;
+- a **device feed**: live arrow boards, message signs, cameras, traffic
+  sensors and temporary signals in work zones.
+
+USDOT's feed registry (data.transportation.gov, dataset `69qe-yiui`, read
+Oct 6) lists one Idaho feed: ITD's work zone feed, version 4.1, updated
+every minute, no key, active since Sept 2025. There's no Idaho device feed.
+Neighbors with feeds: Oregon DOT (v4.0, key needed, which would cover
+Ontario), Utah DOT (v4.0) and WSDOT (v4.2).
+
+The spec's rules that matter to us:
+
+- An event is split into segments wherever a required value or the lanes
+  change.
+- A lane list must cover every lane, numbered from 1 at the left.
+- Times are UTC.
+- The license field is optional, but the spec says public feeds "must be
+  licensed" CC0 and that the field will become required. Idaho's feed leaves
+  it out; the owner treats the feed as open (Oct 6).
+
+**Idaho's feed against it.** Snapshot of Oct 6, 15:39 UTC: 703 work zones
+statewide, 239 with a point in the Ada and Canyon box. The publisher is
+Arcadis, and the data source is "ERS", 511's event system.
+
+| Check | Result |
+|---|---|
+| Schema v4.1 | Passes except 4 work zones whose reduced speed is the text `"NaN"` |
+| Version | Says 4.1 but also uses two 4.2 fields (`work_zone_type`, `impacted_cds_curb_zones`); against 4.2 it fails 27 times (the 4 above plus 24 with `work_zone_type` set to `""`) |
+| Times | 24 overnight closures (e.g. W Chinden Blvd, 10 PM–6 AM) end the day before they start: the end date is one day early |
+| How sure | Every "verified" flag is false and every location method is "unknown": times and places are as planned, not confirmed in the field. 279 work zones are a single point, 424 are lines (median 11 points) |
+| Workers present | On 535 work zones, always true, last confirmed 16 hours to 1.5 years earlier (median 60 days), even for closures days away: a planning field, not live |
+| Lanes | Lane-by-lane status on 561 (1–5 lanes; general, shoulder, exit lane); 126 lanes closed and 228 alternating one-way |
+| Limits | Width, weight, height and length limits on 263, with values |
+| Speeds | Reduced speeds on 228, in km/h converted from round mph (72.42 = 45 mph, 40.234 = 25) |
+| Other fields | Type of work on only 24. The description repeats the schedule, width and speed in words. Beginning cross street on all, mileposts on 571. No contact or update interval in the header |
+| IDs | 38 ERS event numbers; 82 segments `N-k` of event `N` (in the non-standard `road_event_id`); 583 hash IDs, one per day of a recurring schedule, chained as first and next occurrence (all 934 links resolve). IDs didn't change across three fetches over 6 minutes; whether the daily hashes stay the same over days is still to check |
+| HTTP | Rebuilt on every request (new ETag, header time = request time), so asking "changed since?" always returns the whole feed. 1.9 MB raw, 124 KB gzip, 111 KB Brotli. The three fetches were otherwise identical |
+
+So the feed is good for **where and when work is planned** and for
+**which lanes it closes**. We clean it on load: drop the `"NaN"` speeds,
+move the early end dates forward a day, store speeds in mph, and mark
+locations as approximate. Worker presence isn't shown as live.
 
 ---
 

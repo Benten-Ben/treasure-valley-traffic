@@ -81,7 +81,9 @@ Before every push, check the diff for these.
   aggregate-only publishing.
 - **Licenses:** credit "© OpenStreetMap contributors" (ODbL; derived
   databases we publish stay ODbL) and ITD; don't redistribute Ada County
-  Assessor data.
+  Assessor data. ITD's WZDx work-zone feed is published for public use
+  (WZDx asks for CC0), so we may republish it, raw or aggregated, with
+  credit to ITD (owner, Oct 6).
 - Identify our client honestly (User-Agent with a link to this repo).
   Honor Crawl-delay (IEM: 120 s). Poll gently.
 
