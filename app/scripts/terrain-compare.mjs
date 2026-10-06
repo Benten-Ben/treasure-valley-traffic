@@ -103,7 +103,14 @@ async function shoot(view, kind, file) {
 			});
 			const pitch = kind === 'app-3d' ? 60 : 0;
 			const bearing = kind === 'app-3d' ? view.bearing : 0;
+			// The data layers load after the map does: wait for the cameras too, so both shots
+			// show the same layers and only the terrain differs.
+			const cameras = page
+				.waitForResponse((r) => /\/api\/cameras(\?|$)/.test(r.url()), { timeout: 180_000 })
+				.catch(() => null);
 			await page.goto(`${args.app}/#${view.z}/${view.lat}/${view.lon}/${bearing}/${pitch}`);
+			await mapReady(page, { quietMs: 3000 });
+			await cameras;
 			await mapReady(page, { quietMs: 3000 });
 		}
 		const path = join(out, 'raw', `${view.id}-${kind}-${file === args.before ? 'a' : 'b'}.png`);

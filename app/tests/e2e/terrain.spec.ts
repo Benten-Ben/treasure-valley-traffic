@@ -147,7 +147,7 @@ test.describe('terrain', () => {
 		expect(['png', 'webp']).toContain(type);
 
 		const tiles = watchTiles(page);
-		// The Boise foothills, tilted, at the zoom where the 0.5 m rounding applies.
+		// The Boise foothills, tilted, at z13 (rounded to 0.2 m in the re-encoded file).
 		await page.goto('/#13/43.6478/-116.1750/25/60');
 		await mapReady(page);
 		const terrain = tiles.filter((t) => t.url.includes(`/tiles/${manifest.terrain.file}`));
