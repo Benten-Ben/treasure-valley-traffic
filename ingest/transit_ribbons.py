@@ -436,7 +436,7 @@ class Corridors:
         new = []
         min_pts = MIN_PIECE_M / STEP_M
         runs = _runs(labels)
-        for k, (pid, i0, i1) in enumerate(runs):
+        for pid, i0, i1 in runs:
             if pid is not None and pid >= 0:
                 for i in range(i0, i1 + 1):
                     res[i] = labels[i]
@@ -459,6 +459,8 @@ class Corridors:
                 if i1 - i0 + 1 < min_pts:
                     continue
                 start = res[i0 - 1] if i0 > 0 else None
+                if start and entries and entries[-1][0] == start[0]:
+                    entries[-1][2] = start[1]      # the route leaves its piece exactly where the new one starts
                 own_pts = ([self._pt(start)] if start else []) + pts[i0:i1 + 1]
                 new_pid = self._new_piece(shape["shape_id"], own_pts)
                 off = 1 if start else 0
