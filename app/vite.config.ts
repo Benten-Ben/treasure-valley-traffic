@@ -31,7 +31,10 @@ export default defineConfig({
 				// Force runes mode for the project, except for libraries. Can be removed in svelte 6.
 				runes: ({ filename }) => (filename.split(/[/\\]/).includes('node_modules') ? undefined : true)
 			},
-			adapter: adapter()
+			adapter: adapter(),
+			// A long-lived map tab learns of a new deploy within 5 minutes and shows
+			// "New version: reload when convenient" (docs/14 §14.3).
+			version: { pollInterval: 300_000 }
 		})
 	],
 	test: {

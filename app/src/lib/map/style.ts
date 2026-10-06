@@ -1,5 +1,5 @@
 import { layers, namedFlavor } from '@protomaps/basemaps';
-import type { LayerSpecification, LineLayerSpecification, StyleSpecification } from 'maplibre-gl';
+import type { LayerSpecification, LineLayerSpecification, Map, StyleSpecification } from 'maplibre-gl';
 
 /** Where the basemap build (basemap/) publishes its output. Same origin, no third-party hosts. */
 export const TILES_PATH = '/tiles';
@@ -42,7 +42,7 @@ export interface BasemapManifest {
 	};
 }
 
-/** Layer ids of the aerial imagery, toggled together by the map's Map/Aerial switch. */
+/** Layer ids of the aerial imagery, toggled together by the Map/Aerial switch (added on first use). */
 export const IMAGERY_LAYERS = ['aerial', 'aerial-detail'];
 
 /** Layer id of the 3D buildings. */
@@ -107,8 +107,8 @@ export function railLayers(l: LineLayerSpecification): LineLayerSpecification[] 
 	return [track, ties];
 }
 
-/** MapLibre needs absolute URLs for glyphs and sprites, so the page origin is passed in. */
-export function buildStyle(m: BasemapManifest, origin: string, aerial = false): StyleSpecification {
+/** The basemap's own layers, split at the first label: fills and lines below, labels above. */
+function basemapLayers(m: BasemapManifest): { below: LayerSpecification[]; labels: LayerSpecification[] } {
 	let base = layers('protomaps', namedFlavor(m.basemap.flavor), { lang: 'en' });
 	if (m.buildings) {
 		// Our extruded buildings take over from the basemap's flat footprints.
@@ -119,8 +119,109 @@ export function buildStyle(m: BasemapManifest, origin: string, aerial = false): 
 	// classic railroad marks instead, a solid track line with cross-ties.
 	base = base.flatMap((l) => (l.id === 'roads_rail' && l.type === 'line' ? railLayers(l) : [l]));
 	const firstSymbol = base.findIndex((l) => l.type === 'symbol');
-	const below = firstSymbol === -1 ? base : base.slice(0, firstSymbol);
-	const labels = firstSymbol === -1 ? [] : base.slice(firstSymbol);
+	return {
+		below: firstSymbol === -1 ? base : base.slice(0, firstSymbol),
+		labels: firstSymbol === -1 ? [] : base.slice(firstSymbol)
+	};
+}
+
+/**
+ * The layer the aerial imagery goes right after: the hillshade when there's
+ * terrain, else the basemap's last fill or line. Imagery sits above the
+ * basemap's fills and roads and below everything the app adds.
+ */
+export function aerialAfter(m: BasemapManifest): string {
+	if (m.terrain) return 'hillshade';
+	return basemapLayers(m).below.at(-1)?.id ?? '';
+}
+
+/** The imagery sources and layers: NAIP, plus the sharper detail file around the cameras. */
+function imagery(m: BasemapManifest, origin: string, visible: boolean) {
+	const sources: StyleSpecification['sources'] = {};
+	const out: LayerSpecification[] = [];
+	if (!m.imagery) return { sources, layers: out };
+	sources.imagery = {
+		type: 'raster',
+		url: pmtilesUrl(origin, m.imagery.file),
+		tileSize: m.imagery.tileSize,
+		attribution: m.imagery.attribution
+	};
+	out.push({
+		id: IMAGERY_LAYERS[0],
+		type: 'raster',
+		source: 'imagery',
+		layout: { visibility: visible ? 'visible' : 'none' }
+	});
+	// Sharper imagery around the cameras, over the valley layer: where it
+	// has no tile, the valley imagery below shows through.
+	const detail = m.imagery.detail;
+	if (detail) {
+		sources.imageryDetail = {
+			type: 'raster',
+			url: pmtilesUrl(origin, detail.file),
+			tileSize: m.imagery.tileSize
+		};
+		out.push({
+			id: IMAGERY_LAYERS[1],
+			type: 'raster',
+			source: 'imageryDetail',
+			minzoom: detail.minzoom,
+			layout: { visibility: visible ? 'visible' : 'none' }
+		});
+	}
+	return { sources, layers: out };
+}
+
+/** The parts of a MapLibre map the style helpers use (so tests can pass a fake). */
+export type MapLike = Pick<
+	Map,
+	'getLayer' | 'getSource' | 'addSource' | 'addLayer' | 'getLayersOrder' | 'setLayoutProperty' | 'setPaintProperty'
+>;
+
+/**
+ * Add the aerial imagery to a running map the first time Aerial is wanted
+ * (docs/14 §14.8: imagery sources only in Aerial). Its layers go right after
+ * `aerialAfter(m)`, hidden. Once added they stay; turning Aerial off only
+ * hides them. Returns false when the manifest has no imagery.
+ */
+export function addAerial(map: MapLike, m: BasemapManifest, origin: string): boolean {
+	if (!m.imagery) return false;
+	if (map.getLayer(IMAGERY_LAYERS[0])) return true;
+	const { sources, layers: imageryLayers } = imagery(m, origin, false);
+	for (const [id, src] of Object.entries(sources)) if (!map.getSource(id)) map.addSource(id, src);
+	const order = map.getLayersOrder();
+	const i = order.indexOf(aerialAfter(m));
+	const before = i === -1 ? order[0] : order[i + 1];
+	for (const l of imageryLayers) map.addLayer(l, before);
+	return true;
+}
+
+/**
+ * Show or hide the aerial imagery (adding it first when needed), with the
+ * buildings' opacity to match. Returns whether Aerial is now on.
+ */
+export function setAerial(map: MapLike, m: BasemapManifest, origin: string, on: boolean): boolean {
+	if (on && !addAerial(map, m, origin)) return false;
+	for (const id of IMAGERY_LAYERS) if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', on ? 'visible' : 'none');
+	if (map.getLayer(BUILDINGS_LAYER)) map.setPaintProperty(BUILDINGS_LAYER, 'fill-extrusion-opacity', buildingOpacity(on));
+	return on;
+}
+
+/** The basemap's first label layer: data layers drawn under the labels go before it. */
+export function firstBasemapLabel(map: Pick<Map, 'getLayer' | 'getLayersOrder'>): string | undefined {
+	return map.getLayersOrder().find((id) => {
+		const l = map.getLayer(id);
+		return l?.type === 'symbol' && l.source === 'protomaps';
+	});
+}
+
+/**
+ * The style. MapLibre needs absolute URLs for glyphs and sprites, so the page
+ * origin is passed in. The imagery is part of it only when `aerial` is on at
+ * creation; otherwise `addAerial` adds it the first time it's wanted.
+ */
+export function buildStyle(m: BasemapManifest, origin: string, aerial = false): StyleSpecification {
+	const { below, labels } = basemapLayers(m);
 
 	const style: StyleSpecification = {
 		version: 8,
@@ -166,37 +267,10 @@ export function buildStyle(m: BasemapManifest, origin: string, aerial = false): 
 		});
 	}
 
-	if (m.imagery) {
-		style.sources.imagery = {
-			type: 'raster',
-			url: pmtilesUrl(origin, m.imagery.file),
-			tileSize: m.imagery.tileSize,
-			attribution: m.imagery.attribution
-		};
-		// Sits above the basemap's fills and roads, below buildings and labels.
-		middle.push({
-			id: IMAGERY_LAYERS[0],
-			type: 'raster',
-			source: 'imagery',
-			layout: { visibility: aerial ? 'visible' : 'none' }
-		});
-		// Sharper imagery around the cameras, over the valley layer: where it
-		// has no tile, the valley imagery below shows through.
-		const detail = m.imagery.detail;
-		if (detail) {
-			style.sources.imageryDetail = {
-				type: 'raster',
-				url: pmtilesUrl(origin, detail.file),
-				tileSize: m.imagery.tileSize
-			};
-			middle.push({
-				id: IMAGERY_LAYERS[1],
-				type: 'raster',
-				source: 'imageryDetail',
-				minzoom: detail.minzoom,
-				layout: { visibility: aerial ? 'visible' : 'none' }
-			});
-		}
+	if (aerial) {
+		const img = imagery(m, origin, true);
+		Object.assign(style.sources, img.sources);
+		middle.push(...img.layers);
 	}
 
 	if (m.buildings) {
@@ -216,7 +290,7 @@ export function buildStyle(m: BasemapManifest, origin: string, aerial = false): 
 				'fill-extrusion-height': ['coalesce', ['get', 'height'], 0],
 				'fill-extrusion-color': '#f3ede2',
 				'fill-extrusion-vertical-gradient': true,
-				'fill-extrusion-opacity': buildingOpacity(aerial)
+				'fill-extrusion-opacity': buildingOpacity(aerial && Boolean(m.imagery))
 			}
 		});
 	}
