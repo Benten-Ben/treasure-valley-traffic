@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { GRAY_16x8, TEAL_24x8, sha, variant } from './live-fixtures.test-util.js';
 import { variables } from '../../env.js';
+import { USER_AGENT } from './robots.js';
 
 /**
  * WP11's acceptance at the level of the server modules and routes (docs/14
@@ -23,12 +24,15 @@ let dir: string;
 let frames: string;
 let archive: string;
 let imageRequests: string[];
+/** The User-Agent of every request the fake 511 got (robots.txt included). */
+let agents: Set<string | null>;
 let robotsText: string;
 
 /** A fake 511: robots.txt, and a new picture for every image request. */
 function stub511() {
 	let n = 0;
-	const f = vi.fn(async (url: string) => {
+	const f = vi.fn(async (url: string, init?: RequestInit) => {
+		agents.add(new Headers(init?.headers).get('user-agent'));
 		if (url.endsWith('/robots.txt')) return new Response(robotsText);
 		imageRequests.push(url);
 		return new Response(new Uint8Array(variant(TEAL_24x8, n++)));
@@ -103,6 +107,7 @@ beforeEach(async () => {
 	await status('key_cameras', 50, [656]);
 	await status('regional-cameras', 600, [9001]);
 	imageRequests = [];
+	agents = new Set();
 	robotsText = 'User-agent: *\nDisallow: /list/getdata/\nDisallow: /map/map*/\n';
 });
 
@@ -142,6 +147,8 @@ describe('GET /api/cameras/live', () => {
 		expect(body.views[7].frame.url).toBe(`/api/views/7/live/${body.views[7].frame.sha}`);
 		// One upstream request, for the one view that isn't recorded; none for the unknown view.
 		expect(imageRequests).toEqual(['https://511.idaho.gov/map/Cctv/637']);
+		// robots.txt and the image were both asked for as the ingestors ask (robots.test.ts compares the two).
+		expect([...agents]).toEqual([USER_AGENT]);
 	});
 
 	it('serves a new archive row at the next poll', async () => {
