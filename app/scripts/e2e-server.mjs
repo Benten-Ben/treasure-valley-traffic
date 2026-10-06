@@ -18,6 +18,8 @@ const env = { ...process.env, ...harnessEnv() };
 const i = process.argv.indexOf('--port');
 const port = i === -1 ? env.TVT_PORT : process.argv[i + 1];
 const built = join(APP_DIR, '.svelte-kit', 'output', 'server', 'index.js');
+// vite's own entry, not npx: npx doesn't pass SIGTERM on, which left servers behind.
+const VITE = join(APP_DIR, 'node_modules', 'vite', 'bin', 'vite.js');
 
 function newest(path) {
 	const s = statSync(path);
@@ -40,16 +42,17 @@ function stale() {
 
 if (stale()) {
 	console.log('e2e-server: building (sources changed since the last build)');
-	const r = spawnSync('npx', ['vite', 'build'], { cwd: APP_DIR, env, stdio: 'inherit' });
+	const r = spawnSync(process.execPath, [VITE, 'build'], { cwd: APP_DIR, env, stdio: 'inherit' });
 	if (r.status !== 0) process.exit(r.status ?? 1);
 }
 
 console.log(`e2e-server: vite preview on ${port} (DATABASE_URL → ${env.DATABASE_URL.replace(/^.*\//, '')}, ` +
 	`TILES_DIR ${env.TILES_DIR}, TVT_FRAME_SOURCE=${env.TVT_FRAME_SOURCE})`);
-const child = spawn('npx', ['vite', 'preview', '--port', String(port), '--strictPort', '--host', '127.0.0.1'], {
+const child = spawn(process.execPath, [VITE, 'preview', '--port', String(port), '--strictPort', '--host', '127.0.0.1'], {
 	cwd: APP_DIR,
 	env,
 	stdio: 'inherit'
 });
-for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => child.kill(sig));
+for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(sig, () => child.kill(sig));
+process.on('exit', () => child.kill('SIGTERM'));
 child.on('exit', (code) => process.exit(code ?? 0));
