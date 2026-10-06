@@ -58,6 +58,23 @@ services:
       db:
         condition: service_healthy
 
+  wzdx:
+    # Records ITD's work zones from the WZDx feed on 511 Idaho every 5 minutes: each
+    # changed snapshot archived, every version in raw.record, cleaned rows in evt.event.
+    build:
+      context: ..
+      dockerfile: ingest/Dockerfile
+    restart: unless-stopped
+    command: ["python3", "-m", "ingest", "stream", "itd_wzdx"]
+    environment:
+      DATABASE_URL: postgres://tvt:${POSTGRES_PASSWORD}@db:5432/tvt
+      TVT_ARCHIVE: /srv/archive
+    volumes:
+      - ${ARCHIVE_DIR:-/srv/tvt/archive}:/srv/archive
+    depends_on:
+      db:
+        condition: service_healthy
+
   cameras:
     # Key-camera frames from 511 Idaho (ingest/key_cameras.csv), each fetched
     # every 50 s. JPEGs by local day, rolled up after midnight into one AV1 video

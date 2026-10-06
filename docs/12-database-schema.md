@@ -298,6 +298,14 @@ create table evt.sign_message (            -- message boards: one row per distin
 Replay simply asks what was active at time *t*:
 `observed @> t`.
 
+Built Oct 6, 2026 in `db/migrations/0009_events.sql` for ITD's work zones
+(`itd_wzdx`), with two more columns: `content_hash` (of the cleaned row,
+so an unchanged poll writes nothing) and `updated_at` (when the row's
+content last changed). `declared` holds the published start and end after
+the fixes listed in `attributes.fixes`. A work zone that leaves the feed
+and later returns keeps its first-seen time. `evt.sign_message` waits for
+the 511 API's message signs.
+
 ## 12.8 What this schema deliberately leaves out
 
 - **No vehicle or person identities:** no plates, faces or cross-camera

@@ -6,6 +6,7 @@ leniently for real-world quirks seen in our sources. Ported from the
 prototype (tvt/http.py), where these rules were worked out and tested.
 """
 
+import gzip
 import json
 import re
 import time
@@ -109,8 +110,8 @@ def forget_robots():
     _robots.clear()
 
 
-def _open(url, data=None, timeout=90):
-    req = urllib.request.Request(url, data=data, headers={"User-Agent": USER_AGENT})
+def _open(url, data=None, timeout=90, headers=None):
+    req = urllib.request.Request(url, data=data, headers={"User-Agent": USER_AGENT, **(headers or {})})
     return urllib.request.urlopen(req, timeout=timeout)
 
 
@@ -135,8 +136,9 @@ def robots_for(url):
     return host, rules, ("no_rules" if rules is None else "allowed")
 
 
-def get(url, timeout=90):
-    """GET with the robots check and crawl-delay. Returns (status, body bytes, robots decision)."""
+def get(url, timeout=90, compressed=False):
+    """GET with the robots check and crawl-delay. Returns (status, body bytes, robots decision).
+    compressed=True asks for gzip (the body returned is always uncompressed)."""
     host, rules, decision = robots_for(url)
     if decision == "unavailable":
         raise RobotsUnavailable(f"robots.txt at {host} couldn't be read; treating {url} as disallowed for now")
@@ -147,8 +149,11 @@ def get(url, timeout=90):
     if wait > 0:
         time.sleep(wait)
     _last_hit[host] = time.time()
-    with _open(url, timeout=timeout) as r:
-        return r.status, r.read(), decision
+    with _open(url, timeout=timeout, headers={"Accept-Encoding": "gzip"} if compressed else None) as r:
+        body = r.read()
+        if r.headers.get("Content-Encoding") == "gzip":
+            body = gzip.decompress(body)
+        return r.status, body, decision
 
 
 def get_json(url, timeout=90):

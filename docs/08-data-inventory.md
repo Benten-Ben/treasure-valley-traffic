@@ -208,6 +208,11 @@ So the feed is good for **where and when work is planned** and for
 move the early end dates forward a day, store speeds in mph, and mark
 locations as approximate. Worker presence isn't shown as live.
 
+**Collected since Oct 6, 2026** by the `wzdx` service (`itd_wzdx` in
+[ingest/](../ingest/README.md)), every 5 minutes, owner's OK: changed
+snapshots archived, every version of each work zone in `raw.record`,
+cleaned rows in `evt.event` ([ch. 12 §12.7](12-database-schema.md#127-evt-lifecycles)).
+
 ---
 
 **Back to:** [README](../README.md)
