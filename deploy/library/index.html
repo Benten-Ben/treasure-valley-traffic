@@ -135,6 +135,9 @@ const FPS_CHOICES = [1, 4, 12, 16];
 const DEFAULT_FPS = 12;
 const MAX_RATE = 16;                       // Chrome's playbackRate limit
 const KNOWN_INDEXES = ["index-key_cameras.json", "index-regional-cameras.json"];
+// The videos store frame times rounded to 1/25 s, so a picture can start up to 0.04 s
+// after its time in the CSV: jumps land a little past the start to show the picture itself.
+const NUDGE = 0.05;
 const $ = (id) => document.getElementById(id);
 const video = $("video");
 const timeFmt = new Intl.DateTimeFormat("en-US", { timeZone: TZ, hour: "numeric", minute: "2-digit", second: "2-digit" });
@@ -237,7 +240,7 @@ async function selectDay(day, t) {
   $("downloads").innerHTML = `<a href="files/${d.video}" download>video</a> · <a href="files/${d.csv}" download>picture list (CSV)</a>`;
   renderSpeeds();
   drawCoverage();
-  const start = t != null ? t : first ? first.s : 0;
+  const start = t != null ? t : first ? first.s + NUDGE : 0;
   video.addEventListener("loadedmetadata", () => {
     $("clock").max = String(Math.round(video.duration * 10) / 10);
     video.currentTime = Math.min(start, video.duration || start);
@@ -319,8 +322,11 @@ function update() {
 function step(dir) {
   video.pause();
   const t = video.currentTime;
-  const target = dir > 0 ? state.frames.find((f) => f.s > t + 0.01) : [...state.frames].reverse().find((f) => f.s < t - 0.01);
-  if (target) video.currentTime = target.s + 0.001;
+  let k = -1;                                            // the last picture at or before t
+  for (let i = 0; i < state.frames.length && state.frames[i].s <= t + 1e-6; i++) k = i;
+  const onGap = k < 0 || state.rows[rowAt(t)].kind !== "frame";
+  const target = state.frames[dir > 0 ? k + 1 : onGap ? k : k - 1];
+  if (target) video.currentTime = target.s + NUDGE;
 }
 
 function shiftDay(dir) {
