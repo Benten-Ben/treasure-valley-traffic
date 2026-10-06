@@ -281,9 +281,27 @@ on freshness.
 **ITD's I-84 cameras are full HD.** The four I-84 interchange cameras among
 the key cameras send 1920×1166 frames of about 400 KB, 8 times ACHD's
 768×466 frames of about 45 KB, and take about 6 times longer to encode. So
-the 34 key cameras download about 4 GB a day, not 2, and a week of JPEGs is
-about 28 GB. How many of the other 511 cameras are HD is unchecked, so the
+the 34 key cameras download about 4 GB a day, not 2, and the 2 days of JPEGs
+kept are about 8 GB. How many of the other 511 cameras are HD is unchecked, so the
 all-camera figures above are a floor. ⚠️
+
+**One angle per camera, checked Oct 5.** Every ACHD camera on 511 is a
+single image stream: a pan-tilt-zoom camera that an operator can re-aim,
+which stage 4 of the pipeline (§11.7) watches for. None of the key
+intersections has a second ACHD camera on 511. Three things look like extra
+angles but aren't, or aren't reachable:
+
+- **I-84 & Eagle and I-84 & Meridian** also appear as ITD views (511 image
+  IDs 1277 and 1163). They're the same cameras (ACHD 546 and 544) with
+  ITD's caption, served as 1920×1166 PNGs of about 2.5 MB, with snapshots
+  taken at different moments from ACHD's. Same angle, so not captured.
+- **Chinden & SH-16** has a second ACHD camera on the southbound ramp (619)
+  that 511 doesn't republish. It's one of the 18 ACHD cameras not on 511,
+  reachable only from ACHD's image server, whose robots.txt disallows us. The
+  draft note to ACHD asks about it.
+- **Road-weather cameras** (ITD's RWIS) at the I-84 Wye (4 views) and I-84
+  at Kuna/Meridian (3 views) are about 400 m from the nearest key cameras:
+  different places, aimed at the pavement.
 
 ### Video archive instead of JPEGs
 
@@ -431,9 +449,16 @@ JPEG, 752 about 32 KB.
 - **Container:** MKV, one file per camera per day, rolled up from the
   JPEGs after midnight
   ([`ingest/camera_video.py`](../ingest/camera_video.py)).
-- **Originals:** keep the JPEGs a week, then delete them once their video
-  exists. That's longer than measuring needs (24–48 h), since disk allows
-  it for now.
+- **Originals:** keep the JPEGs 2 days (today and yesterday), then delete
+  them once their video exists (owner, Oct 5). Measuring needs 24–48 hours.
+- **Getting a frame back:** every frame can be pulled out of the video as an
+  image, and the CSV beside the video maps frame numbers to fetch times. The
+  pictures aren't byte-identical to the originals, but they're close:
+  across the 26 evening-rush frames of camera 656, SSIM 0.979 on average
+  (lowest 0.973) and PSNR 41 dB (lowest 40 dB). At 2x zoom every vehicle is
+  still distinct; fine texture such as lane-marking edges is slightly
+  softer. (`ffmpeg -i day.mkv -fps_mode passthrough frame%04d.png` writes
+  them all; frame 1 is the gray lead-in when the day starts with a gap.)
 
 **The encoder version matters** (checked on the server, Oct 5, evening-rush
 frames). Debian 13's newer SVT-AV1 needs 13–15% more space than the 1.7

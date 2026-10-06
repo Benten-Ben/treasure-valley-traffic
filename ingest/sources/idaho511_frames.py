@@ -31,7 +31,7 @@ from .. import camera_video, http
 URL = "https://511.idaho.gov/map/Cctv/{}"
 CAMERAS_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "key_cameras.csv")
 POLL_S = 50
-KEEP_JPEG_DAYS = 7
+KEEP_JPEG_DAYS = 2         # today and yesterday (owner, Oct 5); the videos are kept
 MIN_FREE_BYTES = 10 * 2**30          # below this, prune harder, then pause
 ROLLUP_AFTER = timedelta(minutes=5)  # after local midnight, so the day's last fetches are in
 REPORT_EVERY_S = 3600
@@ -45,7 +45,7 @@ SOURCE = {
     "schedule": None,
     "license": "none stated; kept private on the server, never published",
     "credit": "Idaho Transportation Department (511 Idaho) and Ada County Highway District",
-    "notes": "Fetched every 50 s per camera; repeats dropped. JPEGs kept a week, videos kept.",
+    "notes": "Fetched every 50 s per camera; repeats dropped. JPEGs kept 2 days, videos kept.",
 }
 
 
