@@ -147,9 +147,11 @@ live bus positions (`requirements.txt`).
 
 ## Environment notes (cloud session)
 
-- Outbound traffic goes through a proxy. `achdidaho.org`, `swidrdc.org`
-  (COMPASS), `overpass-api.de` and `web.archive.org` are unreachable or
-  blocked from the cloud sandbox but work from a normal network.
+- Outbound traffic goes through a proxy. `achdidaho.org`,
+  `overpass-api.de`, `download.geofabrik.de` and `web.archive.org` are
+  unreachable or blocked from the cloud sandbox but work from a normal
+  network (OpenStreetMap extracts are processed on the server). COMPASS's
+  `swidrdc.org` answers again (Oct 6), with occasional resets: retry once.
 - The cloud session reaches the project server only over Tailscale. It
   joins the owner's tailnet (the owner approves a login link and removes
   the machine when the session ends). The host and user names are in the

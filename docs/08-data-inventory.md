@@ -31,7 +31,7 @@ programmatic use, and none of them publishes a `robots.txt` restriction.
 | `maps.achdidaho.org/server/rest/services` | ACHD | Mostly internal: the `GisData_Traffic`, `GisData_Signal`, `Safety` and similar folders need a login. Public: a roadwork layer and a few planning layers. A switched-off `ACHD_Traffic_Counts` service. |
 | `services2.arcgis.com/9rTo9NcUHIKASKwi` | ACHD's ArcGIS Online account | Hosted copies, e.g. 2022 signal-asset points (traffic, pedestrian, school, fire signals), bike map, a 2021 pedestrian/bike crash summary |
 | `gisp.itd.idaho.gov` and `gis.itd.idaho.gov` | ITD | AADT by segment (1999–2025), monthly volumes at automatic counter stations, crash points (2005–2023), ITS device locations |
-| `swidrdc.org/arcgis` | COMPASS | Traffic counts (portable and permanent counters, multi-agency), congestion measures, demographics |
+| `swidrdc.org/arcgis` | COMPASS | Traffic counts (portable and permanent counters, multi-agency), congestion measures, signals, crashes, demographics (reachable from the cloud again since Oct 6; [§8.9](#89-second-source-review-oct-6-2026)) |
 | `arcgis.com` | Esri catalog | Searchable index of all of these agencies' public items |
 
 ## 8.2 Bucket A: reachable and allowed
@@ -48,7 +48,7 @@ programmatic use, and none of them publishes a `robots.txt` restriction.
 | **ACHD live roadwork, incident and message-sign layers** (new) | Current roadwork plans (4 now), incidents (0 now), and message-board text (5 signs) | Same service, layers 22, 21 and 28 | Useful for explaining congestion on particular days |
 | ACHD open-data layers | Five-Year Plan projects, master street map, count segments (IDs only), sidewalks, pavement | `gis.achdidaho.org/.../ArcGIS_Hub/...` | |
 | **ACHD aerial imagery** (new) | **3-inch (0.25 ft) aerial photos of Ada County, 2024 and 2025** | `gis.achdidaho.org/imagery/rest/services/Imagery/Ada_County_Imagery_2025/ImageServer` | Lane counts, turn-bay lengths, signal-head layouts |
-| ACHD signal-asset points (2022) | 2,469 traffic-signal points (probably poles or heads), 182 pedestrian signals, 33 school flashers, 68 fire signals | `services2.arcgis.com/9rTo9NcUHIKASKwi/...` | Stale (2022), but useful locations |
+| ACHD signal-asset points (2022) | 2,469 traffic-signal **poles** (12 at Eagle & Fairview; about 464 intersections when grouped within 45 m), 182 pedestrian signals (96 hybrid beacons, 76 RRFBs), 33 school flashers, 68 fire signals | `services2.arcgis.com/9rTo9NcUHIKASKwi/...` | Frozen since Aug 2, 2022 ("Official Bike Map 2022"); only an ID and a purpose field. See [§8.9](#89-second-source-review-oct-6-2026) |
 
 **Transit, work zones and 511**
 
@@ -68,7 +68,7 @@ programmatic use, and none of them publishes a `robots.txt` restriction.
 | **ACHD road centerlines with posted speeds** (new, Oct 5, 2026) | Every road segment in Ada County (38,727) with **posted speed** (`PostSpeed`), functional class, one-way flag, street name and address ranges | ACHD's open GIS: `gis.achdidaho.org/.../Maintenance/Road_Centerline/MapServer/7` (no robots.txt; automated access allowed) | All segments carry a speed: arterials look right (Eagle Rd 45–55 mph, Chinden 35–55, Fairview 35–40, State 35–55); 30,565 local streets are 20 mph, likely a residential default ⚠️ (not verified against signs); a few anomalies (one interstate segment at 20). **Ada County only**: Canyon County needs OSM `maxspeed`, ITD, or city/highway-district data. |
 | **ACHD traffic counts layer** (new, Oct 5, 2026) | A `Traffic_Counts` feature layer on ACHD's open GIS (`ArcGIS_Hub` folder), alongside sidewalks, pavement, bike network and the master street map | `gis.achdidaho.org/.../ArcGIS_Hub/Traffic_Counts/FeatureServer` (open) | **Examined Oct 5: locations only.** 3,880 count-location lines, each with a location ID (`PID`), created/edited dates and length, but no counts and no related tables. The counts themselves are only in ACHD's robots-disallowed tables, whose rows don't carry the ID, so joining would mean matching street names and descriptions. The official export we've asked ACHD for is still the clean route. |
 | **Census commute flows (LEHD LODES8)** (new, Oct 6, 2026) | Jobs by the census block where the worker lives and where they work, all jobs, 2002–2023; Idaho and Oregon (for Ontario) | `lehd.ces.census.gov/data/lodes/LODES8/` (robots.txt allows all); `tools/lehd_flows.py` | Public domain. **2023:** 20,500 jobs in Ada or Canyon are held by residents of the 7 counties around them. Most tied to Ada and Canyon (share of residents' jobs): Owyhee 62% (Homedale 67%), Boise County 59%, Gem 58% (Emmett 60%), Elmore 44% (Mountain Home 46%, military not counted), Payette 35%, Washington 25% (Weiser), Malheur County OR 12% (Ontario 10%). Payette County and Ontario form their own job market across the river (2,771 Payette County residents work in Malheur County). Caveats: counts jobs, not trips; leaves out the military and self-employed; places a job at its employer's address. |
-| **FRA rail-crossing inventory** (new) | Every highway–rail crossing: 4,589 in Idaho, **433 in Ada and Canyon**. Includes a field for whether a highway traffic signal is nearby (no preemption field). | `data.transportation.gov` (Socrata API) | Shows which signals sit near tracks, where railroad preemption likely disrupts coordination (Nampa, Meridian, Kuna) |
+| **FRA rail-crossing inventory** (new) | Every highway–rail crossing: 4,589 in Idaho, **433 in Ada and Canyon**. Includes signal-nearby, interconnection and preemption fields, but they're filled only for Boise Valley Railroad crossings ([§8.9](#89-second-source-review-oct-6-2026)). | `data.transportation.gov` (Socrata API) | Shows which signals sit near tracks, where railroad preemption likely disrupts coordination (Nampa, Meridian, Kuna) |
 | Federal datasets | HPMS road data, FARS fatal crashes, census commute data, LEHD job-to-home flows, TTI Urban Mobility data | FHWA, NHTSA, Census, TTI | Public domain or open |
 | Mapillary | Crowd-sourced street-level photos | Free API token | CC BY-SA. Coverage in Boise unchecked. |
 | City of Boise open data portal | City datasets (contents not yet reviewed) | `opendata.cityofboise.org` | Reachable |
@@ -97,9 +97,10 @@ programmatic use, and none of them publishes a `robots.txt` restriction.
 | Source | Why we can't reach it | What it gives |
 |---|---|---|
 | `www.achdidaho.org` (main website) | Akamai blocks datacenter traffic (403) | Page text, links, commission agendas and minutes, budget documents |
-| COMPASS data server (`swidrdc.org`) | Our sandbox's network proxy fails to reach it (502 / certificate error) | Multi-agency count map data, congestion measures |
 | ITD count database (`itd.ms2soft.com`) | 403 from our sandbox | Detailed count records |
-| Overpass (OSM queries), `web.archive.org` | Sandbox network | OSM queries, archived pages |
+| Overpass (OSM queries), `download.geofabrik.de`, `web.archive.org` | Sandbox network | OSM queries and extracts (processed on the server instead), archived pages |
+
+COMPASS's data server (`swidrdc.org`) was listed here until Oct 6, 2026; it answers from the cloud again.
 
 On your own machine these should all work. A Claude session running there
 (Desktop app or `claude remote-control`) could also reach them.
@@ -229,6 +230,69 @@ locations as approximate. Worker presence isn't shown as live.
 [ingest/](../ingest/README.md)), every 5 minutes, owner's OK: changed
 snapshots archived, every version of each work zone in `raw.record`,
 cleaned rows in `evt.event` ([ch. 12 §12.7](12-database-schema.md#127-evt-lifecycles)).
+
+## 8.9 Second source review (Oct 6, 2026)
+
+At the owner's request, four background agents reviewed the remaining
+sources with paced, robots-checked metadata requests (no bulk downloads).
+Their working notes, and any third-party copies, stay out of the
+repository.
+
+**COMPASS** (`share-open-data-compassidaho.hub.arcgis.com`, plus 42
+services and 159 layers on `swidrdc.org`, plus layers on ArcGIS Online).
+The most useful layers:
+
+| Layer | What it gives | Where |
+|---|---|---|
+| Congestion performance measures | 47,293 rows, 2018–2025: travel-time index, reliability (LOTTR, TTTR), hours of delay, congested vs free-flow speed by road segment (the federal measures; probably from NPMRDS ⚠️) | `swidrdc.org`, not on the hub |
+| Commute travel times | 16 commutes, AM and PM, 2025 (e.g. Caldwell to Boise AM: 23 min free-flow, 31 average, 52 at the 95th percentile) | `swidrdc.org`, not on the hub |
+| Signalized_Intersections | 585 signals, one point per intersection (Ada 465, Canyon 120), with operator, owner, coordination group, ACHD's Synchro ID, right-turn lanes and turn phasing per approach, modelled peak-hour turn volumes. Built in 2019, edited Aug 2026 | ArcGIS Online (`services6.arcgis.com/2S9FP4vfcUQQ8G1T`) |
+| Regional_Signals | 1,078 signal points across operators (ACHD 833, Nampa 166, Caldwell 28, ITD 23, highway districts 18) with coordination groups; no date ⚠️. To be reconciled with the 585 | `swidrdc.org`, not on the hub |
+| RegionalCenterline | 62,213 segments in Ada and Canyon with `pm_id` (the key for COMPASS's counts, crashes and model), posted speed and lanes; monthly | hub |
+| Crash data | 174,038 crashes 2008–2025 (two more years than ITD's layer), linked to segments and intersections; the high-injury network (1,924 junctions, 14,487 segments); a person-level table (aggregates only) | hub |
+| Count tables | The latest count at 4,387 locations from every agency, Canyon County's included; 115 permanent counters | hub |
+| Growth | Traffic-zone demographics (2,498 zones, estimates to 2026, forecasts of population, households and jobs to 2055), building permits since 2000, 1,061 preliminary plats with units still to build | hub |
+
+Terms: the hub carries only a disclaimer (credit COMPASS). Layers only on
+`swidrdc.org` have no catalog entry or terms: used internally until COMPASS
+answers ([DECISIONS](DECISIONS.md)). Agency fiber routes (also there) are
+never republished.
+
+**City of Boise** (`opendata.cityofboise.org`, 88 entries, 65 datasets;
+the City's disclaimer). Mostly parks and administrative layers. Useful:
+the development pipeline (Development Tracker, zoning activities,
+residential permits since 1998, high-impact permits), police calls for
+service since 2017 (1.37 million calls, including 69,104 crashes and
+324,981 traffic calls; by census tract only, so aggregates only), street
+lights and parking meters.
+
+**Ada County parcels.** The Assessor's downloads (updated twice a month)
+say "Do not re-distribute this record"; County IT's open-data hub labels
+the same parcels, address points and centerlines "CC0 (Public Domain)".
+Year built, dwelling units and commercial floor area are only in the
+Assessor's parcel-characteristics download. Canyon County publishes
+110,890 parcels (daily) without those fields; the statewide layer is stale.
+
+**FRA rail crossings.** 433 in Ada and Canyon (131 open public crossings at
+grade: Boise Valley Railroad 78, Union Pacific 53); public domain, refreshed
+daily. The signal, interconnection and preemption fields are filled only
+for Boise Valley Railroad (e.g. Cole Rd: interconnected, advance
+preemption); Union Pacific leaves them blank, so we work out "signal near a
+crossing" ourselves. Union Pacific's mainline carries about 13 through
+trains a day at up to 70 mph.
+
+**Signals.** ACHD's 2022 points are poles, not intersections (above).
+COMPASS's 585-point layer gives one point per signalized intersection, and
+OpenStreetMap has 752 `traffic_signals` nodes in the box (May 2026 data ⚠️).
+ACHD also publishes 190 roundabouts and 574 Five-Year Plan intersection
+projects. Nothing newer on ACHD's public GIS; ten of its folders need a
+login.
+
+**Lanes.** Summarized in [ch. 9 §9.3](09-base-map-data.md#93-streets-network-and-lanes),
+with the rule for which source wins where.
+
+**Aerial imagery.** ACHD's 2024 and 2025 3-inch imagery is COMPASS's
+(flown by GeoTerra); [ch. 9 §9.5](09-base-map-data.md#95-imagery).
 
 ---
 

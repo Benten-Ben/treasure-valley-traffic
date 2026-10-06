@@ -66,13 +66,30 @@ USGS 3D Elevation Program (3DEP) coverage, by the 3DEP index at each city:
 |---|---|---|---|---|
 | **OpenStreetMap** (Geofabrik Idaho) | Full street map with tags (lanes and turn lanes where mapped) | .osm.pbf, 123 MB | ODbL | download.geofabrik.de/north-america/us/idaho.html |
 | **Overture Maps transportation** (release 2026-09-23.1) | 173,146 road segments in the valley box; speed limits on about 14k; stable IDs across releases; no lane-count field | GeoParquet (query in place) | ODbL | `s3://overturemaps-us-west-2/release/2026-09-23.1/theme=transportation/` |
-| ✅ **ITD HPMS** (federal highway inventory) | **Through lanes** by direction (19,503 segments in the box), turn lanes, lane width, median, shoulders, access control | Esri FeatureServer | Credit ITD | `gisp.itd.idaho.gov/server/rest/services/GDWarehouse/HPMS/FeatureServer/25` (through) and `/27` (turn) |
+| ✅ **ITD HPMS** (federal highway inventory) | **Through lanes** by direction (19,801 records in the box, Oct 6), turn lanes (637, samples), lane width (92% the 12 ft default), median, shoulders, access control. Good on state routes; looks like defaults on ACHD arterials (Fairview Ave reads 1+1; it has 5 lanes), and Chinden's two carriageway records disagree west of Eagle Rd | Esri FeatureServer | Credit ITD | `gisp.itd.idaho.gov/server/rest/services/GDWarehouse/HPMS/FeatureServer/25` (through) and `/27` (turn) |
 | ITD road network (linear referencing system, LRS) | State system plus local roads, interchanges | FeatureServer | Credit ITD | `.../GDWarehouse/RoadNetwork_Primary/FeatureServer` |
-| ACHD Master Street Map | Arterials and collectors with **existing and planned lanes**, typology, parking | FeatureServer | None stated | `gis.achdidaho.org/server/rest/services/ArcGIS_Hub/Master_Street_Map_Arterials/FeatureServer/1` |
-| COMPASS RegionalCenterline | Ada + Canyon centerlines with `pm_id`, which links to the travel model and crash data | FeatureServer (`swidrdc.org`) | Disclaimer only | COMPASS open-data hub |
+| ACHD Master Street Map | Arterials and collectors with **existing, funded and planned lanes**, typology, parking (1,049 arterial segments). Lanes count the whole cross-section (5 = 2+2 plus a centre turn lane ⚠️); blank on state routes | FeatureServer | None stated | `gis.achdidaho.org/server/rest/services/ArcGIS_Hub/Master_Street_Map_Arterials/FeatureServer/1` |
+| COMPASS RegionalCenterline | Ada + Canyon centerlines (62,213) with `pm_id`, which links to the travel model and crash data; posted speed and **lanes**, so it covers Canyon County | FeatureServer (hub) | Disclaimer only | COMPASS open-data hub |
 | Ada County Assessor centerlines | With address ranges; updated twice a month | Shapefile, 6.6 MB | **"Do not re-distribute"** | `adacountyassessor.org/public/roadcenterline.zip` |
 | Canyon County roads | Street names and types only | FeatureServer | Full data by records request | `maps.canyoncounty.id.gov/arcgisserver/.../CanyonCountyRoads/FeatureServer/0` |
 | Census TIGER/Line 2025 | Roads with address ranges | Shapefile (2.4 + 1.5 MB) | Public domain | `www2.census.gov/geo/tiger/TIGER2025/ROADS/` |
+
+**Lanes: which source wins where** (owner, Oct 6, 2026). No source is good
+everywhere: OpenStreetMap has `lanes` on 72% of major roads in the box and
+`turn:lanes` on about 40% of signal approaches (May 2026 data ⚠️), and no
+source has widths worth using. Each source's values are kept per segment,
+and every lane number shown says where it came from:
+
+| Roads | Through lanes | Turn lanes at signals | Width |
+|---|---|---|---|
+| State, US and interstate routes | ITD HPMS; OpenStreetMap as a check, disagreements flagged | OpenStreetMap, then COMPASS's right-turn lanes and phasing, then HPMS | Class defaults, marked estimated |
+| ACHD arterials (Ada) | Master Street Map; OpenStreetMap for the split by direction; HPMS last | OpenStreetMap, then COMPASS | Defaults |
+| Canyon County arterials | OpenStreetMap, then COMPASS's centerline lanes, then HPMS | OpenStreetMap, then COMPASS | Defaults |
+| Collectors and local streets | OpenStreetMap where tagged, otherwise assumed 1+1 | — | Defaults |
+| Planned changes | Master Street Map funded and planned lanes; ACHD's 574 planned intersection projects | | |
+
+OpenStreetMap stays in its own tables (ODbL); a combined lanes view that
+uses it is a derivative database if it's ever published.
 
 ## 9.4 Buildings
 
@@ -88,7 +105,7 @@ USGS 3D Elevation Program (3DEP) coverage, by the 3DEP index at each city:
 | Source | Coverage | Resolution | License | Notes |
 |---|---|---|---|---|
 | **NAIP 2023** | Whole valley | 0.6 m, 4-band | Public domain | Cloud-optimized GeoTIFFs on Microsoft Planetary Computer (free). AWS copy is requester-pays. |
-| ACHD Ada County Imagery 2024/2025 | **Ada only** | **3 inch** | **None stated** | ImageServer; `exportImage` works, no tile cache. View on request only; don't cache until ACHD confirms. |
+| ACHD Ada County Imagery 2024/2025 | **Ada only**: 2024 the urban core (780 km², 3 inch, Apr 1–2, 2024); 2025 about 72% of Ada (3 inch in 267 sections, 6 inch in 500; undated, probably April 2025) | **3 inch** | **None stated**; really COMPASS's product (flown by GeoTerra "for use by the COMPASS members") | ImageServer; `exportImage` works, no tile cache. Shows lane arrows, stop bars and mast arms that NAIP doesn't. **View on request only** (owner, Oct 6); asked of ACHD and COMPASS. If they agree: a private copy of 300 m around signals and cameras only (about 95 km², 2–4 GB, one overnight fetch); not the whole county (50–120 GB, a product COMPASS sells). |
 | COMPASS orthophotos 2025 | Ada + Canyon | 3–6 inch | **Paid** ($350 per section) | compassidaho.org |
 | Canyon County imagery | Canyon | — | Token required | — |
 | Esri World Imagery | Everywhere | Sub-meter | Esri license; API key outside ArcGIS | Avoid for an open stack |
@@ -97,11 +114,11 @@ USGS 3D Elevation Program (3DEP) coverage, by the 3DEP index at each city:
 
 | Source | What | License |
 |---|---|---|
-| Ada County Assessor | Parcels (32.5 MB), parcel points, address points (275,159), zoning, subdivisions; updated twice a month | Owner names removed; **"do not re-distribute"**. Use internally only. |
+| Ada County Assessor | Parcels (32.5 MB, 240k with condos), parcel points, zoning, subdivisions, and parcel characteristics (year built, dwelling units, commercial floor area, plat actions); updated twice a month. Address points come from County IT's hub (275,155) | Owner names removed; **"do not re-distribute"**, while County IT's hub labels the same layers CC0. We follow the stricter rule until the county answers: a private copy on the server (Oct 6, owner OK), aggregates only. |
 | City of Boise open data (64 datasets) | Zoning, future land use, development tracker, new housing, pathways, street lights, floodplain | Disclaimer only |
-| Canyon County | Tax parcels (103,060), zoning, future land use 2030, building permits | Free to government; centerlines and addresses by records request |
-| Idaho statewide public parcels | Ada 217,038, **Canyon 0** | Not stated |
-| COMPASS open data | **TAZ demographics**, current land use, building permits, preliminary plats, crash data, counts | Disclaimer only (`swidrdc.org`) |
+| Canyon County | Tax parcels (110,890, refreshed daily; no year built or use), zoning, future land use 2030, building permits (unincorporated only) | Free to government; centerlines and addresses by records request |
+| Idaho statewide public parcels | Ada 217,038 (stale: Apr 2025 extract), **Canyon 0** | Disclaimer and §74-120 (no mailing lists) |
+| COMPASS open data | **TAZ demographics** (forecasts to 2055), current land use (305,838 parcels), building permits since 2000, preliminary plats, crash data, counts ([ch. 8 §8.9](08-data-inventory.md#89-second-source-review-oct-6-2026)) | Disclaimer only |
 
 ## 9.7 3D tiles and basemap tiles
 
