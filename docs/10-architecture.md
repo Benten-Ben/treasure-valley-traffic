@@ -88,7 +88,7 @@ Why a VM rather than a container (LXC):
 
 | Resource | Now | Driven by |
 |---|---|---|
-| CPU | 8 vCPU | Tile builds, later vision. The host's CPUs lack AVX2, so prebuilt binaries that assume it need checking first. |
+| CPU | 8 vCPU | Tile builds, later vision. Prebuilt binaries that assume newer CPU features need checking first (details in the private notes). |
 | RAM | 16 GB | PostGIS, builds, later vision |
 | Disk | 100 GB | Map tiles (about 1.4 GB), terrain build scratch (about 12 GB, deletable), database (under 20 GB in year one). The camera archive (see ch. 11) needs its own disk later. |
 

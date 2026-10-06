@@ -274,9 +274,16 @@ on freshness.
 
 | Capture plan | Images per day | JPEG at about 45 KB |
 |---|---|---|
-| All about 210 cameras, every minute, 24 h | about 302,000 | **about 13–14 GB/day** |
+| All about 210 cameras, every minute, 24 h | about 302,000 | **about 13–14 GB/day**, more with ITD's HD cameras (below) |
 | 40 key cameras, every minute, 9 peak hours | about 21,600 | about 1 GB/day |
 | All cameras every 15 min, 24 h (health checks) | about 20,000 | about 0.9 GB/day |
+
+**ITD's I-84 cameras are full HD.** The four I-84 interchange cameras among
+the key cameras send 1920×1166 frames of about 400 KB, 8 times ACHD's
+768×466 frames of about 45 KB, and take about 6 times longer to encode. So
+the 34 key cameras download about 4 GB a day, not 2, and a week of JPEGs is
+about 28 GB. How many of the other 511 cameras are HD is unchecked, so the
+all-camera figures above are a floor. ⚠️
 
 ### Video archive instead of JPEGs
 
@@ -432,8 +439,8 @@ JPEG, 752 about 32 KB.
 frames). Debian 13's newer SVT-AV1 needs 13–15% more space than the 1.7
 release the benchmark used, at the same quality, so the cameras service
 runs on Ubuntu 24.04 for SVT-AV1 1.7. Version 1.7 gave byte-identical files
-on the server and on the benchmark machine, so the server's CPU (AVX, no
-AVX2) changes speed, not results.
+on the server and on the benchmark machine, so the server's CPU changes
+speed, not results.
 
 | Encoder, preset, crf | 656: size, SSIM | 752: size, SSIM | Time for 26 frames |
 |---|---|---|---|
@@ -443,10 +450,30 @@ AVX2) changes speed, not results.
 | SVT-AV1 2.3, preset 4, crf32 | 338 KB, 0.977 | 198 KB, 0.978 | 9–11 s |
 
 None of 2.3's tuning options (`tune`, temporal filtering, variance boost,
-quantization matrices) closed the gap. At about 2.5 frames a second on the
-server, a full day for the 34 key cameras should take about 5–6 hours
-overnight. All 210 cameras would need more cores or a faster preset: a
-question for step 3.
+quantization matrices) closed the gap.
+
+**Speed on the server** (Oct 5, a frozen set of 320 frames: 20 from each of
+16 key cameras, 4 of them full-HD I-84 cameras; 8 virtual CPUs):
+
+| Encoder and preset | How run | Frames/s | Size | SSIM |
+|---|---|---|---|---|
+| SVT-AV1 1.7, preset 6 | one encode at a time | 1.6 | 11.18 MB | 0.9751 |
+| **SVT-AV1 1.7, preset 6** (in use) | **4 side by side** | **5.1** | 11.18 MB (byte-identical) | 0.9751 |
+| SVT-AV1 1.7, preset 8 | 4 side by side | 16.4 | 11.90 MB (+6%) | 0.9714 |
+| SVT-AV1 2.3, preset 6 | 4 side by side | 13.8 | 13.29 MB (+19%) | 0.9712 |
+| SVT-AV1 2.3, preset 8 | 4 side by side | 21.3 | 13.86 MB (+24%) | 0.9695 |
+
+- **Four encodes side by side are about 3x faster** than one encode using
+  every core, with byte-identical output, so the roll-up runs four at a time.
+- **Version 1.7 at preset 8 beats 2.3 at preset 6** on speed, size and
+  quality at once, so 2.3 is out.
+- **Preset 8 is the lever for scale:** about 3x faster again, for 6% more
+  space and slightly lower SSIM.
+- **Time per day:** the 34 key cameras (about 49,600 frames) take about 2–3
+  hours at preset 6. All about 210 cameras (about 300,000 frames) would take
+  about 16 hours at preset 6 or about 5 at preset 8, on the same 8 CPUs. The
+  roll-up runs at low priority until it's done, so no overnight window
+  limits it, and the server has plenty of idle CPU around the clock.
 
 **Why daily rather than hourly files.** Each file starts with a full frame,
 which costs about 3.5–4.3 ordinary frames (evening rush, both cameras).
