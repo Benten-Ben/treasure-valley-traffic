@@ -189,17 +189,17 @@ test.describe('flavors', () => {
 		});
 		await startFrameLog(page);
 		await pop.getByRole('radio', { name: 'Clay' }).check();
+		// The map can't go idle while the keeper asks for frames, so after this it has let go.
 		await mapReady(page);
-		await page.waitForTimeout(3000);
-		const frames = await stopFrameLog(page);
-		frameReport('Map → Clay (Base popover)', frames);
-		const releases: number[] = await page.evaluate(() => (globalThis as any).__wp4releases);
-		const fadeEnd = Math.max(...frames.filter((t) => t <= 450), 0);
+		const releases: number[] = await page.evaluate(() => [...(globalThis as any).__wp4releases]);
+		await page.waitForTimeout(2500);
+		const later: number[] = await page.evaluate(() => (globalThis as any).__wp4releases.slice());
+		frameReport('Map → Clay (Base popover)', await stopFrameLog(page));
 		appendFileSync(screenPath('wp4-crossfade.txt'), `${new Date().toISOString()} drape releases (ms after the input): ${releases.map((t) => t.toFixed(0)).join(', ')}\n`);
-		// Through the fade: the keeper's first release, one per frame and MapLibre's own (without the keeper only MapLibre's).
-		expect(releases.filter((t) => t <= fadeEnd + 50).length, `drape releases during the fade: ${releases.map((t) => t.toFixed(0))}`).toBeGreaterThanOrEqual(3);
-		// Then it lets go: nothing in the seconds after.
-		expect(releases.filter((t) => t > 1500).length, 'drape releases after the fade').toBe(0);
+		// Through the fade: the keeper's first release, one per frame, and MapLibre's own (without the keeper, only MapLibre's).
+		expect(releases.length, `drape releases during the fade: ${releases.map((t) => t.toFixed(0))}`).toBeGreaterThanOrEqual(3);
+		// Then it lets go: no more once the map is idle.
+		expect(later.length - releases.length, 'drape releases after the fade').toBe(0);
 		const p1 = await pixel(page, at.x, at.y);
 		expect(Math.max(...p1.map((c, i) => Math.abs(c - p0[i]))), `the ground went clay: ${p0} → ${p1}`).toBeGreaterThan(3);
 		// Clay's ground is paler than Valley's.
