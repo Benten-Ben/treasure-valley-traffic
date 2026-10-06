@@ -2,7 +2,9 @@
 
 Open GIS layer (the host has no robots.txt), about 38,700 segments, read in
 pages of 2,000 with a pause between requests. Each segment is keyed by
-ACHD's PermID, which survives edits (OBJECTID doesn't).
+ACHD's PermID, which survives edits (OBJECTID doesn't). A run that changes
+the segments rematches every source matched to them (the lane inventories
+and OpenStreetMap; ingest/segment_match.py), in the same run.
 
 Field notes, checked Oct 5, 2026:
 - PostSpeed is set on every segment; most local streets read 20 mph, likely a
@@ -15,7 +17,7 @@ import json
 import time
 import urllib.error
 
-from .. import db, http
+from .. import db, http, segment_match
 
 LAYER = "https://gis.achdidaho.org/server/rest/services/Maintenance/Road_Centerline/MapServer/7"
 FIELDS = ["OBJECTID", "PermID", "StrtConcat", "StName", "FuncClass", "PostSpeed", "EmergSpeed", "OneWay",
@@ -148,10 +150,19 @@ def store(conn, fetch_id, seen_at, features):
             "segments": len(by_perm), "duplicate PermIDs skipped": duplicates, "retired": retired}
 
 
+def changed(stats):
+    """Whether a run changed ACHD's segments (new versions, removals or retirements)."""
+    return any(stats.get(k) for k in ("record versions new", "removed", "retired"))
+
+
 def run(conn):
     db.ensure_source(conn, SOURCE)
     with db.Fetch(conn, SOURCE["name"]) as f:
         features, f.bytes, f.robots = fetch_all(f)
         stats = store(conn, f.id, f.started_at, features)
         f.records = stats["segments"]
+    if changed(stats):
+        # Every source matched to the segments is rematched (owner, Oct 6), each committed in turn.
+        for name, s in segment_match.rematch_all(conn).items():
+            stats[f"{name} rematched"] = s.get("matched lines", s.get("ways matched"))
     return stats

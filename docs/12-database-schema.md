@@ -292,6 +292,45 @@ commute travel times are internal until COMPASS answers. `ops.layer_signature`
 records each layer's count and highest object ID at its last full read, so
 monthly runs skip layers that haven't changed.
 
+**Lane inventories and segment matching (Oct 6, 2026; 0011, re-keyed in
+0016).** Three sources keep their own lane values, each in its own table:
+`core.hpms_section` (ITD HPMS: one row per layer and piece, keyed
+`<EventID>@<RouteID>:<FromMeasure>`, since one EventID can cover several
+pieces of a route), `core.msm_arterial` (ACHD's Master Street Map arterials:
+existing, funded and planned lanes, counting the whole cross-section) and
+`core.compass_segment` (COMPASS's RegionalCenterline, Ada and Canyon, keyed
+by globalid; `pm_id` names a travel-model link of several pieces and stays as
+the join to COMPASS's other data). `core.segment_match` records which ACHD
+segments each of their lines, and each OpenStreetMap way, lies along, by one
+shared matcher (`ingest/segment_match.py`, in UTM 11N): at least 60% of the
+segment within the line's buffer (15 m; 10 m with a street-name check for
+the Master Street Map), or else at least 60% of a line of 20 m or more within
+the segment's buffer (methods `way_in_…`), with bearings within 20°. `share`
+and `overlap_m` always measure the ACHD segment. One line can match many
+segments, and one segment several lines (both carriageways of a divided
+road). A source's matches are rewritten in one transaction after each run
+that changes it, and every source's after `achd_roads` changes ACHD's
+segments; by hand, `python3 -m ingest.segment_match`. Canyon County has no
+ACHD segments, so its lines stay unmatched and keep their own geometry.
+
+**`core.segment_lanes` (0017)** applies the lanes rule of
+[ch. 9 §9.3](09-base-map-data.md#93-streets-network-and-lanes), one row per
+active ACHD segment: `lanes_total` (through lanes both ways),
+`lanes_forward`/`lanes_backward` (along and against the segment's drawn
+direction, when known), `centre_turn_lane`, the winning `source`,
+`split_from`/`split_estimated` (where the direction split came from),
+`confidence` (the winning match's), every source's own reading in
+`candidates` (jsonb), and `conflict` when the sources trusted for the road
+class differ by more than one lane. State routes take HPMS first (its A and D
+routes read as above), ACHD arterials the Master Street Map (a whole
+cross-section: an odd count is read as a centre turn lane ⚠️) with
+OpenStreetMap's split when its total agrees, and collectors and local streets
+OpenStreetMap, else an assumed 1+1. COMPASS's 2 is unknown unless a trusted
+source agrees. Each source's best match (by share) is its own view
+(`core.segment_lanes_hpms`, `_msm`, `_compass`, `_osm`). It is a plain view:
+reading all 38,727 rows takes about 4 s. Since it uses OpenStreetMap, it is an
+ODbL derivative database if published.
+
 ## 12.6 `obs`: time series (TimescaleDB)
 
 | Table | One row per | Key columns | Chunk | Compress after | Rows per year (est.) |

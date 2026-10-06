@@ -181,7 +181,12 @@ class FakeLayer:
             body = {"objectIdFieldName": self.oid_field, "objectIds": self.order}
         else:
             sel = [i for i in self.order if i not in self.lose]
-            if not self.ignore_query:
+            if self.ignore_query:
+                pass
+            elif "objectIds" in q:                                # by ID (the pager's second chance)
+                listed = {int(i) for i in q["objectIds"][0].split(",")}
+                sel = [i for i in sel if i in listed]
+            else:
                 lo, hi = (int(t) for t in re.findall(r"(?:>=|<=) (\d+)", q["where"][0]))
                 sel = [i for i in sel if lo <= i <= hi]
             body = {"objectIdFieldName": self.oid_field, "exceededTransferLimit": len(sel) > self.cap,

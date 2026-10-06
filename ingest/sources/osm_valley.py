@@ -59,8 +59,8 @@ gets no lane rows (the lanes tag stays on the way). When a turn:lanes value's
 slot count disagrees with the lane count, it's logged and the lanes get no
 turns; the tags are kept as tagged.
 
-Matching (core.segment_match), in UTM 11N, with bearings within 20° along
-the shared stretch:
+Matching (core.segment_match) uses the shared matcher (ingest/segment_match.py),
+in UTM 11N, with bearings within 20° along the shared stretch:
   - 'buffer15_bearing20': at least 60% of the ACHD segment lies within 15 m
     of the way. Both carriageways of a divided road (5-7 m either side of
     ACHD's single centerline) can match one segment.
@@ -68,9 +68,8 @@ the shared stretch:
     more lies within 15 m of the segment, which catches turn-bay ways split
     off a block (owner, Oct 6).
 share and overlap_m always measure the ACHD segment (0011); confidence is
-the matched rule's share × cos(bearing difference). This lives here until
-the shared matcher (ingest/segment_match.py) lands; match_achd_segments() is
-the seam.
+the matched rule's share × cos(bearing difference), halved when the way and
+the segment are both named and the names disagree.
 """
 
 import glob
@@ -84,7 +83,7 @@ import tempfile
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 
-from .. import db
+from .. import db, segment_match
 
 PAGE = "https://download.geofabrik.de/north-america/us/idaho.html"   # where the owner downloads it by hand
 BOX = (-117.05, 43.00, -115.95, 43.85)          # left, bottom, right, top
@@ -118,11 +117,7 @@ NOT_INTERSECTION_SIGNALS = {"emergency", "ramp_meter", "blinker", "level_crossin
 
 MATCH_SOURCE = SOURCE["name"]
 MATCH_METHOD = "buffer15_bearing20"
-MATCH_METHOD_WAY = "way_in_buffer15_bearing20"
-MATCH_BUFFER_M = 15
-MATCH_SHARE = 0.6
-MATCH_BEARING_DEG = 20
-MATCH_MIN_WAY_M = 20          # shorter ways can't match on their own share
+MATCH_METHOD_WAY = segment_match.WAY_IN + MATCH_METHOD      # "way_in_buffer15_bearing20"
 
 
 # ---- tag values ------------------------------------------------------------
@@ -502,91 +497,21 @@ def store(conn, fetch_id, seen_at, ways, nodes, allow_shrink=False):
     return stats
 
 
-# Each candidate pair (an ACHD segment and a way within 15 m of it) is tried on the
-# segment's share first, then on the way's. The bearing compares the chord of the
-# shared stretch on the matched line with the chord between the closest points on
-# the other line, folded so that direction doesn't matter.
-MATCH_SQL = """
-insert into core.segment_match (road_segment_id, source, source_id, overlap_m, share, bearing_diff, method,
-                                confidence, matched_at)
-select id, %(source)s, source_id, overlap_m, share, bearing_diff, method,
-       least(1, rule_share) * cos(radians(bearing_diff)), now()
-from (
-  select *, least(m, 180 - m) as bearing_diff
-  from (
-    select *, d - 180 * floor(d / 180) as m
-    from (
-      select id, source_id, overlap_m, share, method, rule_share,
-             abs(degrees(ST_Azimuth(p1, p2))
-                 - degrees(ST_Azimuth(ST_ClosestPoint(other, p1), ST_ClosestPoint(other, p2)))) as d
-      from (
-        select id, source_id, overlap_m, share, method, rule_share, other,
-               ST_StartPoint(ST_GeometryN(piece, 1)) as p1,
-               ST_EndPoint(ST_GeometryN(piece, ST_NumGeometries(piece))) as p2
-        from (
-          select id, source_id, overlap_m, share,
-                 case when seg_rule then %(method)s else %(method_way)s end as method,
-                 case when seg_rule then share else way_share end as rule_share,
-                 case when seg_rule then seg_ov else way_ov end as piece,
-                 case when seg_rule then wg else sg end as other
-          from (
-            select *, share >= %(share)s as seg_rule, ST_Length(way_ov) / way_len as way_share
-            from (
-              select s.id, w.source_id, s.g as sg, w.g as wg, w.len as way_len, seg_ov,
-                     ST_Length(seg_ov) as overlap_m, ST_Length(seg_ov) / nullif(s.len, 0) as share,
-                     case when ST_Length(seg_ov) / nullif(s.len, 0) < %(share)s and w.len >= %(min_way)s
-                          then ST_CollectionExtract(ST_Intersection(w.g, s.b), 2) end as way_ov
-              from osm_match_seg s
-              join osm_match_way w on ST_Intersects(s.g, w.b)
-              cross join lateral (select ST_CollectionExtract(ST_Intersection(s.g, w.b), 2) as seg_ov) x
-            ) pair_overlap
-          ) pair_shares
-          where seg_rule or way_share >= %(share)s
-        ) pair_rule
-      ) pair_ends
-      where p1 is not null and p2 is not null and not ST_Equals(p1, p2)
-    ) pair_bearing
-  ) pair_folded
-) pair_diff
-where bearing_diff <= %(bearing)s"""
+LINES_SQL = """select %(source)s::text as source, 'w' || osm_id as source_id, geom, name
+               from core.osm_way where active"""
 
 
 def match_achd_segments(conn, source=MATCH_SOURCE):
     """Rebuild this source's rows in core.segment_match against the active ACHD road
-    segments (methods buffer15_bearing20 and way_in_buffer15_bearing20, in UTM 11N).
-
-    Self-contained until the shared matcher lands (ingest/segment_match.py, being
-    written alongside); swap this body for a call to it, keeping the signature.
-    """
-    conn.execute("drop table if exists pg_temp.osm_match_way")
-    conn.execute(
-        """create temp table osm_match_way on commit drop as
-           select 'w' || osm_id as source_id, g, ST_Buffer(g, %s, 'quad_segs=4') as b, ST_Length(g) as len
-           from (select osm_id, ST_Transform(geom, 26911) as g from core.osm_way where active) w
-           where ST_Length(g) > 0""",
-        (MATCH_BUFFER_M,))
-    conn.execute("create index on osm_match_way using gist (b)")
-    conn.execute("analyze osm_match_way")
-    conn.execute("drop table if exists pg_temp.osm_match_seg")
-    conn.execute(
-        """create temp table osm_match_seg on commit drop as
-           select id, g, ST_Buffer(g, %s, 'quad_segs=4') as b, ST_Length(g) as len
-           from (select id, ST_Transform(geom, 26911) as g from core.road_segment where active) s""",
-        (MATCH_BUFFER_M,))
-    conn.execute("create index on osm_match_seg using gist (g)")
-    conn.execute("analyze osm_match_seg")
-    conn.execute("delete from core.segment_match where source = %s and method in (%s, %s)",
-                 (source, MATCH_METHOD, MATCH_METHOD_WAY))
-    conn.execute(MATCH_SQL, {"source": source, "method": MATCH_METHOD, "method_way": MATCH_METHOD_WAY,
-                             "share": MATCH_SHARE, "bearing": MATCH_BEARING_DEG, "min_way": MATCH_MIN_WAY_M})
+    segments with the shared matcher (ingest/segment_match.py): methods
+    buffer15_bearing20 and way_in_buffer15_bearing20, in UTM 11N. Doesn't commit."""
+    segment_match.rematch(conn, [source], LINES_SQL, {"source": source})
     by_method = dict(conn.execute(
         """select method, count(*) from core.segment_match where source = %s and method in (%s, %s) group by 1""",
         (source, MATCH_METHOD, MATCH_METHOD_WAY)).fetchall())
     segs, ways = conn.execute(
         """select count(distinct road_segment_id), count(distinct source_id) from core.segment_match
            where source = %s and method in (%s, %s)""", (source, MATCH_METHOD, MATCH_METHOD_WAY)).fetchone()
-    conn.execute("drop table if exists pg_temp.osm_match_way")
-    conn.execute("drop table if exists pg_temp.osm_match_seg")
     return {"segment matches": by_method.get(MATCH_METHOD, 0), "turn-bay matches": by_method.get(MATCH_METHOD_WAY, 0),
             "ACHD segments matched": segs, "ways matched": ways}
 
