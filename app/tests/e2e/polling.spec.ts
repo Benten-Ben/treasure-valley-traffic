@@ -39,11 +39,15 @@ test.describe('polling', () => {
 		expect(api.slice(hiddenFrom), 'requests to /api while hidden').toEqual([]);
 
 		const shownFrom = api.length;
+		const answered = page.waitForResponse((r) => new URL(r.url()).pathname === '/api/transit/vehicles');
 		await setVisibility(page, 'visible');
 		await page.clock.runFor(1_000);
 		await expect.poll(() => api.slice(shownFrom).filter((p) => p === '/api/transit/vehicles').length, { timeout: 5_000 }).toBe(1);
 
-		// And it keeps polling on its interval while visible.
+		// And it keeps polling on its interval while visible: the next poll is
+		// scheduled once this one's answer is in.
+		await answered;
+		await page.waitForTimeout(500);
 		await page.clock.runFor(15_000);
 		await expect.poll(() => api.slice(shownFrom).filter((p) => p === '/api/transit/vehicles').length, { timeout: 5_000 }).toBe(2);
 	});

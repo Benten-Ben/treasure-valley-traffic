@@ -224,5 +224,14 @@ export class App implements AppCtx {
 			}
 		});
 		Object.defineProperty(globalThis, '__tvt', { value: handle, configurable: true, enumerable: false, writable: false });
+		this.#handle = handle;
+	}
+
+	#handle: object | null = null;
+
+	/** Remove the handle (leaving the map routes), if it's still this app's. */
+	uninstall(): void {
+		if (this.#handle && (globalThis as { __tvt?: unknown }).__tvt === this.#handle) Reflect.deleteProperty(globalThis, '__tvt');
+		this.#handle = null;
 	}
 }

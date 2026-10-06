@@ -132,6 +132,7 @@
 		transit.destroy();
 		streets.destroy();
 		cameras.destroy();
+		app.uninstall();
 	});
 
 	// Only the chosen lens is drawn, and none while a mode (calibrating) owns the map.

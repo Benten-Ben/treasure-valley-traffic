@@ -266,9 +266,11 @@ test.describe('persistent', () => {
 		test.setTimeout(400_000);
 		const key = seeds().seeds.find((s) => s.kind === 'key')!;
 		const sql = postgres(process.env.DATABASE_URL!, { max: 1, onnotice: () => {} });
+		const current = async () =>
+			(await sql`select id from core.camera_calibration where view_id = ${key.viewId} and upper_inf(valid)`).map((r) => Number(r.id));
+		const [seeded] = await current();
+		const saved: number[] = [];
 		try {
-			const current = async () =>
-				(await sql`select id from core.camera_calibration where view_id = ${key.viewId} and upper_inf(valid)`).map((r) => Number(r.id));
 			for (const path of [`/calibrate/${key.cameraId}`, `/v1/calibrate/${key.cameraId}`]) {
 				const [previous] = await current();
 				expect(previous, 'the seeded view has a current calibration').toBeTruthy();
@@ -281,12 +283,16 @@ test.describe('persistent', () => {
 				const res = await saving;
 				expect(res.status(), `${path}: POST`).toBe(200);
 				const { id } = await res.json();
+				saved.push(id);
 				await expect(page.getByRole('status').filter({ hasText: 'Saved' })).toBeVisible();
 				expect(await current(), `${path}: the new row is the only current one`).toEqual([id]);
 				const [old] = await sql`select upper_inf(valid) as open from core.camera_calibration where id = ${previous}`;
 				expect(old.open, `${path}: previous row closed`).toBe(false);
 			}
 		} finally {
+			// Put the seeded calibration back as it was, so other specs (and the next run) see the seeds.
+			if (saved.length) await sql`delete from core.camera_calibration where id in ${sql(saved)}`;
+			if (seeded) await sql`update core.camera_calibration set valid = tstzrange(lower(valid), null) where id = ${seeded}`;
 			await sql.end();
 		}
 		expect(offsite).toEqual([]);
