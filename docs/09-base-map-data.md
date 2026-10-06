@@ -49,6 +49,16 @@ USGS 3D Elevation Program (3DEP) coverage, by the 3DEP index at each city:
   domain.
 - **Quick start:** AWS Terrain Tiles (free; last updated 2017) or Mapterhorn
   (open PMTiles).
+- ✅ **Built (Oct 5):** terrain-RGB from the 1 m DEM, as 512-px PNG tiles,
+  z6–14 (`basemap/terrain.py`): 1,030 MB, 7,820 tiles.
+- ✅ **Re-encoded (Oct 6):** the same tiles as lossless WebP, with heights
+  rounded by zoom: 1 m up to z10, 0.5 m at z11, 0.4 m at z12, 0.2 m at z13,
+  none at z14 (`basemap/terrain_reencode.py`). 568 MB (−44.9%); the first
+  load at the default view drops from 8.64 to 4.57 MB in the sandbox's
+  measurement. Steps were tuned by before/after screenshots: larger ones
+  (0.5 m at z13, 0.2 m at z14) drew contour lines across the flat valley
+  floor. The rounding is on the encoded value, so no height moves more than
+  half a step. Not on the server until the next deploy.
 
 ## 9.3 Streets, network and lanes
 
@@ -109,7 +119,7 @@ USGS 3D Elevation Program (3DEP) coverage, by the 3DEP index at each city:
 1. **Basemap:** a Protomaps PMTiles extract of the valley, self-hosted and
    rendered with MapLibre.
 2. **Terrain:** terrain-RGB tiles built from the 3DEP 1 m DEM (public
-   domain).
+   domain), served as lossless WebP with zoom-dependent rounding (§9.2).
 3. **Imagery:** NAIP 2023 by default. ACHD 3-inch only as an on-request
    overlay until terms are confirmed.
 4. **Buildings:** Overture with heights, extruded. Boise 3D buildings
