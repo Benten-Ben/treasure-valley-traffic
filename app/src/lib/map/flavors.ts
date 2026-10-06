@@ -267,10 +267,13 @@ export interface DrapedMap {
  * layers into a cached texture per terrain tile, and redraws a texture only
  * when its tiles, zoom, visible layers or feature state change, or once right
  * after a style change. A paint transition's later frames change none of
- * those, so the drape would keep the transition's first frame (the old
- * flavor) until the map next moved. While the crossfade runs, this releases
- * the cached textures after every frame, and once more after it ends, so the
- * drape shows each step and then the final colors. Returns a cancel.
+ * those, so the drape keeps the transition's first frame (the old flavor)
+ * until something else redraws it: for a flavor switch, the basemap's
+ * re-layout (its data-driven colors changed) when it lands, a jump rather
+ * than a fade; for constant paint only, not until the map moves. While the
+ * crossfade runs, this releases the cached textures after every frame, and
+ * once more after it ends, so the drape shows each step and then the final
+ * colors. Returns a cancel.
  */
 export function keepDrapeFresh(map: DrapedMap, ms: number, now: () => number = () => performance.now()): () => void {
 	const until = now() + ms;
