@@ -418,25 +418,45 @@ JPEG, 752 about 32 KB.
 | 40 key cameras, 9 peak hours | about 1 GB | about 150–500 MB | about 15–45 GB |
 | All about 210 cameras, 24 h | about 13–14 GB | about 2–7 GB | about 180–600 GB |
 
-**Recommendation (confirmed by the midday and evening-rush retests):**
+**The archive format (owner, Oct 5):**
 
-- **Codec:** AV1 via SVT-AV1, preset 6, crf30 (approved by the owner,
-  Oct 5).
-- **Container:** MKV with real per-frame timestamps, as a batch roll-up per
-  camera. Per day rather than per hour (proposed Oct 5, see below).
-- **Originals:** keep the JPEGs only until they've been measured
-  (24–48 h).
+- **Codec:** AV1 via SVT-AV1, preset 6, crf30.
+- **Container:** MKV, one file per camera per day, rolled up from the
+  JPEGs after midnight
+  ([`ingest/camera_video.py`](../ingest/camera_video.py)).
+- **Originals:** keep the JPEGs a week, then delete them once their video
+  exists. That's longer than measuring needs (24–48 h), since disk allows
+  it for now.
 
-**Hourly or daily files?** Each file starts with a full frame, which costs
-about 3.5–4.3 ordinary frames (evening rush, both cameras). With 60 frames
-an hour, that's about 4–5% of an hourly file. A daily file needs only an
-occasional full frame for seeking, so it's about 4–5% smaller. Because the
-JPEGs are kept 24–48 h for measuring anyway, a nightly roll-up adds no
-risk: if it fails, it runs again from the JPEGs the next night. Daily files
-also mean 24 times fewer files (about 210 a day for every camera, not about
-5,000), and one video per camera per day to watch. Hourly files would only
-matter if archived video were needed within the hour, or if the JPEGs were
-kept for less than a day.
+**Why daily rather than hourly files.** Each file starts with a full frame,
+which costs about 3.5–4.3 ordinary frames (evening rush, both cameras).
+With 60 frames an hour, that's about 4–5% of an hourly file, so daily files
+are about 4–5% smaller. The JPEGs are kept for days anyway, so a nightly
+roll-up adds no risk: if it fails, it can run again from the JPEGs. Daily
+files also mean 24 times fewer files (about 210 a day for every camera, not
+about 5,000), and one video per camera per day to watch.
+
+**How a daily video is laid out:**
+
+- **The day runs from local midnight to midnight** (America/Boise, so it
+  follows daylight saving). A file is one calendar day as people read it,
+  traffic is near its lowest at midnight, and daily counts use calendar
+  days too. Daylight-saving days run 23 or 25 hours. The roll-up starts at
+  12:05 AM, once the day's last frames are in.
+- **A 60x time-lapse with true spacing:** one minute of the day is one
+  second of video, so the video's mm:ss reads as the clock's hh:mm. Seeking
+  to 17:10 shows 5:10 PM. A full day plays in 24 minutes.
+- **Gray where there are no frames:** a gap of more than 10 minutes (camera
+  down, capture stopped) shows as plain gray instead of a stale picture.
+- **A CSV beside each video** lists every frame: its time in the video, when
+  it was fetched (UTC and local), and the original JPEG's size and SHA-256.
+- **Playback speed costs nothing.** The same frames encoded at 1, 12, 24
+  and 30 frames a second came out the same size, within 0.02% (evening
+  rush, both cameras). Speed is only a timing label, so a faster copy can
+  be made from the archive in a second without re-encoding, with
+  bit-for-bit the same pictures (`ffmpeg -itsscale 0.0417 -i day.mkv -c
+  copy fast.mkv` plays a day in about a minute). The archive keeps the 60x
+  clock layout; faster viewing is a player setting or a quick copy.
 
 ## 11.6 Open questions for the owner
 
@@ -447,17 +467,20 @@ Answered Oct 5:
 - **Retention:** keep everything (video archive and measurements). Keep
   original JPEGs until they've been measured, or longer if disk allows.
 
+- **Key cameras for step 2:** the suggested set (owner, Oct 5), 34
+  cameras in [`ingest/key_cameras.csv`](../ingest/key_cameras.csv): the
+  COMPASS most-congested segments on Chinden, Eagle Rd and I-84 (Karcher
+  and Nampa-Caldwell are left out because Canyon County has no cameras);
+  the COMPASS safety plan's high-crash intersections that have cameras;
+  the starting list's Eagle & Fairview, Meridian & Overland, Chinden &
+  Curtis/VMP and Cole & Overland; and every camera calibrated so far.
+  Recording since 6:20 PM MDT, Oct 5.
+
 Still open:
 
-1. **Key cameras for step 2.** Which 30–40? Suggested starting set:
-   - the COMPASS top-congested segments: Chinden and Eagle (Karcher /
-     Nampa-Caldwell is excluded because Canyon County has no cameras);
-   - the highest-crash intersections: Eagle & Fairview, Eagle & Franklin,
-     I-84 & Eagle, Meridian & Overland, Chinden & Curtis/VMP, Cole &
-     Overland, and so on.
-2. **Disk:** how much can the server give the archive? Everything needs
+1. **Disk:** how much can the server give the archive? Everything needs
    about 1–2.5 TB a year (§11.7). This waits on the host inventory.
-3. **Vehicle detector license:** permissive (recommended) or AGPL? See
+2. **Vehicle detector license:** permissive (recommended) or AGPL? See
    [DECISIONS.md](DECISIONS.md).
 
 ## 11.7 Processing pipeline (collect everything, measure every frame)
@@ -477,7 +500,7 @@ pipeline version that produced it.
 | 7. Vehicle detection | A permissively licensed detector, later fine-tuned on our own labeled frames (especially at night) | Vehicles per lane zone |
 | 8. Map projection | Per view, an image-to-ground transform from 4 or more points matched against aerial imagery | Positions and queue lengths in meters, on our map |
 | 9. Measurements | Per approach and lane zone: vehicles present, occupancy, back-of-queue distance. Where signal heads are visible: the color shown. | Queues over time, tied to signal state |
-| 10. Store | Measurements go to TimescaleDB; frames to the hourly AV1 archive with a frame index | Everything kept and reprocessable |
+| 10. Store | Measurements go to TimescaleDB; frames to the daily AV1 archive with a frame index | Everything kept and reprocessable |
 
 **What snapshots can't do:**
 
@@ -496,7 +519,7 @@ pipeline version that produced it.
 | Step | Cameras | Purpose |
 |---|---|---|
 | 1 | 2–5 | Daytime/night retest; tune stages 2–6 |
-| 2 | 30–40 key cameras | First real measurements; check accuracy against manual counts |
+| 2 | 30–40 key cameras (34 recording since Oct 5) | First real measurements; check accuracy against manual counts |
 | 3 | All about 210 | Full archive |
 
 Before step 3:
