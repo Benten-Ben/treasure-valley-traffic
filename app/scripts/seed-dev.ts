@@ -35,7 +35,7 @@ import { createHash } from 'node:crypto';
 import { cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { harnessEnv, databaseUrl, mainCheckout, APP_DIR, CHROMIUM_ARGS } from './harness-env.mjs';
+import { harnessEnv, databaseUrl, mainCheckout, APP_DIR, CHROMIUM_ARGS, lockedArgs } from './harness-env.mjs';
 import { INDEX, INDEX_HEADER, fetchedAtOf, jpegDir, localDay, stampOf, tick, withComment } from './archive-tick.ts';
 import { pixelToGround, project, type ImageSize, type Pair, type Pixel, type Pose } from '../src/lib/calibration/solver.ts';
 
@@ -255,7 +255,7 @@ async function buildTemplates(dbName: string) {
 	const { chromium } = await import('@playwright/test');
 	const port = Number(env.TVT_PORT) + 300;
 	const { server, base } = hasImagery ? await startDevServer(tilesDir, port) : { server: null, base: '' };
-	const browser = hasImagery ? await chromium.launch({ args: CHROMIUM_ARGS }) : null;
+	const browser = hasImagery ? await chromium.launch({ args: [...CHROMIUM_ARGS, ...lockedArgs()] }) : null;
 
 	const seeds: Record<string, unknown>[] = [];
 	try {

@@ -180,3 +180,49 @@ export function firstAt(list, pred, t0, field = 'start') {
 }
 
 export const MB = (b) => +(b / 1e6).toFixed(2);
+
+/** Requests that mean the map is still loading (not the periodic polls). */
+const LOADING = /\/tiles\/|\/api\/(?!transit\/vehicles|transit\/tracks|cameras\/live)/;
+
+/**
+ * Wait until the map has loaded: `__tvt.ready` when the app provides it
+ * (WP1), else the map canvas and no map request in flight for `quietMs`.
+ * Returns how it decided ('tvt' or 'quiet') and when the last map request
+ * finished (ms since the call).
+ */
+export async function mapReady(page, { timeout = 180_000, quietMs = 2500 } = {}) {
+	const start = Date.now();
+	let inflight = 0;
+	let last = Date.now();
+	const onReq = (r) => {
+		if (LOADING.test(r.url())) {
+			inflight++;
+			last = Date.now();
+		}
+	};
+	const onDone = (r) => {
+		if (LOADING.test(r.url())) {
+			inflight = Math.max(0, inflight - 1);
+			last = Date.now();
+		}
+	};
+	page.on('request', onReq);
+	page.on('requestfinished', onDone);
+	page.on('requestfailed', onDone);
+	try {
+		await page.waitForFunction(() => globalThis.__tvt || document.querySelector('.maplibregl-canvas'), null, { timeout });
+		if (await page.evaluate(() => Boolean(globalThis.__tvt?.ready))) {
+			await page.evaluate(() => globalThis.__tvt.ready);
+			return { how: 'tvt', settledMs: Date.now() - start };
+		}
+		while (inflight > 0 || Date.now() - last < quietMs) {
+			if (Date.now() - start > timeout) throw new Error(`the map didn't settle in ${timeout} ms (${inflight} in flight)`);
+			await page.waitForTimeout(250);
+		}
+		return { how: 'quiet', settledMs: last - start };
+	} finally {
+		page.off('request', onReq);
+		page.off('requestfinished', onDone);
+		page.off('requestfailed', onDone);
+	}
+}

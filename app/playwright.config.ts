@@ -1,6 +1,6 @@
 import { defineConfig } from '@playwright/test';
 import { join } from 'node:path';
-import { CHROMIUM_ARGS, harnessEnv } from './scripts/harness-env.mjs';
+import { CHROMIUM_ARGS, harnessEnv, lockedArgs } from './scripts/harness-env.mjs';
 
 /**
  * End-to-end specs (docs/14 §14.11): Chromium (SwiftShader) against a
@@ -37,7 +37,8 @@ export default defineConfig({
 		baseURL: `http://127.0.0.1:${port}`,
 		browserName: 'chromium',
 		viewport: { width: 1280, height: 800 },
-		launchOptions: { args: CHROMIUM_ARGS },
+		// SwiftShader WebGL; and nothing resolves but localhost, so no request can leave the machine.
+		launchOptions: { args: [...CHROMIUM_ARGS, ...lockedArgs()] },
 		actionTimeout: 60_000,
 		navigationTimeout: 120_000,
 		trace: 'retain-on-failure',

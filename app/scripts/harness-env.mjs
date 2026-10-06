@@ -40,6 +40,16 @@ export const APP_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 /** Chromium flags for WebGL in headless runs (SwiftShader; the sandbox has no GPU). */
 export const CHROMIUM_ARGS = ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'];
 
+/**
+ * Flags that keep a test browser on this machine: no proxy, and no host name
+ * resolves except localhost and `allowHosts`. Unlike Playwright's
+ * page.route, this leaves the HTTP cache on, so warm loads mean something.
+ */
+export function lockedArgs(allowHosts = []) {
+	const rules = ['MAP * ~NOTFOUND', 'EXCLUDE localhost', 'EXCLUDE 127.0.0.1', ...allowHosts.map((h) => `EXCLUDE ${h}`)];
+	return [`--host-resolver-rules=${rules.join(', ')}`, '--no-proxy-server'];
+}
+
 function git(args, cwd) {
 	try {
 		return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();

@@ -6,8 +6,8 @@
  *   frames and archive, and a working database clone. When something is
  *   missing the spec skips with a message, or fails when
  *   TVT_E2E_REQUIRE_DATA=1 (the workflow).
- * - **Same-origin guard** (automatic): any request that would leave the
- *   machine is aborted and recorded; `offsite` lists them.
+ * - **Same-origin guard** (automatic): the browser resolves only localhost
+ *   (lockedArgs), and `offsite` lists any request to another origin.
  * - `consoleErrors`: console errors and uncaught page errors.
  * - `mapReady(page)`: `__tvt.ready` once WP1 provides it; until then, the map
  *   canvas plus a quiet network.
@@ -15,6 +15,7 @@
 import { test as base, expect, type Page } from '@playwright/test';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { mapReady as waitForMap } from '../../scripts/net.mjs';
 
 export { expect };
 
@@ -79,15 +80,14 @@ export const test = base.extend<{ dataCheck: void; offsite: string[]; consoleErr
 	],
 	offsite: [
 		async ({ page, baseURL }, use) => {
+			// The browser can't resolve anything but localhost (lockedArgs in the config); this
+			// records any attempt. Not page.route: routing turns the HTTP cache off.
 			const origin = new URL(baseURL!).origin;
 			const offsite: string[] = [];
-			await page.context().route(
-				(url) => !['data:', 'blob:'].includes(url.protocol) && url.origin !== origin,
-				(route) => {
-					offsite.push(route.request().url());
-					return route.abort('blockedbyclient');
-				}
-			);
+			page.context().on('request', (r) => {
+				const url = r.url();
+				if (!url.startsWith('data:') && !url.startsWith('blob:') && new URL(url).origin !== origin) offsite.push(url);
+			});
 			await use(offsite);
 		},
 		{ auto: true }
@@ -102,52 +102,13 @@ export const test = base.extend<{ dataCheck: void; offsite: string[]; consoleErr
 	}
 });
 
-/** Kinds of request that mean the map is still loading (not the 15 s polls). */
-const LOADING = /\/tiles\/|\/api\/(?!transit\/vehicles|transit\/tracks|cameras\/live)/;
-
 /**
  * Wait until the map has loaded: `__tvt.ready` when the app provides it
- * (WP1), else the map canvas and no map request in flight for `quietMs`.
+ * (WP1), else the map canvas and no map request in flight for a while.
+ * Returns 'tvt' or 'quiet'.
  */
-export async function mapReady(page: Page, { timeout = 180_000, quietMs = 2500 } = {}) {
-	const start = Date.now();
-	let inflight = 0;
-	let last = Date.now();
-	const onReq = (r: { url(): string }) => {
-		if (LOADING.test(r.url())) {
-			inflight++;
-			last = Date.now();
-		}
-	};
-	const onDone = (r: { url(): string }) => {
-		if (LOADING.test(r.url())) {
-			inflight = Math.max(0, inflight - 1);
-			last = Date.now();
-		}
-	};
-	page.on('request', onReq);
-	page.on('requestfinished', onDone);
-	page.on('requestfailed', onDone);
-	try {
-		await page.waitForFunction(
-			() => (globalThis as any).__tvt || document.querySelector('.maplibregl-canvas'),
-			null,
-			{ timeout }
-		);
-		if (await page.evaluate(() => Boolean((globalThis as any).__tvt?.ready))) {
-			await page.evaluate(() => (globalThis as any).__tvt.ready);
-			return 'tvt';
-		}
-		while (inflight > 0 || Date.now() - last < quietMs) {
-			if (Date.now() - start > timeout) throw new Error(`the map didn't settle in ${timeout} ms (${inflight} in flight)`);
-			await page.waitForTimeout(250);
-		}
-		return 'quiet';
-	} finally {
-		page.off('request', onReq);
-		page.off('requestfinished', onDone);
-		page.off('requestfailed', onDone);
-	}
+export async function mapReady(page: Page, opts: { timeout?: number; quietMs?: number } = {}) {
+	return (await waitForMap(page, opts)).how as 'tvt' | 'quiet';
 }
 
 /** Where a spec's evidence goes: data/dev/screens/<wp>/<name>. */
