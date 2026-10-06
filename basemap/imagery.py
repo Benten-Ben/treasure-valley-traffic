@@ -9,9 +9,16 @@ short-lived access token comes from its public token endpoint.
 Two files, so a missing detail tile never hides the valley layer under it:
   imagery.pmtiles         valley-wide, --minzoom to --maxzoom (default z8-z14;
                           512-px tiles, about 3.5 m per pixel at z14)
-  imagery-detail.pmtiles  around --detail points (camera locations), z15 to
+  imagery-detail.pmtiles  around --detail points (cameras, signals), z15 to
                           --detail-maxzoom (default z17, about 0.45 m per
                           pixel), for camera calibration
+
+The detail windows can instead come from USDA's own NAIP image service
+(--detail-source usda): Idaho's 2025 flight at 0.3 m, which isn't on the
+Planetary Computer yet. That service has no robots.txt rules; we still check,
+ask for one export at a time and pause USDA_GAP_S after each. Each export is
+one zoom (--detail-maxzoom - 2) tile, so overlapping areas are fetched once;
+with --detail-maxzoom 18 (about 0.22 m per pixel) no detail is lost.
 
 Steps:
   1. find the newest images per state (STAC search);
@@ -27,6 +34,8 @@ Needs GDAL's Python bindings (python3.12 here) and the pmtiles CLI.
 Usage:
   python3.12 basemap/imagery.py                                         # valley only
   python3.12 basemap/imagery.py --detail data/cameras/cameras.geojson   # plus camera areas
+  python3.12 basemap/imagery.py --detail-source usda --detail-maxzoom 18 \\
+      --detail data/cameras/cameras.geojson@250 --detail signals.geojson@150 --dry-run
 """
 
 import argparse
@@ -37,10 +46,15 @@ import multiprocessing
 import os
 import sqlite3
 import subprocess
+import sys
 import time
+import urllib.parse
 import urllib.request
 
 from osgeo import gdal, osr
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from ingest import http as polite   # noqa: E402  robots.txt (our RFC 9309 parser) and crawl-delay
 
 gdal.UseExceptions()
 
@@ -54,11 +68,19 @@ ORIGIN = WORLD / 2
 TOKEN_MAX_AGE_S = 25 * 60   # tokens last about an hour
 TARGET_RES = {"valley": 2.4, "detail": 0.6}   # meters per pixel to prefetch at
 LOCAL_CO = ["TILED=YES", "COMPRESS=JPEG", "PHOTOMETRIC=YCBCR", "JPEG_QUALITY=90"]
+LOCAL_CO_ALPHA = ["TILED=YES", "COMPRESS=DEFLATE", "ALPHA=YES"]
+USDA = "https://apps.geo.fpac.usda.gov/geo-imagery/rest/services/naip/conus_naip/ImageServer"
+USDA_GAP_S = 2.5         # pause after each export: one request at a time
+USDA_RES_M = 0.3         # NAIP 2025's ground pixel
+USDA_MAX_PX = 4096       # largest export we ask for (the service allows 15000 x 4100)
 
 for k, v in {"GDAL_DISABLE_READDIR_ON_OPEN": "EMPTY_DIR", "GDAL_HTTP_MULTIPLEX": "YES",
              "GDAL_HTTP_VERSION": "2", "GDAL_HTTP_USERAGENT": USER_AGENT,
              "GDAL_HTTP_MAX_RETRY": "5", "GDAL_HTTP_RETRY_DELAY": "5",
-             "CPL_VSIL_CURL_USE_HEAD": "NO", "GDAL_CACHEMAX": "256"}.items():
+             "CPL_VSIL_CURL_USE_HEAD": "NO", "GDAL_CACHEMAX": "256",
+             # ArcGIS appends a validity mask to its JPEG exports that GDAL fails to decode;
+             # where an export lacks imagery it answers with a PNG with alpha instead.
+             "JPEG_READ_MASK": "NO"}.items():
     gdal.SetConfigOption(k, v)
 
 
@@ -207,19 +229,107 @@ def prefetch(jobs, workers=8):
     return [j[2] for j in jobs if j[2] in got]    # in job order: newer images last, so they win
 
 
+# --- 2b. detail from USDA's image service -------------------------------------
+
+def usda_blocks(detail_tiles, maxzoom):
+    """One export per zoom (maxzoom - 2) tile holding any top-zoom detail tile, trimmed to
+    those tiles' bounding box: (z, x0, y0, x1, y1) in top-zoom tiles, inclusive."""
+    boxes = {}
+    for _layer, z, x, y in detail_tiles:
+        if z == maxzoom:
+            b = boxes.setdefault((x >> 2, y >> 2), [x, y, x, y])
+            b[:] = min(b[0], x), min(b[1], y), max(b[2], x), max(b[3], y)
+    return sorted((maxzoom, *b) for b in boxes.values())
+
+
+def usda_export(block, year):
+    """(URL, EPSG:3857 bounds, (width, height) in px) of one block's export, with square pixels
+    at least as sharp as USDA_RES_M."""
+    z, x0, y0, x1, y1 = block
+    minx, miny = tile_bounds_merc(z, x0, y1)[:2]
+    maxx, maxy = tile_bounds_merc(z, x1, y0)[2:]
+    lat = merc_to_lonlat(0, (miny + maxy) / 2)[1]
+    px = USDA_RES_M / math.cos(math.radians(lat))          # a ground pixel, in Web Mercator meters
+    per_tile = min(USDA_MAX_PX // 4, math.ceil(WORLD / 2 ** z / px))
+    size = ((x1 - x0 + 1) * per_tile, (y1 - y0 + 1) * per_tile)
+    rule = {"mosaicMethod": "esriMosaicNorthwest", "where": f"year_ts = {year} AND Category = 1"}
+    q = {"bbox": f"{minx:.3f},{miny:.3f},{maxx:.3f},{maxy:.3f}", "bboxSR": 3857, "imageSR": 3857,
+         "size": f"{size[0]},{size[1]}", "format": "jpgpng", "compressionQuality": 90, "bandIds": "0,1,2",
+         "interpolation": "RSP_BilinearInterpolation", "mosaicRule": json.dumps(rule), "f": "image"}
+    return f"{USDA}/exportImage?{urllib.parse.urlencode(q)}", (minx, miny, maxx, maxy), size
+
+
+def usda_local(src, block, year):
+    return os.path.join(src, f"u{year}_" + "_".join(map(str, block)) + ".tif")
+
+
+def usda_fetch(blocks, src, year):
+    """Export each block from USDA's service, one at a time with a pause after each, as a
+    georeferenced local GeoTIFF. Finished blocks are kept, so a rerun resumes."""
+    t0, files, fetched, empty = time.time(), [], 0, 0
+    for n, block in enumerate(blocks, start=1):
+        local = usda_local(src, block, year)
+        if os.path.exists(local):
+            files.append(local)
+            continue
+        if os.path.exists(local + ".empty"):
+            continue
+        url, (minx, miny, maxx, maxy), _size = usda_export(block, year)
+        for attempt in (1, 2, 3):
+            try:
+                _status, body, _robots = polite.get(url, timeout=180)
+                if body[:2] != b"\xff\xd8" and body[:4] != b"\x89PNG":
+                    raise ValueError(f"not an image: {body[:200]!r}")
+                break
+            except polite.RobotsDisallowed:
+                raise
+            except Exception as e:                       # network trouble or a server error
+                print(f"  block {block}: attempt {attempt} failed: {e}", flush=True)
+                if attempt == 3:
+                    raise SystemExit("USDA export failed three times; rerun to resume (finished blocks are kept)")
+                time.sleep(30 * attempt)
+            finally:
+                time.sleep(USDA_GAP_S)
+        fetched += 1
+        name = f"/vsimem/u{block[1]}_{block[2]}"
+        gdal.FileFromMemBuffer(name, body)
+        ds = gdal.Open(name)
+        alpha = ds.RasterCount == 4                      # PNG: part of the block has no 2025 image
+        if alpha and ds.GetRasterBand(4).ComputeRasterMinMax(False)[1] == 0:
+            open(local + ".empty", "w").close()
+            empty += 1
+        else:
+            gdal.Translate(local + ".part", ds, format="GTiff", outputSRS="EPSG:3857",
+                           outputBounds=[minx, maxy, maxx, miny],
+                           creationOptions=LOCAL_CO_ALPHA if alpha else LOCAL_CO)
+            os.replace(local + ".part", local)
+            files.append(local)
+        ds = None
+        gdal.Unlink(name)
+        if fetched % 25 == 0:
+            print(f"  {n}/{len(blocks)} blocks, {fetched} fetched, {time.time() - t0:.0f} s", flush=True)
+    print(f"  USDA done: {len(files)} blocks ({fetched} fetched, {empty} without {year} imagery) "
+          f"in {time.time() - t0:.0f} s", flush=True)
+    return files
+
+
 def build_vrts(files, folder, name):
-    """One VRT per coordinate system (BuildVRT needs one), in the order the CRSs first appear.
+    """One VRT per coordinate system and band count (BuildVRT needs both the same), in the
+    order they first appear.
 
     Each gets an alpha band that is transparent wherever no image covers it.
     Without one, the gaps between detail windows count as valid black pixels
-    and paint over the valley imagery underneath."""
+    and paint over the valley imagery underneath. Files that already have one
+    (4 bands) keep theirs."""
     groups = {}
     for f in files:
-        groups.setdefault(gdal.Open(f).GetSpatialRef().GetAuthorityCode(None) or "unknown", []).append(f)
+        ds = gdal.Open(f)
+        key = (ds.GetSpatialRef().GetAuthorityCode(None) or "unknown", ds.RasterCount)
+        groups.setdefault(key, []).append(f)
     out = []
-    for crs, fs in groups.items():
-        path = os.path.join(folder, f"{name}_{crs}.vrt")
-        gdal.BuildVRT(path, fs, addAlpha=True)
+    for (crs, bands), fs in groups.items():
+        path = os.path.join(folder, f"{name}_{crs}{'_a' if bands == 4 else ''}.vrt")
+        gdal.BuildVRT(path, fs, addAlpha=bands == 3)
         out.append(path)
     return out
 
@@ -336,9 +446,14 @@ def main():
     ap.add_argument("--bbox", default="-117.05,43.00,-115.95,43.85", help="west,south,east,north")
     ap.add_argument("--minzoom", type=int, default=8)
     ap.add_argument("--maxzoom", type=int, default=14, help="valley-wide top zoom (512-px tiles)")
-    ap.add_argument("--detail", help="GeoJSON of points to add full-detail imagery around")
+    ap.add_argument("--detail", action="append", default=[], metavar="GEOJSON[@METERS]",
+                    help="points to add full-detail imagery around, optionally with their own radius; repeatable")
     ap.add_argument("--detail-radius", type=float, default=250.0, help="meters around each detail point")
     ap.add_argument("--detail-maxzoom", type=int, default=17)
+    ap.add_argument("--detail-source", choices=["pc", "usda"], default="pc",
+                    help="pc: the newest NAIP on the Planetary Computer; usda: USDA's image service")
+    ap.add_argument("--detail-year", type=int, default=2025, help="NAIP year to export (--detail-source usda)")
+    ap.add_argument("--dry-run", action="store_true", help="count the downloads and stop")
     ap.add_argument("--out", default=os.environ.get("TILES_DIR", "data/tiles"))
     ap.add_argument("--work", default="data/imagery")
     ap.add_argument("--workers", type=int, default=8, help="parallel downloads")
@@ -356,16 +471,20 @@ def main():
 
     # 2. prefetch: whole images at ~2.4 m, then full-resolution windows for the detail tiles
     jobs = [("valley", i["href"], os.path.join(src, "v_" + os.path.basename(i["href"])), None) for i in items]
-    detail_tiles, n_pts = set(), 0
-    if args.detail:
-        pts = [f["geometry"]["coordinates"][:2] for f in json.load(open(args.detail))["features"]
+    detail_tiles, sets, n = set(), [], 0
+    for spec in args.detail:
+        path, _, radius = spec.partition("@")
+        radius = float(radius) if radius else args.detail_radius
+        pts = [f["geometry"]["coordinates"][:2] for f in json.load(open(path))["features"]
                if f.get("geometry")]
-        n_pts = len(pts)
-        for n, (lon, lat) in enumerate(pts):
-            area = around(lon, lat, args.detail_radius)
+        sets.append({"file": os.path.basename(path), "points": len(pts), "radius": radius})
+        for lon, lat in pts:
+            area = around(lon, lat, radius)
             for z in range(args.maxzoom + 1, args.detail_maxzoom + 1):
                 xr, yr = tile_range(area, z)
                 detail_tiles |= {("detail", z, x, y) for x in xr for y in yr}
+            if args.detail_source == "usda":
+                continue
             # Fetch what the top-zoom detail tiles cover: the tiles' extent, not just the circle.
             xr, yr = tile_range(area, args.detail_maxzoom)
             window = (tile_bounds_merc(args.detail_maxzoom, xr[0], yr[-1])[0],
@@ -377,15 +496,33 @@ def main():
                 if overlaps(i["bbox"], (sw[0], sw[1], ne[0], ne[1])):
                     name = f"d{n:03d}_" + os.path.basename(i["href"])
                     jobs.append(("detail", i["href"], os.path.join(src, name), window))
-        print(f"detail: {n_pts} points, {args.detail_radius:.0f} m radius, z{args.maxzoom + 1}-"
-              f"z{args.detail_maxzoom}: {len(detail_tiles)} tiles", flush=True)
+            n += 1
+        print(f"detail: {len(pts)} points from {path}, {radius:.0f} m radius", flush=True)
+    n_pts = sum(s["points"] for s in sets)
+    blocks = usda_blocks(detail_tiles, args.detail_maxzoom) if args.detail_source == "usda" else []
+    if detail_tiles:
+        print(f"detail: z{args.maxzoom + 1}-z{args.detail_maxzoom}: {len(detail_tiles)} tiles", flush=True)
+    if args.dry_run:
+        todo = [j for j in jobs if not os.path.exists(j[2])]
+        print(f"dry run: {len(todo)} of {len(jobs)} Planetary Computer downloads still to fetch", flush=True)
+        if blocks:
+            left = [b for b in blocks if not any(os.path.exists(usda_local(src, b, args.detail_year) + e)
+                                                 for e in ("", ".empty"))]
+            mpx = sum(w * h for w, h in (usda_export(b, args.detail_year)[2] for b in left)) / 1e6
+            print(f"dry run: {len(left)} of {len(blocks)} USDA exports still to fetch ({mpx:.0f} megapixels); "
+                  f"at least {len(left) * USDA_GAP_S / 60:.0f} min plus the server's time", flush=True)
+        return
     print(f"prefetch: {len(jobs)} downloads, {args.workers} at a time -> {src}", flush=True)
     files = prefetch(jobs, args.workers)
     kinds = {j[2]: j[0] for j in jobs}
     sources = {"valley": build_vrts([f for f in files if kinds[f] == "valley"], args.work, "valley")}
+    if blocks:
+        print(f"USDA: {len(blocks)} exports of NAIP {args.detail_year}, one at a time -> {src}", flush=True)
+        detail_files = usda_fetch(blocks, src, args.detail_year)
+    else:
+        detail_files = [f for f in files if kinds[f] == "detail"]
     if detail_tiles:
-        sources["detail"] = sources["valley"] + build_vrts([f for f in files if kinds[f] == "detail"],
-                                                           args.work, "detail")
+        sources["detail"] = sources["valley"] + build_vrts(detail_files, args.work, "detail")
 
     # 3-4. render, then shrink
     valley_mb = os.path.join(args.work, "imagery.mbtiles")
@@ -438,7 +575,9 @@ def main():
         size_d = to_pmtiles(detail_mb, pm_d)
         m["imagery"]["detail"] = {"file": "imagery-detail.pmtiles", "minzoom": args.maxzoom + 1,
                                   "maxzoom": args.detail_maxzoom, "points": n_pts,
-                                  "radius": args.detail_radius}
+                                  "radius": max(s["radius"] for s in sets), "sets": sets,
+                                  "source": (f"NAIP {args.detail_year} (0.3 m) from USDA's image service"
+                                             if blocks else "same as the valley layer")}
         print(f"wrote {pm_d} ({size_d / 1e6:.0f} MB)", flush=True)
     json.dump(m, open(path, "w"), indent=1)
     print(f"total {time.time() - t0:.0f} s")
