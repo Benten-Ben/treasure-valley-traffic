@@ -26,7 +26,9 @@
  * Usage:
  *   import { harnessEnv } from './harness-env.mjs';
  *   node scripts/harness-env.mjs [wp] [--shell]   # print it (as export lines with --shell)
+ *   node scripts/harness-env.mjs [wp] -- vite dev --port {port}   # run a command with it
  *   source scripts/env.sh [wp]                    # export it into the current shell
+ *   npm run dev:wp / npm run preview:wp           # the dev or preview server on the package port
  */
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
@@ -34,6 +36,9 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export const APP_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+
+/** Chromium flags for WebGL in headless runs (SwiftShader; the sandbox has no GPU). */
+export const CHROMIUM_ARGS = ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'];
 
 function git(args, cwd) {
 	try {
@@ -123,11 +128,23 @@ export function harnessEnv({ wp = packageName(), env = process.env } = {}) {
 const shellQuote = (v) => `'${String(v).replaceAll("'", `'\\''`)}'`;
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-	const args = process.argv.slice(2);
+	const all = process.argv.slice(2);
+	const dash = all.indexOf('--');
+	const args = dash === -1 ? all : all.slice(0, dash);
+	const command = dash === -1 ? [] : all.slice(dash + 1);
 	const wp = args.find((a) => !a.startsWith('--'));
 	const env = harnessEnv(wp ? { wp: wp.toLowerCase() } : {});
-	for (const [k, v] of Object.entries(env)) {
-		if (args.includes('--shell')) console.log(`export ${k}=${shellQuote(v)}`);
-		else console.log(`${k}=${k === 'DATABASE_URL' ? v.replace(/:[^:@/]+@/, ':***@') : v}`);
+	if (command.length) {
+		// Run a command with the environment, no shell: `{port}` in an argument becomes the port.
+		const { spawn } = await import('node:child_process');
+		const argv = command.map((a) => a.replaceAll('{port}', env.TVT_PORT));
+		const child = spawn(argv[0], argv.slice(1), { stdio: 'inherit', env: { ...process.env, ...env } });
+		for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => child.kill(sig));
+		child.on('exit', (code, signal) => process.exit(code ?? (signal ? 1 : 0)));
+	} else {
+		for (const [k, v] of Object.entries(env)) {
+			if (args.includes('--shell')) console.log(`export ${k}=${shellQuote(v)}`);
+			else console.log(`${k}=${k === 'DATABASE_URL' ? v.replace(/:[^:@/]+@/, ':***@') : v}`);
+		}
 	}
 }
