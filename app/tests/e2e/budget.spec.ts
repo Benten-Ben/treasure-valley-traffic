@@ -55,7 +55,6 @@ test.describe('budget', () => {
 	});
 
 	test('data API requests start before the first DEM tile response (WP1)', { tag: ['@wp0', '@wp1'] }, async ({ page, baseURL }) => {
-		test.fail(true, "WP1 target (§14.8 Boot): today the data layers wait for the map's load event.");
 		const { timing } = await coldLoad(page, baseURL!);
 		expect(timing.firstDataStart).not.toBeNull();
 		expect(timing.firstDemResponse).not.toBeNull();
