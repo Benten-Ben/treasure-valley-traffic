@@ -48,7 +48,7 @@ import { liveOf } from './live.svelte.js';
 import { look } from './look.svelte.js';
 import LookBanner from './LookBanner.svelte';
 import LookFrame from './LookFrame.svelte';
-import type { LookThrough } from './lookthrough.js';
+import type { LookOptions, LookThrough } from './lookthrough.js';
 import { flyToCamera } from './fly.js';
 import { cameraIdOf, cameraKey, landBeside, landing } from './place.js';
 import type { Cameras3D } from './scene.js';
@@ -703,16 +703,19 @@ export class CamerasModule implements LayerModule {
 
 	/**
 	 * Look through a calibrated camera (the window's view, else its first
-	 * calibrated one); `pose` overrides the saved pose (Check alignment, tests).
+	 * calibrated one). `pose` overrides the saved pose (tests); `draft` is a
+	 * whole unsaved calibration for the view, which may have none saved yet
+	 * (WP14's Check alignment, from Calibrate mode: Step out returns to it).
 	 * Resolves once it's looking, or false.
 	 */
-	async lookThrough(cameraId: number, viewId?: number | null, pose?: Pose): Promise<boolean> {
+	async lookThrough(cameraId: number, viewId?: number | null, o: Pose | LookOptions = {}): Promise<boolean> {
 		const lt = await this.#ensureLook();
 		if (!lt) {
 			toasts.show("Look-through needs the 3D view, which couldn't start here", { kind: 'problem', key: 'look-through' });
 			return false;
 		}
-		return lt.enter(cameraId, viewId ?? this.#shownView.get(cameraId) ?? null, { pose });
+		const opts: LookOptions = 'heading' in o ? { pose: o } : o;
+		return lt.enter(cameraId, viewId ?? this.#shownView.get(cameraId) ?? null, opts);
 	}
 
 	#ensureLook(): Promise<LookThrough | null> {
@@ -747,8 +750,11 @@ export class CamerasModule implements LayerModule {
 		let viewId: number | null = null;
 		const win = el?.closest?.<HTMLElement>('[data-window-key]');
 		const host = win ?? el?.closest?.<HTMLElement>('[data-camera-id]') ?? null;
-		if (win) id = cameraIdOf(win.dataset.windowKey ?? '');
-		else if (host?.dataset.cameraId) id = Number(host.dataset.cameraId);
+		if (win) {
+			id = cameraIdOf(win.dataset.windowKey ?? '');
+			// Focus is in some other window: Enter isn't ours.
+			if (id === null) return false;
+		} else if (host?.dataset.cameraId) id = Number(host.dataset.cameraId);
 		if (host) {
 			const v = (host.matches('[data-view-id]') ? host : host.querySelector<HTMLElement>('[data-view-id]'))?.dataset.viewId;
 			viewId = v ? Number(v) : null;
@@ -829,7 +835,7 @@ export class CamerasModule implements LayerModule {
 		// WP13: 3D cameras and look-through, for tests and the console: `__tvtLook`.
 		const lookHandle = Object.freeze({
 			/** Look through a camera (its window's view or first calibrated one), optionally at another pose; resolves when looking. */
-			enter: (cameraId: number, viewId?: number | null, pose?: Pose) => this.lookThrough(cameraId, viewId, pose),
+			enter: (cameraId: number, viewId?: number | null, pose?: Pose | LookOptions | null) => this.lookThrough(cameraId, viewId, pose ?? {}),
 			/** Step out (Esc): resolves back in Explore. */
 			stepOut: async () => (await this.#ensureLook())?.stepOut(),
 			next: async (dir: 1 | -1) => (await this.#ensureLook())?.next(dir) ?? false,

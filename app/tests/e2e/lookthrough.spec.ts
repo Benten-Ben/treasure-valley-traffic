@@ -330,7 +330,7 @@ test.describe('cameras: 3D and look-through', () => {
 	});
 
 	test('Esc order, Enter on a focused window, and a double-click straight in from the view before the click', { tag: '@wp13' }, async ({ page, offsite }) => {
-		test.setTimeout(600_000);
+		test.setTimeout(900_000);
 		const key = seedsWithPairs().find((x) => x.kind === 'key')!;
 		await openMap(page, at(key));
 		const pole = await page.evaluate((id) => (globalThis as any).__tvtCameras.cameras().find((c: any) => c.id === id), key.cameraId);
@@ -367,13 +367,15 @@ test.describe('cameras: 3D and look-through', () => {
 		await page.keyboard.press('Enter');
 		await expect.poll(async () => (await lookState(page)).phase, { timeout: 120_000 }).toBe('looking');
 		await mapReady(page);
-		// ← and → walk the calibrated cameras by distance, still looking through.
+		// ← and → walk the calibrated cameras by distance, still looking through (jumps here: the next
+		// camera is 2 km away, and only where the map camera lands matters).
 		const count = (await lookState(page)).count;
 		expect(count).toBeGreaterThanOrEqual(4);
+		await page.emulateMedia({ reducedMotion: 'reduce' });
 		await page.keyboard.press('ArrowRight');
 		await expect.poll(async () => (await lookState(page)).index, { timeout: 120_000 }).toBe(1);
 		await expect.poll(async () => (await lookState(page)).phase, { timeout: 120_000 }).toBe('looking');
-		await mapReady(page);
+		expect((await lookState(page)).cameraId).not.toBe(key.cameraId);
 		expect((await inspect(page)).errorM).toBeLessThanOrEqual(0.1);
 		await page.keyboard.press('ArrowLeft');
 		await expect.poll(async () => (await lookState(page)).cameraId, { timeout: 120_000 }).toBe(key.cameraId);

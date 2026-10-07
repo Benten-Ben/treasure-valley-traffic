@@ -220,6 +220,12 @@ export interface TraceSample {
 	ground: number | null;
 }
 
+/** How to look through: another pose for the saved calibration, or a whole draft one (WP14's Check alignment). */
+export interface LookOptions {
+	pose?: Pose;
+	draft?: { pose: Pose; size: ImageSize; groundZ: number; frame?: string | null };
+}
+
 export interface LookSource {
 	calibrations(): readonly Calibration[];
 	nameOf(cameraId: number): string;
@@ -275,12 +281,15 @@ export class LookThrough {
 	 * unsaved pose, and the registration tests). Resolves once it's looking,
 	 * or false when it couldn't.
 	 */
-	async enter(cameraId: number, viewId?: number | null, o: { pose?: Pose } = {}): Promise<boolean> {
+	async enter(cameraId: number, viewId?: number | null, o: LookOptions = {}): Promise<boolean> {
 		const ctx = this.#ctx;
 		const map = this.#map;
-		if (this.#destroyed || look.phase !== 'off' || ctx.modes.current !== 'explore') return false;
+		// From Explore, or from Calibrate (Check alignment, WP14): the mode stack nests.
+		if (this.#destroyed || look.phase !== 'off' || (ctx.modes.current !== 'explore' && ctx.modes.current !== 'calibrate')) return false;
 		const cals = this.#src.calibrations();
-		const cal = cals.find((c) => (viewId ? c.viewId === viewId : c.cameraId === cameraId));
+		let cal = cals.find((c) => (viewId ? c.viewId === viewId : c.cameraId === cameraId));
+		// An unsaved pose for a view with no saved calibration yet: the draft stands in for it.
+		if (o.draft && viewId) cal = { calibrationId: -1, viewId, cameraId, pose: o.draft.pose, size: o.draft.size, groundZ: o.draft.groundZ, frame: o.draft.frame ?? cal?.frame ?? '' };
 		if (!cal || cal.cameraId !== cameraId) {
 			this.#tell('Look-through needs a calibration: configure this camera first');
 			return false;
