@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2" xmlns:gx="http://www.google.com/kml/ext/2.2" xmlns:kml="http://www.opengis.net/kml/2.2" xmlns:atom="http://www.w3.org/2005/Atom">
+<Document>
+<name>HMS Smoke Mapping-20261007</name>
+<description><![CDATA[NOAA Hazard Mapping System multisatellite smoke mapping data.<br>  For product information please visit: <a href="https://www.ospo.noaa.gov/Products/land/hms.html#about">https://www.ospo.noaa.gov/Products/land/hms.html#about</a> ]]></description>
+ <Folder>
+   <name>Overlay</name>
+   <open>0</open>
+   <Style>
+     <ListStyle>
+     <listItemType>check</listItemType>
+     <bgColor>00ffffff</bgColor>
+     <maxSnippetLines>2</maxSnippetLines>
+   </ListStyle>
+   </Style>
+   <ScreenOverlay>
+    <name>NOAA logo</name>
+    <color>ffffffff</color>
+    <visibility>1</visibility>
+    <Icon>
+      <href>https://www.ospo.noaa.gov/graphics/Products/land/fire/hms/png_logo/noaa_logo.png</href>
+    </Icon>
+    <overlayXY x="0" y="1" xunits="fraction" yunits="fraction"/>
+    <screenXY x="1" y="1" xunits="pixels" yunits="insetPixels"/>
+    <size x="100" y="100" xunits="pixels" yunits="pixels"/>
+   </ScreenOverlay>
+   <ScreenOverlay>
+    <name>Analysis Date</name>
+    <color>ffffffff</color>
+    <visibility>1</visibility>
+    <Icon>
+      <href><![CDATA[http://chart.apis.google.com/chart?chst=d_text_outline&chld=FFBBBB|16|h|BB0000|b|Analysis%20for:%2020261007]]></href>
+    </Icon>
+     <overlayXY x="1" y="1" xunits="fraction" yunits="fraction"/>
+    <screenXY x="2" y="92" xunits="insetPixels" yunits="insetPixels"/>
+   </ScreenOverlay>
+   <ScreenOverlay>
+    <name>Generated DateTime</name>
+    <color>ffffffff</color>
+    <visibility>1</visibility>
+    <Icon>
+      <href><![CDATA[http://chart.apis.google.com/chart?chst=d_text_outline&chld=FFBBBB|16|h|BB0000|b|Generated:%201343GMT%2020261007]]></href>
+    </Icon>
+    <overlayXY x="1" y="1" xunits="fraction" yunits="fraction"/>
+    <screenXY x="2" y="130" xunits="insetPixels" yunits="insetPixels"/>
+   </ScreenOverlay>
+   <ScreenOverlay>
+     <name>Legend</name>
+     <color>ffffffff</color>
+     <visibility>1</visibility>
+     <Icon>
+        <href>https://www.ospo.noaa.gov/graphics/Products/land/fire/hms/png_logo/kml_legend.png</href>
+     </Icon>
+     <overlayXY x="1" y="1" xunits="fraction" yunits="fraction"/>
+     <screenXY x="1" y="1" xunits="insetPixels" yunits="insetPixels"/>
+     <size x="300" y="90" xunits="pixels" yunits="pixels"/>
+   </ScreenOverlay>
+ </Folder>
+</Document>
+</kml>
