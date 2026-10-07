@@ -26,6 +26,15 @@ names didn't change, so `ops.source` and `ops.fetch` carry on:
 | [safety](../plugins/safety) | `compass_crashes` | |
 | [flow](../plugins/flow) | `compass_counts`, `compass_congestion` | |
 | [development](../plugins/development) | `compass_growth`, `compass_plats` | |
+| [hazards](../plugins/hazards) | `idl_fire_restrictions`, `nifc_wfigs_incidents`, `nifc_wfigs_perimeters`, `nasa_firms`, `nws_wwa`, `usgs_quakes` | |
+| [air](../plugins/air) | `noaa_hms_smoke` | |
+| [water](../plugins/water) | `nwps_gauges`, `nrcs_snotel`, `boise_ecoli`, `boise_river_hazards`, `usdm_drought` | |
+| [trails](../plugins/trails) | `r2r_trails`, `boise_greenbelt_closures` | |
+| [lands](../plugins/lands) | `usfs_r4_orders`, `idpr_route_closures`, `idpr_area_restrictions` | |
+| [weather](../plugins/weather) | `awc_metar` | |
+| [wildlife](../plugins/wildlife) | `idfg_roadkill` | |
+| [farm](../plugins/farm) | `agrimet_et` | |
+| [sky](../plugins/sky) | `swpc_ovation`, `swpc_kp_1m` | |
 
 Private plugins (ACHD's tables, parcels) live on the server, outside this
 repository: `TVT_PLUGIN_PATH` names their parent folders and they load the

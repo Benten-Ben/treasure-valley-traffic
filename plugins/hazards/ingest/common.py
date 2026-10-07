@@ -111,55 +111,10 @@ def clean_attributes(attrs, drop=()):
 
 # --- polygons ------------------------------------------------------------------
 
-def _area2(ring):
-    """Twice the signed area; positive for a counter-clockwise ring (x east, y north)."""
-    return sum(x0 * y1 - x1 * y0 for (x0, y0), (x1, y1) in zip(ring, ring[1:]))
-
-
-def _inside(point, ring):
-    x, y = point
-    inside = False
-    for (x0, y0), (x1, y1) in zip(ring, ring[1:]):
-        if (y0 > y) != (y1 > y) and x < x0 + (y - y0) * (x1 - x0) / (y1 - y0):
-            inside = not inside
-    return inside
-
-
-def _wind(ring, ccw):
-    return [list(p) for p in (ring if (_area2(ring) > 0) == ccw else ring[::-1])]
-
-
 def polygon_geojson(rings):
-    """Esri polygon rings -> a GeoJSON Polygon or MultiPolygon (RFC 7946 winding), or None.
-
-    Esri writes outer rings clockwise and holes counter-clockwise, in any order, and a
-    multipart polygon (a fire in two pieces) is one list of rings. Each hole goes to the
-    smallest outer ring that contains it. (arcgis.esri_geometry makes one Polygon of all
-    the rings, so a second piece would come out as a "hole" outside the first.) A layer
-    with no clockwise ring at all is read as parts without holes."""
-    clean = []
-    for ring in rings or []:
-        pts = [(float(p[0]), float(p[1])) for p in ring if p is not None and len(p) >= 2]
-        if len(pts) >= 3 and pts[0] != pts[-1]:
-            pts.append(pts[0])
-        if len(pts) >= 4 and _area2(pts) != 0:
-            clean.append(pts)
-    outers = [r for r in clean if _area2(r) < 0]
-    holes = [r for r in clean if _area2(r) > 0]
-    if not outers:
-        outers, holes = holes, []
-    if not outers:
-        return None
-    polygons = [[o] for o in outers]
-    for h in holes:
-        containing = [i for i, o in enumerate(outers) if _inside(h[0], o)]
-        if containing:
-            polygons[min(containing, key=lambda i: abs(_area2(outers[i])))].append(h)
-        else:
-            polygons.append([h])              # a "hole" outside every shell: kept as a part, not lost
-    coords = [[_wind(p[0], True)] + [_wind(h, False) for h in p[1:]] for p in polygons]
-    return {"type": "Polygon", "coordinates": coords[0]} if len(coords) == 1 else \
-        {"type": "MultiPolygon", "coordinates": coords}
+    """Esri polygon rings -> a GeoJSON Polygon or MultiPolygon (RFC 7946 winding), or None: the shared
+    reader's converter (ingest/arcgis.esri_polygon), which keeps a fire in two pieces as two parts."""
+    return arcgis.esri_polygon(rings)
 
 
 def esri_polygon(geometry):

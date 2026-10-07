@@ -8,7 +8,7 @@ import types
 import unittest
 from datetime import date, datetime, timedelta, timezone
 
-from ingest import db, http
+from ingest import arcgis, db, http
 from plugins.lands.ingest import closures
 
 UTC = timezone.utc
@@ -37,7 +37,7 @@ class PolygonTest(unittest.TestCase):
         g = closures.esri_polygon({"rings": [square(-116.0, 43.0, -115.9, 43.1)]})
         self.assertEqual(g["type"], "Polygon")
         self.assertEqual(len(g["coordinates"]), 1)
-        self.assertGreater(closures._area([tuple(p) for p in g["coordinates"][0]]), 0)   # RFC 7946: CCW outside
+        self.assertGreater(arcgis._area([tuple(p) for p in g["coordinates"][0]]), 0)   # RFC 7946: CCW outside
 
     def test_several_outer_rings_with_holes_become_a_multipolygon(self):
         big, small = square(-116.0, 43.0, -115.8, 43.2), square(-115.5, 43.0, -115.4, 43.1)
@@ -48,14 +48,14 @@ class PolygonTest(unittest.TestCase):
         self.assertEqual(holes, [0, 1])
         with_hole = next(p for p in g["coordinates"] if len(p) == 2)
         self.assertEqual(with_hole[0][0], [-116.0, 43.0])                    # the hole went to the big ring
-        self.assertLess(closures._area([tuple(p) for p in with_hole[1]]), 0)  # holes clockwise
+        self.assertLess(arcgis._area([tuple(p) for p in with_hole[1]]), 0)  # holes clockwise
 
     def test_a_hole_goes_to_the_smallest_ring_around_it(self):
         outer, island = square(-116.0, 43.0, -115.0, 44.0), square(-115.8, 43.2, -115.2, 43.8)
         lake = square(-115.9, 43.1, -115.1, 43.9, clockwise=False)
         pond = square(-115.6, 43.4, -115.4, 43.6, clockwise=False)
         g = closures.esri_polygon({"rings": [outer, lake, island, pond]})
-        by_size = sorted(g["coordinates"], key=lambda p: abs(closures._area([tuple(c) for c in p[0]])))
+        by_size = sorted(g["coordinates"], key=lambda p: abs(arcgis._area([tuple(c) for c in p[0]])))
         self.assertEqual([len(p) for p in by_size], [2, 2])              # island with pond, outer with lake
         self.assertEqual(by_size[0][1][0], [-115.6, 43.4])
 

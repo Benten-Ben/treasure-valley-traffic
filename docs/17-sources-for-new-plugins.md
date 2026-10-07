@@ -944,6 +944,32 @@ standard library, no UI)
     every 30 min, one row per value would be about 11 M rows a year).
 - Total stored: well under 50 MB a day, all into `raw.record` and
   `obs`/`evt`.
+- **Built Oct 7** (nine plugins, 22 sources; each plugin's README has the
+  details). Not built, for the reasons given: the FIRMS area API (needs a
+  key), AirNow (the form), USDM polygons (robots.txt; the county
+  statistics are used), IDPR's park alert pages (HTML only), AgriMet's
+  weather outside ET (only under the disallowed `/pn-bin`) and the GFZ Kp
+  history (no clock to start: it can be fetched any time).
+- **What the build corrected or added:**
+  - NWPS has 37 gauges in the ring, not about 10.
+  - Boise's E. coli sites are the City's swimming ponds (Quinn's, Esther
+    Simplot, Veterans), not river sites.
+  - Valley County is a ring county (Cozy Cove SNOTEL), and Oregon has no
+    SNOTEL station in the ring.
+  - R2R's `ConditionDate` is Boise wall-clock time stored as if it were
+    UTC; the poller corrects it and keeps the raw value.
+  - IDFG's roadkill layer is rebuilt whole, so its OBJECTIDs aren't stable
+    IDs; reports are keyed by content. Date-only reports come back at 07:00
+    UTC (midnight MST), and 348 of the ring's 9,268 reports (the Survey123
+    channels) carry real times.
+  - WFIGS: 192 ring incidents from before 2026 still have no out date, so a
+    fire's lifecycle also closes when its record goes quiet past NIFC's own
+    fall-off window (3, 8 or 14 days by size), and reopens on a later
+    update.
+  - Some published outlines are invalid (two IDL zones, one WFIGS
+    perimeter): they're stored as published, and joins use `ST_MakeValid`.
+  - The shared ArcGIS reader turned multipart polygons into one polygon
+    with misplaced holes; fixed in core (`arcgis.esri_polygon`).
 
 **Wave B: reference layers** (about 2–3 weeks, mostly S each through the
 ArcGIS reader; refreshed monthly)
@@ -1300,9 +1326,12 @@ What only the owner can do or know is in §17.7 and in
      weather's fields contract and renderer.
    - **`hazards`** owns:
      - fire: restriction stages, incidents, perimeters and detections;
-     - warnings (NWS WWA, IPAWS);
-     - quakes;
-     - floods as events.
+     - warnings (NWS WWA, IPAWS), flood watches and warnings among them;
+     - quakes.
+
+     A gauge's own flood category (minor, moderate, major) is the gauge's
+     state, so it stays with the gauge in `water` (clarified Oct 7, when
+     both were built).
    - **`water`** owns rivers, canals and snow:
      - gauges and SNOTEL;
      - E. coli results and river notices;

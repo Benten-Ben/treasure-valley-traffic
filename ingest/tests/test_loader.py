@@ -25,11 +25,23 @@ PLUGINS_DIR = os.path.join(REPO, "plugins")
 
 SOURCES_BEFORE = ["achd_cameras", "idaho511_views_oneoff", "vrt_gtfs", "achd_roads", "itd_hpms", "achd_msm",
                   "compass_centerline", "fra_crossings", "achd_signal_points", "compass_signals",
-                  "compass_regional_signals", "intersections", "compass_crashes", "compass_counts", "compass_growth",
-                  "compass_plats", "compass_congestion"]
+                  "compass_regional_signals", "intersections",
+                  # ch. 17 Wave A (Oct 7): hazards (order 60) runs before safety's crashes, the rest after
+                  "idl_fire_restrictions", "nifc_wfigs_incidents", "nifc_wfigs_perimeters", "nasa_firms", "nws_wwa",
+                  "usgs_quakes", "compass_crashes", "noaa_hms_smoke", "nwps_gauges", "nrcs_snotel", "boise_ecoli",
+                  "boise_river_hazards", "usdm_drought", "r2r_trails", "boise_greenbelt_closures", "usfs_r4_orders",
+                  "idpr_route_closures", "idpr_area_restrictions", "awc_metar", "idfg_roadkill", "agrimet_et",
+                  "swpc_ovation", "swpc_kp_1m", "compass_counts", "compass_growth", "compass_plats", "compass_congestion"]
 STREAMS_BEFORE = ["vrt_realtime", "idaho511_frames", "itd_wzdx", "idaho511_api"]
 
 WHERE = {  # source: plugin (docs/15 §15.4)
+    "idl_fire_restrictions": "hazards", "nifc_wfigs_incidents": "hazards", "nifc_wfigs_perimeters": "hazards",
+    "nasa_firms": "hazards", "nws_wwa": "hazards", "usgs_quakes": "hazards", "noaa_hms_smoke": "air",
+    "nwps_gauges": "water", "nrcs_snotel": "water", "boise_ecoli": "water", "boise_river_hazards": "water",
+    "usdm_drought": "water", "r2r_trails": "trails", "boise_greenbelt_closures": "trails",
+    "usfs_r4_orders": "lands", "idpr_route_closures": "lands", "idpr_area_restrictions": "lands",
+    "awc_metar": "weather", "idfg_roadkill": "wildlife", "agrimet_et": "farm", "swpc_ovation": "sky",
+    "swpc_kp_1m": "sky",
     "achd_cameras": "cameras", "idaho511_views_oneoff": "cameras", "idaho511_frames": "cameras",
     "vrt_gtfs": "transit", "vrt_realtime": "transit",
     "achd_roads": "roads", "itd_hpms": "roads", "achd_msm": "roads", "compass_centerline": "roads",
@@ -64,7 +76,8 @@ class RegistryTest(unittest.TestCase):
 
     def test_the_plugins(self):
         self.assertEqual(sorted(p.name for p in ours()),
-                         ["cameras", "conditions", "development", "flow", "intersections", "roads", "safety", "transit"])
+                         ["air", "cameras", "conditions", "development", "farm", "flow", "hazards", "intersections",
+                          "lands", "roads", "safety", "sky", "trails", "transit", "water", "weather", "wildlife"])
 
     def test_manifests_agree_with_their_modules(self):
         for plugin in ours():

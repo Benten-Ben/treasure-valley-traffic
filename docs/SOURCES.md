@@ -26,6 +26,7 @@ Last updated Oct 7, 2026.
 | Census commute flows (LEHD LODES8) | One-off analysis, `tools/lehd_flows.py`: who commutes between Ada, Canyon and the counties around them (results in ch. 8) | Oct 6 |
 | ITD work zones (WZDx feed on 511 Idaho) | Every 5 min (`wzdx` service): versions in `raw.record`, cleaned rows in `evt.event`; 703 statewide, 239 in Ada and Canyon on Oct 6. Open to republish, crediting ITD ([ch. 8 §8.8](08-data-inventory.md#88-itds-work-zone-feed-checked-against-the-wzdx-spec-oct-6-2026)) | Oct 6 |
 | Base map | OpenStreetMap (Protomaps), USGS 3DEP terrain, NAIP 2023 imagery, Overture and Boise 3D buildings | Oct 5 |
+| Chapter 17 Wave A pollers (Oct 7) | 22 sources in nine new plugins, started so their history exists from now on: fire restrictions, WFIGS fires and perimeters, FIRMS, NWS alerts and quakes (`hazards`); HMS smoke (`air`); NWPS gauges, SNOTEL, E. coli, river hazards, drought (`water`); R2R conditions and Greenbelt closures (`trails`); forest orders and IDPR closures (`lands`); METARs (`weather`); roadkill (`wildlife`); AgriMet ET (`farm`); aurora and Kp (`sky`). Versions in `raw.record`, lifecycles in `evt.event`; each plugin's README has its endpoints, cadence, licence and what's kept ([ch. 17 §17.4](17-sources-for-new-plugins.md#174-proposed-order-with-rough-effort)) | Oct 7 |
 
 ## Not started, or only partly
 
@@ -128,8 +129,9 @@ signal nodes with no COMPASS match and need review
 
 For the owner's interests beyond traffic, 306 sources were researched on
 Oct 7 and checked against their official pages, robots.txt and terms
-(160 confirmed, 134 corrected, 7 unverifiable). None is approved: they go
-to the owner one at a time. The recommendations, the first thing to build
+(160 confirmed, 134 corrected, 7 unverifiable). On Oct 7 the owner asked
+the lead to settle the open questions and start polling: Wave A's sources
+are in use (above); the rest follow ch. 17's plan. The recommendations, the first thing to build
 per persona, the sources to avoid and why, and the open questions are in
 [chapter 17](17-sources-for-new-plugins.md). The catalogs:
 

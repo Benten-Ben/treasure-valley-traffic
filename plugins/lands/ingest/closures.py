@@ -120,67 +120,10 @@ def last_read(conn, source):
 
 # --- geometry -------------------------------------------------------------------
 
-def _area(ring):
-    """Signed area (shoelace): negative for a clockwise ring, as Esri writes outer rings."""
-    return sum(x1 * y2 - x2 * y1 for (x1, y1), (x2, y2) in zip(ring, ring[1:] + ring[:1])) / 2
-
-
-def _inside(pt, ring):
-    x, y = pt
-    inside = False
-    for (x1, y1), (x2, y2) in zip(ring, ring[1:] + ring[:1]):
-        if (y1 > y) != (y2 > y) and x < (x2 - x1) * (y - y1) / (y2 - y1) + x1:
-            inside = not inside
-    return inside
-
-
-def _ring(points):
-    out = []
-    for p in points or []:
-        try:
-            x, y = float(p[0]), float(p[1])
-        except (TypeError, ValueError, IndexError):
-            continue
-        if x == x and y == y:                 # not NaN
-            out.append((x, y))
-    if out and out[0] != out[-1]:
-        out.append(out[0])
-    return out if len(out) >= 4 and _area(out) != 0 else None
-
-
 def esri_polygon(g):
-    """An Esri JSON polygon as GeoJSON: Polygon, or MultiPolygon when it has several outer rings.
-
-    Esri lists every ring of a multipart polygon in one array: outer rings
-    clockwise, holes counter-clockwise (both forest-order and IDPR layers have
-    several outer rings with holes). Each hole goes to the smallest outer ring
-    that contains it. Rings are written the RFC 7946 way round (outer rings
-    counter-clockwise). None if no ring is usable."""
-    rings = [r for r in (_ring(r) for r in (g or {}).get("rings") or []) if r]
-    if not rings:
-        return None
-    outers = [r for r in rings if _area(r) < 0]
-    holes = [r for r in rings if _area(r) > 0]
-    if not outers:                            # written the other way round: every ring is an outer ring
-        outers, holes = holes, []
-    polygons = [[o] for o in outers]
-    sizes = [abs(_area(o)) for o in outers]
-    for h in holes:
-        # Vertices on the hole's own boundary (not its middle, where an island may sit), a few in
-        # case one touches the outer ring.
-        probes = h[:-1][::max(1, (len(h) - 1) // 8)]
-        inside = [i for i, o in enumerate(outers) if any(_inside(p, o) for p in probes)]
-        if inside:
-            polygons[min(inside, key=lambda i: sizes[i])].append(h)
-        else:
-            polygons.append([h])              # a "hole" outside every outer ring: keep its area as a polygon
-    coords = []
-    for poly in polygons:
-        outer = poly[0] if _area(poly[0]) > 0 else poly[0][::-1]
-        inner = [h if _area(h) < 0 else h[::-1] for h in poly[1:]]
-        coords.append([[[x, y] for x, y in r] for r in [outer] + inner])
-    return {"type": "Polygon", "coordinates": coords[0]} if len(coords) == 1 else \
-        {"type": "MultiPolygon", "coordinates": coords}
+    """An Esri JSON polygon as GeoJSON (Polygon, or MultiPolygon with several outer rings), or None:
+    the shared reader's converter (ingest/arcgis.esri_polygon; it started here, Oct 7)."""
+    return arcgis.esri_polygon((g or {}).get("rings"))
 
 
 def geojson(g):

@@ -183,6 +183,15 @@ sampler.
 | `development` | Why traffic will change: COMPASS's traffic zones and forecasts, building permits and plats; later Boise's development pipeline | — | public |
 | `achd_tables` | ACHD's count and turn-movement copies and their tools (extends `flow`) | `flow`, `intersections` | **private** |
 | `parcels` | Ada County Assessor parcels and characteristics, aggregates by corridor | `development` | **private** |
+| `hazards` | Fire and warnings (ch. 17 Wave A, Oct 7): IDL's fire-restriction stages, NIFC's WFIGS incidents and perimeters, NASA FIRMS detections, NWS watches, warnings and advisories (person alerts dropped), USGS quakes | — | public (IDL stages internal) |
+| `air` | Smoke: NOAA's HMS smoke polygons (AirNow waits on the owner's form) | — | public |
+| `water` | Rivers and snow: NWPS gauges (37 in the ring), SNOTEL hourly, Boise's E. coli results and river hazards, the Drought Monitor by county | — | public (Boise's layers internal) |
+| `trails` | Ridge to Rivers trail conditions and the Greenbelt's closures and detours | — | public, aggregates until the City answers |
+| `lands` | Forest orders (Region 4) and IDPR's route closures and area restrictions | — | public, IDPR aggregates |
+| `weather` | Aviation Weather Center METARs for the ring's airports | — | public |
+| `wildlife` | IDFG's roadkill reports (about 9,300 in the ring), sensitive-species rules before anything public | — | public, aggregates only |
+| `farm` | AgriMet's daily crop water use (ET) for six Treasure Valley stations | — | public |
+| `sky` | SWPC's aurora nowcast (OVATION) and 1-minute Kp | — | public |
 
 The dependencies are what the ingest code needs (step 1): the intersection
 build links cameras, and nothing in the camera, transit or conditions
