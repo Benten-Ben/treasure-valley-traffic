@@ -7,11 +7,17 @@
  *
  *   S1  cold load at the default view, and at z14 pitch 60
  *   S2  warm reload
- *   S3  each layer on (cold), then off and on again (warm), by its key (2, 4, 7)
+ *   S3  each layer on (cold), then off and on again (warm), by its key (2, 4, 7),
+ *       from the default view with no layer on; road tiles (which MapLibre's
+ *       worker fetches) are counted from Playwright's request events
  *   S4  an 8 s fly-over of 3 waypoints with every layer on   (needs __tvt.map, WP1)
  *   S5  60 s of playback with no input                       (needs __tvt.map, WP1)
  *   S6  camera → Calibrate → Back: return-leg requests for tiles loaded before, and the view
  *   S7  a 30-minute soak with everything on (only when named) (needs __tvt.map, WP1)
+ *   S1flat  fix 8's "flat, then tilt" first visit: a cold load at the default
+ *       centre and zoom with pitch 0, then a tilt to 45 once settled; compare
+ *       its bytes, requests and time to settle with S1's default view
+ *       (only when named)
  *
  * Modes:
  *   --budget  the sandbox: SwiftShader, 25 Mbps / 40 ms throttling. Checks
@@ -24,6 +30,14 @@
  * package's own preview server, started if needed), --channel chrome,
  * --headed, --baseline (write app/scripts/perf-baseline.json, the committed
  * baseline, and don't fail on targets), --no-assert.
+ *
+ * WP5's A/B options (docs/14 §14.9, fixes 1 and 8; #lib/perf/flags):
+ *   --query 'hillshade=capped'   adds a query to every page the scenarios
+ *                                open (also workers=N, lod=M,R); the report
+ *                                and its file name record it
+ *   --label name                 a tag for the results file
+ * S5 and S7 open the pages with ?perf, whose HUD counts setData calls and
+ * WebGL textures (globalThis.__tvtPerf).
  *
  * Results go to data/perf/<time>-<mode>.json (git-ignored). Bytes count
  * JS and JSON at their gzip size (scripts/net.mjs).
@@ -47,13 +61,26 @@ const runs = Number(opt('--runs', 5));
 const baseline = flag('--baseline');
 const assert = !baseline && !flag('--no-assert');
 const scenarios = opt('--scenarios', mode === 'budget' ? 'S1,S2,S3,S6' : 'S1,S2,S4,S5,S6').split(',');
+const query = (opt('--query', '') ?? '').replace(/^\?/, '');
+const label = opt('--label', query ? query.replace(/[^\w=,.-]+/g, '_') : '');
 const env = harnessEnv();
 const THROTTLE = mode === 'budget' ? { latencyMs: 40, mbps: 25 } : undefined;
+/** A page path with the --query options (and any of its own) before the hash. */
+function withQuery(path, extra = query) {
+	const [beforeHash, hash] = path.split('#');
+	const [p, q] = beforeHash.split('?');
+	const params = new URLSearchParams(q ?? '');
+	for (const [k, v] of new URLSearchParams(extra ?? '')) params.set(k, v);
+	const qs = params.toString().replace(/=(?=&|$)/g, '');
+	return `${p}${qs ? `?${qs}` : ''}${hash !== undefined ? `#${hash}` : ''}`;
+}
 const VIEWS = {
-	default: '/',
-	z14p60: '/#14/43.6150/-116.2023/0/60' // downtown Boise
+	default: withQuery('/'),
+	z14p60: withQuery('/#14/43.6150/-116.2023/0/60') // downtown Boise
 };
-const ROUND_TRIP_VIEW = '/#14/43.6150/-116.2023/20/50';
+const ROUND_TRIP_VIEW = withQuery('/#14/43.6150/-116.2023/20/50');
+/** fix 8's flat first visit: the manifest's default centre and zoom (data/tiles/manifest.json), pitch 0. */
+const FLAT_VIEW = withQuery('/#10/43.6000/-116.4000/0/0');
 const LAYER_KEYS = [['streets', '2'], ['transit', '4'], ['cameras', '7']];
 
 const median = (xs) => {
@@ -112,6 +139,12 @@ async function heapMB(page) {
 	return MB(metrics.find((m) => m.name === 'JSHeapUsedSize')?.value ?? 0);
 }
 
+/** The requests of one load, for the results file: path, kind, range, budget bytes, status. */
+const requestList = (entries, base) => entries.map((x) => ({
+	url: x.url.replace(base, ''), kind: x.kind, range: x.range, bytes: x.fromCache ? 0 : x.gzipBytes ?? x.bytes,
+	status: x.status, fromCache: x.fromCache, failed: x.failed ?? undefined
+}));
+
 function loadRecord(net, t0, ready) {
 	const s = summarize(net.entries);
 	return {
@@ -142,15 +175,42 @@ async function S1(browser, base) {
 			await net.settle();
 			const t0 = Math.min(...net.entries.map((x) => x.start));
 			const r = loadRecord(net, t0, ready);
+			r.requestList = requestList(net.entries, base);
 			if (mode === 'real') Object.assign(r, { marks: await marks(page), heapMB: await heapMB(page) });
 			list.push(r);
 			await net.detach();
 			await context.close();
 			log(`S1 ${name} run ${i + 1}: ${r.requests} requests, ${MB(r.bytes)} MB (terrain ${MB(r.terrainBytes)}), ${r.duplicates} duplicates`);
 		}
-		out[name] = { median: medians(list), byKind: list.at(-1).byKind, runs: list.map(({ byKind, ...r }) => r) };
+		out[name] = { median: medians(list), byKind: list.at(-1).byKind, runs: list.map(({ byKind, requestList, ...r }) => r), requests: list.at(-1).requestList };
 	}
 	return out;
+}
+
+async function S1flat(browser, base) {
+	const list = [];
+	for (let i = 0; i < runs; i++) {
+		const { context, page } = await newPage(browser, base);
+		const net = await recordNetwork(page, { throttle: THROTTLE });
+		await page.goto(FLAT_VIEW);
+		const flat = await mapReady(page);
+		await net.settle();
+		const flatSummary = summarize(net.entries);
+		const t0 = Math.min(...net.entries.map((x) => x.start));
+		const tiltStart = Date.now();
+		await page.evaluate(() => globalThis.__tvt.map.easeTo({ pitch: 45, duration: 600 }));
+		const tilt = await mapReady(page);
+		await net.settle();
+		const r = { ...loadRecord(net, t0, { settledMs: flat.settledMs + (Date.now() - tiltStart) }), flatRequests: flatSummary.requests,
+			flatBytes: flatSummary.bytes, flatSettledMs: flat.settledMs, tiltSettledMs: tilt.settledMs };
+		if (mode === 'real') Object.assign(r, { marks: await marks(page) });
+		delete r.requestList;
+		list.push(r);
+		await net.detach();
+		await context.close();
+		log(`S1flat run ${i + 1}: flat ${r.flatRequests} requests / ${MB(r.flatBytes)} MB, after the tilt ${r.requests} / ${MB(r.bytes)} MB (terrain ${MB(r.terrainBytes)}), ${r.duplicates} duplicates`);
+	}
+	return { median: medians(list), byKind: list.at(-1).byKind, runs: list.map(({ byKind, ...r }) => r) };
 }
 
 async function S2(browser, base) {
@@ -187,29 +247,84 @@ async function S2(browser, base) {
 	return { median: medians(list), runs: list, profile: 'persistent (disk cache)' };
 }
 
+/**
+ * Road tiles: MapLibre's worker fetches them, and the page's CDP session
+ * (net.mjs) doesn't see a worker's requests; Playwright's request events do.
+ * Bytes are the encoded body (gzip since WP5).
+ */
+const WORKER_FETCHED = /\/api\/tiles\/roads\//;
+function recordWorkerRequests(page) {
+	const list = [];
+	const on = (r) => WORKER_FETCHED.test(r.url()) && list.push(r);
+	page.on('requestfinished', on);
+	return {
+		mark: () => list.length,
+		async summary(from = 0) {
+			const rs = list.slice(from);
+			let bytes = 0;
+			let gzipped = 0;
+			for (const r of rs) {
+				bytes += (await r.sizes().catch(() => null))?.responseBodySize ?? 0;
+				if ((await r.response())?.headers()['content-encoding'] === 'gzip') gzipped++;
+			}
+			return { requests: rs.length, bytes, gzipped };
+		},
+		detach: () => page.off('requestfinished', on)
+	};
+}
+
+/** Periodic polls, which run on their own clock rather than because of a toggle. */
+const POLL = /\/api\/(transit\/(vehicles|tracks)|cameras\/(live|status))/;
+
+/**
+ * S3 opens the default view with no layer on (`layers=none`: Transit and
+ * Cameras are on by default since WP2, so their key would turn them off),
+ * waits for the map to settle (the first idle prefetches the off layers'
+ * JSON, as designed), then measures each layer's toggles in a fresh context.
+ */
+const S3_VIEW = withQuery('/#map=10/43.6/-116.4/0/45&layers=none');
+
 async function S3(browser, base) {
 	const out = {};
 	for (const [layer, key] of LAYER_KEYS) {
 		const list = [];
 		for (let i = 0; i < runs; i++) {
 			const { context, page } = await newPage(browser, base);
-			await page.goto(VIEWS.default);
+			await page.goto(S3_VIEW);
 			await mapReady(page);
 			const net = await recordNetwork(page, { throttle: THROTTLE });
+			const tiles = recordWorkerRequests(page);
 			await page.keyboard.press(key); // on (cold)
 			await mapReady(page);
 			await net.settle();
 			const cold = summarize(net.entries);
+			const coldTiles = await tiles.summary();
 			const mark = net.mark();
-			await page.keyboard.press(key); // off (a toggle from WP2 on; today a lens switch is a no-op here)
+			const tileMark = tiles.mark();
+			await page.keyboard.press(key); // off
 			await page.waitForTimeout(500);
 			await page.keyboard.press(key); // on again (warm)
 			await mapReady(page, { quietMs: 1500 });
-			const warm = summarize(net.since(mark));
-			list.push({ coldRequests: cold.requests, coldBytes: cold.bytes, warmRequests: warm.requests + warm.cached, warmNetworkRequests: warm.requests });
+			const since = net.since(mark);
+			const warm = summarize(since);
+			const warmTiles = await tiles.summary(tileMark);
+			const polls = since.filter((x) => POLL.test(x.url)).length;
+			const r = {
+				coldRequests: cold.requests + coldTiles.requests,
+				coldBytes: cold.bytes + coldTiles.bytes,
+				coldRoadTiles: coldTiles.requests,
+				coldRoadTileBytes: coldTiles.bytes,
+				coldRoadTilesGzipped: coldTiles.gzipped,
+				warmRequests: warm.requests + warm.cached + warmTiles.requests,
+				warmNetworkRequests: warm.requests + warmTiles.requests,
+				warmPolls: polls
+			};
+			list.push(r);
+			tiles.detach();
 			await net.detach();
 			await context.close();
-			log(`S3 ${layer} run ${i + 1}: cold ${cold.requests} requests / ${MB(cold.bytes)} MB; warm toggle ${warm.requests + warm.cached} requests`);
+			log(`S3 ${layer} run ${i + 1}: cold ${r.coldRequests} requests / ${MB(r.coldBytes)} MB (road tiles ${coldTiles.requests}, ${coldTiles.gzipped} gzipped); ` +
+				`warm toggle ${r.warmRequests} requests (${polls} of them polls)`);
 		}
 		out[layer] = { median: medians(list), runs: list };
 	}
@@ -257,6 +372,7 @@ async function S6(browser, base) {
 		const after = await view(page);
 		const r = {
 			returnLegRequests: back.length,
+			returnLegUrls: back.map((x) => x.url.replace(base, '')),
 			returnLegTileRefetches: back.filter((x) => isTile(x) && loaded.has(keyOf(x))).length,
 			returnLegManifestRequests: back.filter((x) => x.kind === 'manifest').length,
 			returnLegWireBytes: back.reduce((s, x) => s + x.bytes, 0),
@@ -313,12 +429,12 @@ async function S4(browser, base) {
 
 async function S5(browser, base) {
 	const { context, page } = await newPage(browser, base);
-	await page.goto(VIEWS.default);
+	await page.goto(withQuery(VIEWS.default, 'perf'));
 	await mapReady(page);
 	if (!(await hasTvt(page))) return context.close().then(() => ({ skipped: 'needs __tvt.map (WP1)' }));
 	const net = await recordNetwork(page, { bodies: false });
 	const f = await frames(page, async () => {}, 60_000);
-	const setData = await page.evaluate(() => globalThis.__tvt?.perf?.setDataCalls ?? null);
+	const setData = await page.evaluate(() => globalThis.__tvtPerf?.setDataCalls ?? null);
 	await net.detach();
 	await context.close();
 	return { ...f, requests: net.entries.length, setDataCalls: setData };
@@ -326,20 +442,20 @@ async function S5(browser, base) {
 
 async function S7(browser, base) {
 	const { context, page } = await newPage(browser, base);
-	await page.goto(VIEWS.default);
+	await page.goto(withQuery(VIEWS.default, 'perf'));
 	await mapReady(page);
 	if (!(await hasTvt(page))) return context.close().then(() => ({ skipped: 'needs __tvt.map (WP1)' }));
 	for (const key of ['2', '4', '7']) await page.keyboard.press(key);
 	const samples = [];
 	for (let m = 0; m <= 30; m++) {
-		samples.push({ minute: m, heapMB: await heapMB(page), textures: await page.evaluate(() => globalThis.__tvt?.perf?.textures ?? null) });
+		samples.push({ minute: m, heapMB: await heapMB(page), textures: await page.evaluate(() => globalThis.__tvtPerf?.textures ?? null) });
 		if (m < 30) await page.waitForTimeout(60_000);
 	}
 	await context.close();
 	return { samples, heapGrowthMB: +(samples.at(-1).heapMB - samples[0].heapMB).toFixed(1) };
 }
 
-const SCENARIOS = { S1, S2, S3, S4, S5, S6, S7 };
+const SCENARIOS = { S1, S2, S3, S4, S5, S6, S7, S1flat };
 
 /** §14.9 targets this harness can check today (budget mode). */
 function targets(res) {
@@ -417,6 +533,7 @@ const report = {
 	gpu,
 	throttle: THROTTLE ?? null,
 	runs,
+	query: query || null,
 	tilesServer: local ? 'vite preview with the Caddy mirror (src/lib/server/tiles-static.ts)' : 'Caddy',
 	results,
 	offsite: [...new Set(offsite)],
@@ -425,7 +542,7 @@ const report = {
 
 const dir = join(env.TVT_MAIN, 'data', 'perf');
 mkdirSync(dir, { recursive: true });
-const file = join(dir, `${report.at.replace(/[:.]/g, '-')}-${mode}.json`);
+const file = join(dir, `${report.at.replace(/[:.]/g, '-')}-${mode}${label ? `-${label}` : ''}.json`);
 writeFileSync(file, JSON.stringify({ ...report, url: srv.base }, null, 2));
 if (baseline) writeFileSync(join(APP_DIR, 'scripts', 'perf-baseline.json'), `${JSON.stringify(report, null, 2)}\n`);
 
