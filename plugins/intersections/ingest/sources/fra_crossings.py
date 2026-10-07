@@ -10,7 +10,7 @@ Each crossing's record is versioned in raw.record by its DOT crossing number,
 without Socrata's ":@computed_region_*" columns (map-region lookups Socrata
 adds and recomputes, not FRA data). core.rail_crossing keeps closed crossings,
 flagged. Its intersection_id and signal_distance_m are set by the intersection
-build (ingest/intersections.py).
+build (../intersections.py).
 
 Field notes (docs/08 §8.9): FRA's signal, interconnection and preemption
 fields are filled only for Boise Valley Railroad crossings; Union Pacific
@@ -21,7 +21,7 @@ import json
 import time
 import urllib.parse
 
-from .. import db, http
+from ingest import db, http
 
 DATASET = "https://data.transportation.gov/resource/m2f8-22s6.json"
 COUNTIES = ("16001", "16027")        # Ada, Canyon

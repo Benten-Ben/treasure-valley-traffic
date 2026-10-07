@@ -9,7 +9,7 @@ snapshot are marked inactive, never deleted.
 import json
 from collections import Counter
 
-from . import db
+from ingest import db
 
 KINDS = {"signal_intersection", "signal_pole", "ped_hybrid", "rrfb", "ped_conventional",
          "warning_beacon", "school_flasher", "fire_signal"}

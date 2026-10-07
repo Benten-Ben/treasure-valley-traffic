@@ -1,4 +1,4 @@
-"""Tests for the intersection build (ingest/intersections.py).
+"""Tests for the intersection build (plugins/intersections/ingest/intersections.py).
 
 The plan tests are offline, on a synthetic layout in metres. The database test
 builds in a synthetic area outside the valley (around 42.5 N, 115.5 W), inside
@@ -6,7 +6,7 @@ one transaction that is rolled back, against a scratch database named by
 TVT_TEST_DATABASE_URL (a clone with migration 0011). Streets, IDs and points
 are all made up.
 
-Run: python3 -m unittest discover -s ingest/tests -t .
+Run: python3 -m unittest discover -s plugins -t .
 """
 
 import json
@@ -14,7 +14,8 @@ import os
 import unittest
 from datetime import datetime, timedelta, timezone
 
-from ingest import db, intersections as ix
+from ingest import db
+from plugins.intersections.ingest import intersections as ix
 
 T0 = datetime(2026, 10, 6, 12, 0, tzinfo=timezone.utc)
 

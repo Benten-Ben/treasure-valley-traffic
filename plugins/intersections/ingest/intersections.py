@@ -34,7 +34,7 @@ stored and writes our own rows; it fetches nothing.
    looks like that). Below ACTIVE_MIN an intersection is a 'candidate' (the
    review list).
 7. **Reviews:** decisions on candidates (owner's lead, Oct 6) live in
-   ingest/intersection_reviews.json. Each sets the status of the built
+   intersection_reviews.json (beside this file). Each sets the status of the built
    intersection nearest its point within REVIEW_M ('retired' with a reason,
    or 'candidate'), until that intersection gains a source the review lists in
    reopen_on; then the review stops applying and the report says so. Devices
@@ -70,10 +70,9 @@ import os
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 
+from ingest import db
+from ingest.utm import to_utm
 from plugins.roads.ingest import streets
-
-from . import db
-from .utm import to_utm
 
 UTM = 26911
 SNAP_M = 40
@@ -172,7 +171,7 @@ class Existing:
 
 @dataclass
 class Review:
-    """A reviewed decision (ingest/intersection_reviews.json), its point in metres."""
+    """A reviewed decision (intersection_reviews.json), its point in metres."""
     key: str
     name: str
     status: str

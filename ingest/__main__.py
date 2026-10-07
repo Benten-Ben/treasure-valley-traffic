@@ -101,7 +101,7 @@ def main():
         print("match-routes: " + ", ".join(f"{k} {v}" for k, v in stats.items()), flush=True)
         return
     if args.cmd == "match-intersections":
-        from . import intersections
+        from plugins.intersections.ingest import intersections
         with db.connect() as conn:
             if args.dry_run:
                 stats, details = intersections.build(conn, db.now())

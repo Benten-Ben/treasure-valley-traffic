@@ -11,7 +11,8 @@ frozen, so OBJECTIDs hold), and becomes a core.signal_device.
 
 import time
 
-from .. import arcgis, db, signal_devices
+from ingest import arcgis, db
+from .. import signal_devices
 
 BASE = "https://services2.arcgis.com/9rTo9NcUHIKASKwi/ArcGIS/rest/services"
 LAYERS = [  # (service, layer id, default kind)

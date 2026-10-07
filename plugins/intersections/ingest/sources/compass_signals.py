@@ -21,9 +21,10 @@ approach is the intersection's south leg.
 
 from collections import defaultdict
 
+from ingest import arcgis, db
 from plugins.roads.ingest import streets
 
-from .. import arcgis, db, signal_devices
+from .. import signal_devices
 
 LAYER = ("https://services6.arcgis.com/2S9FP4vfcUQQ8G1T/arcgis/rest/services/"
          "Signalized_Intersections/FeatureServer/0")
