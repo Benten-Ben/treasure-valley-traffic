@@ -454,7 +454,13 @@ test.describe('buses3d', () => {
 		await page.route('**/api/transit/tracks**', async (r) => {
 			const res = await r.fetch();
 			const t: Tracks = await res.json();
-			if (!unknownId) unknownId = t.steps.find((s) => s[3] === 'along' && s[1] <= t.now - 90 && (s[2] ?? 0) > t.now - 60)?.[0] ?? null;
+			// The bus moving along its path at the playhead (now − the 90 s delay) for longest after it.
+			// (A fixed 30 s margin, t1 > now − 60, found no bus for most of the seconds after `at`.)
+			if (!unknownId)
+				unknownId =
+					t.steps
+						.filter((s) => s[3] === 'along' && s[1] <= t.now - 90 && (s[2] ?? 0) > t.now - 90)
+						.sort((a, b) => (b[2] ?? 0) - (a[2] ?? 0))[0]?.[0] ?? null;
 			if (unknownId && t.vehicles[unknownId])
 				t.vehicles[unknownId] = { ...t.vehicles[unknownId], routeId: null, routeSource: null, shortName: null, color: '#8a857c', textColor: '#2b2a33', halo: true };
 			await r.fulfill({ json: t, headers: { 'cache-control': 'no-store' } });

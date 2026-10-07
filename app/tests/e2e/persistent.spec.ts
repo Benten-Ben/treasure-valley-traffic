@@ -58,10 +58,23 @@ async function openCameraCard(page: Page, lngLat: [number, number]) {
  * again, no manifest request, the exact view, and the same style layers as
  * after the first trip (which adds the aerial layers). One map throughout.
  */
-async function roundTrips(page: Page, start: string, enter: () => Promise<void>, back: () => Promise<void>, label: string) {
+async function roundTrips(
+	page: Page,
+	start: string,
+	enter: () => Promise<void>,
+	back: () => Promise<void>,
+	label: string,
+	prepare?: () => Promise<void>
+) {
 	const net = await recordNetwork(page, { bodies: false });
 	await page.goto(start);
 	await mapReady(page);
+	// Anything that moves the map before the first trip (a camera click flies to it, WP12) happens
+	// here, so the tiles and the view the trips must keep are the ones after it.
+	if (prepare) {
+		await prepare();
+		await mapReady(page);
+	}
 	const loaded = new Set(net.entries.filter((x) => isTile(x) && !x.failed).map(tileKey));
 	const before = await currentView(page);
 	expect(before).not.toBeNull();
@@ -123,12 +136,12 @@ test.describe('persistent', () => {
 		await roundTrips(
 			page,
 			start,
-			async () => {
-				await openCameraCard(page, pole);
-				await page.getByRole('region', { name: 'Selected camera' }).getByRole('link').click();
-			},
+			// The selection survives each trip, so every cycle enters from the card's link.
+			() => page.getByRole('region', { name: 'Selected camera' }).getByRole('link').click(),
 			() => page.getByRole('button', { name: 'Leave calibration' }).click(),
-			'leave'
+			'leave',
+			// A click on the camera flies to it and opens its window (Q2, WP12): select it first.
+			() => openCameraCard(page, pole)
 		);
 		expect(offsite).toEqual([]);
 	});

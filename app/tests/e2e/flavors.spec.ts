@@ -397,9 +397,10 @@ test.describe('flavors', () => {
 		// Aerial off again, and muted again for when it's next on in Clay.
 		expect(await vis(page, 'aerial')).toBe('none');
 		expect(await paint(page, 'aerial', 'raster-saturation')).toBe(-0.7);
-		// Flavors add no layers: the style holds the same ones, plus the aerial layers calibrating added.
+		// Flavors add no layers: the style holds the same ones, plus the aerial layers calibrating added
+		// and the 3D scene's one layer, which Transit asks for from z14.5 (WP10; the calibrator is at z19).
 		const after = await page.evaluate(() => (globalThis as any).__tvt.map.getLayersOrder());
-		expect(after.filter((id: string) => !ids.includes(id) && !id.startsWith('aerial'))).toEqual([]);
+		expect(after.filter((id: string) => !ids.includes(id) && !id.startsWith('aerial') && id !== 'scene-3d')).toEqual([]);
 		expect(ids.filter((id: string) => !after.includes(id))).toEqual([]);
 	});
 

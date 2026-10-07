@@ -337,16 +337,23 @@ test.describe('layers', () => {
 		};
 		// A first round shows every legend and tooltip once, so their fonts are in.
 		await toggleAll();
-		// Then right after a tracks poll, so its 10 s interval isn't due while Transit is back on;
+		// Then right after a tracks poll, so its 10 s interval is seldom due while Transit is back on;
 		// Transit stays off for the rest, so its regular poll can't land in the count either.
-		await page.waitForResponse((r) => r.url().includes('/api/transit/tracks'), { timeout: 30_000 });
+		const isTracks = (url: string) => url.includes('/api/transit/tracks');
+		const tracksAt: number[] = [];
+		page.on('request', (r) => {
+			if (isTracks(r.url())) tracksAt.push(Date.now());
+		});
+		await (await page.waitForRequest((r) => isTracks(r.url()), { timeout: 30_000 })).response();
 		const net = await recordNetwork(page, { bodies: false });
 		const mark = net.mark();
+		const polls = tracksAt.length;
 		await layerButton(page, 'Transit').click();
 		await mapReady(page);
 		await layerButton(page, 'Transit').click();
 		await mapReady(page);
 		await layerButton(page, 'Transit').click();
+		const transitOff = Date.now();
 		for (const name of ['Cameras', 'Streets']) {
 			await layerButton(page, name).click();
 			await mapReady(page);
@@ -355,7 +362,15 @@ test.describe('layers', () => {
 		}
 		const during = net.since(mark).map((x: { url: string }) => x.url);
 		await net.detach();
-		expect(during, 'requests while toggling loaded layers').toEqual([]);
+		expect(during.filter((url: string) => !isTracks(url)), 'requests while toggling loaded layers').toEqual([]);
+		// Under a loaded SwiftShader a toggle with its map settling can outlast the interval. A tracks
+		// poll a full interval (POLL_MS, 10 s) after the one before is Transit's regular poll, not the
+		// toggle's; one sooner than that, or once Transit is off, is a request the toggle made.
+		const early = tracksAt
+			.map((t, i) => ({ t, gap: i ? t - tracksAt[i - 1] : Infinity }))
+			.slice(polls)
+			.filter((p) => p.gap < 10_000 - 500 || p.t > transitOff + 1000);
+		expect(early, 'tracks polls the toggles brought forward').toEqual([]);
 	});
 
 	test('a slow routes request shows the ring and "Loading routes…"; a 500 shows ▲ and Retry', { tag: '@wp2' }, async ({ page }) => {
