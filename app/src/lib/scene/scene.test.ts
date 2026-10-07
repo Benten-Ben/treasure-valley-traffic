@@ -47,6 +47,29 @@ describe('ground', () => {
 		expect(g.tweening).toBe(false);
 	});
 
+	it('within one terrain epoch a still object isn’t queried again; a new epoch, a move or a frame off screen queries it', () => {
+		const g = new GroundTracker();
+		let queries = 0;
+		const q = (v: number) => () => (queries++, v);
+		g.begin();
+		g.sample('a', -116, 43, q(1300), 1.3, 0, false, 7);
+		g.begin();
+		expect(g.sample('a', -116, 43, q(9999), 1.3, 16, false, 7)).toBeCloseTo(1000, 9);
+		expect(queries).toBe(1);
+		expect(g.queries).toBe(0);
+		// The camera moved (a new epoch): queried, and a refined value eases in.
+		g.begin();
+		g.sample('a', -116, 43, q(1313), 1.3, 32, false, 8);
+		expect(queries).toBe(2);
+		expect(g.tweening).toBe(true);
+		// Not drawn for a frame (off screen), then back: queried and taken at once.
+		g.begin();
+		g.begin();
+		expect(g.sample('a', -116, 43, q(1326), 1.3, 48, false, 8)).toBeCloseTo(1020, 9);
+		expect(queries).toBe(3);
+		expect(g.peek('a')).toBeCloseTo(1020, 9);
+	});
+
 	it('under reduced motion heights jump', () => {
 		const g = new GroundTracker();
 		g.begin();

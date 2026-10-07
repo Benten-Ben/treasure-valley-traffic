@@ -26,8 +26,8 @@ export interface SceneTestHandle {
 	ok(): boolean;
 	error(): string | null;
 	stats(): ReturnType<Scene['stats']>;
-	/** Lay the grid out again over the current view (optionally only the middle `fraction` of it). */
-	reset(fraction?: number): void;
+	/** Lay the grid out again over the current view (optionally only the middle `fraction` of it, and models at `scale`). */
+	reset(fraction?: number, scale?: number): void;
 	setMoving(on: boolean): void;
 	/** Measure the grid on the next frame. Only rows inside the viewport (with `margin` px) count. */
 	probe(margin?: number): Promise<ProbeSummary>;
@@ -88,7 +88,7 @@ export function startSceneTest(app: AppCtx, scene: Scene, count = 1000): SceneTe
 
 	const pick = (i: number | string) => ({ kind: 'bus' as const, id: `s${i}`, layer: 'scene-test', title: `Test model ${i}`, fact: 'A scene test instance' });
 
-	const reset = (fraction = 1) => {
+	const reset = (fraction = 1, scale = 1) => {
 		const map = app.map;
 		if (!map) return;
 		const canvas = map.getCanvas();
@@ -106,7 +106,7 @@ export function startSceneTest(app: AppCtx, scene: Scene, count = 1000): SceneTe
 			const y = h * (0.5 - fy / 2 + (fy * (Math.floor(i / cols) + 0.5)) / rows);
 			const ll = map.unproject([x, y]);
 			base.push([ll.lng, ll.lat]);
-			instances.push({ id: `s${i}`, mesh: 'bus', lng: ll.lng, lat: ll.lat, heading: (i * 37) % 360, color: COLORS[i % COLORS.length], minPx: 9, pick: pick(i) });
+			instances.push({ id: `s${i}`, mesh: 'bus', lng: ll.lng, lat: ll.lat, heading: (i * 37) % 360, scale, color: COLORS[i % COLORS.length], minPx: 9, pick: pick(i) });
 		}
 		scene.set(GROUP, instances);
 	};
@@ -161,7 +161,7 @@ export function startSceneTest(app: AppCtx, scene: Scene, count = 1000): SceneTe
 		const [right, down, fwd] = axes(150, 24, 0);
 		const apex: LngLatAlt = [pl, pt, g + height];
 		const showcaseItems: SceneInstance[] = [
-			{ id: 'show-bus', mesh: 'bus', lng: bl, lat: bt, heading: 35, color: '#2b6cb0', shadow: true, pick: pick('show-bus') },
+			{ id: 'show-bus', mesh: 'bus', lng: bl, lat: bt, heading: 35, color: '#2b6cb0', shadow: true, pick: { kind: 'bus', id: 'show-bus', layer: 'scene-test', title: 'Test bus', fact: 'A scene test instance' } },
 			{ id: 'show-stop', mesh: 'stop', lng: sl, lat: st, heading: 35, slots: ['#d1495b', '#2b6cb0', null, '#2a9d8f'], pick: { kind: 'stop', id: 'show-stop', layer: 'scene-test', title: 'Test stop' } },
 			{ id: 'show-pole', mesh: 'pole', lng: pl, lat: pt, scale: [1, 1, height - 0.3] },
 			{ id: 'show-head', mesh: 'head', lng: pl, lat: pt, alt: g + height, basis: [right, down, fwd], minPx: 12, pick: { kind: 'camera', id: 'show-head', layer: 'scene-test', title: 'Test camera' } },

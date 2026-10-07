@@ -32,42 +32,67 @@ interface Track {
 	from: number;
 	to: number;
 	t0: number;
+	/** The frame it was last drawn in. */
 	seen: number;
+	/** The terrain epoch and exaggeration it was sampled at. */
+	epoch: number;
+	exag: number;
 }
 
 /**
  * Per-object true ground, eased over 200 ms when the DEM under a still object
  * changes. `sample` returns the true ground to draw with this frame.
+ *
+ * The drawn ground only changes when the camera moves, terrain tiles arrive or
+ * the exaggeration changes: the scene counts those in an epoch, and an object
+ * that hasn't moved within one epoch isn't queried again.
  */
 export class GroundTracker {
 	#tracks = new Map<string, Track>();
 	#frame = 0;
 	/** Whether a tween is running (the scene asks the loop for frames while it is). */
 	tweening = false;
+	/** Terrain queries made this frame (for tests and the ?perf HUD). */
+	queries = 0;
 
-	/** Start a frame (objects not sampled for a while are forgotten). */
+	/** Start a frame (objects not drawn for a while are forgotten). */
 	begin(): void {
 		this.#frame++;
 		this.tweening = false;
+		this.queries = 0;
 		if (this.#frame % 600 === 0) for (const [k, t] of this.#tracks) if (this.#frame - t.seen > 600) this.#tracks.delete(k);
 	}
 
+	/** The true ground last shown under `id`, if any. */
+	peek(id: string): number | undefined {
+		return this.#tracks.get(id)?.shown;
+	}
+
 	/**
-	 * True ground under `id` at (lng, lat): the drawn ground `drawn` (exaggerated)
-	 * divided by `exag`. A still object eases to a changed value.
+	 * True ground under `id` at (lng, lat): the drawn ground (exaggerated, a
+	 * number or a function that queries it) divided by `exag`. A still object
+	 * eases to a changed value; one that moved, or wasn't drawn in the last
+	 * frame, takes it at once. With the same `epoch` (≥ 0), exaggeration and
+	 * position as last time, the ground isn't queried again.
 	 */
-	sample(id: string, lng: number, lat: number, drawn: number, exag: number, now: number, reducedMotion = false): number {
-		const target = exag > 0 ? drawn / exag : 0;
+	sample(id: string, lng: number, lat: number, drawn: number | (() => number), exag: number, now: number, reducedMotion = false, epoch = -1): number {
 		const t = this.#tracks.get(id);
+		const frame = this.#frame;
+		if (t && epoch >= 0 && t.epoch === epoch && t.exag === exag && t.lng === lng && t.lat === lat && frame - t.seen <= 1) {
+			t.seen = frame;
+			return this.#advance(t, now);
+		}
+		this.queries++;
+		const d = typeof drawn === 'number' ? drawn : drawn();
+		const target = exag > 0 ? d / exag : 0;
 		if (!t) {
-			this.#tracks.set(id, { lng, lat, shown: target, from: target, to: target, t0: now, seen: this.#frame });
+			this.#tracks.set(id, { lng, lat, shown: target, from: target, to: target, t0: now, seen: frame, epoch, exag });
 			return target;
 		}
-		t.seen = this.#frame;
+		const away = frame - t.seen > 1;
 		const moved = t.lng !== lng || t.lat !== lat;
-		t.lng = lng;
-		t.lat = lat;
-		if (moved || reducedMotion) {
+		Object.assign(t, { lng, lat, seen: frame, epoch, exag });
+		if (moved || away || reducedMotion) {
 			t.shown = t.from = t.to = target;
 			return target;
 		}
@@ -77,6 +102,10 @@ export class GroundTracker {
 			t.to = target;
 			t.t0 = now;
 		} else t.to = target;
+		return this.#advance(t, now);
+	}
+
+	#advance(t: Track, now: number): number {
 		const k = Math.min(1, (now - t.t0) / TWEEN_MS);
 		if (k >= 1 || t.from === t.to) t.shown = t.from = t.to;
 		else {

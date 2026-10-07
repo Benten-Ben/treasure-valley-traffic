@@ -41,6 +41,8 @@ export interface Frame {
 	height: number;
 	/** Screen px per metre at clip w = 1 (radius_px = r_m · pxPerMetreW / w). */
 	pxPerMetreW: number;
+	/** MapLibre world px (the unit of clip w) per metre at the centre. */
+	worldPerMetre: number;
 }
 
 /** out = a · b (column-major, float64). */
@@ -82,7 +84,8 @@ export function makeFrame(main: Mat4, lng: number, lat: number, oz: number, widt
 	f.height = height;
 	// MapLibre's eye space is in world pixels (512·2^zoom per world), and clip w is eye depth there:
 	// a metre is k·worldSize world px, seen at depth w as (H/2)/tan(fov/2) · that / w screen px.
-	f.pxPerMetreW = (k * 512 * 2 ** zoom * (height / 2)) / Math.tan(fov / 2);
+	f.worldPerMetre = k * 512 * 2 ** zoom;
+	f.pxPerMetreW = (f.worldPerMetre * (height / 2)) / Math.tan(fov / 2);
 	return f;
 }
 
@@ -93,10 +96,11 @@ export function offset(f: Frame, mx: number, my: number, z: number, out: [number
 	out[i + 2] = z - f.oz;
 }
 
-/** Project metres-from-origin to CSS px with the float64 matrix; false when behind the camera. */
+/** Project metres-from-origin to CSS px with the float64 matrix; false when behind the camera (`out.w` is set either way). */
 export function projectLocal(f: Frame, e: number, n: number, u: number, out: { x: number; y: number; w: number }): boolean {
 	const m = f.m64;
 	const w = m[3] * e + m[7] * n + m[11] * u + m[15];
+	out.w = w;
 	if (!(w > 0)) return false;
 	out.x = (((m[0] * e + m[4] * n + m[8] * u + m[12]) / w + 1) / 2) * f.width;
 	out.y = ((1 - (m[1] * e + m[5] * n + m[9] * u + m[13]) / w) / 2) * f.height;

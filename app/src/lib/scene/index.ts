@@ -169,6 +169,8 @@ export interface SceneStats {
 	lastFrameMs: number;
 	/** p95 of the last 120 frames' JS time, ms. */
 	p95Ms: number;
+	/** Terrain queries in the last frame (things that moved, or everything after the camera moved). */
+	groundQueries: number;
 }
 
 /** One probed instance: where the GPU put its anchor, and where `map.project` says. */
@@ -286,13 +288,15 @@ export class Scene implements HitSource {
 	#size = { w: 0, h: 0 };
 	#hoverKey = '';
 	#selectedKey = '';
+	/** Bumped when the drawn ground may have changed (camera moved, terrain tiles or settings changed). */
+	#epoch = 0;
 	#selectedAt = 0;
 	#cleanup: (() => void)[] = [];
 	#times: number[] = [];
 	#probe: { kind: MeshKind; local: Vec3; resolve: (rows: ProbeRow[]) => void; reject: (e: Error) => void } | null = null;
 	/** Ids per mesh kind in the order they were written this frame (for the probe). */
 	#order = new globalThis.Map<MeshKind, { id: string; lng: number; lat: number; z: number }[]>();
-	#stats: SceneStats = { frames: 0, drawCalls: 0, instances: 0, lastFrameMs: 0, p95Ms: 0 };
+	#stats: SceneStats = { frames: 0, drawCalls: 0, instances: 0, lastFrameMs: 0, p95Ms: 0, groundQueries: 0 };
 	#layer = sceneLayer({
 		onAdd: (gl) => this.#setup(gl),
 		onRemove: () => this.#teardown(),
@@ -333,13 +337,24 @@ export class Scene implements HitSource {
 			if (map.isStyleLoaded()) readd();
 			else map.once('style.load', readd);
 		};
+		// The drawn ground changes only when the camera moves, terrain tiles arrive or terrain is set.
+		const bump = () => void this.#epoch++;
+		const onSource = (e: { sourceId?: string }) => {
+			if (e.sourceId && e.sourceId === map.getTerrain()?.source) this.#epoch++;
+		};
 		map.on('resize', onResize);
 		map.on('webglcontextlost', onLost);
 		map.on('webglcontextrestored', onRestored);
+		map.on('move', bump);
+		map.on('terrain', bump);
+		map.on('sourcedata', onSource);
 		this.#cleanup.push(() => {
 			map.off('resize', onResize);
 			map.off('webglcontextlost', onLost);
 			map.off('webglcontextrestored', onRestored);
+			map.off('move', bump);
+			map.off('terrain', bump);
+			map.off('sourcedata', onSource);
 		});
 		const d = this.#deps;
 		if (d.picker) {
@@ -563,10 +578,10 @@ export class Scene implements HitSource {
 		let total = 0;
 
 		/** True ground under a point (eased), and the drawn base height for a true height (or the ground). */
+		const epoch = this.#epoch;
 		const groundAt = (id: string, lng: number, lat: number, groundAlt: number | undefined, fallback: number) => {
 			if (!terrain) return groundAlt ?? fallback;
-			const drawn = map.queryTerrainElevation([lng, lat]) ?? 0;
-			return this.#ground.sample(id, lng, lat, drawn, exag, now, still);
+			return this.#ground.sample(id, lng, lat, () => map.queryTerrainElevation([lng, lat]) ?? 0, exag, now, still, epoch);
 		};
 		const zAt = (id: string, lng: number, lat: number, alt: number | undefined, groundAlt: number | undefined) => {
 			const g = groundAt(id, lng, lat, groundAlt, alt ?? 0);
@@ -589,13 +604,25 @@ export class Scene implements HitSource {
 				const hover = Boolean(key) && key === this.#hoverKey;
 				const mx = mercatorX(inst.lng);
 				const my = mercatorY(inst.lat);
+				const sv = typeof inst.scale === 'number' ? this.#sv.fill(inst.scale) : (inst.scale ?? ONES);
+				let s = selected ? SELECT_SCALE * (1 + 0.08 * pulse) : 1;
+				const lift = (inst.lift ?? 0) + (selected ? SELECT_LIFT : 0);
+				// Off screen (judged at the height it was last drawn at): neither drawn, picked nor queried for its ground.
+				const prev = terrain ? this.#ground.peek(inst.id) : undefined;
+				if (prev !== undefined || !terrain) {
+					const approx = terrain ? (inst.alt === undefined ? exag * prev! : renderedZ(inst.alt, prev!, exag)) : zAt(inst.id, inst.lng, inst.lat, inst.alt, inst.groundAlt);
+					offset(f, mx, my, approx + lift, local);
+					const rM = mesh.radius * 2 * Math.max(sv[0], sv[1], sv[2]) * s;
+					if (projectLocal(f, local[0], local[1], local[2], pt)) {
+						const m = Math.max((rM * f.pxPerMetreW) / pt.w, (inst.minPx ?? 0) / 2) + 64;
+						if (pt.x < -m || pt.y < -m || pt.x > f.width + m || pt.y > f.height + m) continue;
+					} else if (pt.w < -rM * f.worldPerMetre) continue;
+				}
 				const base = zAt(inst.id, inst.lng, inst.lat, inst.alt, inst.groundAlt);
-				const z = base + (inst.lift ?? 0) + (selected ? SELECT_LIFT : 0);
+				const z = base + lift;
 				offset(f, mx, my, z, local);
 				// Axes, with the instance's scale; east and north grow by the Mercator scale here over the centre's.
 				const axes = inst.basis ?? hprInto(this.#axes, inst.heading, inst.pitch, inst.roll);
-				const sv = typeof inst.scale === 'number' ? this.#sv.fill(inst.scale) : (inst.scale ?? ONES);
-				let s = selected ? SELECT_SCALE * (1 + 0.08 * pulse) : 1;
 				const c = cosC / Math.cos(inst.lat * DEG);
 				// Screen size: the bounding sphere's centre and radius.
 				const ctr = mesh.center;
@@ -693,7 +720,13 @@ export class Scene implements HitSource {
 		gl.cullFace(gl.BACK);
 		gl.frontFace(gl.CCW);
 		calls += gpu.meshes.draw(this.#data, f.m32, light);
-		if (this.#probe) this.#runProbe(map, gpu);
+		// The probe (tests only) stalls until the GPU is done; keep it out of the frame's JS time.
+		let probeMs = 0;
+		if (this.#probe) {
+			const p0 = performance.now();
+			this.#runProbe(map, gpu);
+			probeMs = performance.now() - p0;
+		}
 		gl.disable(gl.CULL_FACE);
 		gl.enable(gl.BLEND);
 		gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
@@ -714,13 +747,14 @@ export class Scene implements HitSource {
 		gl.bindVertexArray(null);
 		this.#pick.commit();
 
-		const ms = performance.now() - t0;
+		const ms = performance.now() - t0 - probeMs;
 		this.#times.push(ms);
 		if (this.#times.length > 120) this.#times.shift();
 		this.#stats.drawCalls = calls;
 		this.#stats.instances = total;
 		this.#stats.lastFrameMs = ms;
 		this.#stats.p95Ms = p95(this.#times);
+		this.#stats.groundQueries = this.#ground.queries;
 		// Keep frames coming while heights ease or the selection pulses.
 		deps.loop.want('scene:ease', this.#ground.tweening ? 60 : null);
 	}

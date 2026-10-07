@@ -32,6 +32,9 @@ function record(name: string, data: unknown) {
 
 async function openTest(page: Page, hash: string) {
 	await page.goto(`/?scene-test${hash}`);
+	// Record map errors with their source from the moment the map exists.
+	await page.waitForFunction(() => (globalThis as any).__tvt?.map, null, { timeout: 120_000 });
+	await watchMapErrors(page);
 	await mapReady(page);
 	await page.waitForFunction(() => (globalThis as any).__tvtSceneTest, null, { timeout: 90_000 });
 	expect(await page.evaluate(() => (globalThis as any).__tvtSceneTest.ok()), 'the scene is running').toBe(true);
@@ -55,6 +58,33 @@ async function probeAt(page: Page, cam: { center: [number, number]; zoom: number
 	}, fraction);
 }
 
+type MapError = { source: string | null; tile: string | null; message: string };
+
+/** Record the map's error events with their source (an `error` event's console line doesn't say which source). */
+async function watchMapErrors(page: Page) {
+	await page.evaluate(() => {
+		const w = globalThis as any;
+		if (w.__mapErrors) return;
+		w.__mapErrors = [];
+		w.__tvt.map.on('error', (ev: any) => {
+			const c = ev.tile?.tileID?.canonical;
+			w.__mapErrors.push({ source: ev.sourceId ?? null, tile: c ? `${c.z}/${c.x}/${c.y}` : null, message: String(ev.error?.message ?? ev.error) });
+		});
+	});
+}
+
+/**
+ * Console errors, less basemap tiles that failed to decode (seen at high pitch
+ * and zoom: a basemap source's tile, never the scene's, which has no source).
+ * Each tolerated one must come from a basemap source and is noted on the test.
+ */
+async function sceneErrors(page: Page, consoleErrors: string[]): Promise<string[]> {
+	const mapErrors: MapError[] = await page.evaluate(() => (globalThis as any).__mapErrors ?? []);
+	for (const e of mapErrors) expect(e.source, `map error from ${e.source}: ${e.message}`).toMatch(/^(terrain|hillshade|imagery|naip|protomaps|buildings)/);
+	if (mapErrors.length) test.info().annotations.push({ type: 'basemap tile errors', description: mapErrors.map((e) => `${e.source} ${e.tile}: ${e.message}`).join('; ') });
+	return consoleErrors.filter((m) => !(mapErrors.length && /^map error .*could not be decoded/.test(m)));
+}
+
 /** The scene chunk's file and gzip size, from the build's Vite manifest. */
 function sceneChunk(): { file: string; gzip: number } {
 	const manifest = join(process.cwd(), '.svelte-kit', 'output', 'client', '.vite', 'manifest.json');
@@ -70,12 +100,6 @@ test.describe('scene', () => {
 	test('spike gate: one instanced batch on the terrain lands within 0.1 px of map.project (pitch 0–85, fov 20–60, roll ±5)', { tag: '@wp9' }, async ({ page, consoleErrors }) => {
 		test.setTimeout(1_500_000);
 		await openTest(page, `#map=${FOOTHILLS.zoom}/${FOOTHILLS.center[1]}/${FOOTHILLS.center[0]}/${FOOTHILLS.bearing}/0&layers=none`);
-		// Map errors with their source: at pitch 85 the basemap can fail to decode a far tile, which isn't the scene's.
-		await page.evaluate(() => {
-			const w = globalThis as any;
-			w.__mapErrors = [];
-			w.__tvt.map.on('error', (ev: any) => w.__mapErrors.push({ source: ev.sourceId ?? null, tile: ev.tile?.tileID?.canonical ? `${ev.tile.tileID.canonical.z}/${ev.tile.tileID.canonical.x}/${ev.tile.tileID.canonical.y}` : null, message: String(ev.error?.message ?? ev.error) }));
-		});
 		const rows: (Summary & { pitch: number; fov: number; roll: number; zoom: number })[] = [];
 		const cams: { pitch: number; fov: number; roll: number; zoom: number }[] = [];
 		for (const pitch of [0, 30, 60, 75, 85]) for (const fov of [20, 60]) for (const roll of [-5, 5]) cams.push({ pitch, fov, roll, zoom: FOOTHILLS.zoom });
@@ -87,18 +111,14 @@ test.describe('scene', () => {
 		}
 		await page.screenshot({ path: screenPath('spike-last-view.png') });
 		const worst = Math.max(...rows.map((r) => r.max));
-		const mapErrors: { source: string | null; tile: string | null; message: string }[] = await page.evaluate(() => (globalThis as any).__mapErrors);
+		const mapErrors: MapError[] = await page.evaluate(() => (globalThis as any).__mapErrors);
 		record('spike.json', { at: new Date().toISOString(), worstPx: worst, rows, mapErrors });
 		test.info().annotations.push({ type: 'spike', description: `worst ${worst.toFixed(4)} px over ${rows.length} camera settings` });
 		for (const r of rows) {
 			expect(r.n, `instances on screen at pitch ${r.pitch}, fov ${r.fov}, roll ${r.roll}`).toBeGreaterThan(50);
 			expect(r.max, `GPU vs map.project at pitch ${r.pitch}, fov ${r.fov}, roll ${r.roll}, z${r.zoom} (px)`).toBeLessThanOrEqual(0.1);
 		}
-		// The only console errors allowed are basemap tiles that failed to decode (each recorded with its source above).
-		const tileDecode = (m: string) => /^map error .*could not be decoded/.test(m);
-		for (const e of mapErrors) expect(e.source, `map error from ${e.source}: ${e.message}`).toMatch(/^(terrain|hillshade|imagery|naip|protomaps|valley|basemap|buildings)/);
-		if (mapErrors.length) test.info().annotations.push({ type: 'basemap tile errors', description: mapErrors.map((e) => `${e.source} ${e.tile}: ${e.message}`).join('; ') });
-		expect(consoleErrors.filter((m) => !tileDecode(m))).toEqual([]);
+		expect(await sceneErrors(page, consoleErrors)).toEqual([]);
 	});
 
 	test("a model's base is within 0.2 m of queryTerrainElevation at z ≥ 15", { tag: '@wp9' }, async ({ page }) => {
@@ -128,7 +148,9 @@ test.describe('scene', () => {
 			map.jumpTo({ zoom: 22.5 });
 		});
 		await mapReady(page);
-		await page.evaluate(() => (globalThis as any).__tvtSceneTest.reset(0.6));
+		// Models at 1/200 scale (about 6 cm, some 20 px here): full-size buses would be thousands of px long,
+		// which only costs SwiftShader overdraw; the anchor's placement is what's measured.
+		await page.evaluate(() => (globalThis as any).__tvtSceneTest.reset(0.6, 0.005));
 		const steps: { step: number; max: number; mercMax: number; n: number }[] = [];
 		for (let step = 0; step < 40; step++) {
 			const s: Summary = await page.evaluate(async (step) => {
@@ -181,18 +203,22 @@ test.describe('scene', () => {
 				}
 			};
 		});
+		// The showcase alone first, so a click picks its bus: the selection adds the ground ring.
 		await page.evaluate(async () => {
 			const t = (globalThis as any).__tvtSceneTest;
-			t.reset(0.9);
+			t.clear();
 			await t.showcase(true);
 		});
 		await mapReady(page);
-		// Select the showcase bus by clicking it: the selection adds the ground ring.
 		const bus = await page.evaluate(() => (globalThis as any).__tvtSceneTest.placed().find((p: any) => p.id === 'show-bus'));
 		expect(bus, 'the showcase bus is on screen').toBeTruthy();
 		await page.mouse.click(bus.x, bus.y);
 		await expect.poll(() => page.evaluate(() => (globalThis as any).__tvt.layers.selection?.id)).toBe('show-bus');
 		await page.waitForTimeout(1500);
+		await page.screenshot({ path: screenPath('showcase-selected-z18.png') });
+		// Then the 1,000-model grid around it too (more instances, the same batches).
+		await page.evaluate(() => (globalThis as any).__tvtSceneTest.reset(0.9, 0.5));
+		await mapReady(page);
 		const r = await page.evaluate(
 			() =>
 				new Promise<{ draws: number; stats: any }>((resolve) => {
@@ -201,14 +227,14 @@ test.describe('scene', () => {
 					map.triggerRepaint();
 				})
 		);
-		await page.screenshot({ path: screenPath('showcase-z18.png') });
+		await page.screenshot({ path: screenPath('showcase-grid-z18.png') });
 		record('draw-calls.json', r);
 		console.log(`scene draws: ${r.draws} (scene's count ${r.stats.drawCalls}), ${r.stats.instances} instances, JS ${r.stats.lastFrameMs.toFixed(2)} ms`);
 		// bus, stop, pole, head, pin, ring, shadows, cones, lines, photos: 10 kinds in use.
 		expect(r.stats.drawCalls).toBe(r.draws);
 		expect(r.draws).toBeGreaterThanOrEqual(10);
 		expect(r.draws).toBeLessThanOrEqual(12);
-		expect(consoleErrors).toEqual([]);
+		expect(await sceneErrors(page, consoleErrors)).toEqual([]);
 	});
 
 	test('the scene chunk is ≤ 40 KB gzip, requested only after the first idle, and never with Transit and Cameras off', { tag: '@wp9' }, async ({ page, browser }) => {
@@ -257,6 +283,7 @@ test.describe('scene', () => {
 			return { n: s.n, max: s.max };
 		});
 		expect(before.n).toBeGreaterThan(50);
+		await page.screenshot({ path: screenPath('context-before.png') });
 		await page.evaluate(async () => {
 			const gl = (globalThis as any).__tvt.map.getCanvas().getContext('webgl2');
 			const ext = gl.getExtension('WEBGL_lose_context');
@@ -272,7 +299,9 @@ test.describe('scene', () => {
 			return { n: s.n, max: s.max, ok: t.ok(), stats: t.stats() };
 		});
 		await page.screenshot({ path: screenPath('context-restored.png') });
-		record('context-restore.json', { before, after });
+		// For the record (not WP9's): whether the 2D overlay's custom layer came back too.
+		const overlayLayer = await page.evaluate(() => Boolean((globalThis as any).__tvt.map.getLayer('overlay')));
+		record('context-restore.json', { before, after, overlayLayerAfterRestore: overlayLayer });
 		expect(after.ok).toBe(true);
 		expect(after.n).toBe(before.n);
 		expect(after.max).toBeLessThanOrEqual(0.1);
@@ -285,6 +314,9 @@ test.describe('scene', () => {
 		await expect.poll(() => page.evaluate(() => (globalThis as any).__tvt.layers.status.transit), { timeout: 60_000 }).toBe('ready');
 		await mapReady(page);
 		await page.evaluate(() => (globalThis as any).__tvtSceneTest.clear());
+		// A frame without the grid, so the picker has no stale placements.
+		await mapReady(page);
+		expect(await page.evaluate(() => (globalThis as any).__tvtSceneTest.placed().length)).toBe(0);
 		// A point on a route line, away from any bus.
 		const pt = await page.evaluate(() => {
 			const map = (globalThis as any).__tvt.map;
@@ -345,20 +377,32 @@ test.describe('scene', () => {
 				}
 			}
 		});
-		const before = await page.evaluate(() => (globalThis as any).__tvtSceneTest.stats().frames);
+		const stats = () => page.evaluate(() => (globalThis as any).__tvtSceneTest.stats());
+		// A still frame with a still camera queries no terrain.
+		await page.evaluate(() => new Promise<void>((r) => ((globalThis as any).__tvt.map.once('render', () => r()), (globalThis as any).__tvt.map.triggerRepaint())));
+		const still = await stats();
+		const pos = () => page.evaluate(() => (globalThis as any).__tvtSceneTest.placed().slice(0, 50).map((p: any) => [p.x, p.y]));
+		const before = { frames: still.frames, pos: await pos(), t: Date.now() };
 		await page.evaluate(() => (globalThis as any).__tvtSceneTest.setMoving(true));
-		await page.waitForTimeout(6000);
+		// The loop asks for frames by itself (SwiftShader frames take a while here: count, don't time).
+		await expect.poll(async () => (await stats()).frames - before.frames, { timeout: 180_000 }).toBeGreaterThanOrEqual(6);
 		const moving = await page.evaluate(() => ({ stats: (globalThis as any).__tvtSceneTest.stats(), setData: (globalThis as any).__setData }));
+		const after = await pos();
+		const seconds = (Date.now() - before.t) / 1000;
 		await page.screenshot({ path: screenPath('grid-1000-z13.png') });
 		await page.evaluate(() => (globalThis as any).__tvtSceneTest.setMoving(false));
-		await page.waitForTimeout(1500);
-		const f1 = await page.evaluate(() => (globalThis as any).__tvtSceneTest.stats().frames);
 		await page.waitForTimeout(3000);
-		const f2 = await page.evaluate(() => (globalThis as any).__tvtSceneTest.stats().frames);
-		record('moving.json', { framesWhileMoving: moving.stats.frames - before, stats: moving.stats, setData: moving.setData, framesAfterStop: f2 - f1 });
-		console.log(`moving 6 s: ${moving.stats.frames - before} frames, ${moving.stats.instances} instances, JS p95 ${moving.stats.p95Ms.toFixed(2)} ms (sandbox), setData ${moving.setData}; after stop ${f2 - f1} frames in 3 s`);
+		const f1 = (await stats()).frames;
+		await page.waitForTimeout(4000);
+		const f2 = (await stats()).frames;
+		const moved = after.filter((p: number[], i: number) => before.pos[i] && Math.hypot(p[0] - before.pos[i][0], p[1] - before.pos[i][1]) > 0.01).length;
+		record('moving.json', { framesWhileMoving: moving.stats.frames - before.frames, seconds, stillFrameGroundQueries: still.groundQueries, stats: moving.stats, setData: moving.setData, moved, framesAfterStop: f2 - f1 });
+		console.log(
+			`moving: ${moving.stats.frames - before.frames} frames in ${seconds.toFixed(1)} s, ${moving.stats.instances} instances, ${moved}/50 moved on screen, JS p95 ${moving.stats.p95Ms.toFixed(2)} ms and last ${moving.stats.lastFrameMs.toFixed(2)} ms (sandbox), ${moving.stats.groundQueries} terrain queries a frame; still frame ${still.groundQueries} queries; setData ${moving.setData}; after stop ${f2 - f1} frames in 4 s`
+		);
+		expect(still.groundQueries, 'terrain queries in a still frame').toBe(0);
 		expect(moving.stats.instances).toBe(1000);
-		expect(moving.stats.frames - before).toBeGreaterThan(5);
+		expect(moved).toBeGreaterThan(40);
 		expect(moving.setData).toBe(0);
 		expect(f2 - f1, 'no frames once nothing moves').toBeLessThanOrEqual(1);
 	});
