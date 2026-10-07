@@ -199,13 +199,14 @@ Buses already play back through the tracks contract
 - **3D:** the GL engine draws each kind with its own model (bus, airliner,
   small plane, helicopter), at its altitude for aircraft.
 
-## 15.6 Refactor plan (proposal)
+## 15.6 Refactor plan
 
 Each step leaves the server doing exactly what it did before (same
 sources, tables and URLs), with every test green, before the next one starts.
 
-1. **Ingest plugins** (after the lanes fixes are merged). **Built, Oct 7**
-   (branch `refactor/ingest-plugins`):
+1. **Ingest plugins.** **Done, Oct 7:** merged and pushed; the new images
+   were built on the server and list the same sources (the services switch
+   at their next restart):
    - the manifest format and loader (`ingest/manifest.py`,
      `ingest/sources/__init__.py`);
    - each source and its helpers moved with `git mv` into
@@ -232,17 +233,22 @@ sources, tables and URLs), with every test green, before the next one starts.
    - the catch-all API route goes in;
    - `LayerId` is opened up to whatever plugins register.
    Screenshots and the existing end-to-end specs must match before and after.
-3. **Private plugins:**
-   - the private repo starts on the server (`/srv/tvt/plugins-private`,
-     Oct 7); the owner approved a private GitHub copy, which needs the
-     owner to create the repo and give Claude's GitHub app access to it
-     (this session's GitHub access can't create repositories);
-   - Compose gets the extra build context;
-   - the private tools and parcels move into `achd_tables` and `parcels`
-     (on `TVT_PLUGIN_PATH`; `check_public`'s rule came with step 1).
+3. **Private plugins.** **Started, Oct 7:**
+   - the private repo is on the server (`/srv/tvt/plugins-private`, a git
+     repository); a private GitHub copy (approved) needs the owner to
+     create the repo and give Claude's GitHub app access to it, since this
+     session's GitHub access can't create repositories;
+   - `achd_tables` holds the ACHD table tool and its tests, `parcels` the
+     Assessor copy's manifest and terms, and `tools/` the one-off 511 probe
+     and camera sampler; the data stays in `/srv/tvt/private/data`, which
+     the ingest service mounts read-only;
+   - Compose gets the extra build context when a private plugin first has
+     code a service runs (none yet).
 4. **New plugins,** one source at a time with the owner:
-   - `aircraft`, if an existing source's terms fit (research Oct 7), until
-     the owner's own receiver arrives;
+   - `aircraft` (being built Oct 7): adsb.lol's live data (ODbL) every
+     10 s, with the FAA registry for types; it starts once the owner has
+     sent adsb.lol a courtesy note, and moves to the owner's own receiver
+     later;
    - then `lands` (ownership, management, access and restrictions) and
      `trails`.
 
