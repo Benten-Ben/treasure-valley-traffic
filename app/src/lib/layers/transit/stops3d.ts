@@ -140,14 +140,20 @@ export class StopPosts {
 		return this.#opacity > 0;
 	}
 
-	/** Hand the scene the posts inside `bounds` grown by half its size each way. */
-	setNear(bounds: Pick<LngLatBounds, 'getWest' | 'getEast' | 'getSouth' | 'getNorth'>): void {
+	/**
+	 * Hand the scene the posts inside `bounds` grown by a quarter of its size
+	 * each way and, with `centre`, within `radius` metres of it: in a tilted
+	 * view the bounds reach the horizon, where posts are too small to see.
+	 */
+	setNear(bounds: Pick<LngLatBounds, 'getWest' | 'getEast' | 'getSouth' | 'getNorth'>, centre?: [number, number], radius = Infinity): void {
 		const [w, e, s, n] = [bounds.getWest(), bounds.getEast(), bounds.getSouth(), bounds.getNorth()];
-		const dx = (e - w) / 2;
-		const dy = (n - s) / 2;
+		const dx = (e - w) / 4;
+		const dy = (n - s) / 4;
+		const kx = centre ? 111_320 * Math.cos((centre[1] * Math.PI) / 180) : 0;
 		this.near.length = 0;
 		for (const p of this.all) {
 			if (p.lng < w - dx || p.lng > e + dx || p.lat < s - dy || p.lat > n + dy) continue;
+			if (centre && Math.hypot((p.lng - centre[0]) * kx, (p.lat - centre[1]) * 110_574) > radius) continue;
 			p.scale = this.#scale;
 			p.opacity = this.#opacity;
 			this.near.push(p);

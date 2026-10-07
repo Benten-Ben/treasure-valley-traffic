@@ -21,6 +21,7 @@ import {
 	turn,
 	UNKNOWN_GHOST,
 	type GroundAt,
+	LENGTH_MARGIN,
 	type ModelFrame
 } from './bus3d.js';
 import { UNKNOWN_COLOR } from './transit.js';
@@ -41,7 +42,7 @@ describe('bus level of detail (§14.4 "Buses and stops")', () => {
 		expect(zm).toBeGreaterThan(14.9);
 		expect(zm).toBeLessThan(15.1);
 		expect(modelScale(zm, LAT)).toBeCloseTo(MAX_MODEL_SCALE, 6);
-		expect(lengthPx(zm)).toBeCloseTo(MIN_MODEL_PX, 6);
+		expect(lengthPx(zm)).toBeCloseTo(MIN_MODEL_PX * LENGTH_MARGIN, 6);
 	});
 
 	it('a drawn model is at least 28 px long, at up to 4× real size, true scale from about z17', () => {
@@ -83,8 +84,8 @@ describe('bus level of detail (§14.4 "Buses and stops")', () => {
 		expect(lod.plateAlt).toBeGreaterThan(BUS_HEIGHT_M * lod.scale);
 		expect(plateAltitude(lod, true) - plateAltitude(lod, false)).toBeGreaterThanOrEqual(SELECT_LIFT_M);
 		// Seen from above, the plate clears the model's half-length; tilted, less (its height lifts it).
-		expect(lodAt(16, LAT, 0, true).clearance).toBeCloseTo(MIN_MODEL_PX / 2, 1);
-		expect(lodAt(16, LAT, 60, true).clearance).toBeCloseTo(MIN_MODEL_PX / 4, 1);
+		expect(lodAt(16, LAT, 0, true).clearance).toBeCloseTo((MIN_MODEL_PX * LENGTH_MARGIN) / 2, 6);
+		expect(lodAt(16, LAT, 60, true).clearance).toBeCloseTo((MIN_MODEL_PX * LENGTH_MARGIN) / 4, 6);
 	});
 });
 
@@ -157,13 +158,19 @@ describe('heading and slope', () => {
 		expect(m.inst.pitch).toBeCloseTo(5.7, 1);
 		placeModel(m, frame({ now: 1016 }));
 		expect(reads).toBe(2);
+		// A metre on: the slope it has is still good.
 		placeModel(m, frame({ now: 1032, lat: 43.6 + 1 / 111_000 }));
+		expect(reads).toBe(2);
+		placeModel(m, frame({ now: 1048, lat: 43.6 + 3 / 111_000 }));
 		expect(reads).toBe(4);
-		placeModel(m, frame({ now: 1048, lat: 43.6 + 1 / 111_000, epoch: 2 }));
+		placeModel(m, frame({ now: 1064, lat: 43.6 + 3 / 111_000, epoch: 2 }));
 		expect(reads).toBe(6);
+		// Turned: read again.
+		placeModel(m, frame({ now: 1080, lat: 43.6 + 3 / 111_000, epoch: 2, heading: 90 }));
+		expect(reads).toBe(8);
 		// Hidden: nothing read.
-		placeModel(m, frame({ now: 1064, opacity: 0, epoch: 3 }));
-		expect(reads).toBe(6);
+		placeModel(m, frame({ now: 1096, opacity: 0, epoch: 3 }));
+		expect(reads).toBe(8);
 		expect(m.inst).toMatchObject({ mesh: 'bus', shadow: true, color: '#2a78d6', opacity: 0 });
 	});
 });

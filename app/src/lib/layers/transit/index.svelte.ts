@@ -34,8 +34,8 @@ import {
 import { busAt, Feed, positionAt, runningAt, sameSet, smoothAngle, trail, type BusAt, type BusState } from './playback.js';
 import { ageText, ARROW, arrowImage, CREAM, CREDIT, fallbackBusLayers, FALLBACK_LAYERS, INK, UNKNOWN_COLOR } from './transit.js';
 import type { Scene, SceneInstance } from '#lib/scene/index.js';
-import { bodyColor, busModel, BUS_LENGTH_M, lodAt, modelFade, modelZoom, placeModel, plateAltitude, type BusModel, type GroundAt, type Lod } from './bus3d.js';
-import { loadPlateFont, plateKey, plateOffset, plateSize, plateSprite, type PlateLook } from './plates.js';
+import { bodyColor, busModel, BUS_LENGTH_M, lodAt, metresPerPx, modelFade, modelZoom, placeModel, plateAltitude, type BusModel, type GroundAt, type Lod } from './bus3d.js';
+import { loadPlateFont, PLATE_BODY_H, PLATE_PAD, plateBodyWidth, plateKey, plateOffset, plateSize, plateSprite, type PlateLook } from './plates.js';
 import { StopPosts, STOP_NAMES, stopNameLayer } from './stops3d.js';
 
 /**
@@ -167,6 +167,7 @@ interface BusRuntime {
 	routeId: string | null;
 	// This frame's playback (worked out once per rendered frame, for the overlay and the scene).
 	state: BusState;
+	kind: BusAt['kind'];
 	/** The playback's own opacity (a gap's fade-jump), 0 when hidden. */
 	shown: number;
 	/** The path heading this frame (unsmoothed), or null. */
@@ -401,6 +402,7 @@ export class TransitModule implements LayerModule {
 			// WP10: positions are worked out once per frame for the scene and the overlay; zooming decides
 			// what's drawn; terrain changes make the models read their slopes again.
 			scope.on('render', () => void (this.#advanced = false));
+			scope.on('resize', () => this.#measure());
 			scope.on('zoom', () => this.#onZoom());
 			scope.on('move', () => this.#onMove(false));
 			scope.on('moveend', () => this.#onMove(true));
@@ -728,6 +730,7 @@ export class TransitModule implements LayerModule {
 				hollow,
 				routeId: v?.routeId ?? null,
 				state: old?.state ?? 'hidden',
+				kind: old?.kind ?? null,
 				shown: old?.shown ?? 0,
 				raw: old?.raw ?? null,
 				speed: old?.speed ?? 0,
@@ -783,13 +786,20 @@ export class TransitModule implements LayerModule {
 		const map = this.#scope?.map;
 		if (!clock || !map || !this.#visible) return false;
 		this.#advanced = true;
-		const T = clock.playhead();
+		const T = (this.#frameT = clock.playhead());
 		const now = performance.now();
 		const zoom = map.getZoom();
 		const centre = map.getCenter();
 		this.#lod = lodAt(zoom, centre.lat, map.getPitch(), this.#modelsOn);
-		const b = map.getBounds();
-		const [w, s, e, n] = [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()];
+		// On screen: where the overlay put each bus last frame (it projects them all, terrain included).
+		// Before its first frame, the map's bounds stand in.
+		const onScreen = this.#onScreen;
+		onScreen.clear();
+		if (!this.#size.w) this.#measure();
+		const { w: W, h: H } = this.#size;
+		const placed = this.#ctx!.overlay.positions(BUS_GROUP);
+		for (const p of placed) if (p.x >= 0 && p.y >= 0 && p.x <= W && p.y <= H) onScreen.add(p.id);
+		const b = placed.length ? null : map.getBounds();
 		const at = this.#at;
 		let fastest = 0;
 		for (const [vid, rt] of this.#runtime) {
@@ -804,16 +814,29 @@ export class TransitModule implements LayerModule {
 			rt.pos[0] = at.lon;
 			rt.pos[1] = at.lat;
 			rt.state = at.state;
+			rt.kind = at.kind;
 			rt.shown = shown ? at.opacity : 0;
 			rt.raw = at.heading;
 			rt.speed = at.speed;
 			rt.heading = smoothAngle(rt.heading, at.heading, now - rt.turnedAt);
 			rt.turnedAt = now;
-			if (at.speed > 0 && shown && at.lon >= w && at.lon <= e && at.lat >= s && at.lat <= n) fastest = Math.max(fastest, at.speed);
+			const visible = b ? b.contains([at.lon, at.lat]) : onScreen.has(vid);
+			if (at.speed > 0 && shown && visible) fastest = Math.max(fastest, at.speed);
 		}
 		this.#fastest = fastest;
 		this.#idle = fastest === 0;
 		return true;
+	}
+
+	#onScreen = new Set<string>();
+	/** The playhead of the frame being drawn (epoch s). */
+	#frameT = 0;
+	/** The canvas size (CSS px), read on resize: reading it in a frame can force a layout. */
+	#size = { w: 0, h: 0 };
+
+	#measure() {
+		const c = this.#scope?.map.getCanvas();
+		if (c) this.#size = { w: c.clientWidth, h: c.clientHeight };
 	}
 
 	/**
@@ -909,7 +932,7 @@ export class TransitModule implements LayerModule {
 		const lat = map.getCenter().lat;
 		this.#showModels(modelFade(zoom, lat) > 0);
 		const posts = this.#posts.setZoom(zoom, lat);
-		if (posts && !this.#postsOn) this.#posts.setNear(map.getBounds());
+		if (posts && !this.#postsOn) this.#near(map);
 		this.#showPosts(posts);
 	}
 
@@ -920,8 +943,16 @@ export class TransitModule implements LayerModule {
 		const now = performance.now();
 		if (!end && now - this.#nearAt < NEAR_MS) return;
 		this.#nearAt = now;
-		this.#posts.setNear(map.getBounds());
+		this.#near(map);
 		if (end) map.triggerRepaint();
+	}
+
+	/** The posts near the view: within the bounds, and twice the screen's half-diagonal of the centre. */
+	#near(map: Map) {
+		const c = map.getCenter();
+		if (!this.#size.w) this.#measure();
+		const radius = Math.hypot(this.#size.w, this.#size.h) * metresPerPx(map.getZoom(), c.lat);
+		this.#posts.setNear(map.getBounds(), [c.lng, c.lat], radius);
 	}
 
 	#showModels(on: boolean) {
@@ -1075,8 +1106,9 @@ export class TransitModule implements LayerModule {
 					x: drawn.get(id)?.x ?? null,
 					y: drawn.get(id)?.y ?? null,
 					// WP10: speed (m/s) and the path heading this frame, the model's look, the plate's opacity.
+					routeId: rt.routeId,
 					speed: rt.speed,
-					kind: self.buses[id]?.kind ?? null,
+					kind: rt.kind,
 					raw: rt.raw,
 					model: self.#modelsOn && self.#modelList.includes(rt.model.inst) ? (rt.model.inst.opacity ?? 0) : 0,
 					heading3d: rt.model.heading,
@@ -1095,24 +1127,26 @@ export class TransitModule implements LayerModule {
 			// WP10 ------------------------------------------------------------------------------------
 			/** The 3D scene: none (not asked for yet), loading, ready or failed. */
 			scene: () => self.#sceneState,
+			/** The playhead of the last frame drawn (epoch s): what buses(), plates() and the models show. */
+			frameT: () => self.#frameT,
 			/** This frame's level of detail. */
 			lod: () => ({ ...self.#lod, modelZoom: modelZoom(self.#scope?.map.getCenter().lat ?? 43.6), models: self.#modelsOn, posts: self.#postsOn }),
 			/** The scene's own numbers (draw calls, instances, JS ms per frame and its p95), or null. */
 			sceneStats: () => self.#scene?.stats() ?? null,
 			/** Where each pickable 3D thing was drawn last frame. */
 			placed: () => self.#scene?.placed() ?? [],
-			/** Where each plate was drawn last frame (its anchor, CSS px) and its sprite. */
+			/** Where each plate was drawn last frame (its anchor, CSS px), its sprite, and its body's box on screen. */
 			plates: () => {
 				const at = new globalThis.Map(self.#ctx?.overlay.positions(PLATE_GROUP).map((p) => [p.id, p]) ?? []);
-				return self.#plateList.map((p) => ({
-					id: p.id,
-					sprite: p.sprite,
-					opacity: p.opacity ?? 0,
-					offset: p.offset ?? [0, 0],
-					altitude: p.altitude ?? 0,
-					x: at.get(p.id)?.x ?? null,
-					y: at.get(p.id)?.y ?? null
-				}));
+				return self.#plateList.map((p) => {
+					const a = at.get(p.id);
+					const text = self.#runtime.get(p.id) ? busBadge(self.feed.vehicles[p.id]).text : '';
+					const off = p.offset ?? [0, 0];
+					const { width, height } = plateSize(text);
+					// The sprite is centred on anchor + offset; the body sits PLATE_PAD in from its top left.
+					const box = a ? { x: a.x + off[0] - width / 2 + PLATE_PAD, y: a.y + off[1] - height / 2 + PLATE_PAD, w: plateBodyWidth(text), h: PLATE_BODY_H } : null;
+					return { id: p.id, sprite: p.sprite, opacity: p.opacity ?? 0, offset: off, altitude: p.altitude ?? 0, x: a?.x ?? null, y: a?.y ?? null, box };
+				});
 			},
 			/** The stop posts handed to the scene now: how many, their scale and fade. */
 			posts: () => ({ shown: self.#postsOn, near: self.#posts.near.length, all: self.#posts.all.length, scale: self.#posts.near[0]?.scale ?? null, opacity: self.#posts.near[0]?.opacity ?? null }),

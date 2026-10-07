@@ -40,6 +40,10 @@ describe('stop posts (§14.4 "Buses and stops")', () => {
 		posts.setNear({ getWest: () => -116.22, getEast: () => -116.19, getSouth: () => 43.59, getNorth: () => 43.61 });
 		expect(near.map((p) => p.id)).toEqual(['stop:a', 'stop:b']);
 		expect(posts.near).toBe(near);
+		// In a tilted view the bounds reach far; a radius around the centre keeps it to what can be seen.
+		posts.setNear({ getWest: () => -116.3, getEast: () => -116.1, getSouth: () => 43.5, getNorth: () => 43.7 }, [-116.2, 43.6], 500);
+		expect(near.map((p) => p.id)).toEqual(['stop:a']);
+		posts.setNear({ getWest: () => -116.22, getEast: () => -116.19, getSouth: () => 43.59, getNorth: () => 43.61 });
 		expect(posts.setZoom(15.5, LAT)).toBe(false);
 		expect(posts.setZoom(17, LAT)).toBe(true);
 		expect(near[0].scale).toBeCloseTo(postScale(17, LAT), 9);

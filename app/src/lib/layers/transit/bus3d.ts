@@ -27,8 +27,8 @@ import { UNKNOWN_COLOR } from './transit.js';
  * - Models sit on the drawn terrain (the scene's ground) and pitch with its
  *   slope sampled ahead and behind: 6 m at true scale, 6 m × the model's
  *   scale when it's drawn larger, so an oversized model's ends follow the
- *   ground too. The slope is read again only when the bus has moved or
- *   turned, or the terrain changed.
+ *   ground too. The slope is read again only when the bus has moved 2 m or
+ *   turned 3°, or the terrain changed (two terrain reads each time).
  * - This module is pure apart from the slope's terrain reads: the Transit
  *   module calls it once per rendered frame, from the scene's update.
  */
@@ -39,6 +39,8 @@ export const BUS_HEIGHT_M = 3.1;
 /** A model is drawn at least this long (px), at up to MAX_MODEL_SCALE × real size. */
 export const MIN_MODEL_PX = 28;
 export const MAX_MODEL_SCALE = 4;
+/** Sized 1% over the minimum, so float32 and the latitude across the screen never take a model under it. */
+export const LENGTH_MARGIN = 1.01;
 /** The disc-to-model crossfade, in zoom levels. */
 export const FADE_ZOOMS = 0.3;
 /** The model's heading low-pass (ms); the 2D arrow's is 300 ms. */
@@ -46,9 +48,9 @@ export const MODEL_TAU_MS = 120;
 /** Slope reach at true scale (m) and the steepest pitch drawn (degrees). */
 export const SLOPE_REACH_M = 6;
 export const MAX_PITCH_DEG = 15;
-/** Re-read the slope after the bus moves this far (m) or turns this much (degrees). */
-const SLOPE_MOVE_M = 0.5;
-const SLOPE_TURN_DEG = 2;
+/** Re-read the slope after the bus moves this far (m) or turns this much (degrees): two terrain reads each time. */
+export const SLOPE_MOVE_M = 2;
+export const SLOPE_TURN_DEG = 3;
 /** The plate floats this far above the roof (m). */
 export const PLATE_GAP_M = 0.8;
 /** The scene's selection lift (m) and scale (§14.3); the plate follows them. */
@@ -65,13 +67,13 @@ const clamp = (x: number, a: number, b: number) => Math.min(b, Math.max(a, x));
 /** Ground metres per CSS pixel (512 px tiles). */
 export const metresPerPx = (zoom: number, lat: number) => circumferenceAt(lat) / (512 * 2 ** zoom);
 
-/** The zoom at which a model 4× real size is MIN_MODEL_PX long: about 15 at 43.6° N. */
-export const modelZoom = (lat: number) => Math.log2((MIN_MODEL_PX * circumferenceAt(lat)) / (512 * BUS_LENGTH_M * MAX_MODEL_SCALE));
+/** The zoom at which a model 4× real size is MIN_MODEL_PX long (with the margin): about 15 at 43.6° N. */
+export const modelZoom = (lat: number) => Math.log2((MIN_MODEL_PX * LENGTH_MARGIN * circumferenceAt(lat)) / (512 * BUS_LENGTH_M * MAX_MODEL_SCALE));
 
-/** The model's scale: MIN_MODEL_PX long, at most MAX_MODEL_SCALE × real size, true size once that's long enough. */
+/** The model's scale: MIN_MODEL_PX long (with the margin), at most MAX_MODEL_SCALE × real size, true size once that's long enough. */
 export function modelScale(zoom: number, lat: number): number {
 	const px = BUS_LENGTH_M / metresPerPx(zoom, lat);
-	return clamp(MIN_MODEL_PX / px, 1, MAX_MODEL_SCALE);
+	return clamp((MIN_MODEL_PX * LENGTH_MARGIN) / px, 1, MAX_MODEL_SCALE);
 }
 
 /** The model's share of the crossfade: 0 below modelZoom, 1 from FADE_ZOOMS above it. */
