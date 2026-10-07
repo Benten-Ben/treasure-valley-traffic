@@ -1,7 +1,7 @@
 """Offline tests for the 511 Idaho API stream. Every record here is made up,
 in the shapes 511's API documents (no 511 data in the repository).
 
-Run: python3 -m unittest discover -s ingest/tests -t .
+Run: python3 -m unittest discover -s plugins -t .
 """
 
 import csv
@@ -12,7 +12,7 @@ import tempfile
 import unittest
 from datetime import datetime, timezone
 
-from ingest.sources import idaho511_api as api
+from plugins.conditions.ingest.sources import idaho511_api as api
 
 UTC = timezone.utc
 

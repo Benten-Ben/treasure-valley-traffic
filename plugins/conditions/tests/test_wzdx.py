@@ -1,6 +1,6 @@
 """Offline tests for the ITD WZDx stream's cleaning and change detection.
 
-Run: python3 -m unittest discover -s ingest/tests -t .
+Run: python3 -m unittest discover -s plugins -t .
 The features below copy the shapes seen in Idaho's feed on Oct 6, 2026 (docs/08 §8.8).
 """
 
@@ -10,7 +10,7 @@ import os
 import unittest
 from datetime import datetime, timezone
 
-from ingest.sources import itd_wzdx as wz
+from plugins.conditions.ingest.sources import itd_wzdx as wz
 
 UTC = timezone.utc
 

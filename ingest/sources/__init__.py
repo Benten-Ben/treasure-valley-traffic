@@ -7,14 +7,14 @@ run continuously (`stream`), each as its own service.
 """
 
 from plugins.cameras.ingest.sources import achd_cameras, idaho511_frames, idaho511_views
+from plugins.conditions.ingest.sources import idaho511_api, itd_wzdx
 from plugins.intersections.ingest import intersections
 from plugins.intersections.ingest.sources import (achd_signal_points, compass_regional_signals, compass_signals,
                                                   fra_crossings)
 from plugins.roads.ingest.sources import achd_msm, achd_roads, compass_centerline, itd_hpms
 from plugins.transit.ingest.sources import vrt_gtfs, vrt_realtime
 
-from . import (compass_congestion, compass_counts, compass_crashes, compass_growth, compass_plats, idaho511_api,
-               itd_wzdx)
+from . import compass_congestion, compass_counts, compass_crashes, compass_growth, compass_plats
 
 # The COMPASS data sources come last: they depend on nothing above them, and
 # the long crash download shouldn't delay the daily intersection build.

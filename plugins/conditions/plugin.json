@@ -1,0 +1,18 @@
+{
+  "name": "conditions",
+  "title": "Road conditions: work zones, events, signs and road weather",
+  "depends": [],
+  "visibility": "public",
+  "order": 40,
+  "sources": [
+    {"name": "itd_wzdx", "module": "ingest.sources.itd_wzdx", "kind": "stream",
+     "license": "public use; WZDx asks for CC0 (none stated in the feed)",
+     "credit": "Idaho Transportation Department (511 Idaho)", "republish": "yes"},
+    {"name": "idaho511_api", "module": "ingest.sources.idaho511_api", "kind": "stream",
+     "license": "511 Idaho developer terms (key holder); not republished",
+     "credit": "Idaho Transportation Department (511 Idaho)", "republish": "internal"}
+  ],
+  "tables": ["core.message_sign", "evt.sign_message", "core.weather_station", "obs.weather_reading"],
+  "storage": "Only changed snapshots are archived: WZDx (about 124 KB gzipped a fetch, every 5 min) in $TVT_ARCHIVE/wzdx/, the 511 API's changed responses in $TVT_ARCHIVE/idaho511/; events in evt.event (core's lifecycle table), sign messages and road-weather readings in this plugin's tables.",
+  "ethics": "511 Idaho's API is used under its developer terms with the owner's key, at most 8 calls a minute; its data isn't republished (the OK to republish covers WZDx only). 511's list pages and /map/map*/ endpoints are off-limits for collection. WZDx may be republished, raw or aggregated, crediting ITD (owner, Oct 6, 2026)."
+}

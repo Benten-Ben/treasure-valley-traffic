@@ -35,7 +35,7 @@ import time
 import traceback
 from datetime import datetime, timedelta, timezone
 
-from .. import db, events, http
+from ingest import db, events, http
 
 URL = "https://511.idaho.gov/api/wzdx"
 POLL_S = 300

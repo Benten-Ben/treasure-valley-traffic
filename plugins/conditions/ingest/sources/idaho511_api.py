@@ -37,7 +37,7 @@ import traceback
 from collections import deque
 from datetime import datetime, timezone
 
-from .. import db, events, http
+from ingest import db, events, http
 
 BASE = "https://511.idaho.gov/api/"
 MAX_CALLS, PER_S = 8, 60
