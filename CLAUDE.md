@@ -12,7 +12,7 @@ our own base map with live and historical data layers.
 - Research write-up: `README.md` and `docs/01`–`docs/08`.
 - Platform design: `docs/09` (base-map data), `docs/10` (architecture),
   `docs/11` (camera validation layer), `docs/13` (visual design), `docs/14`
-  (UI v2 plan).
+  (UI v2 plan), `docs/15` (core and plugins).
 - Decisions: `docs/DECISIONS.md`. Read it before proposing anything
   structural.
 - Data sources still to do: `docs/SOURCES.md`.
