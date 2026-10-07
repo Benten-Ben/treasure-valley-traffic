@@ -96,6 +96,12 @@ class ParseTest(unittest.TestCase):
         self.assertEqual(len(payload["_geom"]), 16)
         self.assertEqual(geom["type"], "MultiLineString")
 
+    def test_editor_tracking_names_are_dropped_too(self):
+        f = by_oid(902)
+        f["attributes"].update(Creator="staff_c", Editor="staff_d")
+        (_, payload, _), = r2r.parse([f])[0]
+        self.assertFalse({"Creator", "Editor"} & set(payload))
+
     def test_a_moved_line_is_a_new_version(self):
         moved = by_oid(902)
         moved["geometry"]["paths"][0][0] = [-116.1485, 43.6525]
@@ -266,7 +272,7 @@ class ManifestTest(unittest.TestCase):
         self.assertEqual(r2r.SOURCE["access"], "open")
         self.assertEqual(interval_s(r2r.SOURCE["schedule"]), 30 * 60)
         self.assertGreaterEqual(interval_s(r2r.SOURCE["schedule"]), 600)
-        self.assertEqual(plugin.manifest["tables"], ["raw.record", "evt.event"])
+        self.assertEqual(plugin.manifest["tables"], [])        # raw.record and evt.event are core's
 
 
 DB_URL = os.environ.get("TVT_TEST_DATABASE_URL")

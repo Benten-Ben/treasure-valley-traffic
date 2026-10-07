@@ -28,6 +28,11 @@ RING = (-117.30, 42.90, -115.60, 44.30)
 
 SNAPSHOT_MIN_SHARE = 0.5     # as ingest/db.py: a snapshot under half of what's current is refused
 
+# Staff names, never stored from either layer: ArcGIS Online's editor tracking (Creator, Editor),
+# ArcGIS Enterprise's (created_user, last_edited_user) and R2R's own Editor field. Listed for both
+# layers, so turning editor tracking on later doesn't start storing who edited a row.
+STAFF_FIELDS = {"creator", "editor", "created_user", "last_edited_user"}
+
 
 def get(url):
     """http.get for these layers: robots.txt, pacing and the edit guard (ingest/http.py), gzip."""

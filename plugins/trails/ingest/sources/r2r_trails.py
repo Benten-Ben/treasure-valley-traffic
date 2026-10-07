@@ -58,7 +58,7 @@ SOURCE = {
 # Fields the parse depends on: a layer without them fails the fetch instead of reading as blanks.
 REQUIRED = ("GlobalID", "TrailName", "Condition", "ConditionDate")
 # Staff names (editor tracking and the Editor field) and the derived length: never stored.
-DROP = {"editor", "created_user", "last_edited_user", "objectid", "shape__length"}
+DROP = layers.STAFF_FIELDS | {"objectid", "shape__length"}
 
 # R2R's seven labels (the layer's 'BPR Trail Condition' domain, Oct 7, 2026) by how they start.
 # Order matters: "frozen early" before "frozen", "dry at start" before "dry".

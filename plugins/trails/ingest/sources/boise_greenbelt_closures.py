@@ -79,10 +79,15 @@ def in_effect(attrs):
     return True
 
 
+# Never stored: staff names, should the view carry editor tracking now or later, OBJECTID
+# (it's in the key) and the derived length.
+DROP = layers.STAFF_FIELDS | {"objectid", "shape__length"}
+
+
 def payload(part, attrs, geom):
-    """The record as versioned: the layer's name, every field but OBJECTID (it's in the key) and
-    the derived length, and a fingerprint of the line."""
-    out = {"layer": part, **{k: v for k, v in attrs.items() if k.lower() not in ("objectid", "shape__length")}}
+    """The record as versioned: the layer's name, every field but those in DROP, and a
+    fingerprint of the line."""
+    out = {"layer": part, **{k: v for k, v in attrs.items() if k.lower() not in DROP}}
     out["_geom"] = arcgis.geom_digest(geom)
     return out
 
@@ -108,7 +113,7 @@ def event_row(source_id, part, kind, attrs, geom):
 def parse(layers_read):
     """[(layer name, kind, Esri JSON features)] -> (records, event rows, stats)."""
     records, rows = {}, {}
-    stats = {"outside the ring": 0, "without an id": 0, "ended": 0}
+    stats = {"outside the ring": 0, "without an id": 0, "inactive rows": 0}
     for part, kind, features in layers_read:
         for f in features:
             attrs = f.get("attributes") or {}
@@ -125,7 +130,7 @@ def parse(layers_read):
             if in_effect(attrs):
                 rows[source_id] = event_row(source_id, part, kind, attrs, geom)
             else:
-                stats["ended"] += 1
+                stats["inactive rows"] += 1
     return list(records.values()), list(rows.values()), stats
 
 

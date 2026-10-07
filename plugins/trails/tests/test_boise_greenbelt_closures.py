@@ -62,7 +62,7 @@ class ParseTest(unittest.TestCase):
     def test_ids_and_the_ring(self):
         self.assertEqual(sorted(self.payloads), ["construction:501", "construction:502", "construction:503",
                                                  "construction:504", "detour:601", "detour:602"])
-        self.assertEqual(self.stats, {"outside the ring": 1, "without an id": 0, "ended": 2})
+        self.assertEqual(self.stats, {"outside the ring": 1, "without an id": 0, "inactive rows": 2})
 
     def test_only_rows_in_effect_are_events(self):
         self.assertEqual(sorted(self.events), ["construction:501", "construction:502", "construction:504",
@@ -77,6 +77,15 @@ class ParseTest(unittest.TestCase):
         self.assertNotIn("SHAPE__Length", p)
         self.assertEqual(len(p["_geom"]), 16)
         self.assertEqual(self.payloads["construction:503"]["STATUS"], "Inactive")     # kept as a version
+
+    def test_staff_names_are_never_kept(self):
+        layers_read = read()
+        layers_read[0][2][0]["attributes"].update(Creator="staff_a", Editor="staff_b", EditDate=1791230400000)
+        layers_read[1][2][0]["attributes"].update(created_user="staff_a", last_edited_user="staff_b")
+        payloads = {k: p for k, p, _ in gb.parse(layers_read)[0]}
+        for p in payloads.values():
+            self.assertFalse({"Creator", "Editor", "created_user", "last_edited_user"} & set(p))
+        self.assertEqual(payloads["construction:501"]["EditDate"], 1791230400000)   # a date, not a person
 
     def test_event_row(self):
         r = self.events["construction:502"]
@@ -99,7 +108,7 @@ class RunTest(unittest.TestCase):
     def run_with(self, srv):
         def store(conn, fetch_id, seen_at, records, rows):
             self.stored = (records, rows)
-            return {"rows": len(records)}
+            return {"rows": len(records), "ended": 0}         # events that ended (store's count)
 
         with mock.patch.object(db, "ensure_source"), mock.patch.object(db, "Fetch", FakeFetch), \
                 mock.patch.object(gb, "store", side_effect=store):
@@ -110,14 +119,14 @@ class RunTest(unittest.TestCase):
         stats = self.run_with(srv)
         self.assertEqual(len(srv.urls), 4)                   # IDs and rows for each layer
         self.assertTrue(all("/FeatureServer/0/" in u for u in srv.urls[:2]))
-        self.assertEqual(stats, {"rows": 6, "outside the ring": 1, "ended": 2})
+        self.assertEqual(stats, {"rows": 6, "ended": 0, "outside the ring": 1, "inactive rows": 2})
         self.assertEqual(len(self.stored[1]), 4)
 
     def test_an_emptied_layer_is_taken(self):
         srv = server(empty=(0, 1))
         stats = self.run_with(srv)
         self.assertEqual(len(srv.urls), 2)                   # an empty ID list needs no row request
-        self.assertEqual(stats, {"rows": 0})
+        self.assertEqual(stats, {"rows": 0, "ended": 0})
         self.assertEqual(self.stored, ([], []))
         self.assertFalse(layers.refuse(0, 3, floor=gb.GUARD_FLOOR))     # store's guard, holding three rows
 
@@ -166,9 +175,15 @@ class DatabaseTest(unittest.TestCase):
         self.assertEqual((active, upper), (False, t1))
 
     def test_an_emptied_layer_ends_everything(self):
-        self.store(read(), self.t0)
+        few = [(part, kind, feats[:2] if part == "construction" else feats[:1]) for part, kind, feats in read()]
+        self.store(few, self.t0)                                    # 3 rows, as on Oct 7: under the floor
         out = self.store([("construction", "closure", []), ("detour", "detour", [])], self.t0 + timedelta(hours=1))
-        self.assertEqual((out["rows"], out["removed"], out["ended"]), (0, 6, 4))
+        self.assertEqual((out["rows"], out["removed"], out["ended"]), (0, 3, 3))
+
+    def test_an_empty_answer_is_refused_once_we_hold_the_floor(self):
+        self.store(read(), self.t0)                                 # 6 rows
+        with self.assertRaisesRegex(RuntimeError, "not taken as a full snapshot"):
+            self.store([("construction", "closure", []), ("detour", "detour", [])], self.t0 + timedelta(hours=1))
 
 
 if __name__ == "__main__":

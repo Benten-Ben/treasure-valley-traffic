@@ -91,8 +91,10 @@ and [cycling.md, "City of Boise Greenbelt closures"](../../docs/sources/cycling.
 - **What we keep:**
   - `raw.record`: every row's version, keyed `construction:<OBJECTID>` or
     `detour:<OBJECTID>` (the view has no GlobalID), as one complete snapshot
-    of both layers. Every field is kept except `OBJECTID` (it's in the key)
-    and `SHAPE__Length`, plus a line fingerprint.
+    of both layers. Every field is kept except `OBJECTID` (it's in the key),
+    `SHAPE__Length` and any staff names from editor tracking (`Creator`,
+    `Editor`, `created_user`, `last_edited_user`, should the City turn it
+    on), plus a line fingerprint.
   - `evt.event`, kind `closure` (layer 0) or `detour` (layer 1): every row
     in effect. A row is in effect unless its `STATUS`, or a detour's
     `Project_Status`, reads "Inactive" or another ended word (completed,
