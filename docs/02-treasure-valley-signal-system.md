@@ -54,11 +54,11 @@ where the gaps are.
 
 | Area | Owner / operator | Notes |
 |---|---|---|
-| **Ada County local roads** (Boise, Meridian, Eagle, Kuna, Star, Garden City, unincorporated) | **ACHD** | Created by voter referendum in 1971. Idaho Code §40-1406 makes a countywide highway district "responsible for all county secondary and city highways"; cities in it don't maintain their own streets. The City of Boise "does not directly operate any ITS infrastructure."[^tsmo] |
-| **State highways in Ada County** (SH-55 Eagle Rd, SH-44 State St, US-20/26 Chinden, SH-16, SH-69, US-30, I-84 ramps) | **ITD** owns them; **ACHD** operates most or all signals | ITD said in 2006 that "ACHD has managed the state highway signal system within Ada County for ITD for many years under a service agreement."[^itd2006] A 2015 ACHD paper says ACHD operates "all traffic signals on state highways within the county."[^curns] The 2020 COMPASS plan says only "select ITD traffic signals."[^tsmo] Two ACHD–ITD agreements (ITS operations and fiber use) were last revised in 2011.[^agr] |
+| **Ada County local roads** (Boise, Meridian, Eagle, Kuna, Star, Garden City, unincorporated) | **ACHD** | Created by voter referendum on May 25, 1971 ⚠️ (source not yet re-checked). Idaho has 63 highway districts, and ACHD is the only countywide one.[^lso] Idaho Code §40-1406 makes a countywide highway district "responsible for all county secondary and city highways"; cities in it don't maintain their own streets. The City of Boise "does not directly operate any ITS infrastructure."[^tsmo] |
+| **State highways in Ada County** (SH-55 Eagle Rd, SH-44 State St, US-20/26 Chinden, SH-16, SH-69, US-30, I-84 ramps) | **ITD** owns them; **ACHD** operates most or all signals | ITD said in 2006 that "ACHD has managed the state highway signal system within Ada County for ITD for many years under a service agreement."[^itd2006] A 2015 ACHD paper says ACHD operates "all traffic signals on state highways within the county."[^curns] The 2020 COMPASS plan says only "select ITD traffic signals."[^tsmo] Two ACHD–ITD agreements (ITS operations and fiber use) were last revised in 2011. The second, *Fiber Optic Network Infrastructure Use* (agreement agr1), includes connection to ACHD's real-time ATMS.[^agr] |
 | **Nampa** | **City of Nampa** Traffic Division | Operates its signals plus "certain ITD traffic signals."[^tsmo] Awarded Econolite an ATMS + ATSPM platform in April 2024[^nampaecono] and built a $6.1M Integrated Command Center.[^nampaicc] |
 | **Caldwell** | **City of Caldwell** | Runs Naztec controllers like ACHD's older fleet, and shares parts and training with ACHD.[^agr7] A Caldwell–Nampa signal interconnect agreement is still "Planned."[^agr8] |
-| **Rural Canyon County** | Nampa HD No. 1, Notus-Parma HD No. 2, Golden Gate HD No. 3, Canyon HD No. 4 | Few signals; "rural traffic management."[^el82] |
+| **Rural Canyon County** | Nampa HD No. 1, Notus-Parma HD No. 2, Golden Gate HD No. 3, Canyon HD No. 4 | Few signals; "rural traffic management."[^el82] ⚠️ Nampa Highway District bid a signal at Middleton Rd and Orchard Ave in 2021 (source not yet re-checked). |
 | **Regional planning** | **COMPASS** (the metropolitan planning organization, MPO) | Owns the regional ITS architecture, the TSMO Strategic Plan, Congestion Management reports, and federal funding priorities. Doesn't operate signals. |
 
 **Scale.** Counts vary by source and by what's counted:
@@ -74,19 +74,42 @@ where the gaps are.
 
 | Year | Event | Source |
 |---|---|---|
-| 2000 | ACHD opens its Traffic Management Center (TMC) | [^tsmo] |
+| Jan 2000 | ACHD opens its Traffic Management Center (TMC). ⚠️ The month (January) is from our research notes (source not yet re-checked). | [^tsmo] |
+| 2009 | ACHD retimes 32+ intersections for Boise State games | ⚠️ (source not yet re-checked) |
 | 2012 | ACHD plans a $600K first phase of 20–30 adaptive signals, using federal money left over from a cancelled bridge project. The Traffic Services Manager warned: "You can't turn the switch on and go to adaptive, find out that it doesn't work and go back." | [^govtech] |
 | ~2014 | **Three Cities ITS project**: Rhythm Engineering adaptive system with 22 sensors on Glenwood, Eagle, Chinden and State | [^ktvbadaptive] |
 | ~2015 | **ACHD scraps the adaptive system.** Sun glare and fog kept it from detecting queues accurately, and side streets weren't served properly. ACHD's spokesperson said it was flawed and "created issues for drivers rather than eliminating them." ⚠️ Article date not confirmed. | [^ktvbadaptive] |
 | 2017 | $2.25M federal ATCMTD grant to replace controllers and detection at **82 intersections** | [^fhwa2017] |
 | 2017–19 | ACHD participates in the national SPaT Challenge (signal-timing broadcasts to connected vehicles) at 20 intersections, evaluated by the University of Idaho | [^pactrans] |
+| Mar 2018 | ITD and ACHD pilot dynamic "no right turn" signs at Eagle & Ustick | ⚠️ (source not yet re-checked) |
 | 2020 | COMPASS TSMO Strategic Plan: ACHD's "forward focus" is "signal performance measurement and data collection." ACHD and ITD central systems "are from different vendors and are not integrated." | [^tsmo] |
+| Nov 2021 | **SH-44/SH-55 in Eagle:** a Nov 2, 2021 City of Eagle staff memo says ITD changed the junction from a continuous-flow intersection to an expanded standard intersection after construction began. Eagle asked ACHD to model the delay nearby. | [^eaglememo] |
 | 2022 | 465 signals, 220 cameras; emergency-vehicle preemption "up to 65,000 times a month" | [^ipress2022] |
 | Fall 2023 | ITD contracts "national traffic engineering experts for review of signal timing and operations" on Eagle Road (18 signals, about 60,000 vehicles/day) | [^itdeagle] |
 | Apr 2024 | Nampa awards Econolite ATMS + ATSPM | [^nampaecono] |
 | Aug 2024 | **ACHD countywide Econolite contract:** Centracs Mobility central system, Cobalt ATC controllers with EOS software, detection, and cabinets for about 600 locations | [^econolite] |
 | Apr 2025 | **Franklin Traffic Operations Center** completed: a $29.4M campus that brings together ACHD's congestion management center and its signal, sign and paint shops | [^cshqa] |
 | Aug 2026 | ITD turns on variable speed limits on Eagle Rd (Fairview–Chinden): 45 mph in weekday peaks, 55 mph otherwise; a two-year pilot | [^itdvsl] |
+
+**Operations and infrastructure.**
+
+- **After hours.** The Ada County Sheriff's Office monitors ACHD's cameras
+  after hours.[^agr4]
+- **Backup center.** The backup control center on the unfunded list (§2.5) is
+  requested because the current facility is "located in a
+  floodplain."[^rdp]
+- **Fiber.** More than 545 miles region-wide (2020). Shared downtown fiber
+  (ACHD, Boise, Boise State) saved about $600K. ⚠️ (source not yet
+  re-checked)
+
+**ACHD cameras over time.**
+
+| When | Cameras | Source / note |
+|---|---|---|
+| 2009 | 74 | ⚠️ (source not yet re-checked) |
+| 2022 | 220 | [^ipress2022] |
+| Oct 4, 2026 | 232 records in ACHD's GIS camera layer | 228 distinct cameras ([ch. 11](11-camera-validation-layer.md#111-the-source)) |
+| Undated | About 160 arterial cameras | A COMPASS item ⚠️ (source not yet re-checked) |
 
 ## 2.4 How timing works here today
 
@@ -112,6 +135,9 @@ where the gaps are.
 - **The same pattern in Nampa.** Its Transportation Engineer Manager said in
   2023: "we're reliant on reactive fixes. When a citizen sees a light doesn't
   turn for them right, they call us."[^nampaicc]
+- **What Nampa expects from retiming.** Nampa's lead transportation engineer
+  said on Nov 10, 2022 that corridor retiming generally gives "a 10 to 15
+  percent decrease in travel times." ⚠️ (source not yet re-checked)
 
 ## 2.5 What's on the unfunded list
 
@@ -144,6 +170,18 @@ direct lever for anyone trying to improve signal timing.
 > *outside* (grant) money for. ACHD may fund some of this work from its own
 > budget. Ask ACHD what is already planned in-house before assuming nothing
 > is happening.
+
+**Other plans and grants.**
+
+- COMPASS's FY2023–29 Transportation Improvement Program (TIP) holds **19
+  TSMO/ITS projects totaling $119.6M**.[^tip]
+- **IROC**, a joint operations center, is still listed as "Planned." ⚠️
+  (source not yet re-checked)
+- **RAISE grant:** $8.5M to Valley Regional Transit (VRT) on Aug 11, 2022 for
+  6.5 miles of transit improvements on State St/SH-44. Signal priority isn't
+  mentioned. ⚠️ (source not yet re-checked)
+- **I-84 ramp metering** appears only as an unfunded need. There are no ramp
+  meters today. ⚠️ (source not yet re-checked)
 
 ## 2.6 Seams and coordination problems
 
@@ -193,9 +231,15 @@ proposal, AI included, has to address:
   fees (about $23M) and vehicle registration fees (about $14M).[^revenue]
 - **Five-Year Work Plan 2026–2030:** 266 projects, about $1.2B, mostly
   capital.[^fyp]
-- **Staff:** about 300 total employees. We found no published
-  traffic-engineering or signal-operations headcount, which is a key question
-  given the staffing benchmarks in [chapter 4](04-improvement-playbook.md).
+- **Staff:** about 300 total employees, per Wikipedia ⚠️.[^wiki]
+  We found no published traffic-engineering or signal-operations headcount,
+  which is a key question given the staffing benchmarks in
+  [chapter 4](04-improvement-playbook.md).
+- **Headquarters:** ACHD bought **5800 N. Meeker Ave.** for **$16.4M** as a
+  new headquarters. ⚠️ (source not yet re-checked) Our research notes left
+  open whether the TMC moved there; §2.3 puts the congestion management
+  center in the Franklin Traffic Operations Center (Apr 2025), which may
+  answer it.
 - **State constraints:**
   - Idaho allows local-option sales taxes only in small resort cities, so
     Valley Regional Transit has no dedicated funding source.[^localoption]
@@ -237,9 +281,11 @@ broken detectors get found.
 **Next:** [03 — Regional traffic context and data](03-traffic-context-and-data.md)
 
 [^tsmo]: COMPASS, *Treasure Valley TSMO Strategic Plan* (IBI Group, Jan 16, 2020), pp. 14–18. https://compassidaho.org/wp-content/uploads/COMPASSTSMOPlan_FINAL.pdf
+[^lso]: Idaho Legislative Services Office briefing, Jan 16, 2018.
 [^itd2006]: ITD Transporter, Aug 25, 2006. https://apps.itd.idaho.gov/apps/MediaManagerMVC/Transporter/2006/082506_Trans/082506_Board.html
 [^curns]: ACHD paper, ITE Western District annual meeting, 2015. https://www.westernite.org/annualmeetings/15_Las_Vegas/Papers/2C-Curns.pdf
 [^agr]: COMPASS Regional ITS Architecture, agreements. https://its-architecture.compassidaho.org/html/agree/agr2.html and https://its-architecture.compassidaho.org/html/agree/agr1.html
+[^agr4]: COMPASS Regional ITS Architecture, agreement agr4. https://its-architecture.compassidaho.org/html/agree/agr4.html
 [^agr7]: https://its-architecture.compassidaho.org/html/agree/agr7.html
 [^agr8]: https://its-architecture.compassidaho.org/html/agree/agr8.html
 [^el82]: https://its-architecture.compassidaho.org/html/inv/el82.html
@@ -253,12 +299,14 @@ broken detectors get found.
 [^fhwa2017]: FHWA press release, Oct 4, 2017. https://www.fhwa.dot.gov/pressroom/fhwa1717d.cfm
 [^pactrans]: PacTrans, "Field Evaluation of V2I Connected Vehicle Deployment in Ada County." https://depts.washington.edu/pactrans/research/projects/field-evaluation-of-v2i-connected-vehicle-deployment-in-ada-county-idaho-validating-communication-architecture-and-control-technology-readiness
 [^itdeagle]: ITD, Eagle Road safety corridor page. https://itd.idaho.gov/?p=57877
+[^eaglememo]: City of Eagle staff memo, Nov 2, 2021 (SH-44/SH-55 junction).
 [^cshqa]: CSHQA project page, ACHD Franklin Traffic Operations Center. https://www.cshqa.com/project/achd-franklin-traffic-operations-center/
 [^itdvsl]: ITD news release, Aug 5, 2026. https://itd.idaho.gov/news/itd-activates-variable-speed-limit-signs-on-eagle-road/
 [^achd206]: ACHD public info item (search excerpt only). https://www.achdidaho.org/community-resources/public-info-and-alerts/-item-206
 [^kivifog]: KIVI, "Dense fog affecting traffic lights throughout Ada County." https://www.kivitv.com/news/dense-fog-affecting-traffic-lights-throughout-ada-county
 [^lpi]: Idaho Press, 2023. https://www.idahopress.com/news/local/ada-county-highway-district-makes-changes-to-downtown-boise-intersection-in-hopes-of-improving-safety/article_21165e1e-2bef-11ee-957c-efe1d2b47f6a.html
 [^rdp]: COMPASS, *Resource Development Plan FY2026*, pp. 2–5. https://compassidaho.org/wp-content/uploads/2026ResourceDevelopmentPlan.pdf
+[^tip]: COMPASS, FY2023–2029 Transportation Improvement Program (TIP).
 [^d3comments]: COMPASS, ITD D3 ITIP public comments 2023. https://compassidaho.org/wp-content/uploads/D3ITIP_Comments2023_Revised.pdf
 [^cms2022]: COMPASS, *2022 Congestion Management System Report*. https://compassidaho.org/wp-content/uploads/2022CongestionManagementSystemReport.pdf
 [^commission]: Idaho Code §40-1404A. https://legislature.idaho.gov/statutesrules/idstat/Title40/T40CH14/SECT40-1404A/
@@ -266,6 +314,7 @@ broken detectors get found.
 [^budget27]: ACHD, FY2027 budget hearing. https://engage.achdidaho.org/budget-fiscal-year-2027/news_feed/2027-budget-public-hearing
 [^revenue]: ACHD budget document (search excerpt). https://www.achdidaho.org/home/showpublisheddocument/1766/638961385597700000
 [^fyp]: ACHD, 2026–2030 Five Year Plan adoption. https://engage.achdidaho.org/five-year-plan-2026-2030/news_feed/achd-commissioners-adopt-2026-2030-five-year-plan
+[^wiki]: Wikipedia, "Ada County Highway District" (total employees). ⚠️ Secondary source.
 [^localoption]: Idaho Code §50-1044. https://legislature.idaho.gov/statutesrules/idstat/Title50/T50CH10/SECT50-1044/
 [^redlight]: KIVI, "New Idaho law forces Boise to abandon red light camera program." https://www.kivitv.com/downtown-boise/new-idaho-law-forces-boise-to-abandon-red-light-camera-program
 [^report]: ACHD, Report an Issue. https://www.achdidaho.org/community-resources/report-an-issue

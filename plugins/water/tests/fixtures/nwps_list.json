@@ -1,0 +1,164 @@
+{
+ "gauges": [
+  {
+   "lid": "ARKI1",
+   "name": "Southwest Idaho Reservoirs at Arrowrock Dam",
+   "rfc": {
+    "abbreviation": "NWRFC",
+    "name": "Northwest River Forecast Center"
+   },
+   "wfo": {
+    "abbreviation": "BOI",
+    "name": "Boise"
+   },
+   "state": {
+    "abbreviation": "ID",
+    "name": "Idaho"
+   },
+   "latitude": 43.59638888888889,
+   "longitude": -115.92305555555555,
+   "pedts": {
+    "observed": "HPIRG",
+    "forecast": "HPIFZ"
+   },
+   "status": {
+    "observed": {
+     "primary": 3126.26,
+     "primaryUnit": "ft",
+     "secondary": -999,
+     "secondaryUnit": "kcfs",
+     "floodCategory": "not_defined",
+     "validTime": "2026-10-07T12:30:00Z"
+    },
+    "forecast": {
+     "primary": -999,
+     "primaryUnit": "",
+     "secondary": -999,
+     "secondaryUnit": "",
+     "floodCategory": "fcst_not_current",
+     "validTime": "0001-01-01T00:00:00Z"
+    }
+   }
+  },
+  {
+   "lid": "BCJI1",
+   "name": "Snake River below C.J. Strike Reservoir",
+   "rfc": {
+    "abbreviation": "NWRFC",
+    "name": "Northwest River Forecast Center"
+   },
+   "wfo": {
+    "abbreviation": "BOI",
+    "name": "Boise"
+   },
+   "state": {
+    "abbreviation": "ID",
+    "name": "Idaho"
+   },
+   "latitude": 42.94724,
+   "longitude": -115.98031,
+   "pedts": {
+    "observed": "QRIRZ",
+    "forecast": ""
+   },
+   "status": {
+    "observed": {
+     "primary": 4.15723,
+     "primaryUnit": "kcfs",
+     "secondary": -999,
+     "secondaryUnit": "ft",
+     "floodCategory": "not_defined",
+     "validTime": "2026-10-07T09:45:00Z"
+    },
+    "forecast": {
+     "primary": -999,
+     "primaryUnit": "",
+     "secondary": -999,
+     "secondaryUnit": "",
+     "floodCategory": "fcst_not_current",
+     "validTime": "0001-01-01T00:00:00Z"
+    }
+   }
+  },
+  {
+   "lid": "BIGI1",
+   "name": "Boise River at Boise (Glenwood Bridge)",
+   "rfc": {
+    "abbreviation": "NWRFC",
+    "name": "Northwest River Forecast Center"
+   },
+   "wfo": {
+    "abbreviation": "BOI",
+    "name": "Boise"
+   },
+   "state": {
+    "abbreviation": "ID",
+    "name": "Idaho"
+   },
+   "latitude": 43.660555555556,
+   "longitude": -116.27916666667,
+   "pedts": {
+    "observed": "QRIRZ",
+    "forecast": "QRIFZ"
+   },
+   "status": {
+    "observed": {
+     "primary": 0.379,
+     "primaryUnit": "kcfs",
+     "secondary": 3.6,
+     "secondaryUnit": "ft",
+     "floodCategory": "no_flooding",
+     "validTime": "2026-10-07T12:45:00Z"
+    },
+    "forecast": {
+     "primary": 0.4125,
+     "primaryUnit": "kcfs",
+     "secondary": 3.7,
+     "secondaryUnit": "ft",
+     "floodCategory": "no_flooding",
+     "validTime": "2026-10-07T18:00:00Z"
+    }
+   }
+  },
+  {
+   "lid": "EMMI1",
+   "name": "Payette River at Emmett",
+   "rfc": {
+    "abbreviation": "NWRFC",
+    "name": "Northwest River Forecast Center"
+   },
+   "wfo": {
+    "abbreviation": "BOI",
+    "name": "Boise"
+   },
+   "state": {
+    "abbreviation": "ID",
+    "name": "Idaho"
+   },
+   "latitude": 43.930555555556,
+   "longitude": -116.44166666667,
+   "pedts": {
+    "observed": "HGIRG",
+    "forecast": "HGIFZ"
+   },
+   "status": {
+    "observed": {
+     "primary": 1.55,
+     "primaryUnit": "ft",
+     "secondary": 0.494,
+     "secondaryUnit": "kcfs",
+     "floodCategory": "no_flooding",
+     "validTime": "2026-10-07T12:45:00Z"
+    },
+    "forecast": {
+     "primary": 2,
+     "primaryUnit": "ft",
+     "secondary": 0.749,
+     "secondaryUnit": "kcfs",
+     "floodCategory": "no_flooding",
+     "validTime": "2026-10-16T06:00:00Z"
+    }
+   }
+  }
+ ]
+}

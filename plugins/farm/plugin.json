@@ -1,0 +1,15 @@
+{
+  "name": "farm",
+  "title": "Farms and crops: crop water use",
+  "depends": [],
+  "visibility": "public",
+  "order": 67,
+  "sources": [
+    {"name": "agrimet_et", "module": "ingest.sources.agrimet_et", "kind": "source",
+     "license": "U.S. Government work (public domain, inferred); provisional data",
+     "credit": "U.S. Bureau of Reclamation, AgriMet", "republish": "yes"}
+  ],
+  "tables": [],
+  "storage": "raw.record only (no tables of its own until core's met_station and readings land, ch. 17 Q8): one record per station-day (about 80-350 bytes) and one per station's daily crop chart (about 0.5 KB at the lawn-only Boise stations, 4 KB at Parma). In season (April-October) about 6 day records and 6 charts a day, roughly 30 KB a day with row overhead, about 6 MB a season; off season about 1 KB a day. Provisional values that Reclamation revises add versions.",
+  "ethics": "Reads only the static chart files under www.usbr.gov/pn/agrimet/chart/, which robots.txt allows; /pn-bin and the RISE API are robots-disallowed and never used (collecting AgriMet's weather there needs Reclamation's OK, ch. 17 §17.7). One GET per file, 3 s apart, at most 12 a day in season and 6 a week off season (12 in the first two weeks of January). Weather stations at agency sites; nothing about people. Values are provisional and are labelled so wherever shown; credit Reclamation AgriMet."
+}

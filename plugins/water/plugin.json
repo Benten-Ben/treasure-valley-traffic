@@ -1,0 +1,29 @@
+{
+  "name": "water",
+  "title": "Water: river gauges and floods, snow, swimming water, river hazards and drought",
+  "depends": [],
+  "visibility": "public",
+  "order": 62,
+  "sources": [
+    {"name": "nwps_gauges", "module": "ingest.sources.nwps_gauges", "kind": "source",
+     "license": "US government work (public domain)",
+     "credit": "NOAA National Weather Service (NWPS; Northwest River Forecast Center); observations courtesy of the U.S. Geological Survey",
+     "republish": "yes"},
+    {"name": "nrcs_snotel", "module": "ingest.sources.nrcs_snotel", "kind": "source",
+     "license": "US government work (USDA NRCS); public domain assumed",
+     "credit": "USDA Natural Resources Conservation Service (SNOTEL)", "republish": "yes"},
+    {"name": "boise_ecoli", "module": "ingest.sources.boise_ecoli", "kind": "source",
+     "license": "none stated (City of Boise layer, disclaimer only)",
+     "credit": "City of Boise Parks and Recreation", "republish": "internal"},
+    {"name": "boise_river_hazards", "module": "ingest.sources.boise_river_hazards", "kind": "source",
+     "license": "none stated (City of Boise / Boise Fire layer)",
+     "credit": "Boise Fire Department and City of Boise (Float the Boise)", "republish": "internal"},
+    {"name": "usdm_drought", "module": "ingest.sources.usdm_drought", "kind": "source",
+     "license": "free to reproduce with the required credit (NDMC permission page)",
+     "credit": "U.S. Drought Monitor: National Drought Mitigation Center (University of Nebraska-Lincoln), USDA, NOAA and NASA; map courtesy of NDMC",
+     "republish": "aggregates"}
+  ],
+  "tables": [],
+  "storage": "About 1.7 MB a day in raw.record, most of it NWPS readings (37 gauges, mostly 15-minute values: about 3,500 rows a day, roughly 0.6 GB a year); SNOTEL about 100 station-hours a day; E. coli, hazards and drought a few rows a week. Once, at the start: each gauge's first sweep loads its 30 days of history (about 100,000 rows, some 40 MB, over the first day) and the first drought run loads the archive since 2000 (about 14,000 rows). evt.event: a handful of open rows (floods, live river hazards, drought episodes). Downloads: about 4-5 MB a day, mostly NWPS's weekly 30-day series.",
+  "ethics": "Rivers, snow and drought, not people. The river-hazard layer's editor user names (Creator, Editor) and its Internal Comments field (which names people) are never stored. The City of Boise layers (E. coli, river hazards) state no license: used internally with credit until the City answers a courtesy note (docs/17 Q17). Hazards and water quality are shown in the agencies' own words; we make no swim, float or safe calls. ArcGIS layers are only queried. The USGS Water Data API and api.weather.gov are not used (their robots.txt disallows us); the Drought Monitor's polygon files sit under a disallowed path and aren't collected."
+}

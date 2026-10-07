@@ -1,0 +1,358 @@
+{
+ "displayFieldName": "species",
+ "fieldAliases": {
+  "OBJECTID": "OBJECTID",
+  "species": "species",
+  "source": "source",
+  "observed": "observed",
+  "salvaged": "salvaged",
+  "sex": "sex",
+  "lifeStage": "lifeStage",
+  "lifeState": "lifeState",
+  "disposition": "disposition",
+  "decomposition": "decomposition",
+  "latitude": "latitude",
+  "longitude": "longitude",
+  "highway": "highway",
+  "milepost": "milepost",
+  "note": "note",
+  "reported": "reported",
+  "county": "county",
+  "region": "region",
+  "gmu": "gmu",
+  "path": "path",
+  "GlobalID": "GlobalID"
+ },
+ "geometryType": "esriGeometryPoint",
+ "spatialReference": {
+  "wkid": 4326,
+  "latestWkid": 4326
+ },
+ "fields": [
+  {
+   "name": "OBJECTID",
+   "type": "esriFieldTypeOID",
+   "alias": "OBJECTID"
+  },
+  {
+   "name": "species",
+   "type": "esriFieldTypeString",
+   "alias": "species",
+   "length": 255
+  },
+  {
+   "name": "source",
+   "type": "esriFieldTypeString",
+   "alias": "source",
+   "length": 50
+  },
+  {
+   "name": "observed",
+   "type": "esriFieldTypeDate",
+   "alias": "observed",
+   "length": 8
+  },
+  {
+   "name": "salvaged",
+   "type": "esriFieldTypeString",
+   "alias": "salvaged",
+   "length": 20
+  },
+  {
+   "name": "sex",
+   "type": "esriFieldTypeString",
+   "alias": "sex",
+   "length": 255
+  },
+  {
+   "name": "lifeStage",
+   "type": "esriFieldTypeString",
+   "alias": "lifeStage",
+   "length": 255
+  },
+  {
+   "name": "lifeState",
+   "type": "esriFieldTypeString",
+   "alias": "lifeState",
+   "length": 30
+  },
+  {
+   "name": "disposition",
+   "type": "esriFieldTypeString",
+   "alias": "disposition",
+   "length": 1073741822
+  },
+  {
+   "name": "decomposition",
+   "type": "esriFieldTypeString",
+   "alias": "decomposition",
+   "length": 255
+  },
+  {
+   "name": "latitude",
+   "type": "esriFieldTypeDouble",
+   "alias": "latitude"
+  },
+  {
+   "name": "longitude",
+   "type": "esriFieldTypeDouble",
+   "alias": "longitude"
+  },
+  {
+   "name": "highway",
+   "type": "esriFieldTypeString",
+   "alias": "highway",
+   "length": 255
+  },
+  {
+   "name": "milepost",
+   "type": "esriFieldTypeString",
+   "alias": "milepost",
+   "length": 50
+  },
+  {
+   "name": "note",
+   "type": "esriFieldTypeString",
+   "alias": "note",
+   "length": 1073741822
+  },
+  {
+   "name": "reported",
+   "type": "esriFieldTypeDate",
+   "alias": "reported",
+   "length": 8
+  },
+  {
+   "name": "county",
+   "type": "esriFieldTypeString",
+   "alias": "county",
+   "length": 50
+  },
+  {
+   "name": "region",
+   "type": "esriFieldTypeString",
+   "alias": "region",
+   "length": 50
+  },
+  {
+   "name": "gmu",
+   "type": "esriFieldTypeString",
+   "alias": "gmu",
+   "length": 20
+  },
+  {
+   "name": "path",
+   "type": "esriFieldTypeString",
+   "alias": "path",
+   "length": 250
+  },
+  {
+   "name": "GlobalID",
+   "type": "esriFieldTypeGlobalID",
+   "alias": "GlobalID",
+   "length": 38
+  }
+ ],
+ "features": [
+  {
+   "attributes": {
+    "OBJECTID": 9000001,
+    "species": "Mule Deer (Odocoileus hemionus)",
+    "source": "IDFG Roadkill & Salvage Reports",
+    "observed": 1762153200000,
+    "salvaged": "Yes",
+    "sex": "Female",
+    "lifeStage": "Adult",
+    "lifeState": "Dead",
+    "disposition": "Roadside",
+    "decomposition": "Fresh",
+    "latitude": 43.6012345,
+    "longitude": -116.2012345,
+    "highway": "SYNTHETIC HWY 1",
+    "milepost": "12.5",
+    "note": "SYNTHETIC NOTE TEXT",
+    "reported": 1762239600000,
+    "county": "Testcounty",
+    "region": "Testregion",
+    "gmu": "99",
+    "path": "synthetic/path/0001",
+    "GlobalID": "{00000000-0000-4000-8000-000009000001}"
+   },
+   "geometry": {
+    "x": -116.2012345,
+    "y": 43.6012345
+   }
+  },
+  {
+   "attributes": {
+    "OBJECTID": 9000002,
+    "species": "Mule Deer (Odocoileus hemionus)",
+    "source": "IDFG Roadkill & Salvage Reports",
+    "observed": 1762153200000,
+    "salvaged": "No",
+    "sex": "Unknown",
+    "lifeStage": "Juvenile",
+    "lifeState": "Dead",
+    "disposition": "Roadside",
+    "decomposition": "Fresh",
+    "latitude": 43.6012345,
+    "longitude": -116.2012345,
+    "highway": "SYNTHETIC HWY 1",
+    "milepost": "12.5",
+    "note": "",
+    "reported": 1762239600000,
+    "county": "Testcounty",
+    "region": "Testregion",
+    "gmu": "99",
+    "path": null,
+    "GlobalID": "{00000000-0000-4000-8000-000009000002}"
+   },
+   "geometry": {
+    "x": -116.2012345,
+    "y": 43.6012345
+   }
+  },
+  {
+   "attributes": {
+    "OBJECTID": 9000003,
+    "species": "Elk (Cervus canadensis)",
+    "source": "IDFG Survey 123",
+    "observed": 1789911720000,
+    "salvaged": "",
+    "sex": "Female",
+    "lifeStage": "Adult",
+    "lifeState": "Dead",
+    "disposition": "Moved to Ditch",
+    "decomposition": "Fresh",
+    "latitude": 44.1012345,
+    "longitude": -115.8012345,
+    "highway": "",
+    "milepost": " ",
+    "note": "",
+    "reported": 1789941900000,
+    "county": "Testcounty",
+    "region": "Testregion",
+    "gmu": "99",
+    "path": null,
+    "GlobalID": "{00000000-0000-4000-8000-000009000003}"
+   },
+   "geometry": {
+    "x": -115.8012345,
+    "y": 44.1012345
+   }
+  },
+  {
+   "attributes": {
+    "OBJECTID": 9000004,
+    "species": "Mule Deer (Odocoileus hemionus)",
+    "source": "IDFG Roadkill & Salvage Reports",
+    "observed": 1762153200000,
+    "salvaged": "Yes",
+    "sex": "Female",
+    "lifeStage": "Adult",
+    "lifeState": "Dead",
+    "disposition": "Roadside",
+    "decomposition": "Fresh",
+    "latitude": 43.5012345,
+    "longitude": -114.4012345,
+    "highway": "SYNTHETIC HWY 1",
+    "milepost": "12.5",
+    "note": "",
+    "reported": 1762239600000,
+    "county": "Testcounty",
+    "region": "Testregion",
+    "gmu": "99",
+    "path": null,
+    "GlobalID": "{00000000-0000-4000-8000-000009000004}"
+   },
+   "geometry": {
+    "x": -114.4012345,
+    "y": 43.5012345
+   }
+  },
+  {
+   "attributes": {
+    "OBJECTID": 9000005,
+    "species": "Mule Deer (Odocoileus hemionus)",
+    "source": "IDFG Roadkill & Salvage Reports",
+    "observed": 7887600000,
+    "salvaged": "Yes",
+    "sex": "Female",
+    "lifeStage": "Adult",
+    "lifeState": "Dead",
+    "disposition": "Roadside",
+    "decomposition": "Fresh",
+    "latitude": 43.4012345,
+    "longitude": -116.6012345,
+    "highway": "SYNTHETIC HWY 1",
+    "milepost": "12.5",
+    "note": "",
+    "reported": 256374000000,
+    "county": "Testcounty",
+    "region": "Testregion",
+    "gmu": "99",
+    "path": null,
+    "GlobalID": "{00000000-0000-4000-8000-000009000005}",
+    "observerName": "SYNTHETIC NAME"
+   },
+   "geometry": {
+    "x": -116.6012345,
+    "y": 43.4012345
+   }
+  },
+  {
+   "attributes": {
+    "OBJECTID": 9000006,
+    "species": "Mule Deer (Odocoileus hemionus)",
+    "source": "IDFG Roadkill & Salvage Reports",
+    "observed": 1762153200000,
+    "salvaged": "Yes",
+    "sex": "Female",
+    "lifeStage": "Adult",
+    "lifeState": "Dead",
+    "disposition": "Roadside",
+    "decomposition": "Fresh",
+    "latitude": null,
+    "longitude": null,
+    "highway": "SYNTHETIC HWY 1",
+    "milepost": "12.5",
+    "note": "",
+    "reported": 1762239600000,
+    "county": "Testcounty",
+    "region": "Testregion",
+    "gmu": "99",
+    "path": null,
+    "GlobalID": "{00000000-0000-4000-8000-000009000006}"
+   }
+  },
+  {
+   "attributes": {
+    "OBJECTID": 9000007,
+    "species": "Pronghorn (Antilocapra americana)",
+    "source": "Big Game Mortality Report (BGMR)",
+    "observed": 1791183600000,
+    "salvaged": "Yes",
+    "sex": "Male",
+    "lifeStage": "Adult",
+    "lifeState": "Dead",
+    "disposition": "Roadside",
+    "decomposition": "Unknown",
+    "latitude": 43.7012345,
+    "longitude": -116.7012345,
+    "highway": " ",
+    "milepost": null,
+    "note": "",
+    "reported": 1791270000000,
+    "county": "Testcounty",
+    "region": "Testregion",
+    "gmu": "99",
+    "path": null,
+    "GlobalID": "{00000000-0000-4000-8000-000009000007}"
+   },
+   "geometry": {
+    "x": -116.7012345,
+    "y": 43.7012345
+   }
+  }
+ ]
+}

@@ -2,7 +2,10 @@
 
 robots.txt follows RFC 9309 (groups, * and $ wildcards, longest match wins;
 4xx means no rules; 5xx or a network error means disallow for now), parsed
-leniently for real-world quirks seen in our sources. Ported from the
+leniently for real-world quirks seen in our sources. Every group that names
+us is merged, as the RFC requires (or every `*` group if none does), and an
+exact tie between an allow and a disallow rule counts as disallow: stricter
+than the RFC, like our case-insensitive matching (owner, Oct 7). Ported from the
 prototype (tvt/http.py), where these rules were worked out and tested.
 """
 
@@ -19,6 +22,21 @@ from . import AGENT_TOKEN, USER_AGENT
 
 class RobotsDisallowed(Exception):
     pass
+
+
+class EditRefused(Exception):
+    """An ArcGIS edit operation. Some public services advertise edit capabilities
+    (Barber Park's sensors, IDFG's access sites); we only ever read (Oct 7)."""
+
+
+# ArcGIS operations that change a service's data. Refused for every host, GET or POST.
+EDIT_OPS = re.compile(r"/(?:feature|map)server(?:/\d+)?/(?:applyedits|addfeatures|updatefeatures|deletefeatures"
+                      r"|calculate|append|truncate|addattachment|updateattachment|deleteattachments)\b", re.IGNORECASE)
+
+# Extra spacing between requests to one host, on top of its crawl-delay (the longer wins):
+# for hosts whose robots.txt asks for nothing but that we read often or in bulk.
+# Sources add their host here (http.PACE_S["host"] = seconds).
+PACE_S = {}
 
 
 class RobotsUnavailable(RobotsDisallowed):
@@ -76,11 +94,15 @@ class Robots:
         return re.compile(body + ("$" if anchored else ""), re.IGNORECASE)
 
     def _group(self):
-        specific = [g for g in self.groups if any(a != "*" and a in AGENT_TOKEN for a in g[0])]
-        if specific:
-            return specific[0]
-        wildcard = [g for g in self.groups if "*" in g[0]]
-        return wildcard[0] if wildcard else None
+        """The rules and crawl-delay that apply to us: every group naming our agent token,
+        merged (RFC 9309 §2.2.1), or else every `*` group (Canyon County's and ScienceBase's
+        files have two). The longest crawl-delay among them wins. None if no group applies."""
+        groups = [g for g in self.groups if any(a != "*" and a in AGENT_TOKEN for a in g[0])] \
+            or [g for g in self.groups if "*" in g[0]]
+        if not groups:
+            return None
+        delays = [g[2] for g in groups if g[2] is not None]
+        return [rule for g in groups for rule in g[1]], (max(delays) if delays else None)
 
     def allowed(self, url):
         parts = urllib.parse.urlsplit(url)
@@ -89,14 +111,14 @@ class Robots:
         if not group:
             return True
         best = None  # (length, allow)
-        for allow, rx, length in group[1]:
-            if rx.match(path) and (best is None or length > best[0] or (length == best[0] and allow)):
+        for allow, rx, length in group[0]:
+            if rx.match(path) and (best is None or length > best[0] or (length == best[0] and not allow)):
                 best = (length, allow)
         return True if best is None else best[1]
 
     def crawl_delay(self):
         group = self._group()
-        return group[2] if group else None
+        return group[1] if group else None
 
 
 DISALLOW_ALL = Robots("User-agent: *\nDisallow: /")
@@ -136,19 +158,29 @@ def robots_for(url):
     return host, rules, ("no_rules" if rules is None else "allowed")
 
 
-def get(url, timeout=90, compressed=False):
-    """GET with the robots check and crawl-delay. Returns (status, body bytes, robots decision).
-    compressed=True asks for gzip (the body returned is always uncompressed)."""
+def _polite(url):
+    """Check an URL before requesting it: never an edit operation, robots.txt must allow
+    it, and the host's crawl-delay (or PACE_S, whichever is longer) has passed. Returns
+    the robots decision."""
+    if EDIT_OPS.search(urllib.parse.urlsplit(url).path):
+        raise EditRefused(f"refusing an edit operation: {url}")
     host, rules, decision = robots_for(url)
     if decision == "unavailable":
         raise RobotsUnavailable(f"robots.txt at {host} couldn't be read; treating {url} as disallowed for now")
     if rules is not None and not rules.allowed(url):
         raise RobotsDisallowed(f"robots.txt at {host} disallows {url}")
-    delay = (rules.crawl_delay() if rules else None) or 0
+    delay = max((rules.crawl_delay() if rules else None) or 0, PACE_S.get(urllib.parse.urlsplit(url).netloc, 0))
     wait = _last_hit.get(host, 0) + delay - time.time()
     if wait > 0:
         time.sleep(wait)
     _last_hit[host] = time.time()
+    return decision
+
+
+def get(url, timeout=90, compressed=False):
+    """GET with the robots check and crawl-delay. Returns (status, body bytes, robots decision).
+    compressed=True asks for gzip (the body returned is always uncompressed)."""
+    decision = _polite(url)
     with _open(url, timeout=timeout, headers={"Accept-Encoding": "gzip"} if compressed else None) as r:
         body = r.read()
         if r.headers.get("Content-Encoding") == "gzip":
@@ -157,19 +189,10 @@ def get(url, timeout=90, compressed=False):
 
 
 def post(url, data, timeout=90):
-    """POST a form body (bytes, URL-encoded) with the same robots check and crawl-delay as get():
-    for read-only queries too long for a URL (ArcGIS servers on IIS refuse query strings over
-    about 2,000 characters). Returns (status, body bytes, robots decision)."""
-    host, rules, decision = robots_for(url)
-    if decision == "unavailable":
-        raise RobotsUnavailable(f"robots.txt at {host} couldn't be read; treating {url} as disallowed for now")
-    if rules is not None and not rules.allowed(url):
-        raise RobotsDisallowed(f"robots.txt at {host} disallows {url}")
-    delay = (rules.crawl_delay() if rules else None) or 0
-    wait = _last_hit.get(host, 0) + delay - time.time()
-    if wait > 0:
-        time.sleep(wait)
-    _last_hit[host] = time.time()
+    """POST a form body (bytes, URL-encoded) with the same checks as get(): for read-only
+    queries too long for a URL (ArcGIS servers on IIS refuse query strings over about
+    2,000 characters). Returns (status, body bytes, robots decision)."""
+    decision = _polite(url)
     with _open(url, data=data, timeout=timeout,
                headers={"Content-Type": "application/x-www-form-urlencoded"}) as r:
         return r.status, r.read(), decision

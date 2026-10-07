@@ -21,7 +21,11 @@
  *
  * The local database password is never committed: it comes from
  * TVT_DB_PASSWORD or PGPASSWORD, or from $MAIN/data/dev/harness.env
- * (git-ignored, one KEY=value per line).
+ * (git-ignored, one KEY=value per line). Any variable below can be set there
+ * too (the environment still wins), as can the machine's own settings:
+ * TVT_DB_HOST (host[:port] for DATABASE_URL), TVT_DB_ADMIN, TVT_PG_BIN and
+ * TVT_PYTHON (see db.mjs), for a machine whose test database isn't the
+ * default one on localhost (for example on another port).
  *
  * Usage:
  *   import { harnessEnv } from './harness-env.mjs';
@@ -101,7 +105,7 @@ export function dbPassword(main) {
 export function databaseUrl(name, main = mainCheckout()) {
 	const pw = dbPassword(main);
 	const auth = pw ? `tvt:${encodeURIComponent(pw)}` : 'tvt';
-	const host = process.env.TVT_DB_HOST || 'localhost';
+	const host = process.env.TVT_DB_HOST || localSettings(main).TVT_DB_HOST || 'localhost';
 	return `postgres://${auth}@${host}/${name}`;
 }
 
@@ -114,7 +118,9 @@ export function harnessEnv({ wp = packageName(), env = process.env } = {}) {
 	const workflow = Boolean(wp);
 	const devDir = join(main, 'data', 'dev', wp ?? 'local');
 	const port = packagePort(wp);
-	const pick = (key, fallback) => (env[key] !== undefined && env[key] !== '' ? env[key] : fallback);
+	const local = localSettings(main);
+	const pick = (key, fallback) =>
+		env[key] !== undefined && env[key] !== '' ? env[key] : local[key] !== undefined && local[key] !== '' ? local[key] : fallback;
 	const out = {
 		TVT_MAIN: main,
 		TVT_WP: wp ?? '',

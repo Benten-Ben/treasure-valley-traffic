@@ -13,7 +13,11 @@
  * The tvt role can't create databases, so creating and dropping run as the
  * postgres user over the local socket: directly when this runs as root
  * (createdb is started with postgres's uid, no shell involved), otherwise
- * through `sudo -n -u postgres` if that's allowed. Only names starting with
+ * through `sudo -n -u postgres` if that's allowed. Or, with TVT_DB_ADMIN set
+ * (user@host:port, in the environment or data/dev/harness.env), as that
+ * superuser over TCP. TVT_PG_BIN names the folder
+ * of the PostgreSQL client tools and TVT_PYTHON the Python for migrate.py,
+ * when the ones on PATH aren't the right ones. Only names starting with
  * tvt_ are accepted, and tvt and tvt_template are never dropped.
  *
  * Nobody connects to tvt_template except to seed it (WP0); everyone else
@@ -24,7 +28,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { databaseUrl, mainCheckout, packageName, APP_DIR } from './harness-env.mjs';
+import { databaseUrl, localSettings, mainCheckout, packageName, APP_DIR } from './harness-env.mjs';
 
 const REPO = join(APP_DIR, '..');
 export const TEMPLATE = 'tvt_template';
@@ -47,11 +51,22 @@ function postgresIds() {
 	return { uid: Number(uid), gid: Number(gid) };
 }
 
-/** Run a PostgreSQL client tool as the postgres superuser (peer auth on the local socket). */
+/** A setting from the environment, else data/dev/harness.env. */
+function setting(key) {
+	return process.env[key] || localSettings(mainCheckout())[key] || '';
+}
+
+/** A PostgreSQL client tool, from TVT_PG_BIN if set. */
+const pgTool = (tool) => (setting('TVT_PG_BIN') ? join(setting('TVT_PG_BIN'), tool) : tool);
+
+/** Run a PostgreSQL client tool as the postgres superuser (peer auth on the local socket, or TVT_DB_ADMIN). */
 function asPostgres(tool, args) {
 	const env = { PATH: process.env.PATH ?? '/usr/bin:/bin', LANG: 'C.UTF-8' };
+	const admin = /^([^@]+)@([^:]+):(\d+)$/.exec(setting('TVT_DB_ADMIN'));
 	let r;
-	if (process.getuid?.() === 0) {
+	if (admin) {
+		r = spawnSync(pgTool(tool), ['-U', admin[1], '-h', admin[2], '-p', admin[3], ...args], { cwd: '/tmp', env, encoding: 'utf8' });
+	} else if (process.getuid?.() === 0) {
 		const ids = postgresIds();
 		if (!ids) fail('no postgres user on this machine');
 		r = spawnSync(tool, args, { uid: ids.uid, gid: ids.gid, cwd: '/tmp', env, encoding: 'utf8' });
@@ -90,7 +105,7 @@ export function drop(name) {
 
 function psqlAs(name, args) {
 	const url = databaseUrl(name, mainCheckout());
-	return execFileSync('psql', ['-X', '-v', 'ON_ERROR_STOP=1', '-q', url, ...args], { encoding: 'utf8' });
+	return execFileSync(pgTool('psql'), ['-X', '-v', 'ON_ERROR_STOP=1', '-q', url, ...args], { encoding: 'utf8' });
 }
 
 /** Run a SQL file in one transaction on a clone. */
@@ -129,7 +144,7 @@ export function applyPending(name) {
 
 export function migrate(name) {
 	checkName(name);
-	execFileSync('python3', [join(REPO, 'db', 'migrate.py')], {
+	execFileSync(setting('TVT_PYTHON') || 'python3', [join(REPO, 'db', 'migrate.py')], {
 		stdio: 'inherit',
 		env: { ...process.env, DATABASE_URL: databaseUrl(name, mainCheckout()) }
 	});

@@ -24,7 +24,9 @@ network stay in private notes on the server, never in this repository.
 1. Install Docker Engine, the Compose plugin and git
    (`sudo apt install -y docker.io docker-compose-v2 git` on Ubuntu 24.04).
 2. Put the code in `/srv/tvt/repo`: clone it, or push it there from a
-   checkout.
+   checkout. The server's repo takes pushes over the tailnet
+   (`git config receive.denyCurrentBranch updateInstead` in it, so a push
+   updates the checked-out files), so the server needs no GitHub access.
 3. Create the environment file: `cp deploy/.env.example deploy/.env`, then
    set a database password generated on the server
    (`openssl rand -hex 24`). Never paste it into a chat session.
@@ -32,13 +34,32 @@ network stay in private notes on the server, never in this repository.
    `sudo mkdir -p /srv/tvt/frames /srv/tvt/archive && sudo chown 1000:1000 /srv/tvt/frames /srv/tvt/archive`.
    The archive holds raw feeds that can't be fetched again later, so back it up.
 5. Put the map tiles in `TILES_DIR`: build them (see [basemap/](../basemap)),
-   or copy a finished build.
+   or copy a finished build ([below](#tiles-copied-not-built-on-the-server)).
+   They're too big for GitHub, so they're built on our side or copied, never
+   committed.
 6. Put the private reference files in `PRIVATE_DATA_DIR` (they aren't in
    this repository).
 7. Start everything: `docker compose -f deploy/docker-compose.yml up -d --build`.
 8. Link the 511 camera views to cameras (one-off, by hand):
    `docker compose -f deploy/docker-compose.yml exec ingest python3 -m ingest run idaho511_views_oneoff`.
 9. Open the site on port 8080.
+
+### Tiles: copied, not built on the server
+
+On Oct 5 the pilot built the tiles in the cloud session and copied the
+finished build (about 1.2–1.4 GB then) to the VM with `rsync` over
+Tailscale, which resumes if the link drops, instead of building them on the
+server:
+
+- It saves about an hour of heavy CPU on the home server.
+- The VM then needs no GDAL, Go (for `pmtiles`) or DuckDB, which also
+  sidesteps most questions about whether those tools run on the server's
+  CPU. They get installed later, when the map needs a refresh.
+- The cloud session downloads at 25–40 MB/s, so building there was faster
+  than setting up GDAL, `pmtiles` and the repo on the owner's laptop. (The
+  owner had offered: "I can do things on my local machine if it would be net
+  faster".)
+- The copy itself is slow: about 2.5 MB/s through the tailnet relay.
 
 ## HTTPS on the tailnet
 
@@ -61,10 +82,110 @@ Over Tailscale only: the site and SSH are reachable from the owner's own
 devices. Don't forward any ports on the home router. The site has no login
 yet, so it must not be exposed to the internet.
 
+No login also means anyone on the owner's home network or tailnet can edit
+or overwrite a camera's calibration (noted Oct 5, when the calibrator went
+live). Calibrations are hand work, and they live only in the database on the
+server's disk: nothing is backed up yet (pending in
+[DECISIONS](../docs/DECISIONS.md)). Both argue for settling backups and,
+eventually, a login or some edit protection for calibrations.
+
 ## Updating
 
 ```bash
-cd /srv/tvt/repo
-git pull        # or push to it from a checkout
-docker compose -f deploy/docker-compose.yml up -d --build
+# push main to /srv/tvt/repo from a checkout (the server has no GitHub access), then:
+cd /srv/tvt/repo/deploy
+docker compose up -d --build <services>
 ```
+
+Run Compose from `deploy/` **without `-f`**, so it reads `COMPOSE_FILE` from
+`deploy/.env` and includes the overrides that are switched on (live images,
+the preview). With an explicit `-f`, the overrides are skipped.
+
+### Checking the app by hand
+
+SvelteKit refuses cross-site requests, and `curl` sends no browser `Origin`
+header, so a bare `curl -X POST` to the app's API is rejected (Oct 5 smoke
+test). Send what the app's own page sends:
+
+```bash
+curl -X POST http://localhost:8080/api/views/<id>/frame \
+  -H "Origin: http://localhost:8080" -H "Content-Type: application/json" -d '{}'
+```
+
+That call writes: it keeps the view's newest frame as its calibration
+reference in `FRAMES_DIR`, so try it on a view nobody has calibrated.
+
+## Loading an OpenStreetMap extract (by hand)
+
+Geofabrik's robots.txt disallows scripted downloads, so OpenStreetMap comes
+in only from a file the owner downloads in a browser, loaded by hand; there
+is no schedule ([DECISIONS](../docs/DECISIONS.md), Oct 6; what's kept:
+[ch. 12](../docs/12-database-schema.md), [plugins/roads](../plugins/roads/README.md)).
+The steps (Builder D's first-run notes, Oct 6):
+
+1. Rebuild the ingest image, which carries `osmium-tool` (about 4 MB more:
+   osmium-tool 1.5 MB plus Boost program_options about 2.4 MB):
+   `docker compose up -d --build ingest` from `deploy/`. ACHD's roads
+   (`achd_roads`) must already be loaded, so matching has segments.
+2. Check it: `docker compose -f deploy/docker-compose.yml exec ingest osmium --version`
+   (1.18 on Oct 6).
+3. The owner downloads `idaho-latest.osm.pbf` **and** its `.md5` from
+   [Geofabrik's Idaho page](https://download.geofabrik.de/north-america/us/idaho.html)
+   in a browser, and puts both in `${ARCHIVE_DIR:-/srv/tvt/archive}/osm/inbox/`,
+   owned by uid 1000.
+4. Load: `docker compose -f deploy/docker-compose.yml exec ingest python3 -m ingest osm-load --inbox`
+   (the old `python3 -m ingest.osm_load` still works). `--file PATH` loads a
+   file from anywhere instead.
+
+What a load does:
+
+- It takes the newest file in the inbox and checks it against the `.md5`
+  beside it.
+- An extract with the same MD5 as last time is skipped, unless `--force`.
+- Afterwards the file moves to `$TVT_ARCHIVE/osm/` (renamed with the date
+  and the start of its MD5) and the last two extracts are kept. Pruning
+  never removes the file just loaded, and reloading an archived file
+  refreshes its time, so it counts as the newest.
+- **Shrink guard:** when 1,000 or more ways are active, a load that brings
+  fewer than half of them refuses to retire the rest. Check the file, or
+  pass `--allow-shrink`.
+
+Timing at server scale, estimated Oct 6:
+
+| Step | Time |
+|---|---|
+| Download (in a browser) | 10–60 s |
+| osmium cuts the extract to the valley box | 15–30 s |
+| Tag filter, export and parse | 10–15 s |
+| Store | about 5 s |
+| Match to ACHD's segments | about 47 s (21 s before the turn-bay rule) |
+| **Whole load** | **about 1.5–2 minutes** |
+
+Disk: about 250 MB of archived extracts, plus about 150 MB of temporary
+files while processing.
+
+Expected rows, estimated Oct 6 from the May 2026 Overpass counts ⚠️, beside
+the first real load on Oct 7 (Geofabrik's Oct 5 extract, 129 MB;
+[SOURCES](../docs/SOURCES.md#openstreetmap-first-load-oct-7)). Where they
+differ, the Oct 7 load is the fact; the Oct 6 numbers were sizing guesses.
+
+| Table | Estimate (Oct 6) | First load (Oct 7) |
+|---|---|---|
+| `core.osm_way` | about 13,500 (7,823 major ways + about 5,600 other ways with lanes) | 13,917 (10,614 with `lanes`) |
+| `core.osm_lane` | about 40,000–50,000 | 25,701 |
+| `core.osm_node` | about 2,800 (752 intersection signals, about 1,709 crossing signals, 342 level crossings, less overlaps) | 767 signals, 1,742 crossing signals, 345 level crossings |
+| `core.segment_match` | about 6,000–9,000 | 14,054 ACHD segments matched, plus 2,222 turn-bay matches |
+| `raw.record` | about 16,300 rows (5–8 MB) on the first load, then about 150–500 new versions (60–200 KB) a week | not recorded |
+
+## Preview of main's app (UI v2)
+
+While UI v2 lands a wave at a time (docs/14 §14.10),
+[`compose.preview.yml`](compose.preview.yml) runs `main`'s app as `app-next`
+beside the live app:
+- the live app keeps the LAN port and the tailnet HTTPS name;
+- the preview is on LAN port 8081 and on port 8444 of the tailnet name.
+
+The live `app` stays pinned to the image tagged `tvt-app:live`, so a rebuild
+can't ship the unfinished UI. Both apps share the database, frames and tiles.
+The override's header has the commands to switch it on, update it and retire
+it at a checkpoint.

@@ -59,6 +59,27 @@ are core:
   aircraft want a circle of about 250 km, lands the national forest. Each
   plugin says which area it covers.
 
+Chapter 17's research added six more core pieces, decided Oct 7
+([§17.8](17-sources-for-new-plugins.md#178-decisions-on-the-open-questions-oct-7)):
+
+- **Fields**, a fourth shape of time: gridded 2D or 3D frames (radar,
+  clouds, smoke, model forecasts) with valid and issue times, kept as files
+  with an index in the database.
+- **Recurring lifecycles** and one rules-by-date evaluator (seasons,
+  weekdays, hours, overrides), in Python and TypeScript.
+- **The sun and moon ephemeris** and lighting state, in Python and
+  TypeScript.
+- **Surface-model (nDSM) tiles** in the base map: heights of buildings and
+  trees above the ground.
+- **Occurrences** (point events with no duration) and **versioned
+  geometry** (a shape with the time range it's valid for).
+- **Routing**, with pgRouting on our own graph.
+
+And two rules for drawing the lines between plugins: plugins own data
+domains while toolbar groups own presentation, and named areas include the
+backcountry (the Boise National Forest and the Owyhee wilderness) and a
+weather context of about 300 km.
+
 The base map's streets (for drawing) are core; the road network as data
 (ACHD's segments, lanes) is the `roads` plugin.
 
@@ -158,10 +179,19 @@ sampler.
 | `transit` | VRT's GTFS and live positions, route matching, ribbons, progress, tracks | — | public |
 | `conditions` | Live road conditions: ITD's work zones (WZDx), the 511 API (events, message signs, advisories, road weather, truck restrictions, winter roads) | — | public (511 data internal) |
 | `safety` | COMPASS's crashes and high-injury network; crash people in `restricted` | `roads`, `intersections` | public, aggregates only for people |
-| `flow` | How traffic moves: COMPASS's counts, congestion measures and commute travel times; later speeds from buses and GPS drives | `roads` | public (congestion internal) |
+| `flow` | How traffic moves: COMPASS's counts, congestion measures and commute travel times; later speeds from buses (method below) and GPS drives | `roads` | public (congestion internal) |
 | `development` | Why traffic will change: COMPASS's traffic zones and forecasts, building permits and plats; later Boise's development pipeline | — | public |
 | `achd_tables` | ACHD's count and turn-movement copies and their tools (extends `flow`) | `flow`, `intersections` | **private** |
 | `parcels` | Ada County Assessor parcels and characteristics, aggregates by corridor | `development` | **private** |
+| `hazards` | Fire and warnings (ch. 17 Wave A, Oct 7): IDL's fire-restriction stages, NIFC's WFIGS incidents and perimeters, NASA FIRMS detections, NWS watches, warnings and advisories (person alerts dropped), USGS quakes | — | public (IDL stages internal) |
+| `air` | Smoke: NOAA's HMS smoke polygons (AirNow waits on the owner's form) | — | public |
+| `water` | Rivers and snow: NWPS gauges (37 in the ring), SNOTEL hourly, Boise's E. coli results and river hazards, the Drought Monitor by county | — | public (Boise's layers internal) |
+| `trails` | Ridge to Rivers trail conditions and the Greenbelt's closures and detours | — | public, aggregates until the City answers |
+| `lands` | Forest orders (Region 4) and IDPR's route closures and area restrictions | — | public, IDPR aggregates |
+| `weather` | Aviation Weather Center METARs for the ring's airports | — | public |
+| `wildlife` | IDFG's roadkill reports (about 9,300 in the ring), sensitive-species rules before anything public | — | public, aggregates only |
+| `farm` | AgriMet's daily crop water use (ET) for six Treasure Valley stations | — | public |
+| `sky` | SWPC's aurora nowcast (OVATION) and 1-minute Kp | — | public |
 
 The dependencies are what the ingest code needs (step 1): the intersection
 build links cameras, and nothing in the camera, transit or conditions
@@ -183,6 +213,57 @@ Staying in core: `basemap/` (terrain, imagery, streets, buildings), the
 GL and 3D engine, the three time contracts and their displays, evidence
 and review, places and search, areas, the layer system, the ingest
 framework, `core.source_link`, deploy and `tools/check_public.py`.
+
+### Speeds from buses (planned for `flow`)
+
+How `flow` would turn bus GPS into travel speeds and signal delay. The
+pilot proposed it on Oct 5, when the owner said "we were thinking about
+utilizing their GPS locations to model travel speeds/traffic". Only step 1
+is built. As a method it sits beside the
+GPS runs of [ch. 7](07-diy-data-collection.md#a-gps-floating-car-runs-the-most-valuable),
+and it's how the bus-signal-delay analysis in
+[§16.6](16-ideas-and-personas.md#how-long-buses-wait-at-signals-offered-oct-6)
+would be done.
+
+1. **Place each fix on its route.** Snap each fix to its route line, giving
+   distance along the route plus time, so each trip becomes a
+   time–distance trajectory. Built as `obs.vehicle_progress`
+   ([ch. 14](14-ui-v2.md)), made for playback.
+2. **Time each crossing.** Interpolate when each bus crossed each segment
+   boundary, such as each signalized intersection. With fixes 30 s apart a
+   single crossing is known to ±15 s, which averages out over many trips.
+3. **Take out what buses do and cars don't.** Dwell at stops, pulling in
+   and out, and layovers aren't traffic. The stop status each fix carries,
+   with the stop locations, separates stopped at a stop from stopped at a
+   signal or crawling in traffic.
+4. **Aggregate** by segment, hour and weekday: typical travel time, its
+   spread, and delay against free-flowing runs. Clusters of stationary
+   fixes just before a stop bar point to signal delay.
+
+What the Oct 5 sample (4,637 fixes from 34 buses; the VRT row of
+[§8.2](08-data-inventory.md#82-bucket-a-reachable-and-allowed)) says about
+resolution:
+
+| Measure | Oct 5 value |
+|---|---|
+| Distance a moving bus covers between fixes | about 200 m (a quarter 330 m or more, p90 440 m): roughly one fix per block, or 3–4 between signals on a typical arterial |
+| Moving speed | median 24 km/h (15 mph); the fastest 10% above 51 km/h (32 mph) |
+| Stationary fixes | 22%, which is useful signal (stops, signals, queues), not noise |
+
+Limits and baselines:
+
+- **Only streets with bus service,** which still include State, Fairview,
+  Chinden, Overland, Vista, Orchard, Franklin and Ustick.
+- **Thin samples.** Headways of 30–60 minutes give a segment only a few
+  buses an hour, so time-of-day profiles need **2–4 weeks** of recording.
+- **Buses aren't cars.** They accelerate more slowly and serve stops, so
+  they measure congestion trends and relative delay, not car speeds.
+  Calibrating against car data would close that gap: the owner's GPS runs
+  with `tools/gps_runs.py`, or camera measurements.
+- **Baselines.** ACHD's posted speeds are the free-flow baseline, and also
+  the progression speeds that matter for signal timing; functional class
+  helps pick which segments to analyze. COMPASS's congestion measures are
+  the official history to compare against ([SOURCES](SOURCES.md)).
 
 ## 15.5 Tracks: one contract for everything that moves
 
@@ -252,25 +333,41 @@ sources, tables and URLs), with every test green, before the next one starts.
    - then `lands` (ownership, management, access and restrictions) and
      `trails`.
 
-## 15.7 Ideas for later plugins (Oct 7 chat)
+## 15.7 Ideas for later plugins
 
-Kept here so they aren't lost; none is approved yet.
+The full catalog, by persona and with every detail from the Oct 6–7
+brainstorms, is [chapter 16](16-ideas-and-personas.md), and the sources
+for them are in [chapter 17](17-sources-for-new-plugins.md). On Oct 7 the
+lead settled where things go (§17.8 Q7) and started Wave A's pollers for
+`hazards`, `air`, `water`, `trails`, `lands`, `weather`, `wildlife`, `farm`
+and `sky`. At the plugin level:
 
-- **aircraft:** live and recorded positions with altitude, in 3D; medical
-  and Guard helicopters, fire aviation; FAA airspace and flight
-  restrictions.
-- **lands:** who owns and manages what (PAD-US, BLM, state endowment lands,
-  Boise National Forest, Fish & Game), public access, Access Yes!,
-  vehicle-use maps, seasonal closures, fire restrictions, mining claims,
-  grazing allotments.
-- **trails:** Ridge to Rivers and its mud closures, OpenStreetMap and Forest
-  Service trails, trailheads, campgrounds.
-- **water:** river flows (USGS gauges), reservoirs, snowpack, floating
-  season, canals.
-- **hazards:** fire perimeters and hotspots, smoke and air quality, weather
-  warnings, earthquakes.
-- **sky:** sun and moon paths and shadows (and sun glare on east–west roads
-  at commute time), satellite passes, dark-sky spots.
+- **aircraft** (being built, §15.6 step 4): live and recorded positions in
+  3D, special aircraft, FAA airspace and flight restrictions.
+- **lands:** who owns and manages what, public access, and the rules on it.
+- **trails:** trails, closures, trailheads, campgrounds.
+- **water:** river flows, reservoirs, snowpack, the float season, canals.
+- **hazards:** fire, warnings, earthquakes, floods.
+- **air:** air quality, smoke and the camera haze index (its own plugin,
+  §17.8 Q7).
+- **weather:** observations and forecasts, and real weather drawn in 3D
+  (§16.5).
+- **sky:** the aurora, satellite passes, dark skies and the night dome. The
+  sun and moon ephemeris that sky, glare and gardening share is core (§17.8
+  Q3).
+- **gardening:** sun and shade hours from buildings and trees, frost, soil,
+  canal water.
+- **farm:** crops by field, irrigation, field burning, farmland lost to
+  subdivisions.
+- **wildlife:** winter range, crossings, wildlife–vehicle collisions.
 - **history:** historic aerials and topo maps on a year slider.
 - **civic:** development near me, hearings, school boundaries, precincts.
+- **land cover:** painted land cover and 3D trees from the near-infrared
+  imagery and lidar (§16.3).
 - **home** (private): the owner's own sensors, drives and receiver.
+
+Some ideas extend existing plugins instead: commuter features (`flow`,
+`conditions`), cycling and walking (LTS and facilities in `roads`,
+counters in `flow`, crashes in `safety`, off-street paths in `trails`,
+gathered by a "Walk and bike" toolbar group; there's no `active` plugin),
+and the homeowner's view (`parcels`, private).

@@ -1,0 +1,19 @@
+{
+ "_note": "SYNTHETIC: the field names, codes and quirks of Boise Fire's Boise_River_Hazards_and_Access_-_VIEW layer 10 (Oct 7, 2026): one-letter codes, the literal word 'Remediated', a missing status; made-up names, people, text and points.",
+ "objectIdFieldName": "OBJECTID",
+ "globalIdFieldName": "GlobalID",
+ "geometryType": "esriGeometryPoint",
+ "spatialReference": {"wkid": 4326, "latestWkid": 4326},
+ "features": [
+  {"attributes": {"OBJECTID": 1, "Name": "Test strainer", "Type": "T", "Status": "A", "Comments": "Reported by Example Person", "CreationDate": 1900000000000, "Creator": "example_editor_1", "EditDate": 1900003600000, "Editor": "example_editor_2", "Descriptions": "A made-up tree across the left channel.", "Marker": "1.0"}, "geometry": {"x": -116.21, "y": 43.62}},
+  {"attributes": {"OBJECTID": 2, "Name": "Test diversion dam", "Type": "P", "Status": "A", "Comments": null, "CreationDate": 1900000000000, "Creator": "example_editor_1", "EditDate": 1900000000000, "Editor": "example_editor_1", "Descriptions": "A made-up permanent structure.", "Marker": null}, "geometry": {"x": -116.22, "y": 43.63}},
+  {"attributes": {"OBJECTID": 3, "Name": "Test logjam", "Type": "E", "Status": "P", "Comments": "Internal note", "CreationDate": 1900000000000, "Creator": null, "EditDate": null, "Editor": null, "Descriptions": null, "Marker": "2.5"}, "geometry": {"x": -116.23, "y": 43.64}},
+  {"attributes": {"OBJECTID": 4, "Name": "Test sweeper", "Type": "T", "Status": "Remediated", "Comments": null, "CreationDate": 1900000000000, "Creator": null, "EditDate": null, "Editor": null, "Descriptions": "Cleared (made up).", "Marker": null}, "geometry": {"x": -116.24, "y": 43.65}},
+  {"attributes": {"OBJECTID": 5, "Name": "Test branch", "Type": "T", "Status": "R", "Comments": null, "CreationDate": 1900000000000, "Creator": null, "EditDate": null, "Editor": null, "Descriptions": null, "Marker": null}, "geometry": {"x": -116.25, "y": 43.66}},
+  {"attributes": {"OBJECTID": 6, "Name": "Test rapid", "Type": "R", "Status": "A", "Comments": null, "CreationDate": 1900000000000, "Creator": null, "EditDate": null, "Editor": null, "Descriptions": null, "Marker": null}, "geometry": {"x": -116.26, "y": 43.62}},
+  {"attributes": {"OBJECTID": 7, "Name": "Test put-in", "Type": "I", "Status": "A", "Comments": null, "CreationDate": 1900000000000, "Creator": null, "EditDate": null, "Editor": null, "Descriptions": null, "Marker": null}, "geometry": {"x": -116.27, "y": 43.62}},
+  {"attributes": {"OBJECTID": 8, "Name": "Test snag", "Type": "T", "Status": null, "Comments": null, "CreationDate": 1900000000000, "Creator": null, "EditDate": null, "Editor": null, "Descriptions": null, "Marker": null}, "geometry": {"x": -116.28, "y": 43.62}},
+  {"attributes": {"OBJECTID": 9, "Name": "Test old hazard", "Type": "E", "Status": "I", "Comments": null, "CreationDate": 1900000000000, "Creator": null, "EditDate": null, "Editor": null, "Descriptions": null, "Marker": null}, "geometry": {"x": -116.29, "y": 43.62}},
+  {"attributes": {"OBJECTID": 10, "Name": "Test far away", "Type": "T", "Status": "A", "Comments": null, "CreationDate": 1900000000000, "Creator": null, "EditDate": null, "Editor": null, "Descriptions": null, "Marker": null}, "geometry": {"x": -114.0, "y": 43.62}}
+ ]
+}

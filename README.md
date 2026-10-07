@@ -35,6 +35,8 @@ historical data layers.
 | 13 | [Visual design](docs/13-visual-design.md) | The app as a friendly, game-inspired command center: lenses, the Valley Feed, time replay, camera wall, type and color |
 | 14 | [UI v2: one map, every layer](docs/14-ui-v2.md) | The rebuilt map interface: one persistent map, layers, live images, playback, 3D buses and cameras, windows |
 | 15 | [Core and plugins](docs/15-plugins.md) | What every subject needs (base map, time and playback, layers, ingest framework) versus plugins per subject (roads, intersections, cameras, transit, conditions, safety, flow, development; later aircraft, lands, trails), private plugins, and the refactor plan |
+| 16 | [Ideas by persona](docs/16-ideas-and-personas.md) | Where the platform could go and who for: aviation, hiking and lands, fire and weather (including weather in 3D), commuters, cyclists, civic, homeowners, gardeners, farmers, the sky, history, wildlife; what the aerial imagery could do; which shared core pieces unlock them |
+| 17 | [Sources for new plugins](docs/17-sources-for-new-plugins.md) | Oct 7 research for the owner's interests: 306 sources across weather (and weather in 3D), hazards, wildlife, sky, gardening, farms, lands, trails and cycling, each checked against official pages, robots.txt and terms; a first thing to build per persona, six proposed core pieces, a phased 3D weather design, and 34 open questions. Catalogs per theme in [docs/sources/](docs/sources/) |
 
 **Working files:**
 
@@ -234,6 +236,9 @@ directly or by a public records request:
 6. Results of ITD's 2023 Eagle Road signal timing review.
 7. Whether ACHD, ITD or Boise participate in Waze for Cities or have
    considered Google Green Light.
+
+Research questions of our own, from chapter 5's notes, are listed under
+[chapter 5](docs/05-ai-and-emerging-tech.md) (its open questions).
 
 ## How this was researched
 

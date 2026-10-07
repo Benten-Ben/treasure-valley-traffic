@@ -7,6 +7,8 @@
 }
 
 (site) {
+	# The app to proxy to is the snippet's argument: app:3000 for the live
+	# app, app-next:3000 for the preview (compose.preview.yml).
 	# Basemap output from basemap/ (PMTiles, fonts, sprites, manifest.json).
 	# file_server answers HTTP range requests, which PMTiles depends on.
 	handle_path /tiles/* {
@@ -38,17 +40,27 @@
 
 	handle {
 		encode zstd gzip
-		reverse_proxy app:3000
+		reverse_proxy {args[0]}
 	}
 }
 
 :80 {
-	import site
+	import site app:3000
 }
 
 # The VM's Tailscale name (TVT_HTTPS_HOST in deploy/.env, kept out of the
 # repo). Caddy gets its certificate from the VM's Tailscale daemon through the
 # mounted socket; the tailnet must have HTTPS certificates switched on.
 {$TVT_HTTPS_HOST:localhost} {
-	import site
+	import site app:3000
+}
+
+# The preview of main's app (compose.preview.yml publishes these ports; without
+# it they stay inside the container and app-next doesn't exist).
+:81 {
+	import site app-next:3000
+}
+
+{$TVT_HTTPS_HOST:localhost}:8444 {
+	import site app-next:3000
 }

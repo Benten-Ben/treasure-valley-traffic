@@ -75,5 +75,31 @@ class FetchLayerTest(unittest.TestCase):
         self.assertEqual(self.fetch(FakeLayer([]))[0], [])
 
 
+class EsriPolygonTest(unittest.TestCase):
+    """Multipart polygons (Oct 7): Esri lists every ring of every part in one array."""
+
+    @staticmethod
+    def square(x, y, d, clockwise):
+        ring = [[x, y], [x + d, y], [x + d, y + d], [x, y + d], [x, y]]
+        return ring[::-1] if clockwise else ring
+
+    def test_two_parts_and_a_hole_become_a_multipolygon(self):
+        a = self.square(0, 0, 10, clockwise=True)           # outer rings: clockwise in Esri JSON
+        hole = self.square(2, 2, 2, clockwise=False)        # a hole in a
+        b = self.square(20, 0, 5, clockwise=True)           # a second part, not a hole in a
+        g = arcgis.esri_geometry({"rings": [a, b, hole]})
+        self.assertEqual(g["type"], "MultiPolygon")
+        self.assertEqual([len(p) for p in g["coordinates"]], [2, 1])
+        outer, inner = g["coordinates"][0]
+        self.assertGreater(arcgis._area([tuple(p) for p in outer]), 0)    # RFC 7946: outer counter-clockwise
+        self.assertLess(arcgis._area([tuple(p) for p in inner]), 0)
+
+    def test_one_part_stays_a_polygon_and_bad_rings_drop(self):
+        g = arcgis.esri_geometry({"rings": [self.square(0, 0, 1, clockwise=True), [[0, 0], [1, 1]]]})
+        self.assertEqual(g["type"], "Polygon")
+        self.assertEqual(len(g["coordinates"]), 1)
+        self.assertIsNone(arcgis.esri_geometry({"rings": [[[0, 0], [1, 1]]]}))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -60,7 +60,7 @@ camera-list page); the cameras themselves are in the database.
 | `label` | e.g. "Broadway & Beacon"; a few have stray spaces |
 | `Latitude`, `Longitude` | Missing on 2 duplicate records |
 | `hyperlink` | `https://more.achdidaho.org/ATIS/CCTV/CCTV_<id>.jpg` |
-| `camtimestamp` | **Layer-wide refresh time, identical on all records.** It can't tell us which cameras are dead. |
+| `camtimestamp` | **Layer-wide refresh time, identical on all records.** It can't tell us which cameras are dead. Example: "Oct 4 2026 10:15PM" on all 232 records at the Oct 5, 04:20 UTC check (10:20 PM MDT on Oct 4). |
 | `OBJECTID`, `GlobalID` | Internal |
 
 **What we know about each camera's position and view (checked Oct 5):**
@@ -74,6 +74,13 @@ camera-list page); the cameras themselves are in the database.
 | Exact heading, tilt, zoom, mounting height, presets, camera model | **No public source** | Measured by calibration (below), or ask ACHD |
 | Snapshot time | Yes, to the second | 511 timestamp bar |
 | Image size | Yes | Varies by camera (768×466, 704×426, …), a hint of different camera models |
+
+**A corner camera usually looks diagonally across the intersection** (as
+Eagle & Fairview does), so it sees two or three approaches. That's a good
+first guess for the registry's "which approaches each camera sees" (§11.4).
+With the pole's corner known, what calibration still has to find is mainly
+the pole height and where the camera points; the 4–6 matched points below
+solve both.
 
 **Calibration gives the exact geometry.** For each view, mark 4–6 points
 visible in both the camera image and aerial imagery: stop bars, lane-line
@@ -127,8 +134,9 @@ asks crawlers to stay away. The owner considers one-off checks fine (Oct
 5). Automated collection from these endpoints stays off-limits, so the
 pipeline will never rely on them:
 
-- **ACHD image-server headers (Oct 4):** the 59 s refresh, the 220
-  live / 8 stale counts, and the CSV's `status_2026_10_05` and
+- **ACHD image-server headers (Oct 4):** the 59 s refresh (measured on
+  camera 517 by polling its `Last-Modified` every 30 s for 12 minutes), the
+  220 live / 8 stale counts, and the CSV's `status_2026_10_05` and
   `last_image_age` columns.
 - **511's website list, `/List/GetData/Cameras` (Oct 5):**
   - 511's image IDs, such as 656 and 752;
@@ -143,9 +151,27 @@ timestamp bar.
 
 **Quality notes:**
 
-- 232 records cover 228 cameras (4 listed twice).
+- 232 records cover 228 cameras. Four ACHD camera numbers are listed twice
+  (Oct 5 check): 535 I-84 & Northside, 718 Chinden & Star, 717 Victory &
+  Locust Grove and 707 Ten Mile & Victory. On two of them the second copy
+  has no coordinates (the "missing on 2 duplicate records" above). The
+  dedupe rule keeps the copy that has coordinates.
 - On Oct 4–5, 2026, 220 were live and 8 stale. Two have been dead for
-  years: I-84 & McDermott and I-84 & Northside.
+  years: I-84 & McDermott and I-84 & Northside (535, also one of the
+  double-listed ones).
+- **The western edge:** ACHD's westernmost cameras are 3 on I-84 near the
+  Nampa line. There are none in Canyon County.
+- **511's camera names have typos,** for example "McMillian" (McMillan)
+  and "Jerfferson" (Jefferson). Any matching between ACHD and 511 records by
+  name has to allow for them.
+
+**Cameras this chapter keeps coming back to:**
+
+| ACHD `camID` | 511 image ID | Location | Why it matters |
+|---|---|---|---|
+| 517 | not checked | Broadway & Beacon | The first camera test (Oct 4 evening, MDT; a one-off check of ACHD's server). Its snapshot showed a visible queue, the first sign that cameras can document queues. The 59 s refresh was measured on it. |
+| 526 | 656 | Eagle & Fairview | Benchmark camera: the refresh and side-by-side checks (§11.2) and the codec tests (§11.5) |
+| 620 | 752 | Chinden & Cloverdale | At the region's #1 congested segment, and the start of [chapter 7's corridor sprint](07-diy-data-collection.md#75-a-4-week-data-sprint-for-one-corridor-suggested) (Chinden westbound, Cloverdale to Eagle Rd). The second benchmark camera. |
 
 ## 11.2 Where the images come from (and why that's allowed)
 
@@ -164,6 +190,28 @@ copies:
 - 511's About page lists ACHD as a data provider.
 - 511's robots.txt allows `/map/Cctv/`, and its published pages contain no
   terms against reuse.
+
+**How the decision went (Oct 5).** The pilot first advised *against* the
+511 route: the images are ACHD's, and pulling them through 511 to get
+around ACHD's own robots.txt would sidestep ACHD's clear wishes, a bad
+start with ACHD's traffic staff. It proposed naming 511 in the permission
+request ("or via the 511 API, if you'd prefer") and letting ACHD choose.
+The owner's view: if 511 has obviously been given permission to republish
+the images, and lets us view them, "that seems like a legitimate existing
+path to me." The open question was whether 511 keeps its own copies or just links
+to ACHD's server; the evidence above (its own CloudFront copies, the ITD
+logo, the 511 timestamp bar, ACHD listed as a provider) settled it. So
+"ask ACHD and let it choose" was dropped. The draft to ACHD had asked
+permission (raw images kept about 30 days, only derived measures long-term;
+the owner later chose to keep the archive, §11.4); it became a courtesy
+note.
+
+**The owner's reading of ACHD's limits (Oct 6):** cameras relisted on 511
+come with permission to fetch them, and ACHD's robots.txt is "more about
+not straining their systems rather than restriction and 511 just has
+better scale." That's why the rule for 511's images is to poll gently
+(§11.7, "Scaling up, politely"), and why the road-weather views on 511 are
+recorded too (§11.5).
 
 Rules for using the 511 route:
 
@@ -206,8 +254,9 @@ for 7 minutes (Oct 5, 12:03–12:10 AM MDT):
   difference), even though 511 redraws the bar.
 
 **ACHD vs 511, side by side** (one-off research check, Oct 5, 12:28–12:32
-AM MDT). ACHD cameras 526 and 620, and their 511 copies 656 and 752, were
-fetched about every 13 s. Results:
+AM MDT). ACHD cameras 526 (Eagle & Fairview) and 620 (Chinden &
+Cloverdale), and their 511 copies 656 and 752, were fetched about every
+13 s. Results:
 
 - **The 511 bar is ACHD's image time.** 511's four bars for camera 656 read
   12:26:57, 12:27:56, 12:29:54 and 12:30:53. These match ACHD's
@@ -262,6 +311,19 @@ on freshness.
 
 ## 11.4 What we'll build (agreed scope: options C–E as validation)
 
+**The options as first offered (Oct 5):**
+
+| Option | What it gives | What it needs |
+|---|---|---|
+| A. Map layer only | Camera dots; a click opens the live image in the browser | Nothing more |
+| B. Track the list over time | Cameras added, moved or removed | Keeping history instead of only the latest copy |
+| C. Camera health | Which cameras are dead, and for how long | ACHD's permission or 511's API |
+| D. Image samples at chosen intersections | A record of queues and spillback at set times | Permission, plus storage and retention decisions |
+| E. Automatic queue measurement from images | Rough queue lengths over many days | D first, plus computer vision and privacy rules (count vehicles, never identify them) |
+
+The owner chose C–E as a validation layer, not core (Oct 5). A and B
+became the camera registry and the map's camera layer (piece 1 below).
+
 | Piece | What it does | Buildable before images flow? |
 |---|---|---|
 | **1. Camera registry** | ACHD list + 511 list merged; history of cameras added, moved or removed; linked to intersections; later, which approaches each camera sees | Yes |
@@ -307,13 +369,32 @@ angles but aren't, or aren't reachable:
 have enough", wherever we have them). ITD's road-weather stations (RWIS)
 carry 2–4 cameras each, one per direction: 385 views at 130 stations
 statewide in 511's camera list (one-off copy, Oct 5), 30 of them at the 10
-stations in our area. A second service (`regional`) captures all of them,
-plus 4 Oregon DOT views near Ontario and Weiser, every 10 minutes into daily
-videos. Its list is built from 511's camera list, so it's kept with the
-private files.
+stations in our area (the original box):
+
+| Road | Stations in our area |
+|---|---|
+| I-84 | the Wye, Broadway, Eisenman, Kuna/Meridian, Northside, Caldwell, Simco Rd |
+| SH-55 | Horseshoe Bend Hill |
+| SH-21 | Highland Valley Summit |
+| US-95 | Ion Summit |
+
+28 of the 30 views were live on Oct 6, 03:18 UTC (9:18 PM MDT on Oct 5).
+A second service (`regional`) captures all 385, plus 4 Oregon DOT views,
+every 10 minutes into daily videos. Its list is built from 511's camera
+list, so it's kept with the private files.
+
+- **Toward Ontario:** between Caldwell and Ontario, the stations at I-84
+  Caldwell (2 views), Black Canyon (3 views) and I-84/US-95 near Fruitland
+  (4 views) are already in the statewide set. The 4 Oregon DOT views added
+  to the regional list are the Snake River, OR-201 at Weiser, the OR-201
+  on-ramp to I-84, and one at Jordan Valley. (Earlier summaries said "near
+  Ontario and Weiser"; one of the four is at Jordan Valley instead.)
 - Their images are 800×486 JPEGs with ITD's own caption: station,
   milepost, elevation, which way the view faces, and the station's capture
-  time. Caldwell's two views showed 511's "no live feed" image on Oct 5.
+  time. Caldwell's two views showed 511's "no live feed" placeholder on
+  Oct 5, and eight road-weather views showed it early on Oct 6 (about
+  1:50 AM MDT). Placeholders are never saved (see "Gray where there are
+  no frames" below).
 - **Cadence (Oct 5, 8:57 and 9:10 PM):** 511 refreshes its copies about
   every 15 minutes and re-stamps its own time bar each time, so all 28 live
   views changed bytes within 12 minutes. The stations' own pictures also
@@ -476,7 +557,12 @@ JPEG, 752 about 32 KB.
   cost nothing (Oct 5 evening, two cameras: 600 → 60 came out 1–2%
   smaller), and seeking needs at most 60 pictures decoded instead of 600:
   in Chromium on the cloud machine, a seek in the HD camera's evening took
-  up to 9.6 s with one keyframe.
+  up to 9.6 s with one keyframe. After the switch, the same seek from the
+  cloud machine still took up to about 7 s. The pilot put that down to the
+  cloud's slow link to the server (about 2.5 MB/s through the tailnet
+  relay), not the page, and expected seeking to be near-instant on the home
+  network. The owner was asked to say if it isn't; no result is recorded
+  yet (§11.6).
 - **Container:** MP4, one file per camera per day, rolled up from the
   JPEGs after midnight
   ([`plugins/cameras/ingest/camera_video.py`](../plugins/cameras/ingest/camera_video.py)). MKV until
@@ -493,6 +579,23 @@ JPEG, 752 about 32 KB.
   still distinct; fine texture such as lane-marking edges is slightly
   softer. (`ffmpeg -i day.mp4 -fps_mode passthrough frame%04d.png` writes
   them all; frame 1 is the gray lead-in when the day starts with a gap.)
+- **Cutting or re-encoding a day's video** (pitfalls found sending clips,
+  Oct 6). The videos have variable frame spacing, which trips up ffmpeg's
+  defaults:
+  - **Keep the frame timing.** Re-encoding a day (for example scaling the
+    HD I-84 camera to 960 px wide with `libsvtav1`) without `-fps_mode
+    passthrough` duplicated frames up to a constant 25 a second, so the
+    file came out bigger. With passthrough it shrank and encoded far
+    faster.
+  - **Don't trim a remuxed MKV with `-ss`.** That gave gray gap frames
+    instead of footage. Remuxing the full day (`-c copy -movflags
+    +faststart`) worked.
+  - **Frame times are rounded to 1/25 s** in the MP4s, so a picture can
+    start up to 0.04 s after its time in the CSV. A jump to the exact time
+    can show the previous (gray) frame, so the library lands just past each
+    picture's start (0.05 s).
+  - **Size:** an HD camera's evening is about 69 MB of video, over the
+    chat's 30 MB upload limit, so a clip to share needs cutting or scaling.
 
 **The encoder version matters** (checked on the server, Oct 5, evening-rush
 frames). Debian 13's newer SVT-AV1 needs 13–15% more space than the 1.7
@@ -524,6 +627,14 @@ quantization matrices) closed the gap.
 
 - **Four encodes side by side are about 3x faster** than one encode using
   every core, with byte-identical output, so the roll-up runs four at a time.
+- **Memory limits it before CPU does** (measured Oct 7, one encode's
+  peak): about 0.66 GB at 328×339, 0.9 GB at 800×486 and 2.3 GB at
+  1920×1166, mostly fixed at the start whatever the day's length. Four HD
+  encodes alone take about 9 GB, and on Oct 7 the key-camera and regional
+  roll-ups ran side by side next to a tile build and filled the VM's 16
+  GB. So encodes now start only while their estimates fit a 6 GB budget
+  (`TVT_ROLLUP_MEMORY_MB`), biggest first, and the two services take turns
+  through a lock file. Two HD days now encode at a time instead of four.
 - **Version 1.7 at preset 8 beats 2.3 at preset 6** on speed, size and
   quality at once, so 2.3 is out.
 - **Preset 8 is the lever for scale:** about 3x faster again, for 6% more
@@ -577,6 +688,14 @@ about 5,000), and one video per camera per day to watch.
   to 17:10 shows 5:10 PM. A full day plays in 24 minutes.
 - **Gray where there are no frames:** a gap of more than 10 minutes (camera
   down, capture stopped) shows as plain gray instead of a stale picture.
+  - **511's "No live camera feed at this time" placeholder is never
+    saved.** It's a PNG, and the frame streams keep only complete JPEGs
+    (the SOI marker at the start, EOI near the end), so a camera serving
+    it simply has a gap, and capture resumes when the camera returns. When
+    key-camera capture started (Oct 5, 6:20 PM MDT), three of ITD's I-84
+    key cameras (Eagle, Cloverdale and the Wye; 511 image IDs 676, 677 and
+    687) had been serving it all evening. They were back by early Oct 6,
+    with 70–80 frames each since midnight by about 1:50 AM MDT.
 - **A CSV beside each video** lists every frame: its time in the video, when
   it was fetched (UTC and local), and the original JPEG's size and SHA-256.
 - **Playback speed costs nothing.** The same frames encoded at 1, 12, 24
@@ -622,6 +741,10 @@ Still open:
    about 1–2.5 TB a year (§11.7). This waits on the host inventory.
 2. **Vehicle detector license:** permissive (recommended) or AGPL? See
    [DECISIONS.md](DECISIONS.md).
+3. **Is seeking in the video library near-instant at home?** From the
+   cloud machine it still took up to about 7 s after the switch to a
+   keyframe every 60 pictures (§11.5, "The archive format"). The owner was
+   asked to check on the home network; no answer is recorded.
 
 ## 11.7 Processing pipeline (collect everything, measure every frame)
 
@@ -668,6 +791,13 @@ Before step 3:
 
 All cameras at one fetch per update is about 3.5 requests a second and
 13–14 GB of downloads a day.
+
+**A yardstick for "gently" (Oct 5):** 511's own web viewer re-requests a
+camera's image every 15 s, and its CDN caches each image for 15 s (§11.2),
+so our one fetch per camera a minute is gentler than 511's own page. The
+image links carry no key, so the real limits on capture are politeness and
+storage, not the API throttle. We use a single API key, never several
+(§11.3).
 
 **Storage and compute for "everything"** (all about 210 cameras, 24 h):
 

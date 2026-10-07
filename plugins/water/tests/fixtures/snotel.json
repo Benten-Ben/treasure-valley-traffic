@@ -1,0 +1,201 @@
+[
+ {
+  "stationTriplet": "978:ID:SNTL",
+  "data": [
+   {
+    "stationElement": {
+     "elementCode": "BATT",
+     "ordinal": 1,
+     "durationName": "HOURLY",
+     "dataPrecision": 2,
+     "storedUnitCode": "volt",
+     "originalUnitCode": "volt",
+     "beginDate": "1999-09-21 14:00",
+     "endDate": "2100-01-01 00:00",
+     "derivedData": false
+    },
+    "values": [
+     {
+      "date": "2026-10-07 05:00",
+      "value": 12.45,
+      "qcFlag": "N",
+      "qaFlag": "R"
+     },
+     {
+      "date": "2026-10-07 06:00",
+      "value": 12.43,
+      "qcFlag": "N",
+      "qaFlag": "R"
+     }
+    ]
+   },
+   {
+    "stationElement": {
+     "elementCode": "TOBS",
+     "ordinal": 1,
+     "durationName": "HOURLY",
+     "dataPrecision": 1,
+     "storedUnitCode": "degF",
+     "originalUnitCode": "degF",
+     "beginDate": "1999-09-21 14:00",
+     "endDate": "2100-01-01 00:00",
+     "derivedData": false
+    },
+    "values": [
+     {
+      "date": "2026-10-07 05:00",
+      "value": 51.4,
+      "qcFlag": "V",
+      "qaFlag": "R"
+     },
+     {
+      "date": "2026-10-07 06:00",
+      "value": 48.6,
+      "qcFlag": "V",
+      "qaFlag": "R"
+     }
+    ]
+   },
+   {
+    "stationElement": {
+     "elementCode": "WTEQ",
+     "ordinal": 1,
+     "durationName": "HOURLY",
+     "dataPrecision": 1,
+     "storedUnitCode": "in",
+     "originalUnitCode": "in",
+     "beginDate": "1999-09-21 00:00",
+     "endDate": "2100-01-01 00:00",
+     "derivedData": false
+    },
+    "values": [
+     {
+      "date": "2026-10-07 05:00",
+      "value": 0.0,
+      "qcFlag": "V",
+      "qaFlag": "R"
+     },
+     {
+      "date": "2026-10-07 06:00",
+      "value": 0.0,
+      "qcFlag": "V",
+      "qaFlag": "R"
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "stationTriplet": "637:ID:SNTL",
+  "data": [
+   {
+    "stationElement": {
+     "elementCode": "BATT",
+     "ordinal": 1,
+     "durationName": "HOURLY",
+     "dataPrecision": 2,
+     "storedUnitCode": "volt",
+     "originalUnitCode": "volt",
+     "beginDate": "1978-10-01 00:00",
+     "endDate": "2100-01-01 00:00",
+     "derivedData": false
+    },
+    "values": [
+     {
+      "date": "2026-10-07 05:00",
+      "value": 12.55,
+      "qcFlag": "N",
+      "qaFlag": "R"
+     },
+     {
+      "date": "2026-10-07 06:00",
+      "value": 12.53,
+      "qcFlag": "N",
+      "qaFlag": "R"
+     }
+    ]
+   },
+   {
+    "stationElement": {
+     "elementCode": "SNWD",
+     "ordinal": 1,
+     "durationName": "HOURLY",
+     "dataPrecision": 0,
+     "storedUnitCode": "in",
+     "originalUnitCode": "in",
+     "beginDate": "1998-10-01 00:00",
+     "endDate": "2100-01-01 00:00",
+     "derivedData": false
+    },
+    "values": [
+     {
+      "date": "2026-10-07 04:00",
+      "value": 0,
+      "qcFlag": "V",
+      "qaFlag": "R"
+     },
+     {
+      "date": "2026-10-07 05:00",
+      "value": 0,
+      "qcFlag": "V",
+      "qaFlag": "R"
+     }
+    ]
+   },
+   {
+    "stationElement": {
+     "elementCode": "TOBS",
+     "ordinal": 1,
+     "durationName": "HOURLY",
+     "dataPrecision": 1,
+     "storedUnitCode": "degF",
+     "originalUnitCode": "degF",
+     "beginDate": "1978-10-01 00:00",
+     "endDate": "2100-01-01 00:00",
+     "derivedData": false
+    },
+    "values": [
+     {
+      "date": "2026-10-07 05:00",
+      "value": 50.4,
+      "qcFlag": "V",
+      "qaFlag": "R"
+     },
+     {
+      "date": "2026-10-07 06:00",
+      "value": 51.3,
+      "qcFlag": "V",
+      "qaFlag": "R"
+     }
+    ]
+   },
+   {
+    "stationElement": {
+     "elementCode": "WTEQ",
+     "ordinal": 1,
+     "durationName": "HOURLY",
+     "dataPrecision": 1,
+     "storedUnitCode": "in",
+     "originalUnitCode": "in",
+     "beginDate": "1978-10-01 00:00",
+     "endDate": "2100-01-01 00:00",
+     "derivedData": false
+    },
+    "values": [
+     {
+      "date": "2026-10-07 05:00",
+      "value": 0.2,
+      "qcFlag": "V",
+      "qaFlag": "R"
+     },
+     {
+      "date": "2026-10-07 06:00",
+      "value": 0.2,
+      "qcFlag": "V",
+      "qaFlag": "R"
+     }
+    ]
+   }
+  ]
+ }
+]

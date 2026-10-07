@@ -61,6 +61,10 @@ corridors for before/after studies.[^appa]
 **About 57% of the hours are counting cars.** That's the part automation has
 already eliminated where agencies invested in it.
 
+**What counts cost.** Fort Bend County, TX's 2025 bids ran $220–325 for a
+4-hour peak turning-movement count and $450–630 for a 12-hour count.
+Maricopa estimated $400 per intersection. ⚠️ (source not yet re-checked)
+
 ## 6.3 What automation has already delivered
 
 | Agency | What changed | Documented effect |
@@ -68,8 +72,12 @@ already eliminated where agencies invested in it.
 | **Utah DOT** (ATSPM) | Counts come from controllers. Modeling is "limited to the development of offsets." Daily automated detector checks. | "No longer collects turning movement counts using traditional methods, and no longer uses an FTE for floating-car studies." In Feb 2019, 226 public calls produced only 137 work orders (vs. 226 before). Detector problems are seen "about a month before a call might come in."[^appa] |
 | **Georgia DOT** (ATSPM) | Field visits only when a ticket or ATSPM alert points to a problem | **70% fewer** locations needing field visits: 12,600 fewer visits a year, about $630K/yr.[^appa] |
 | **Anne Arundel County, MD** (Miovision ATSPM + consultant) | 8-signal corridor retimed "without traditional traffic counts and models" | "No field observations were needed"; timeline "from months to weeks"; benefit-cost 14:1.[^annearundel] |
-| **Purdue/INDOT** (connected-vehicle data) | Offsets set from vehicle trajectories, no detectors needed. Statewide ranking of 2,000+ signals to decide where to look. | CV offsets comparable to detector-based ones; "two weeks of data may be sufficient."[^day2016] 11 timing changes at 9 signals cut delay by up to 53 s/veh.[^jtrp2024] |
+| **Purdue/INDOT** (connected-vehicle data) | Offsets set from vehicle trajectories, no detectors needed. Statewide ranking of 2,000+ signals to decide where to look. | CV offsets comparable to detector-based ones; "two weeks of data may be sufficient."[^day2016] 11 timing changes at 9 signals cut delay by up to 53 s/veh.[^jtrp2024] Retiming SR-9 in Anderson, IN raised arrivals on green from 62% to 69% ⚠️ (source not yet re-checked). |
 | **Utah, again** | Retiming is now needs-based | "We no longer go out to retime signals every three to five years. Now, we do it only when it's needed."[^hop18048] |
+
+**What Utah's switch cost.** The floating-car FTE UDOT no longer needs cost
+about $116,000 a year. Implementation took 8,000 hours (2012–2018), and
+ATSPM upkeep is about 10% of one FTE. ⚠️ (source not yet re-checked)
 
 **Staffing benchmark.** UDOT operates **1,252 signals** with 1 engineering
 manager, 2 statewide timing engineers, 4 region signal engineers, 4 timing
@@ -86,7 +94,10 @@ signals with 70–80 FTE including consultants.[^ch4]
 | **Flow Labs Optimus Gen2** (Apr 2026) | Retiming from connected-vehicle data with a transformer model | Retiming "from months to minutes"; automates "months of manual model building and calibration"[^flowlabs] |
 | **Miovision One** (May 2026) | Includes "Mateo," a generative-AI assistant for plain-language questions about network performance, plus an optimizer and remote deployment | "Up to 50% faster retiming"; engineers review before implementation[^miovision] |
 | **Iteris ClearGuide Signal Trends**, **INRIX Signal Analytics** | Probe-based signal performance monitoring | "Eliminates the need for traffic counting studies"[^clearguide]; INRIX reports agencies in 20 states monitoring 10,000+ intersections[^inrix] |
-| **Econolite Centracs SPM** (ACHD's platform family) | Performance analytics and heat maps | "Eliminate the cost of manual traffic counts." No automated timing recommendations described.[^centracs] |
+| **Econolite Centracs SPM** (ACHD's platform family) | Performance analytics and heat maps | "Eliminate the cost of manual traffic counts." No automated timing recommendations described.[^centracs] Econolite's real-time optimization is a separate product, **Edaptive** ⚠️ (source not yet re-checked). |
+
+Other vendors: NoTraffic claims 24% less delay in Oklahoma City. We found no
+evidence of Rekor doing signal timing. ⚠️ (source not yet re-checked)
 
 The direction is clear: vendors are racing to automate the analysis step.
 None of these labor claims has been independently evaluated yet.
@@ -146,7 +157,10 @@ None of these labor claims has been independently evaluated yet.
 
 - **Using the tools is itself labor.** FHWA's model of Utah's system counts
   tool use as new work: engineers and technicians each spending about
-  10 h/week.[^appa]
+  10 h/week.[^appa] The model puts that new tool-use work at about
+  **$1.2M a year** (about 18,200 hours). ⚠️ (source not yet re-checked)
+- **Few agencies measure the payoff.** Only 2 of 7 agencies studied tracked
+  ATSPM benefits quantitatively. ⚠️ (source not yet re-checked)
 - **Staff is the barrier even for ATSPM.** In NCHRP Synthesis 659 (2026),
   23 of 24 state DOTs said limited staff was the top barrier to expanding
   ATSPM. 78% review ATSPM reports ad hoc, and only about 12% routinely for
@@ -157,7 +171,8 @@ None of these labor claims has been independently evaluated yet.
 - **Adaptive systems get switched off when staff can't maintain them.**
   FHWA: adaptive systems "have been deactivated well before the end of their
   useful life due either to a lack of adequate resources or agency
-  capability."[^asctse] ACHD's 2014–15 InSync removal (see
+  capability."[^asctse] Gahanna, OH dropped ACS Lite for lack of staff
+  ⚠️ (source not yet re-checked). ACHD's 2014–15 InSync removal (see
   [chapter 2](02-treasure-valley-signal-system.md#27-lessons-from-the-failed-adaptive-pilot))
   is a local example of a related failure.
 
@@ -184,6 +199,19 @@ order-of-magnitude:
 - **What doesn't shrink:** detector, cabinet and knockdown repair. Automation
   reduces wasted trips (perhaps 1.2–1.5× technician capacity), but the
   physical work remains.
+
+**Staffing benchmarks from 2019**, by agency size ⚠️ (source not yet
+re-checked):
+
+| Agency size | Engineers | Technicians | All staff |
+|---|---|---|---|
+| 150–450 signals | 2.4 | 6.4 | 20.9 |
+| 450–1,000 signals | | | 43.5 |
+
+ACHD's working number of about 500 signals sits just inside the larger
+band. A peer under strain: New Orleans (about 462 signals) had 2
+maintenance employees in May 2024 and 2,000+ pending 311 signal requests.
+⚠️ (source not yet re-checked)
 
 **Preconditions:**
 

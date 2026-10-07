@@ -11,7 +11,7 @@ team, which data you can actually get.
 | Measure | Value | Source |
 |---|---|---|
 | Boise MSA population, July 2025 (Census) | **864,243**, up 12.2% from 770,194 in 2020 | Census Vintage 2025[^fredpop] |
-| Boise MSA growth 2024→25 | **+2.2%**, 13th-fastest MSA nationally; Canyon County +2.9%, the fastest in Idaho | Idaho Dept. of Labor[^idol] |
+| Boise MSA growth 2024→25 | **+2.2%**, 13th-fastest MSA nationally and **2nd in the West**, after St. George, UT ⚠️ (source not yet re-checked); Canyon County +2.9%, the fastest in Idaho | Idaho Dept. of Labor[^idol] |
 | Ada + Canyon, 2026 (COMPASS estimate) | **876,760**: Ada 589,500, Canyon 287,260. Boise 256,450; Meridian 152,070; Nampa 126,810; Caldwell 82,770 | COMPASS, Apr 2026[^compasspop] |
 | Forecast | **1.3 million by 2055** (Communities in Motion 2055 forecast, accepted Dec 2023; plan due by Dec 2027) | COMPASS[^cim2055] |
 
@@ -26,7 +26,7 @@ national 3–5 year norm (see [chapter 4](04-improvement-playbook.md#43-evidence
 | **Texas A&M Urban Mobility Report** (2025 ed., 2024 data) | **47 hours** of delay per auto commuter (rank 66 of 101 urban areas), up from 28 in 2000, 35 in 2010 and 44 in 2019. Travel Time Index 1.22. Total 12.6M person-hours of delay.[^umr] |
 | **TomTom Traffic Index** (2025) | ⚠️ #34 of 91 US cities; 34.7% average congestion; 47 hours lost in rush hour[^tomtom] |
 | **ACS mean commute** | Boise MSA 23.8 min (2024). Ada County rose from 19.4 to 21.2 min (2005–09 → 2020–24); Canyon County from 24.4 to 25.3 min[^acs] |
-| **COMPASS 2024 Congestion Management report** | 22% of interstate/state highway miles moderately or highly congested. 4.9 annual peak hours of excessive delay per capita. Caldwell→Boise on I-84 averages 31 minutes in the AM peak.[^cms2024] |
+| **COMPASS 2024 Congestion Management report** | 22% of interstate/state highway miles moderately or highly congested. 4.9 annual peak hours of excessive delay per capita. Caldwell→Boise on I-84 averages 31 minutes in the AM peak. I-84 had **37 "event" days** of unusual congestion, against a target of fewer than 15.[^cms2024] |
 
 **Context:** Boise isn't among the most congested US metros by these
 measures; it ranks mid-pack among midsize areas. The pain comes from **how
@@ -129,12 +129,17 @@ intervals. This opens **HSIP** safety funding as well as congestion funding
   unfunded."[^chinden]
 - **Eagle Rd variable speed limit pilot** (Fairview → Chinden): live since
   Aug 2026, two years.[^vsl]
+- **ITD's TECM program** (Transportation Expansion and Congestion
+  Mitigation): House Bill 25 (2025) adds $20M a year for three years and
+  lets ITD invest about $1B more ⚠️ (source not yet re-checked).
 - **ACHD Five-Year Work Plan 2026–30:** 266 projects, about $1.2B, published
   as GIS data.[^fyplayer]
 - **Transit:** Valley Regional Transit has no dedicated funding source and
   depends on voluntary local contributions.[^vrthistory]
   - Nampa cut, then partly restored, VRT funding in July 2026; service cuts
-    took effect Oct 1, 2026.[^vrtnampa]
+    took effect Oct 1, 2026.[^vrtnampa] The July cut removed the funding
+    **entirely**; the part restored keeps **Route 42 and Access** ⚠️ (source
+    not yet re-checked).
   - Ridership was about 1.05M trips in 2025, vs. 1.37M in 2019.[^ntd]
   - Weak transit means the arterial signal network carries nearly all trips.
 
@@ -179,7 +184,8 @@ intervals. This opens **HSIP** safety funding as well as congestion funding
 ### Public records (Idaho Public Records Act)
 
 - **Timelines:** residents must get a response within **3 working days**,
-  extendable to 10.[^pra103]
+  extendable to 10.[^pra103] Non-residents can wait up to **35 days** ⚠️
+  (source not yet re-checked).
 - **Fees:** the first 2 hours of labor and first 100 pages are free for
   residents.[^pra102]
 - **Exemption to expect:** critical-infrastructure records whose disclosure
@@ -191,7 +197,9 @@ intervals. This opens **HSIP** safety funding as well as congestion funding
 - **Request existing records** rather than asking the agency to create new
   analyses.
 - **Portals:** [ACHD public records request](https://www.achdidaho.org/about-achd/public-records-request)
-  · [ITD public records](https://itd.idaho.gov/public-records/)
+  · [ITD public records](https://itd.idaho.gov/public-records/). ACHD takes
+  requests through **JustFOIA** and ITD through **GovQA**
+  (`itdidaho.govqa.us`) ⚠️ (source not yet re-checked).
 
 ### Academic partners
 

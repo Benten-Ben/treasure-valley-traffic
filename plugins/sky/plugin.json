@@ -1,0 +1,18 @@
+{
+  "name": "sky",
+  "title": "The sky over the valley: aurora and space weather",
+  "depends": [],
+  "visibility": "public",
+  "order": 68,
+  "sources": [
+    {"name": "swpc_ovation", "module": "ingest.sources.swpc_ovation", "kind": "source",
+     "license": "public domain (US government work; no explicit statement)",
+     "credit": "NOAA Space Weather Prediction Center (OVATION Prime)", "republish": "yes"},
+    {"name": "swpc_kp_1m", "module": "ingest.sources.swpc_kp_1m", "kind": "source",
+     "license": "public domain (US government work; no explicit statement)",
+     "credit": "NOAA Space Weather Prediction Center", "republish": "yes"}
+  ],
+  "tables": [],
+  "storage": "No tables of its own and no archive files: rows in core's raw.record only. OVATION: one row per snapshot every 30 min (651 values; the payload is about 0.5 KB after Postgres compresses it on a quiet day, about 1.5 KB when the oval is busy), about 40-90 KB a day with the row and its indexes. Kp: one row per UTC hour (60 values, about 0.8 KB), about 25 KB a day. Downloads: about 7 MB a day (OVATION's global file is about 145 KB gzipped; Kp about 1.3 KB).",
+  "ethics": "Nature, not people: no personal data. US government data from services.swpc.noaa.gov, whose robots.txt returns 404 (no rules); one request per source per run, at least 2 s apart, with our User-Agent. OVATION's values are the chance of aurora overhead, not of seeing it from the valley: anything shown from them must say so and stay approximate (docs/sources/sky.md)."
+}

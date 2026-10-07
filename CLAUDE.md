@@ -12,7 +12,8 @@ our own base map with live and historical data layers.
 - Research write-up: `README.md` and `docs/01`–`docs/08`.
 - Platform design: `docs/09` (base-map data), `docs/10` (architecture),
   `docs/11` (camera validation layer), `docs/13` (visual design), `docs/14`
-  (UI v2 plan), `docs/15` (core and plugins).
+  (UI v2 plan), `docs/15` (core and plugins), `docs/16` (ideas by persona), `docs/17`
+  (sources for new plugins; catalogs per theme in `docs/sources/`).
 - Decisions: `docs/DECISIONS.md`. Read it before proposing anything
   structural.
 - Data sources still to do: `docs/SOURCES.md`.
@@ -26,12 +27,15 @@ our own base map with live and historical data layers.
   decisions in `docs/DECISIONS.md`.
 - Go through data sources one at a time with the owner before committing to
   how each is used.
-- The cloud session is the primary pilot. A local helper session (owner's
-  laptop) does anything needing local files or the home network. The owner
-  relays between them.
-- **Never** change the home server (create, modify or delete VMs,
-  containers, storage or network) without the owner's explicit approval for
-  that specific action.
+- Since Oct 7, one Claude Code session on the owner's laptop drives the
+  project: code, docs, git, deploys and the home server
+  ([HANDOFF.md](HANDOFF.md)). A cloud session is used only for a bounded
+  task the owner starts.
+- **The project's VM** has the owner's standing OK (Oct 7): deploy,
+  restart, clean up and edit its configuration. **Everything else on the
+  home server** needs the owner's explicit approval for that specific
+  action. That means the host, its storage, network and backups, and its
+  other VMs and containers.
 
 ## This repository is public
 
@@ -95,7 +99,8 @@ Before every push, check the diff for these.
 ```
 README.md               research summary and index
 docs/01-08              research chapters (signals, local system, data, playbook, AI, automation, DIY data, inventory)
-docs/09-15              platform: base-map data, architecture, camera layer, DB schema (draft), visual design, UI v2 plan, core and plugins
+docs/09-17              platform: base-map data, architecture, camera layer, DB schema (draft), visual design, UI v2 plan, core and plugins, ideas by persona, sources for new plugins
+docs/sources/           verified source catalogs per theme (Oct 7 research), for chapter 17
 docs/DECISIONS.md       decision log + pending questions + owner actions
 docs/SOURCES.md         data source backlog: what's in use, what's left, suggested order
 docs/data/README.md     what the reference datasets are (kept privately, not published)
@@ -156,9 +161,30 @@ Front-end rules:
   model and usability rules. Never use red/green alone.
 
 Python 3.11, standard library only, except `gtfs-realtime-bindings` for
-live bus positions (`requirements.txt`).
+live bus positions (`requirements.txt`). Decoding gridded data (GRIB2,
+NetCDF, HDF5, rasters, lidar) runs in a separate `worker` image with GDAL,
+eccodes, NumPy, pyproj, h5py and PDAL from Ubuntu's packages (decided Oct 7,
+docs/17 §17.8 Q9); collectors stay standard library.
 
-## Environment notes (cloud session)
+## Environment notes (local session, the driver)
+
+- The laptop reaches the project server over the home LAN or the tailnet.
+  The host and user names are in the private server notes.
+- **Deploying:** push `main` to the server's repository (`/srv/tvt/repo`,
+  which accepts pushes), then rebuild with Compose on the server
+  ([deploy/](deploy/README.md)). Push to GitHub too. The server has no
+  GitHub access.
+- **The laptop has no Docker.** Heavy work runs on the server:
+  - basemap builds;
+  - Docker images;
+  - test suites that need PostGIS and TimescaleDB.
+  
+  App checks (`npm run check`, `npm test`, `npm run build`) and the Python
+  tests run locally.
+- **Private plugins:** a separate private repository. Its copies are on the
+  server and on GitHub (private), and the laptop pushes to both.
+
+## Environment notes (cloud sessions)
 
 - Outbound traffic goes through a proxy. `achdidaho.org`,
   `overpass-api.de`, `download.geofabrik.de` and `web.archive.org` are
@@ -184,6 +210,7 @@ live bus positions (`requirements.txt`).
 
 - Match the surrounding style. Cite sources inline in docs, and mark
   anything resting on secondary sources with ⚠️.
-- Commit messages: imperative summary plus a short body. Develop on the
-  assigned branch, then fast-forward `main` (the default branch) once the
-  checks pass and the diff has been checked for private details.
+- Commit messages: imperative summary plus a short body. Commits are
+  authored by the owner, with Claude as co-author. Develop on a branch, then
+  fast-forward `main` (the default branch) once the checks pass and the diff
+  has been checked for private details.

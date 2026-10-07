@@ -1,0 +1,60 @@
+# A preview of main's app beside the live one (owner, Oct 7, 2026).
+#
+# UI v2 (docs/14) lands on main a wave at a time, but its first deployable
+# checkpoint (§14.10) needs packages that aren't finished yet. This override
+# runs main's app as `app-next` beside the live app, which stays pinned to the
+# image it was last deployed with:
+#   live:    the LAN port (HTTP_PORT) and https://<tailnet name>/
+#   preview: LAN port 8081 and https://<tailnet name>:8444/
+# Both use the same database, frames and tiles, so a calibration saved in the
+# preview is a real calibration. Live camera images are on in the preview, as
+# compose.live-images.yml turns them on for the app.
+#
+# Enable (once):
+#   docker tag tvt-app tvt-app:live        # the image the pin below uses
+#   add compose.preview.yml to COMPOSE_FILE in deploy/.env, e.g.
+#     COMPOSE_FILE=docker-compose.yml:compose.preview.yml
+#   docker compose build app-next && docker compose up -d --no-deps app-next web
+# Update the preview after pushing main:
+#   docker compose build app-next && docker compose up -d --no-deps app-next
+# Retire it at a checkpoint (main becomes the live app):
+#   remove compose.preview.yml from COMPOSE_FILE, then
+#   docker compose rm -sf app-next && docker compose build app && docker compose up -d app web
+services:
+  app:
+    # Pinned while the preview is on: rebuilding `app` must not ship main's
+    # unfinished UI as the live site.
+    image: tvt-app:live
+    build: !reset null
+
+  app-next:
+    build: ../app
+    image: tvt-app-next
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://tvt:${POSTGRES_PASSWORD}@db:5432/tvt
+      FRAMES_DIR: /srv/frames
+      PROTOCOL_HEADER: x-forwarded-proto
+      HOST_HEADER: x-forwarded-host
+      CAMERA_IMAGES_ENABLED: "true"
+      TVT_ARCHIVE: /srv/archive
+    volumes:
+      - ${FRAMES_DIR:?set FRAMES_DIR in deploy/.env}:/srv/frames
+      - ${ARCHIVE_DIR:-/srv/tvt/archive}/cameras/jpeg:/srv/archive/cameras/jpeg:ro
+      - ${ARCHIVE_DIR:-/srv/tvt/archive}/cameras/status:/srv/archive/cameras/status:ro
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/api/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  web:
+    # The Caddyfile always defines the preview sites (:81 and :8444); this
+    # publishes them.
+    ports:
+      - "${HTTP_BIND:-0.0.0.0}:8081:81"
+      - "${HTTPS_BIND:-0.0.0.0}:8444:8444"
+      - "${HTTPS_BIND:-0.0.0.0}:8444:8444/udp"

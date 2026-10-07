@@ -30,6 +30,22 @@ class RobotsTest(unittest.TestCase):
         self.assertFalse(r.allowed("https://x/a/b.pdf"))
         self.assertTrue(r.allowed("https://x/a/b.pdf?page=2"))
 
+    def test_groups_for_us_are_merged_and_ties_disallow(self):     # ScienceBase's two * groups
+        r = Robots("User-agent: Claude-User\nDisallow: /\n\nUser-agent: *\nAllow: /\n\n"
+                   "User-agent: *\nDisallow: /\nCrawl-delay: 5\n")
+        self.assertFalse(r.allowed("https://x/catalog/item/1"))   # Allow: / and Disallow: / tie
+        self.assertEqual(r.crawl_delay(), 5)
+
+    def test_every_group_naming_us_applies(self):
+        r = Robots("User-agent: treasure-valley-traffic\nDisallow: /a/\n\n"
+                   "User-agent: other\nDisallow: /\n\n"
+                   "User-agent: treasure-valley-traffic\nDisallow: /b/\nCrawl-delay: 2\n\n"
+                   "User-agent: *\nDisallow: /c/\nCrawl-delay: 9\n")
+        self.assertFalse(r.allowed("https://x/a/1"))
+        self.assertFalse(r.allowed("https://x/b/1"))
+        self.assertTrue(r.allowed("https://x/c/1"))                # a group names us, so * doesn't apply
+        self.assertEqual(r.crawl_delay(), 2)
+
 
 if __name__ == "__main__":
     unittest.main()
@@ -54,3 +70,16 @@ class RobotsUnavailableTest(unittest.TestCase):
     def test_unavailable_still_counts_as_disallowed(self):
         from ingest import http
         self.assertTrue(issubclass(http.RobotsUnavailable, http.RobotsDisallowed))
+
+
+class EditGuardTest(unittest.TestCase):
+    def test_arcgis_edits_are_refused_before_any_request(self):
+        from ingest import http
+        for url in ["https://x/arcgis/rest/services/Parks/FeatureServer/0/applyEdits",
+                    "https://x/server/rest/services/a/FeatureServer/applyedits?f=json",
+                    "https://x/arcgis/rest/services/a/MapServer/3/deleteFeatures"]:
+            with self.assertRaises(http.EditRefused):
+                http.get(url)
+            with self.assertRaises(http.EditRefused):
+                http.post(url, b"edits=[]")
+        self.assertIsNone(http.EDIT_OPS.search("/arcgis/rest/services/a/FeatureServer/0/query"))

@@ -68,7 +68,9 @@ resources."[^tsmp] Ask ACHD whether it has a TSMP.
 | FHWA Traffic Signal Timing Manual (2008) | Literature synthesis | Benefits "outweigh the costs 40:1 (or more)"; delay −15–40%, stops −10–40%, travel time up to −25%, fuel up to −10%[^stm2008] |
 | Texas TLS Program I (TTI, 1992) | 2,243 signals, 44 cities, $7.9M | Delay −24.6%, stops −14.2%, fuel −9.1%; about $62 of benefit per $1[^texas] |
 | California FETSIM (1983–93) | 12,245 signals, 334 projects | Delay −14%, stops −13%, travel time −7%, fuel −8%; fuel savings alone more than 5× program cost[^fetsim] |
+| Los Angeles ATSAC | All 4,398 signals on the system by 2013 | LADOT reported speeds +16% and travel time about −12% ⚠️ (source not yet re-checked) |
 | Dallas–Fort Worth regional retiming, Phase V | 201 signals | Signal delay about −8%; about $32M/yr user benefit[^nctcog] |
+| Maricopa Association of Governments (MAG) Traffic Signal Optimization Program | 112 projects at 1,100+ intersections since 2004 | Benefit-cost claimed up to 40:1; Kittelson built its INRIX- and trajectory-based evaluation ⚠️ (source not yet re-checked) |
 | UDOT ATSPM, 10-year | 2,111 signals | $11.6M cost vs. $108.0M benefit; **$57.9M of the benefit came from faster detector repair**[^atspmbc][^udotdetect] |
 | Indiana (Purdue/INDOT) connected-vehicle-targeted retiming | 11 changes at 9 signals | Delay cut by up to 53 s/veh; split failures down up to 30%[^indot] |
 | Boston + Google Green Light (INRIX evaluation) | 114 intersections | Delay −13.5% average (up to 24%); unnecessary stops −20%[^boston] |
@@ -124,6 +126,10 @@ maintenance? When was each corridor last retimed?
 | Queue doesn't clear in one green (repeatedly) | Under-allocated split, or demand above capacity | Split failure measure; v/c analysis |
 | Progression breaks at a specific point | Jurisdiction seam (ACHD↔ITD, Nampa↔Caldwell) or different cycle lengths | Compare cycle lengths on each side; time-space diagram |
 | Everything is bad at 5:15 pm and fine at 7 pm | Demand over capacity; timing can only move delay around | Volume vs capacity; this needs network or capacity solutions |
+
+Besides the overnight max-out flag above, FHWA's Watchdog rule also flags a
+detector when a pedestrian button logs more than 200 actuations overnight ⚠️
+(source not yet re-checked).
 
 Long cycles also have a hidden cost: they can *increase* congestion through
 turn-bay spillback and less efficient long greens (STM2 §7.4.2).[^stm2]
@@ -195,6 +201,10 @@ touching agency equipment.
 | **StreetLight** | Turning-movement counts, O-D patterns | Commercial[^streetlight] |
 | **Google Project Green Light** | Infers cycle, splits and offsets from Maps data and recommends changes | Free to partner cities; agencies only (see [chapter 5](05-ai-and-emerging-tech.md)) |
 | **DIY floating-car runs** | GPS-logged drives through a corridor (stops, delay, travel time) | Cheap and credible for before/after if done systematically (STM2 Ch. 8) |
+
+Automakers have their own probe programs too: Stellantis **Mobilisights**
+(2023) and GM **Future Roads** (with INRIX). Austin used INRIX through
+Kimley-Horn. ⚠️ (source not yet re-checked)
 
 Vendor risk is real. Wejo, a connected-vehicle data source Purdue used,
 collapsed in 2023.[^wejo]
@@ -276,8 +286,10 @@ committees); and volunteers for field data collection.
    connected-vehicle pilot, and the university runs the NIATT transportation
    institute.[^niatt]
 5. **Pilot agreements.** Pittsburgh's Surtrac went from a 9-intersection
-   CMU pilot to city ownership.[^surtrac] Google Green Light uses a no-cost,
-   60-day-exit agreement model (Vancouver, 2026).
+   CMU pilot to city ownership.[^surtrac] It grew from 9 intersections to 50
+   ⚠️ (source not yet re-checked); [chapter 5](05-ai-and-emerging-tech.md)
+   gives about 350 by the 2022 Miovision acquisition. Google Green Light uses
+   a no-cost, 60-day-exit agreement model (Vancouver, 2026).
 
 **Pitfalls:**
 
@@ -300,6 +312,7 @@ committees); and volunteers for field data collection.
 | **HSIP** | Intersection safety improvements, including signal changes | Safety framing (e.g., LPIs, yellow/red timing)[^hsip] |
 | **SMART grants** | Tech demonstrations; Stage 1 up to $2M | Federal program, FY22–26[^smart] |
 | **ATTAIN** (formerly ATCMTD) | Advanced traffic tech deployment, up to $12M | ACHD won $2.25M in 2017 under ATCMTD[^attain] |
+| **FHWA AID Demonstration** (Accelerated Innovation Deployment) | ATSPM | Has paid for ATSPM: $649,500 to Dover, NH, and $1M each to Kentucky and Wyoming. Not taking applications in Oct 2026 ⚠️ (source not yet re-checked) |
 
 **Federal uncertainty:** the IIJA surface-transportation authorizations
 expired Sept 30, 2026, and an extension or reauthorization was being debated
