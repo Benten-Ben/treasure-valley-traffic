@@ -242,7 +242,7 @@ centerlines. ACHD's 2022 poles (60 m), COMPASS's Regional_Signals (40 m) and
 OpenStreetMap's signal nodes (60 m) confirm it, and leftovers cluster at 45 m
 into candidates. Confidence follows how many sources agree (three 1.0, two
 0.85, COMPASS alone 0.7); below 0.6 a row is a candidate. Reviewed decisions
-(`ingest/intersection_reviews.json`) retire or hold candidates until new
+(`plugins/intersections/ingest/intersection_reviews.json`) retire or hold candidates until new
 evidence reopens them. IDs carry over by Synchro ID, then by the nearest row
 within 30 m; rows are retired, never deleted. COMPASS's per-approach fields
 fill `core.approach`. Cameras link within 80 m when they share a street,
@@ -257,7 +257,7 @@ internal only.
 **OpenStreetMap (`osm_valley`, Oct 6, 2026).** Geofabrik's robots.txt, read
 Oct 6, 2026, disallows its extracts for every robot (`Disallow: *.osm.pbf`,
 `*.md5`, `*updates*` and more). So the owner downloads the Idaho extract by
-hand each week and loads it with `python3 -m ingest.osm_load --inbox`; there
+hand each week and loads it with `python3 -m ingest osm-load --inbox`; there
 is no download code and no schedule, and the owner has asked Geofabrik for
 one scripted download a week. osmium cuts the extract to the valley box. It
 keeps every major way, every other road tagged with lanes or turn lanes, and
@@ -302,7 +302,7 @@ existing, funded and planned lanes, counting the whole cross-section) and
 by globalid; `pm_id` names a travel-model link of several pieces and stays as
 the join to COMPASS's other data). `core.segment_match` records which ACHD
 segments each of their lines, and each OpenStreetMap way, lies along, by one
-shared matcher (`ingest/segment_match.py`, in UTM 11N): at least 60% of the
+shared matcher (`plugins/roads/ingest/segment_match.py`, in UTM 11N): at least 60% of the
 segment within the line's buffer (15 m; 10 m with a street-name check for
 the Master Street Map), or else at least 60% of a line of 20 m or more within
 the segment's buffer (methods `way_in_…`), with bearings within 20°. `share`
@@ -310,7 +310,7 @@ and `overlap_m` always measure the ACHD segment. One line can match many
 segments, and one segment several lines (both carriageways of a divided
 road). A source's matches are rewritten in one transaction after each run
 that changes it, and every source's after `achd_roads` changes ACHD's
-segments; by hand, `python3 -m ingest.segment_match`. Canyon County has no
+segments; by hand, `python3 -m ingest segment-match`. Canyon County has no
 ACHD segments, so its lines stay unmatched and keep their own geometry.
 
 **`core.segment_lanes` (0017, corrected in 0018)** applies the lanes rule of

@@ -1,5 +1,5 @@
 {
-  "about": "Reviewed decisions the intersection build applies (ingest/intersections.py). Each review applies to the built intersection nearest its point (key: 'lat,lon') within 50 m, unless that intersection has since gained a source listed in reopen_on: then it no longer applies and the build reports it for another look. status: 'retired' (never deleted), 'candidate' or 'active'. Add new reviews here.",
+  "about": "Reviewed decisions the intersection build applies (intersections.py, beside this file). Each review applies to the built intersection nearest its point (key: 'lat,lon') within 50 m, unless that intersection has since gained a source listed in reopen_on: then it no longer applies and the build reports it for another look. status: 'retired' (never deleted), 'candidate' or 'active'. Add new reviews here.",
   "reviews": [
     {
       "key": "43.66300,-116.47232",
