@@ -6,7 +6,7 @@ that is rolled back. Every row is synthetic: made-up segments, routes, ways
 and lines in UTM 11N far from the valley, with their matches written directly
 (the matcher has its own tests).
 
-Run: python3 -m unittest discover -s ingest/tests -t .
+Run: python3 -m unittest discover -s plugins -t .
 """
 
 import json
@@ -14,7 +14,7 @@ import os
 import unittest
 
 from ingest import db
-from ingest.sources import achd_msm, compass_centerline, itd_hpms, osm_valley
+from plugins.roads.ingest.sources import achd_msm, compass_centerline, itd_hpms, osm_valley
 
 DB_URL = os.environ.get("TVT_TEST_DATABASE_URL")
 X0, Y0 = 300000, 4790000

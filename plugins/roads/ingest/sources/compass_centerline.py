@@ -28,7 +28,8 @@ check on the matcher.
 import json
 from collections import Counter
 
-from .. import arcgis, db, segment_match
+from ingest import arcgis, db
+from .. import segment_match
 
 LAYER = "https://swidrdc.org/arcgis/rest/services/COMPASSData/CommonFeatures/FeatureServer/0"
 HUB = "https://share-open-data-compassidaho.hub.arcgis.com/datasets/compassidaho::regionalcenterline-2"

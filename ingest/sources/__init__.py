@@ -6,11 +6,12 @@ cameras and crossings before the intersection build that joins them). STREAMS
 run continuously (`stream`), each as its own service.
 """
 
+from plugins.roads.ingest.sources import achd_msm, achd_roads, compass_centerline, itd_hpms
+
 from .. import intersections
-from . import (achd_cameras, achd_msm, achd_roads, achd_signal_points, compass_centerline, compass_congestion,
-               compass_counts, compass_crashes, compass_growth, compass_plats, compass_regional_signals,
-               compass_signals, fra_crossings, idaho511_api, idaho511_frames, idaho511_views, itd_hpms, itd_wzdx,
-               vrt_gtfs, vrt_realtime)
+from . import (achd_cameras, achd_signal_points, compass_congestion, compass_counts, compass_crashes, compass_growth,
+               compass_plats, compass_regional_signals, compass_signals, fra_crossings, idaho511_api, idaho511_frames,
+               idaho511_views, itd_wzdx, vrt_gtfs, vrt_realtime)
 
 # The COMPASS data sources come last: they depend on nothing above them, and
 # the long crash download shouldn't delay the daily intersection build.

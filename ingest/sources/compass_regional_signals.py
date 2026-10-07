@@ -22,7 +22,9 @@ school flashers, 126 RRFBs, 118 HAWKs, 35 flashing beacons, 23 fire signals and
 than adding signals.
 """
 
-from .. import arcgis, db, signal_devices, streets
+from plugins.roads.ingest import streets
+
+from .. import arcgis, db, signal_devices
 from . import compass_signals
 
 LAYER = "https://swidrdc.org/arcgis/rest/services/COMPASSData/I_84DetourRoutesRegional/MapServer/3"

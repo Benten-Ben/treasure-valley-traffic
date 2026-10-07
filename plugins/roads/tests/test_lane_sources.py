@@ -6,7 +6,7 @@ are offline. The store tests run only against a scratch database named by
 TVT_TEST_DATABASE_URL (a clone migrated through 0011); each works inside one
 transaction and rolls it back.
 
-Run: python3 -m unittest discover -s ingest/tests -t .
+Run: python3 -m unittest discover -s plugins -t .
 """
 
 import contextlib
@@ -22,7 +22,7 @@ import http.client
 
 from ingest import arcgis, db
 from ingest.db import version_hash
-from ingest.sources import achd_msm, achd_roads, compass_centerline, itd_hpms
+from plugins.roads.ingest.sources import achd_msm, achd_roads, compass_centerline, itd_hpms
 
 NOW = datetime(2026, 10, 6, 12, tzinfo=timezone.utc)
 

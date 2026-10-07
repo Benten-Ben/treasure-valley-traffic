@@ -1,7 +1,7 @@
 """Load an OpenStreetMap extract the owner downloaded by hand (sources/osm_valley.py).
 
-    python3 -m ingest.osm_load --inbox          # the newest file in $TVT_ARCHIVE/osm/inbox/
-    python3 -m ingest.osm_load --file PATH      # a .osm.pbf (or OSM XML) file anywhere
+    python3 -m ingest osm-load --inbox          # the newest file in $TVT_ARCHIVE/osm/inbox/
+    python3 -m ingest osm-load --file PATH      # a .osm.pbf (or OSM XML) file anywhere
 
 Geofabrik's robots.txt disallows scripted downloads of its extracts, so the
 weekly extract is downloaded by hand in a browser (owner, Oct 6, 2026),
@@ -16,19 +16,19 @@ import argparse
 import os
 import sys
 
-from . import db
+from ingest import db
 from .sources import osm_valley
 
 
-def main():
-    ap = argparse.ArgumentParser(prog="python3 -m ingest.osm_load", description=__doc__.splitlines()[0])
+def main(argv=None):
+    ap = argparse.ArgumentParser(prog="python3 -m ingest osm-load", description=__doc__.splitlines()[0])
     which = ap.add_mutually_exclusive_group(required=True)
     which.add_argument("--inbox", action="store_true", help="load the newest extract in $TVT_ARCHIVE/osm/inbox/")
     which.add_argument("--file", help="load this .osm.pbf or OSM XML file")
     ap.add_argument("--force", action="store_true", help="load it even if it's the extract loaded last time")
     ap.add_argument("--allow-shrink", action="store_true",
                     help="retire ways even when this extract has fewer than half the active ones")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
     path = args.file
     if args.inbox:

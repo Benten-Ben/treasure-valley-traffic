@@ -70,7 +70,9 @@ import os
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 
-from . import db, streets
+from plugins.roads.ingest import streets
+
+from . import db
 from .utm import to_utm
 
 UTM = 26911

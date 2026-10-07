@@ -45,7 +45,8 @@ import time
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 
-from .. import arcgis, db, segment_match
+from ingest import arcgis, db
+from .. import segment_match
 
 BASE = "https://gisp.itd.idaho.gov/server/rest/services/GDWarehouse"
 HPMS = f"{BASE}/HPMS/FeatureServer"

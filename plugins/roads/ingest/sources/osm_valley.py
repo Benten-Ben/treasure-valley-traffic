@@ -8,13 +8,13 @@ pulled under the ODbL (db/migrations/0011, docs/09 §9.3).
 Where the data comes from: by hand only. Geofabrik's robots.txt, read Oct 6,
 2026, disallows its extracts for every robot (`Disallow: *.osm.pbf`,
 `*.md5`, `*updates*`, ...), so this module makes no network requests and the
-source has no schedule; it isn't in ingest/sources SOURCES, so `run all` and
+source has no schedule; it isn't in the registry's SOURCES, so `run all` and
 `serve` never touch it. The owner downloads the Idaho extract in a browser
 (download.geofabrik.de/north-america/us/idaho.html), copies it (and its .md5)
 to the server, and loads it with
 
-    python3 -m ingest.osm_load --inbox          # newest file in $TVT_ARCHIVE/osm/inbox/
-    python3 -m ingest.osm_load --file PATH      # a .osm.pbf or OSM XML file
+    python3 -m ingest osm-load --inbox          # newest file in $TVT_ARCHIVE/osm/inbox/
+    python3 -m ingest osm-load --file PATH      # a .osm.pbf or OSM XML file
 
 which registers the source, logs the load in ops.fetch, and archives the
 file in $TVT_ARCHIVE/osm/ (the last two are kept). The extract loaded last
@@ -59,7 +59,7 @@ gets no lane rows (the lanes tag stays on the way). When a turn:lanes value's
 slot count disagrees with the lane count, it's logged and the lanes get no
 turns; the tags are kept as tagged.
 
-Matching (core.segment_match) uses the shared matcher (ingest/segment_match.py),
+Matching (core.segment_match) uses the shared matcher (segment_match.py),
 in UTM 11N, with bearings within 20° along the shared stretch:
   - 'buffer15_bearing20': at least 60% of the ACHD segment lies within 15 m
     of the way. Both carriageways of a divided road (5-7 m either side of
@@ -83,7 +83,8 @@ import tempfile
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 
-from .. import db, segment_match
+from ingest import db
+from .. import segment_match
 
 PAGE = "https://download.geofabrik.de/north-america/us/idaho.html"   # where the owner downloads it by hand
 BOX = (-117.05, 43.00, -115.95, 43.85)          # left, bottom, right, top
@@ -503,7 +504,7 @@ LINES_SQL = """select %(source)s::text as source, 'w' || osm_id as source_id, ge
 
 def match_achd_segments(conn, source=MATCH_SOURCE):
     """Rebuild this source's rows in core.segment_match against the active ACHD road
-    segments with the shared matcher (ingest/segment_match.py): methods
+    segments with the shared matcher (segment_match.py): methods
     buffer15_bearing20 and way_in_buffer15_bearing20, in UTM 11N. Doesn't commit."""
     segment_match.rematch(conn, [source], LINES_SQL, {"source": source})
     by_method = dict(conn.execute(
@@ -635,7 +636,7 @@ def archive_file(path, folder, md5):
     return dest
 
 
-# ---- the by-hand loader (python3 -m ingest.osm_load) -----------------------
+# ---- the by-hand loader (python3 -m ingest osm-load) -----------------------
 
 def load_file(conn, path, force=False, allow_shrink=False):
     """Load an extract the owner downloaded by hand, then archive it (when TVT_ARCHIVE is

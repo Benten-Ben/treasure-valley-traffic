@@ -26,7 +26,8 @@ street codes, names and typology but no lanes, so it isn't read.
 import json
 from collections import Counter
 
-from .. import arcgis, db, segment_match
+from ingest import arcgis, db
+from .. import segment_match
 
 LAYER = "https://gis.achdidaho.org/server/rest/services/ArcGIS_Hub/Master_Street_Map_Arterials/FeatureServer/1"
 

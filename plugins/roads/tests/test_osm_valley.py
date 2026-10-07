@@ -1,17 +1,17 @@
-"""Tests for the OpenStreetMap source (ingest/sources/osm_valley.py).
+"""Tests for the OpenStreetMap source (plugins/roads/ingest/sources/osm_valley.py).
 
 Offline: tag values, lane expansion, what we keep (node kinds, junctions),
 the osmium command lines, the by-hand loader and its archive (MD5 skip,
 pruning), and that the source makes no requests and isn't registered.
 With osmium installed, the real pipeline runs over a synthetic fixture
-(ingest/tests/fixtures/osm_valley.osm: invented IDs, names and coordinates).
+(plugins/roads/tests/fixtures/osm_valley.osm: invented IDs, names and coordinates).
 
 Database tests run only against a scratch database named by
 TVT_TEST_DATABASE_URL (a package clone with migration 0011), inside a
 transaction that is rolled back. The matching layout sits 45 km from any
 ACHD segment.
 
-Run: python3 -m unittest discover -s ingest/tests -t .
+Run: python3 -m unittest discover -s plugins -t .
 """
 
 import contextlib
@@ -28,7 +28,7 @@ from decimal import Decimal
 from unittest import mock
 
 from ingest import http
-from ingest.sources import osm_valley as osm
+from plugins.roads.ingest.sources import osm_valley as osm
 
 FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "osm_valley.osm")
 HAVE_OSMIUM = shutil.which("osmium") is not None

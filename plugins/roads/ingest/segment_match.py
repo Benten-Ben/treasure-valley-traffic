@@ -50,7 +50,7 @@ unmatched and keep their own geometry; the stats say how many unmatched
 lines lie away from ACHD's network (no segment within 50 m) and how many lie
 near it (real misses).
 
-By hand: python3 -m ingest.segment_match [itd_hpms achd_msm compass_centerline osm_valley]
+By hand: python3 -m ingest segment-match [itd_hpms achd_msm compass_centerline osm_valley]
 """
 
 import math
@@ -377,7 +377,7 @@ def rematch_all(conn, names=None, only_stale=False):
 
 
 def main(argv):
-    from . import db
+    from ingest import db
     with db.connect() as conn:
         try:
             results = rematch_all(conn, argv or None)

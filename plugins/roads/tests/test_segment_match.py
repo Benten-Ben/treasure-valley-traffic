@@ -1,11 +1,11 @@
-"""Tests for matching source lines to ACHD road segments (ingest/segment_match.py).
+"""Tests for matching source lines to ACHD road segments (plugins/roads/ingest/segment_match.py).
 
 The rule tests are offline. The geometry tests run only against a scratch
 database named by TVT_TEST_DATABASE_URL (a clone migrated through 0011):
 they draw made-up lines in UTM 11N far from the valley, work inside one
 transaction and roll it back, so nothing is left behind.
 
-Run: python3 -m unittest discover -s ingest/tests -t .
+Run: python3 -m unittest discover -s plugins -t .
 """
 
 import contextlib
@@ -14,7 +14,7 @@ import os
 import unittest
 from unittest import mock
 
-from ingest import segment_match as sm
+from plugins.roads.ingest import segment_match as sm
 
 
 class RulesTest(unittest.TestCase):

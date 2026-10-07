@@ -4,7 +4,7 @@ Open GIS layer (the host has no robots.txt), about 38,700 segments, read in
 pages of 2,000 with a pause between requests. Each segment is keyed by
 ACHD's PermID, which survives edits (OBJECTID doesn't). A run that changes
 the segments rematches every source matched to them (the lane inventories
-and OpenStreetMap; ingest/segment_match.py), in the same run; any other run
+and OpenStreetMap; segment_match.py), in the same run; any other run
 rematches those whose matches are out of date (a rematch that failed). One
 matcher failing doesn't stop the others or the run.
 
@@ -19,7 +19,8 @@ import json
 import time
 import urllib.error
 
-from .. import db, http, segment_match
+from ingest import db, http
+from .. import segment_match
 
 LAYER = "https://gis.achdidaho.org/server/rest/services/Maintenance/Road_Centerline/MapServer/7"
 FIELDS = ["OBJECTID", "PermID", "StrtConcat", "StName", "FuncClass", "PostSpeed", "EmergSpeed", "OneWay",
