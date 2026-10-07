@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { onDestroy } from 'svelte';
 	import type { AppCtx } from '#lib/app/context.js';
+	import { clockOf, clockText } from '#lib/state/clock.svelte.js';
 	import Icon from './Icon.svelte';
 	import { QUESTION } from './chrome-icons.js';
 	import { slots } from './slots.svelte.js';
@@ -12,21 +12,17 @@
 	 * nameplate and stat chips on the left; the clock, the time pill, other
 	 * packages' pieces (the `topbar-right` slot) and Help on the right.
 	 *
-	 * - The clock is the wall clock in Boise until WP8's playhead clock.
+	 * - The clock is the playhead in Boise (WP8's clock): the moment the
+	 *   buses on the map are at.
 	 * - A chip shows its source and age on hover, turns its layer on when
 	 *   clicked, shows — while loading and ▲ when its feed is old; a polite
 	 *   live region announces only threshold crossings.
 	 */
 	let { app, phone = false, onhelp }: { app: AppCtx; phone?: boolean; onhelp: () => void } = $props();
 
-	let now = $state(Date.now());
-	const timer = setInterval(() => (now = Date.now()), 1000);
-	onDestroy(() => clearInterval(timer));
-	const fmt = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Boise', hour: 'numeric', minute: '2-digit', second: '2-digit', weekday: 'short' });
-	const clock = $derived.by(() => {
-		const parts = Object.fromEntries(fmt.formatToParts(now).map((p) => [p.type, p.value]));
-		return `${parts.hour}:${parts.minute}:${parts.second} ${parts.dayPeriod} · ${parts.weekday}`;
-	});
+	// The playhead: the moment the buses on the map are at (WP8's clock, ticking once a second).
+	const playhead = $derived(clockOf(app));
+	const clock = $derived(clockText(playhead.T));
 
 	const chips = $derived(app.layers.chips());
 
@@ -70,7 +66,7 @@
 	</div>
 	{#if !phone}
 		<div class="right">
-			<span class="clock card num" title="Time in Boise">{clock}</span>
+			<span class="clock card num" title="The time the buses on the map are at (Boise)">{clock}</span>
 			<TimePill {app} />
 			{#each slots.items('topbar-right') as it (it.id)}<it.component {...it.props} />{/each}
 			<button class="help card" aria-label="Help and keys (?)" onclick={onhelp}><Icon icon={QUESTION} size={22} /></button>

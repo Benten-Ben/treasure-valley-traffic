@@ -25,11 +25,12 @@ test.describe('polling', () => {
 		await page.goto('/');
 		await mapReady(page);
 
-		// The Transit layer polls the live buses. (WP2: layers combine, and Transit is on at a first
-		// visit, so the lens-era "press 4" that switched to it would now turn it off.)
+		// The Transit layer polls the bus tracks (WP8; the vehicles endpoint before it). (WP2: layers
+		// combine, and Transit is on at a first visit, so the lens-era "press 4" that switched to it
+		// would now turn it off.)
 		await expect.poll(() => page.evaluate(() => (globalThis as any).__tvt.layers?.transit)).toBe(true);
 		expect(await page.evaluate(() => (globalThis as any).__tvt.layers?.enabled)).toContain('transit');
-		await expect.poll(() => api.filter((p) => p === '/api/transit/vehicles').length).toBeGreaterThan(0);
+		await expect.poll(() => api.filter((p) => p === '/api/transit/tracks').length).toBeGreaterThan(0);
 
 		await setVisibility(page, 'hidden');
 		// Let anything already in flight land, then watch a quiet minute.
@@ -40,16 +41,16 @@ test.describe('polling', () => {
 		expect(api.slice(hiddenFrom), 'requests to /api while hidden').toEqual([]);
 
 		const shownFrom = api.length;
-		const answered = page.waitForResponse((r) => new URL(r.url()).pathname === '/api/transit/vehicles');
+		const answered = page.waitForResponse((r) => new URL(r.url()).pathname === '/api/transit/tracks');
 		await setVisibility(page, 'visible');
 		await page.clock.runFor(1_000);
-		await expect.poll(() => api.slice(shownFrom).filter((p) => p === '/api/transit/vehicles').length, { timeout: 5_000 }).toBe(1);
+		await expect.poll(() => api.slice(shownFrom).filter((p) => p === '/api/transit/tracks').length, { timeout: 5_000 }).toBe(1);
 
-		// And it keeps polling on its interval while visible: the next poll is
+		// And it keeps polling on its interval (10 s) while visible: the next poll is
 		// scheduled once this one's answer is in.
 		await answered;
 		await page.waitForTimeout(500);
 		await page.clock.runFor(15_000);
-		await expect.poll(() => api.slice(shownFrom).filter((p) => p === '/api/transit/vehicles').length, { timeout: 5_000 }).toBe(2);
+		await expect.poll(() => api.slice(shownFrom).filter((p) => p === '/api/transit/tracks').length, { timeout: 5_000 }).toBe(2);
 	});
 });
