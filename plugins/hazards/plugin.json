@@ -21,7 +21,7 @@
     {"name": "usgs_quakes", "module": "ingest.sources.usgs_quakes", "kind": "source",
      "license": "public domain", "credit": "U.S. Geological Survey, Earthquake Hazards Program", "republish": "yes"}
   ],
-  "tables": ["raw.record", "evt.event"],
+  "tables": [],
   "storage": "Small, and only on change: under 1 MB a day typical, a few MB on a busy fire day (new perimeter versions at 10-100 KB each). Everything goes to core's raw.record and evt.event; no tables of its own (ch. 17 Q8). Transfer is about 60 MB a day before gzip (which we ask for), most of it the hourly FIRMS files (4 x 200 KB) and the USGS week feed (1.4 MB), cut to the ring before storing.",
   "ethics": "Road network and nature, not people: NWS alerts about people (Child Abduction, Blue Alert, Law Enforcement, Missing Person) are dropped before storing; FIRMS hotspots are pixel footprints, never pins on houses or structure-fire alerts; IDL's last_edited_user is dropped. api.weather.gov is robots-disallowed and never fetched (the WWA url field, api.weather.gov plus cap_id, is a link for display only). IDL states no license: internal, credited, until a courtesy note is answered (ch. 17 Q17)."
 }

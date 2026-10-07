@@ -222,7 +222,7 @@ class ManifestTest(unittest.TestCase):
     def test_the_manifest_loads_and_matches_its_modules(self):
         plugin = manifest.load(PLUGIN)
         self.assertEqual((plugin.name, plugin.visibility, plugin.order, plugin.depends), ("hazards", "public", 60, []))
-        self.assertEqual(plugin.manifest["tables"], ["raw.record", "evt.event"])
+        self.assertEqual(plugin.manifest["tables"], [])          # raw.record and evt.event are core's
         names = []
         for entry in plugin.manifest["sources"]:
             m = importlib.import_module(f"plugins.hazards.{entry['module']}")

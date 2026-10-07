@@ -40,7 +40,8 @@ LAYER = "https://mapservices.weather.noaa.gov/eventdriven/rest/services/WWA/watc
 PRECISION = 5
 REREAD_S = 30
 PERSON_RELATED = {"child abduction emergency", "blue alert", "law enforcement warning",
-                  "missing and endangered person", "missing endangered person"}
+                  "missing and endangered person", "missing and endangered persons", "missing endangered person"}
+PERSON_CODES = {"CAE", "BLU", "LEW", "MEP"}     # the same alerts' product codes in msg_type (no VTEC action is one)
 SIGNIFICANCE = {"W": "warning", "A": "watch", "Y": "advisory", "S": "statement", "F": "forecast",
                 "O": "outlook", "N": "synopsis"}
 PRODUCT_FIELDS = ("prod_type", "msg_type", "issuance", "onset", "ends", "expiration", "cap_id")
@@ -60,7 +61,9 @@ SOURCE = {
 
 
 def person_related(attrs):
-    return (arcgis.text(attrs.get("prod_type")) or "").lower() in PERSON_RELATED
+    """By name or by product code, so a renamed product type is still caught."""
+    return ((arcgis.text(attrs.get("prod_type")) or "").lower() in PERSON_RELATED
+            or (arcgis.text(attrs.get("msg_type")) or "").upper() in PERSON_CODES)
 
 
 def vtec(attrs):

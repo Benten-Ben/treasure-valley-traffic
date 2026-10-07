@@ -11,8 +11,8 @@ VIIRS 375 m on NOAA-20, NOAA-21 and Suomi NPP, and MODIS 1 km (Terra and Aqua).
   sensor, satellite, acquisition date and time, and the published latitude and longitude,
   so the hourly rewrites only move last_seen. Every column is kept, numbers typed,
   plus the acquisition time as UTC ISO text. complete=False.
-- A file that fails (a 404 when a satellite is retired) is reported in the stats and
-  the others are stored; if all fail, the fetch fails.
+- A file that fails (a 404 when a satellite is retired, or a page that isn't a FIRMS
+  CSV) is reported in the stats and the others are stored; if all fail, the fetch fails.
 
 Points are pixel centres; scan and track are the pixel's size in km. Draw them as
 footprints, never as pins on houses, and never build structure-fire alerts. Static
@@ -37,6 +37,7 @@ FILES = (  # (sensor, path under BASE)
 )
 PAUSE_S = 2.0
 TEXT = {"acq_date", "acq_time", "satellite", "version", "daynight", "instrument", "type"}
+HEADER = {"latitude", "longitude", "acq_date", "acq_time", "satellite"}   # every FIRMS CSV starts with these
 
 SOURCE = {
     "name": "nasa_firms",
@@ -83,8 +84,15 @@ def parse(sensor, text, box=common.RING):
     return out
 
 
+def is_firms_csv(text):
+    """The answer starts with a FIRMS header (not a maintenance or error page served with 200)."""
+    first = text.lstrip("\ufeff").split("\n", 1)[0]
+    return HEADER <= {c.strip() for c in first.split(",")}
+
+
 def fetch(get=None, sleep=time.sleep):
-    """Read every file. Returns (parsed, failed {sensor: error}, bytes, last status, robots decision)."""
+    """Read every file. Returns (parsed, failed {sensor: error}, bytes, last status, robots decision).
+    An answer that isn't a FIRMS CSV counts as a failed file, so it can't pass as "no detections"."""
     get = get or (lambda url: http.get(url, timeout=120, compressed=True))
     parsed, failed, nbytes, status, decision = {}, {}, 0, None, None
     for i, (sensor, path) in enumerate(FILES):
@@ -96,7 +104,11 @@ def fetch(get=None, sleep=time.sleep):
             failed[sensor] = f"{type(err).__name__}: {err}"[:200]
             continue
         nbytes += len(body)
-        parsed.update(parse(sensor, body.decode("utf-8", "replace")))
+        text = body.decode("utf-8", "replace")
+        if not is_firms_csv(text):
+            failed[sensor] = "not a FIRMS CSV (no latitude, longitude, acq_date header)"
+            continue
+        parsed.update(parse(sensor, text))
     if len(failed) == len(FILES):
         raise RuntimeError("every FIRMS file failed: " + "; ".join(f"{k}: {v}" for k, v in failed.items()))
     return parsed, failed, nbytes, status, decision

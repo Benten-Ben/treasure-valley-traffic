@@ -35,6 +35,12 @@ class GroupTest(unittest.TestCase):
         self.assertEqual(dropped, 1)                                     # the Child Abduction Emergency
         self.assertNotIn("Child Abduction", json.dumps(parsed))
 
+    def test_people_alerts_dropped_by_name_or_code(self):
+        for attrs in ({"prod_type": "Missing and Endangered Persons", "msg_type": " "},
+                      {"prod_type": "Blue Alert"}, {"prod_type": "Renamed Product", "msg_type": "lew"}):
+            self.assertTrue(nws.person_related(attrs), attrs)
+        self.assertFalse(nws.person_related({"prod_type": "Red Flag Warning", "msg_type": "NEW"}))
+
     def test_one_event_over_two_zones(self):
         payload, geom = nws.parse(features())[0][RFW]
         self.assertEqual((payload["parts"], len(payload["products"])), (2, 1))

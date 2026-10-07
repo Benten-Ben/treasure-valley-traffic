@@ -85,6 +85,19 @@ class FetchTest(unittest.TestCase):
         self.assertEqual(sorted(failed), ["modis", "viirs_snpp"])
         self.assertEqual({k.split(":")[0] for k in parsed}, {"viirs_noaa20", "viirs_noaa21"})
 
+    def test_a_page_that_isnt_a_csv_is_a_failed_file(self):
+        get, _ = self.files()
+
+        def maintenance(url):
+            status, body, decision = get(url)
+            return (200, b"<html><body>FIRMS is down for maintenance</body></html>", decision) \
+                if "MODIS" in url else (status, body, decision)
+        parsed, failed, *_ = firms.fetch(maintenance, sleep=lambda s: None)
+        self.assertEqual(list(failed), ["modis"])
+        self.assertNotIn("modis", {k.split(":")[0] for k in parsed})
+        with self.assertRaises(RuntimeError):                       # every file a page: the fetch fails
+            firms.fetch(lambda url: (200, b"<!doctype html><title>Error</title>", "allowed"), sleep=lambda s: None)
+
     def test_all_failing_fails_the_fetch(self):
         err = OSError("network down")
         get, _ = self.files({s: err for s, _ in firms.FILES})

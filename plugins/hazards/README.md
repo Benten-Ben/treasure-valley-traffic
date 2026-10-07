@@ -66,8 +66,9 @@ NOAA-21 and Suomi NPP, and MODIS
 ([catalog](../../docs/sources/hazards.md#nasa-firms-active-fire-detections)).
 All four paths confirmed Oct 7, 2026; about 200 KB each, rewritten hourly.
 Kept: the ring's rows, one record per detection (sensor, satellite, time and
-position), every column typed. A file that fails is reported and the rest
-stored. robots.txt allows it, Crawl-delay 1 (honored); 2 s between files.
+position), every column typed. A file that fails, or answers with something
+other than a FIRMS CSV, is reported and the rest stored. robots.txt allows it,
+Crawl-delay 1 (honored); 2 s between files.
 
 **`nws_wwa`**: layer 1 (WatchesWarnings, all 111 product types) of
 `https://mapservices.weather.noaa.gov/eventdriven/rest/services/WWA/watch_warn_adv/MapServer`
