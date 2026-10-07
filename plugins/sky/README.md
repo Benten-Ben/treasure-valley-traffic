@@ -81,7 +81,8 @@ gzip.
   An hour is stored only once the file holds its first and last minutes, so
   no record gets a partial version. The hour in progress waits for the next
   run. With a six-hour window, about five hourly runs in a row can fail
-  before a minute is lost. `complete=False`.
+  before a minute is lost. A file with no complete hour to store (empty, cut
+  to under an hour, or all nulls) fails the fetch. `complete=False`.
 - **Not here:** the definitive 3-hourly Kp since 1932 is
   [GFZ's](../../docs/sources/sky.md#gfz-kp-index-since-1932) (CC BY), and
   it can be read at any time, so it needs no clock started now. SWPC's

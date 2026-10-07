@@ -14,7 +14,8 @@ lacks): 24 rows a day rather than 1,440 (sky.md correction 6: Kp kept
 compactly). An hour is stored only once the file holds both its first and its
 last minute, so a record never gets a partial version; the hour in progress
 waits for the next run. With a six-hour window and an hourly schedule, about
-five runs in a row can fail before a minute is lost.
+five runs in a row can fail before a minute is lost. A file with no complete
+hour to store (empty, cut to under an hour, or all nulls) fails the fetch.
 
 kp_index and kp are SWPC's integer and its label in thirds ("2P" is 2+,
 "3M" is 3-) of estimated_kp; both are dropped when they're exactly what
@@ -99,11 +100,11 @@ def hours(by_minute):
     out = []
     while start + HOUR - MINUTE <= last:
         entries = [by_minute.get(start + i * MINUTE) for i in range(60)]
-        if any(e is not None for e in entries):
-            values = [e["estimated_kp"] if e else None for e in entries]
+        values = [e["estimated_kp"] if e else None for e in entries]
+        labels = {str(i): [e["kp_index"], e["kp"]] for i, e in enumerate(entries)
+                  if e and derived(e["estimated_kp"]) != (e["kp_index"], e["kp"])}
+        if labels or any(v is not None for v in values):
             payload = {"start": iso(start), "step_s": 60, "estimated_kp": values}
-            labels = {str(i): [e["kp_index"], e["kp"]] for i, e in enumerate(entries)
-                      if e and derived(e["estimated_kp"]) != (e["kp_index"], e["kp"])}
             if labels:
                 payload["labels"] = labels
             out.append((start, payload))
@@ -123,6 +124,11 @@ def run(conn):
         f.bytes = len(body)
         by_minute = minutes(json.loads(body))
         recs = records(by_minute)
+        if not recs:
+            # The file normally spans about six hours, so this is an empty file, a window cut
+            # to under an hour, or an outage: fail the fetch so ops.fetch shows it.
+            span = f", {iso(min(by_minute))} to {iso(max(by_minute))}" if by_minute else ""
+            raise ValueError(f"Kp: no complete UTC hour with a value in the file ({len(by_minute)} minutes{span})")
         f.records = len(recs)
         new, unchanged, _ = db.upsert_records(conn, SOURCE["name"], recs, f.id, f.started_at, complete=False)
     values = [e["estimated_kp"] for e in by_minute.values() if e["estimated_kp"] is not None]

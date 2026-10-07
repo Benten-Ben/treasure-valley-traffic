@@ -83,6 +83,11 @@ class HoursTest(unittest.TestCase):
         self.assertIsNone(recs["2026-10-07T09:00:00Z"]["estimated_kp"][17])
         self.assertEqual(recs["2026-10-07T09:00:00Z"]["estimated_kp"].count(None), 1)
 
+    def test_an_hour_of_null_estimates_is_skipped_too(self):
+        t = datetime(2026, 10, 7, 9, tzinfo=UTC)
+        rows = run_of(t, 60) + [entry(t + timedelta(minutes=60 + i), None) for i in range(60)]
+        self.assertEqual([r[0] for r in kp.records(kp.minutes(rows))], ["2026-10-07T09:00:00Z"])
+
     def test_labels_kept_only_where_they_arent_derivable(self):
         rows = sample()
         odd = next(r for r in rows if r["time_tag"] == "2026-10-07T13:05:00")
@@ -148,6 +153,20 @@ class SourceTest(unittest.TestCase):
         self.assertEqual([r[0] for r in records], ["2026-10-07T13:00:00Z"])
         self.assertEqual((fetch.records, fetch.bytes), (1, len(body)))
         self.assertEqual((stats["minutes"], stats["hours"], stats["latest"]), (81, 1, "2026-10-07T14:10:00Z"))
+
+    def test_a_file_with_no_hour_to_store_fails_the_fetch(self):
+        t = datetime(2026, 10, 7, 9, 1, tzinfo=UTC)
+        for label, rows in {"empty": [], "under an hour": run_of(t, 59),
+                            "all nulls": [entry(t + timedelta(minutes=i), None) for i in range(180)]}.items():
+            fetch = mock.MagicMock(id=52, started_at=datetime(2026, 10, 7, 14, 11, tzinfo=UTC))
+            fetch.__enter__.return_value = fetch
+            with self.subTest(label), \
+                    mock.patch.object(kp.http, "get", return_value=(200, json.dumps(rows).encode(), "no_rules")), \
+                    mock.patch.object(kp.db, "ensure_source"), \
+                    mock.patch.object(kp.db, "Fetch", return_value=fetch), \
+                    mock.patch.object(kp.db, "upsert_records") as upsert, self.assertRaises(ValueError):
+                kp.run(mock.sentinel.conn)
+            upsert.assert_not_called()
 
 
 DB_URL = os.environ.get("TVT_TEST_DATABASE_URL")
