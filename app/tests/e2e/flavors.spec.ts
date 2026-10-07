@@ -441,7 +441,7 @@ test.describe('flavors', () => {
 		// the shared sandbox's load a basemap or terrain range fetch now and then fails in transport
 		// ("Failed to fetch", "could not be decoded"), which no WP4 code touches. Anything else fails.
 		const mapErrors = consoleErrors.filter((e) => e.startsWith('map error'));
-		lines.push(`MapLibre tile errors during the run: ${mapErrors.length}`);
+		lines.push(`MapLibre tile errors during the run: ${mapErrors.length}`, ...mapErrors.map((e) => `  ${e.slice(0, 300)}`));
 		writeFileSync(screenPath('wp4-views.txt'), lines.join('\n') + '\n');
 		if (mapErrors.length) test.info().annotations.push({ type: 'map errors', description: mapErrors.join(' | ') });
 		expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
