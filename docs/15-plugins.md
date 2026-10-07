@@ -252,46 +252,33 @@ sources, tables and URLs), with every test green, before the next one starts.
    - then `lands` (ownership, management, access and restrictions) and
      `trails`.
 
-## 15.7 Ideas for later plugins (Oct 7 chat)
+## 15.7 Ideas for later plugins
 
-Kept here so they aren't lost; none is approved yet.
+The full catalog, by persona and with every detail from the Oct 6–7
+brainstorms, is [chapter 16](16-ideas-and-personas.md). None is approved
+yet. At the plugin level:
 
-- **aircraft:** live and recorded positions with altitude, in 3D; medical
-  and Guard helicopters, fire aviation; FAA airspace and flight
-  restrictions.
-- **lands:** who owns and manages what (PAD-US, BLM, state endowment lands,
-  Boise National Forest, Fish & Game), public access, Access Yes!,
-  vehicle-use maps, seasonal closures, fire restrictions, mining claims,
-  grazing allotments.
-- **trails:** Ridge to Rivers and its mud closures, OpenStreetMap and Forest
-  Service trails, trailheads, campgrounds.
-- **water:** river flows (USGS gauges), reservoirs, snowpack, floating
-  season, canals.
-- **hazards:** fire perimeters and hotspots, smoke and air quality, weather
-  warnings, earthquakes.
-- **sky:** sun and moon paths and shadows (and sun glare on east–west roads
-  at commute time), satellite passes, dark-sky spots.
+- **aircraft** (being built, §15.6 step 4): live and recorded positions in
+  3D, special aircraft, FAA airspace and flight restrictions.
+- **lands:** who owns and manages what, public access, and the rules on it.
+- **trails:** trails, closures, trailheads, campgrounds.
+- **water:** river flows, reservoirs, snowpack, the float season, canals.
+- **hazards:** fire, smoke and air quality, warnings, earthquakes, floods.
+- **weather:** observations and forecasts, and real weather drawn in 3D
+  (§16.5).
+- **sky:** sun and moon paths and shadows, glare, satellite passes, dark
+  skies.
+- **gardening:** sun and shade hours from buildings and trees, frost, soil,
+  canal water.
+- **farm:** crops by field, irrigation, field burning, farmland lost to
+  subdivisions.
+- **wildlife:** winter range, crossings, wildlife–vehicle collisions.
 - **history:** historic aerials and topo maps on a year slider.
 - **civic:** development near me, hearings, school boundaries, precincts.
+- **land cover:** painted land cover and 3D trees from the near-infrared
+  imagery and lidar (§16.3).
 - **home** (private): the owner's own sensors, drives and receiver.
 
-More from the same Oct 6–7 brainstorm, restored from the chat (Oct 7). Some
-of it belongs in existing plugins:
-- **commuter** (`flow`, `conditions`): "when should I leave", from our own
-  travel-time history; incidents and work zones on my route.
-- **cyclist and pedestrian** (`safety`, `roads`): bike lanes and the
-  Greenbelt, bike and pedestrian crashes (COMPASS records the road-user
-  type), sidewalk gaps, scooter-share feeds where they're published ⚠️.
-- **homeowner or land buyer** (private, with `parcels`): ownership, zoning,
-  FEMA floodplains, soils, water rights (Idaho Department of Water
-  Resources), wells, irrigation districts and canal schedules.
-- **farmer:** crop type by field (USDA's Cropland Data Layer), canal water
-  dates, field burning.
-- **wildlife** (`safety`): mule deer winter range and highway crossings,
-  wildlife–vehicle collisions.
-- **from the aerial imagery** (Oct 6), for the next design round:
-  - painted land cover, classifying every pixel (tree canopy, lawn,
-    sagebrush, bare dirt, pavement, roofs, water) so the Valley and Clay
-    styles can draw it;
-  - the year slider (NAIP back to about 2013, see history above);
-  - driveway density along corridors (with `parcels`).
+Some ideas extend existing plugins instead: commuter features (`flow`,
+`conditions`), cyclist and pedestrian safety (`safety`, `roads`), and the
+homeowner's view (`parcels`, private).

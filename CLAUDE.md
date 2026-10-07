@@ -12,7 +12,7 @@ our own base map with live and historical data layers.
 - Research write-up: `README.md` and `docs/01`–`docs/08`.
 - Platform design: `docs/09` (base-map data), `docs/10` (architecture),
   `docs/11` (camera validation layer), `docs/13` (visual design), `docs/14`
-  (UI v2 plan), `docs/15` (core and plugins).
+  (UI v2 plan), `docs/15` (core and plugins), `docs/16` (ideas by persona).
 - Decisions: `docs/DECISIONS.md`. Read it before proposing anything
   structural.
 - Data sources still to do: `docs/SOURCES.md`.
@@ -98,7 +98,7 @@ Before every push, check the diff for these.
 ```
 README.md               research summary and index
 docs/01-08              research chapters (signals, local system, data, playbook, AI, automation, DIY data, inventory)
-docs/09-15              platform: base-map data, architecture, camera layer, DB schema (draft), visual design, UI v2 plan, core and plugins
+docs/09-16              platform: base-map data, architecture, camera layer, DB schema (draft), visual design, UI v2 plan, core and plugins, ideas by persona
 docs/DECISIONS.md       decision log + pending questions + owner actions
 docs/SOURCES.md         data source backlog: what's in use, what's left, suggested order
 docs/data/README.md     what the reference datasets are (kept privately, not published)

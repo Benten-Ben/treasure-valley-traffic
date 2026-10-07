@@ -35,6 +35,7 @@ historical data layers.
 | 13 | [Visual design](docs/13-visual-design.md) | The app as a friendly, game-inspired command center: lenses, the Valley Feed, time replay, camera wall, type and color |
 | 14 | [UI v2: one map, every layer](docs/14-ui-v2.md) | The rebuilt map interface: one persistent map, layers, live images, playback, 3D buses and cameras, windows |
 | 15 | [Core and plugins](docs/15-plugins.md) | What every subject needs (base map, time and playback, layers, ingest framework) versus plugins per subject (roads, intersections, cameras, transit, conditions, safety, flow, development; later aircraft, lands, trails), private plugins, and the refactor plan |
+| 16 | [Ideas by persona](docs/16-ideas-and-personas.md) | Where the platform could go and who for: aviation, hiking and lands, fire and weather (including weather in 3D), commuters, cyclists, civic, homeowners, gardeners, farmers, the sky, history, wildlife; what the aerial imagery could do; which shared core pieces unlock them |
 
 **Working files:**
 
