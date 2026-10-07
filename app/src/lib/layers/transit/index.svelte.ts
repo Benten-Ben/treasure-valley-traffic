@@ -903,6 +903,12 @@ export class TransitModule implements LayerModule {
 		const spot = this.spot;
 		const now = performance.now();
 		const ground = map.getTerrain() ? this.#ground : null;
+		// Each model's size is corrected for its ground's height against the centre's: the camera's distance
+		// from the centre (m) is the focal length in px times metres per px there.
+		if (!this.#size.h) this.#measure();
+		const fov = map.getVerticalFieldOfView();
+		const depthC = (this.#size.h / 2 / Math.tan((fov * Math.PI) / 360)) * metresPerPx(lod.zoom, map.getCenter().lat);
+		const size = ground ? { lod, elevC: map.getCenterElevation(), depthC } : undefined;
 		// Slopes are read only for buses on screen (the scene culls the rest anyway).
 		const onScreen = this.#onScreen;
 		const all = onScreen.size === 0;
@@ -918,6 +924,7 @@ export class TransitModule implements LayerModule {
 					color,
 					opacity,
 					scale: lod.scale,
+					size,
 					now,
 					epoch: this.#terrainEpoch,
 					ground,

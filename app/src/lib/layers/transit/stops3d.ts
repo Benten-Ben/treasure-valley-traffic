@@ -26,7 +26,8 @@ import { CREAM, INK } from './network.js';
  *   rather than a speckled dither).
  * - A post is drawn bigger than life, about 26 px tall (at most 6× real
  *   size) until its true size is that tall: a 2.9 m post is only 3 px tall
- *   at z16.
+ *   at z16. While it's enlarged it's also stouter (up to 2.5× wider than
+ *   tall), so the pole, sign and flags are more than a hairline.
  * - Only stops near the view are handed to the scene (refreshed as the map
  *   moves), so the scene's frame never walks all 562.
  * - If the scene can't start, none of this happens: the capsules alone mark
@@ -40,6 +41,8 @@ export const NAME_ZOOM = 17;
 export const POST_PX = 26;
 export const POST_HEIGHT_M = 2.9;
 export const POST_MAX_SCALE = 6;
+/** At the largest scale, the post is this much wider (x, y) than its height scale; 1 at true size. */
+export const POST_GIRTH = 2.5;
 /** Flag slots on the post mesh. */
 export const FLAG_SLOTS = 4;
 export const STOP_NAMES = 'transit-stop-names';
@@ -53,6 +56,13 @@ export const postFade = (zoom: number) => clamp((zoom - (POST_ZOOM - POST_FADE))
 export function postScale(zoom: number, lat: number): number {
 	const px = POST_HEIGHT_M / metresPerPx(zoom, lat);
 	return clamp(POST_PX / px, 1, POST_MAX_SCALE);
+}
+
+/** The post's scale per axis (x, y wider while it's enlarged; z its height scale). */
+export function postSize(zoom: number, lat: number): [number, number, number] {
+	const s = postScale(zoom, lat);
+	const g = 1 + ((POST_GIRTH - 1) * (s - 1)) / (POST_MAX_SCALE - 1);
+	return [g * s, g * s, s];
 }
 
 /** A stop's flags: up to four routes, running ones first (route color), then the rest (ghost color). */
@@ -99,7 +109,7 @@ export class StopPosts {
 	/** The ones near the view (the scene's group array, mutated in place). */
 	readonly near: SceneInstance[] = [];
 	#stops: readonly NetworkStop[] = [];
-	#scale = 1;
+	#scale: [number, number, number] = [1, 1, 1];
 	#opacity = 0;
 
 	/** Build the posts for a network (`pick(i)`: what a click on stop i selects). */
@@ -131,7 +141,7 @@ export class StopPosts {
 
 	/** Size and fade for a zoom (in place); returns whether any post shows. */
 	setZoom(zoom: number, lat: number): boolean {
-		this.#scale = postScale(zoom, lat);
+		this.#scale = postSize(zoom, lat);
 		this.#opacity = postFade(zoom);
 		for (const p of this.near) {
 			p.scale = this.#scale;

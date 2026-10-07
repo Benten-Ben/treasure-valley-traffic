@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { NetworkRoute, NetworkStop } from '#lib/contracts/network.js';
 import { metresPerPx } from './bus3d.js';
-import { flagColors, NAME_ZOOM, POST_HEIGHT_M, POST_MAX_SCALE, POST_PX, POST_ZOOM, postFade, postScale, StopPosts, stopNameLayer } from './stops3d.js';
+import { flagColors, NAME_ZOOM, POST_GIRTH, POST_HEIGHT_M, POST_MAX_SCALE, POST_PX, POST_ZOOM, postFade, postScale, postSize, StopPosts, stopNameLayer } from './stops3d.js';
 
 const LAT = 43.6;
 const route = (id: string, color: string, ghost: string): NetworkRoute => ({ id, rid: Number(id) || 1, shortName: id, longName: null, color, ghost, textColor: '#ffffff', halo: false, sortOrder: null });
@@ -22,6 +22,12 @@ describe('stop posts (§14.4 "Buses and stops")', () => {
 		expect(px(POST_ZOOM)).toBeGreaterThan(18);
 		for (let z = 16.5; z <= 19; z += 0.25) expect(px(z), `z${z}`).toBeGreaterThanOrEqual(POST_PX - 1e-9);
 		expect(postScale(19.5, LAT)).toBe(1);
+		// Stouter while enlarged: 2.5× wider than tall at 6×, plain at true size.
+		const [x, y, z] = postSize(POST_ZOOM, LAT);
+		expect(z).toBe(POST_MAX_SCALE);
+		expect(x / z).toBeCloseTo(POST_GIRTH, 9);
+		expect(y).toBe(x);
+		expect(postSize(19.5, LAT)).toEqual([1, 1, 1]);
 	});
 
 	it('fly a flag per route: running ones first in route color, then ghosts, four at most', () => {
@@ -46,7 +52,7 @@ describe('stop posts (§14.4 "Buses and stops")', () => {
 		posts.setNear({ getWest: () => -116.22, getEast: () => -116.19, getSouth: () => 43.59, getNorth: () => 43.61 });
 		expect(posts.setZoom(15.5, LAT)).toBe(false);
 		expect(posts.setZoom(17, LAT)).toBe(true);
-		expect(near[0].scale).toBeCloseTo(postScale(17, LAT), 9);
+		expect(near[0].scale).toEqual(postSize(17, LAT));
 		expect(near[0].opacity).toBe(1);
 		posts.setRunning(new Set(['2']), byId);
 		expect(posts.all[1].slots).toEqual(['#eb6834', '#b1c6e2', null, null]);

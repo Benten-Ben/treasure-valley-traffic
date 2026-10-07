@@ -16,6 +16,7 @@ import {
 	modelZoom,
 	placeModel,
 	plateAltitude,
+	scaleAt,
 	SELECT_LIFT_M,
 	slopeAt,
 	turn,
@@ -69,6 +70,25 @@ describe('bus level of detail (§14.4 "Buses and stops")', () => {
 			const lod = lodAt(z, LAT, 0, true);
 			expect(lod.fade + lod.disc).toBeCloseTo(1, 9);
 		}
+	});
+
+	it('corrects a model for its ground height: lower ground is farther from the camera', () => {
+		const lod = lodAt(15.5, LAT, 0, true);
+		// At z15.5 the camera is about 1.47 km from the centre (a 36.87° field of view, 800 px tall).
+		const depthC = (400 / Math.tan((36.87 * Math.PI) / 360)) * metresPerPx(15.5, LAT);
+		expect(depthC).toBeGreaterThan(1400);
+		expect(depthC).toBeLessThan(1550);
+		expect(scaleAt(lod, 800, 800, depthC)).toBeCloseTo(lod.scale0, 9);
+		// 20 m lower: 20/1466 farther, drawn that much larger to stay 28 px long.
+		expect(scaleAt(lod, 780, 800, depthC) / lod.scale0).toBeCloseTo(1 + 20 / depthC, 9);
+		expect(scaleAt(lod, 820, 800, depthC) / lod.scale0).toBeCloseTo(1 - 20 / depthC, 9);
+		// Tilted, a height difference is only partly a depth difference.
+		const tilted = lodAt(15.5, LAT, 60, true);
+		expect(scaleAt(tilted, 780, 800, depthC) / tilted.scale0).toBeCloseTo(1 + (20 * 0.5) / depthC, 9);
+		// Never past 4× or below true size; no ground, no correction.
+		expect(scaleAt(lodAt(14, LAT, 0, true), 0, 800, 3000)).toBe(MAX_MODEL_SCALE);
+		expect(scaleAt(lodAt(19, LAT, 0, true), 900, 800, 100)).toBe(1);
+		expect(scaleAt(lod, null, 800, depthC)).toBeCloseTo(lod.scale, 9);
 	});
 
 	it('without the scene, buses stay discs at every zoom', () => {
@@ -181,5 +201,11 @@ describe('heading and slope', () => {
 		const fresh = busModel('8', null);
 		placeModel(fresh, frame({ slope: false }));
 		expect(reads).toBe(10);
+		// With a size, the scale follows the ground it read (the plane is 0 m at 43.6); a bigger model reaches
+		// farther for its slope, so it reads again.
+		const lod = lodAt(15.5, 43.6, 0, true);
+		placeModel(fresh, frame({ now: 1016, scale: lod.scale, size: { lod, elevC: 20, depthC: 1466 } }));
+		expect(reads).toBe(12);
+		expect(fresh.inst.scale).toBeCloseTo(lod.scale0 * (1 + 20 / 1466), 6);
 	});
 });

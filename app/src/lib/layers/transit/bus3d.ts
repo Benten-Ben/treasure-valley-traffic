@@ -88,11 +88,15 @@ export interface Lod {
 	fade: number;
 	/** The disc layer's share (1 − fade). */
 	disc: number;
+	/** The model's scale at the view centre's depth (clamped), and before clamping. */
 	scale: number;
+	scale0: number;
 	/** The plate's height above the drawn ground (m), before any selection lift. */
 	plateAlt: number;
 	/** Extra screen clearance (px) so the plate clears the model's footprint seen from above. */
 	clearance: number;
+	/** cos(pitch): how much of a height difference is a depth difference. */
+	cosPitch: number;
 }
 
 /**
@@ -101,16 +105,31 @@ export interface Lod {
  */
 export function lodAt(zoom: number, lat: number, pitchDeg: number, models: boolean): Lod {
 	const fade = models ? modelFade(zoom, lat) : 0;
-	const scale = modelScale(zoom, lat);
+	const scale0 = (MIN_MODEL_PX * LENGTH_MARGIN * metresPerPx(zoom, lat)) / BUS_LENGTH_M;
+	const scale = clamp(scale0, 1, MAX_MODEL_SCALE);
 	const halfPx = (BUS_LENGTH_M * scale) / 2 / metresPerPx(zoom, lat);
 	return {
 		zoom,
 		fade,
 		disc: 1 - fade,
 		scale,
+		scale0,
 		plateAlt: BUS_HEIGHT_M * scale + PLATE_GAP_M,
-		clearance: Math.min(30, halfPx * Math.cos(pitchDeg * DEG))
+		clearance: Math.min(30, halfPx * Math.cos(pitchDeg * DEG)),
+		cosPitch: Math.cos(pitchDeg * DEG)
 	};
+}
+
+/**
+ * A model's scale on ground `elev` metres high (drawn), when the view centre's
+ * ground is `elevC` and the camera is `depthC` metres from it: the camera is
+ * only 0.7–1.5 km up at z15–16, so a bus 20 m lower than the centre would be
+ * drawn 1–3% short of its 28 px. Height differences are corrected; distance
+ * across a tilted view is not (that's perspective: farther buses look smaller).
+ */
+export function scaleAt(lod: Pick<Lod, 'scale0' | 'cosPitch'>, elev: number | null, elevC: number, depthC: number): number {
+	const k = elev !== null && depthC > 0 ? 1 + ((elevC - elev) * lod.cosPitch) / depthC : 1;
+	return clamp(lod.scale0 * k, 1, MAX_MODEL_SCALE);
 }
 
 /** The plate's height for one bus: above its roof, lifted with the model when it's selected. */
@@ -149,10 +168,15 @@ export type GroundAt = (p: [number, number]) => number | null;
  * behind: degrees, nose up, at most ±MAX_PITCH_DEG; 0 without terrain.
  */
 export function slopeAt(ground: GroundAt, lng: number, lat: number, heading: number, reach = SLOPE_REACH_M): number {
+	return groundAround(ground, lng, lat, heading, reach).pitch;
+}
+
+/** The slope (as `slopeAt`) and the drawn ground's height there (the two samples' mean; null without terrain). */
+export function groundAround(ground: GroundAt, lng: number, lat: number, heading: number, reach = SLOPE_REACH_M): { pitch: number; elev: number | null } {
 	const a = ground(along(lng, lat, heading, reach));
 	const b = ground(along(lng, lat, heading, -reach));
-	if (a === null || b === null) return 0;
-	return clamp(Math.atan2(a - b, 2 * reach) / DEG, -MAX_PITCH_DEG, MAX_PITCH_DEG);
+	if (a === null || b === null) return { pitch: 0, elev: null };
+	return { pitch: clamp(Math.atan2(a - b, 2 * reach) / DEG, -MAX_PITCH_DEG, MAX_PITCH_DEG), elev: (a + b) / 2 };
 }
 
 /** Turn `from` toward `to` (degrees) with a low-pass of `tauMs` over `dtMs`. */
@@ -169,8 +193,8 @@ export interface BusModel {
 	/** The model's heading (degrees), low-passed; null until the bus has one. */
 	heading: number | null;
 	turnedAt: number;
-	/** Where the slope was last read, and what it was. */
-	slope: { lng: number; lat: number; heading: number; reach: number; epoch: number; pitch: number } | null;
+	/** Where the slope was last read, and what it was (with the drawn ground's height there). */
+	slope: { lng: number; lat: number; heading: number; reach: number; epoch: number; pitch: number; elev: number | null } | null;
 }
 
 export function busModel(vid: string, pick: Selection | null, old?: BusModel): BusModel {
@@ -188,7 +212,10 @@ export interface ModelFrame {
 	color: string;
 	/** 0–1: the crossfade times the playback's own (a gap's fade-jump); 0 hides it. */
 	opacity: number;
+	/** The scale at the view centre's depth (it sets the slope's reach). */
 	scale: number;
+	/** With it, the scale is corrected for the bus's ground height (`scaleAt`): the centre's ground and the camera's distance from it (m). */
+	size?: { lod: Pick<Lod, 'scale0' | 'cosPitch'>; elevC: number; depthC: number };
 	/** performance.now() (ms). */
 	now: number;
 	/** Terrain epoch: bumped when terrain data or settings change (re-read the slope). */
@@ -198,7 +225,7 @@ export interface ModelFrame {
 	slope?: boolean;
 }
 
-/** Move one model to this frame (in place): position, heading, slope, look. */
+/** Move one model to this frame (in place): position, heading, slope, size, look. */
 export function placeModel(m: BusModel, f: ModelFrame): SceneInstance {
 	const inst = m.inst;
 	m.heading = turn(m.heading, f.heading, f.now - m.turnedAt);
@@ -206,7 +233,6 @@ export function placeModel(m: BusModel, f: ModelFrame): SceneInstance {
 	inst.lng = f.lng;
 	inst.lat = f.lat;
 	inst.heading = m.heading ?? 0;
-	inst.scale = f.scale;
 	inst.color = f.color;
 	inst.opacity = f.opacity;
 	if (f.opacity > 0 && (f.slope !== false || !m.slope)) {
@@ -220,8 +246,12 @@ export function placeModel(m: BusModel, f: ModelFrame): SceneInstance {
 			Math.abs(((((h - s.heading) % 360) + 540) % 360) - 180) < SLOPE_TURN_DEG &&
 			Math.abs(s.lat - f.lat) * 111_000 < SLOPE_MOVE_M &&
 			Math.abs(s.lng - f.lng) * 111_000 * Math.cos(f.lat * DEG) < SLOPE_MOVE_M;
-		if (!fresh) m.slope = { lng: f.lng, lat: f.lat, heading: h, reach, epoch: f.epoch, pitch: f.ground ? slopeAt(f.ground, f.lng, f.lat, h, reach) : 0 };
+		if (!fresh) {
+			const g = f.ground ? groundAround(f.ground, f.lng, f.lat, h, reach) : { pitch: 0, elev: null };
+			m.slope = { lng: f.lng, lat: f.lat, heading: h, reach, epoch: f.epoch, pitch: g.pitch, elev: g.elev };
+		}
 		inst.pitch = m.slope!.pitch;
 	}
+	inst.scale = f.size && f.ground ? scaleAt(f.size.lod, m.slope?.elev ?? null, f.size.elevC, f.size.depthC) : f.scale;
 	return inst;
 }
