@@ -49,7 +49,7 @@ const SEED_NOTE =
 export const SEEDS = [
 	{ kind: 'key', imageId: 656, offsetM: [8, -6], height: 10, heading: 355, tilt: 20, roll: 0, vfov: 42, size: { width: 768, height: 466 } },
 	{ kind: 'roll', imageId: 637, offsetM: [5, 0], height: 8, heading: 150, tilt: 25, roll: -5, vfov: 45, size: { width: 768, height: 466 } },
-	{ kind: 'low-tilt', imageId: 633, offsetM: [4, -5], height: 11, heading: 268, tilt: 9, roll: 0, vfov: 30, size: { width: 768, height: 466 } },
+	{ kind: 'low-tilt', imageId: 634, offsetM: [4, -5], height: 11, heading: 268, tilt: 9, roll: 0, vfov: 30, size: { width: 768, height: 466 } },
 	{ kind: 'hd', imageId: 675, offsetM: [0, 8], height: 14, heading: 92, tilt: 16, roll: 0, vfov: 50, size: { width: 1920, height: 1166 } }
 ] as const;
 
