@@ -28,7 +28,7 @@ check on the matcher.
 import json
 from collections import Counter
 
-from .. import arcgis, db, segment_match, signal_devices
+from .. import arcgis, db, segment_match
 
 LAYER = "https://swidrdc.org/arcgis/rest/services/COMPASSData/CommonFeatures/FeatureServer/0"
 HUB = "https://share-open-data-compassidaho.hub.arcgis.com/datasets/compassidaho::regionalcenterline-2"
@@ -134,7 +134,7 @@ on conflict (global_id) do update set
 def store(conn, fetch_id, seen_at, features):
     records, rows, counts = parse(features)
     # An empty or cut-off layer would retire most rows (and could pass for a republish): refuse it.
-    signal_devices.check_snapshot(conn, "core.compass_segment", "true", (), len(rows), SOURCE["name"])
+    db.check_snapshot(conn, "core.compass_segment", "true", (), len(rows), SOURCE["name"])
     republish, carried = arcgis.carry_over(conn, label="compass_centerline", source=SOURCE["name"],
                                            table="core.compass_segment", id_column="global_id", records=records,
                                            key_fields=REPUBLISH_KEY)

@@ -22,9 +22,9 @@ import urllib.parse
 from datetime import date, datetime, timezone
 from http.client import IncompleteRead
 
+from ingest import compass_layer as cl
 from ingest import http
-from ingest.sources import (compass_congestion, compass_counts, compass_crashes, compass_growth, compass_layer as cl,
-                            compass_plats)
+from ingest.sources import compass_congestion, compass_counts, compass_crashes, compass_growth, compass_plats
 
 MS_2008_06_01 = 1212278400000          # 2008-06-01 00:00 UTC: how COMPASS stores the day
 MS_2025_01_15 = 1736899200000

@@ -26,7 +26,7 @@ street codes, names and typology but no lanes, so it isn't read.
 import json
 from collections import Counter
 
-from .. import arcgis, db, segment_match, signal_devices
+from .. import arcgis, db, segment_match
 
 LAYER = "https://gis.achdidaho.org/server/rest/services/ArcGIS_Hub/Master_Street_Map_Arterials/FeatureServer/1"
 
@@ -149,7 +149,7 @@ on conflict (global_id) do update set
 def store(conn, fetch_id, seen_at, features):
     records, rows, counts = parse(features)
     # An empty or cut-off layer would retire most rows (and could pass for a republish): refuse it.
-    signal_devices.check_snapshot(conn, "core.msm_arterial", "true", (), len(rows), SOURCE["name"])
+    db.check_snapshot(conn, "core.msm_arterial", "true", (), len(rows), SOURCE["name"])
     republish, carried = arcgis.carry_over(conn, label="achd_msm", source=SOURCE["name"], table="core.msm_arterial",
                                            id_column="global_id", records=records, key_fields=("StreetCode",))
     new, unchanged, removed = db.upsert_records(conn, SOURCE["name"], records, fetch_id, seen_at)

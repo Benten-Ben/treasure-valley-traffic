@@ -18,8 +18,8 @@ Field notes, checked Oct 6, 2026:
   coded (agency codes read 'City of Caldwell').
 """
 
-from . import compass_layer as cl
-from .compass_layer import flag, integer, number, text
+from .. import compass_layer as cl
+from ..compass_layer import flag, integer, number, text
 
 PATH = "COMPASSData/PreliminaryPlats/FeatureServer/0"
 

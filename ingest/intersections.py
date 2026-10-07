@@ -71,7 +71,7 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 
 from . import db, streets
-from .transit_ribbons import to_utm
+from .utm import to_utm
 
 UTM = 26911
 SNAP_M = 40

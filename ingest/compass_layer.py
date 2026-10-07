@@ -1,4 +1,5 @@
-"""Reading COMPASS's ArcGIS layers on swidrdc.org, shared by the compass_* sources.
+"""Reading COMPASS's ArcGIS layers on swidrdc.org, shared by the compass_* sources
+(the safety, flow and development plugins; a second shared reader beside arcgis.py).
 
 swidrdc.org has no robots.txt (404: no rules, checked Oct 6, 2026), so
 http.get adds no crawl delay; we pace ourselves instead: at least PAUSE_S
@@ -48,7 +49,7 @@ from http.client import HTTPException
 
 from psycopg.types.json import Jsonb
 
-from .. import db, http
+from . import db, http
 
 BASE = "https://swidrdc.org/arcgis/rest/services/"
 PAGE = 2000

@@ -34,8 +34,8 @@ Field notes, checked Oct 6, 2026:
 
 import re
 
-from . import compass_layer as cl
-from .compass_layer import flag, integer, number, text
+from .. import compass_layer as cl
+from ..compass_layer import flag, integer, number, text
 
 TAZ_PATH = "CompassMembers/TAZ_demographicsOpenData/FeatureServer/0"
 PERMIT_PATH = "CompassMembers/Demographics_TAZForecast_Permits/FeatureServer/0"

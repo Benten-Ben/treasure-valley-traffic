@@ -9,22 +9,14 @@ snapshot are marked inactive, never deleted.
 import json
 from collections import Counter
 
+from . import db
+
 KINDS = {"signal_intersection", "signal_pole", "ped_hybrid", "rrfb", "ped_conventional",
          "warning_beacon", "school_flasher", "fire_signal"}
 
-MIN_SHARE = 0.5      # a snapshot with less than half of what's active now is refused
-
-
-def check_snapshot(conn, table, where, params, n, label):
-    """Refuse a snapshot that would retire most of what we hold (an emptied or cut-off layer
-    looks like that); the fetch is logged as failed and nothing is retired."""
-    active = conn.execute(f"select count(*) from {table} where active and {where}", params).fetchone()[0]
-    if n == 0 or n < MIN_SHARE * active:
-        raise RuntimeError(f"{label}: only {n} records against {active} active; not taken as a full snapshot")
-
-
 def check(conn, source, n):
-    check_snapshot(conn, "core.signal_device", "source = %s", (source,), n, source)
+    """The snapshot guard (db.check_snapshot) for one source's signal devices."""
+    db.check_snapshot(conn, "core.signal_device", "source = %s", (source,), n, source)
 
 
 def store(conn, source, devices, seen_at):

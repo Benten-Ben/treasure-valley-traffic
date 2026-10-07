@@ -59,6 +59,18 @@ class Fetch:
         return False
 
 
+SNAPSHOT_MIN_SHARE = 0.5      # a snapshot with less than half of what's active now is refused
+
+
+def check_snapshot(conn, table, where, params, n, label):
+    """Refuse a snapshot that would retire most of what we hold (an emptied or cut-off layer
+    looks like that); the fetch is logged as failed and nothing is retired. Shared by the
+    road, lane, signal and rail-crossing sources."""
+    active = conn.execute(f"select count(*) from {table} where active and {where}", params).fetchone()[0]
+    if n == 0 or n < SNAPSHOT_MIN_SHARE * active:
+        raise RuntimeError(f"{label}: only {n} records against {active} active; not taken as a full snapshot")
+
+
 def version_hash(payload):
     return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).digest()
 

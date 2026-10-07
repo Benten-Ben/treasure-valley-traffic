@@ -45,7 +45,7 @@ import time
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 
-from .. import arcgis, db, segment_match, signal_devices
+from .. import arcgis, db, segment_match
 
 BASE = "https://gisp.itd.idaho.gov/server/rest/services/GDWarehouse"
 HPMS = f"{BASE}/HPMS/FeatureServer"
@@ -342,10 +342,10 @@ def check_snapshot(conn, layers, name_records):
     road names included. layers: {kind: (records, rows, counts)}. Raises before anything
     is written, so the fetch is logged as failed and nothing is retired."""
     for kind, (records, rows, counts) in layers.items():
-        signal_devices.check_snapshot(conn, "core.hpms_section", "kind = %s", (kind,), len(rows), f"itd_hpms {kind}")
+        db.check_snapshot(conn, "core.hpms_section", "kind = %s", (kind,), len(rows), f"itd_hpms {kind}")
     held = conn.execute("select count(*) from raw.record where source = %s and removed_at is null",
                         (NAMES_SOURCE,)).fetchone()[0]
-    if not name_records or len(name_records) < signal_devices.MIN_SHARE * held:
+    if not name_records or len(name_records) < db.SNAPSHOT_MIN_SHARE * held:
         raise RuntimeError(f"itd_hpms names: only {len(name_records)} records against {held} held; "
                            "not taken as a full snapshot")
 

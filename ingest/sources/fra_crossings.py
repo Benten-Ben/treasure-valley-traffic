@@ -21,7 +21,7 @@ import json
 import time
 import urllib.parse
 
-from .. import db, http, signal_devices
+from .. import db, http
 
 DATASET = "https://data.transportation.gov/resource/m2f8-22s6.json"
 COUNTIES = ("16001", "16027")        # Ada, Canyon
@@ -255,7 +255,7 @@ def fetch_rows(pause_s=2.0):
 
 
 def store(conn, fetch_id, seen_at, parsed):
-    signal_devices.check_snapshot(conn, "core.rail_crossing", "true", (), len(parsed), SOURCE["name"])
+    db.check_snapshot(conn, "core.rail_crossing", "true", (), len(parsed), SOURCE["name"])
     records = [(cid, payload, geom) for cid, (payload, geom) in parsed.items()]
     new, unchanged, removed = db.upsert_records(conn, SOURCE["name"], records, fetch_id, seen_at)
     cols = list(crossing({}).keys())

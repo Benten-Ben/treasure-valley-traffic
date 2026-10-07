@@ -45,8 +45,8 @@ from datetime import datetime, time
 from zoneinfo import ZoneInfo
 
 from .. import db
-from . import compass_layer as cl
-from .compass_layer import flag, integer, number, pm_id, text
+from .. import compass_layer as cl
+from ..compass_layer import flag, integer, number, pm_id, text
 
 SERVICE = "COMPASSData/CrashData/FeatureServer"
 BOISE = ZoneInfo("America/Boise")
