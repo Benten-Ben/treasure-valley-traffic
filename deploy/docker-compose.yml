@@ -95,9 +95,9 @@ services:
         condition: service_healthy
 
   cameras:
-    # Key-camera frames from 511 Idaho (ingest/key_cameras.csv), each fetched
+    # Key-camera frames from 511 Idaho (plugins/cameras/ingest/key_cameras.csv), each fetched
     # every 50 s. JPEGs by local day, rolled up after midnight into one AV1 video
-    # per camera per day (ingest/camera_video.py). Needs no database.
+    # per camera per day (plugins/cameras/ingest/camera_video.py). Needs no database.
     build:
       context: ..
       dockerfile: ingest/Dockerfile.cameras

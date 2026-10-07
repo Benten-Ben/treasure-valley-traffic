@@ -1,5 +1,5 @@
 # Cameras image: the key-camera frame stream and the daily AV1 videos
-# (`python3 -m ingest stream idaho511_frames`, ingest/camera_video.py).
+# (`python3 -m ingest stream idaho511_frames`, plugins/cameras/ingest/camera_video.py).
 # Ubuntu 24.04 for its SVT-AV1 1.7, the encoder benchmarked in docs/11. On our
 # frames, Debian 13's SVT-AV1 2.3 needs 13–15% more space for the same quality.
 # Build context is the repository root (see deploy/docker-compose.yml).
@@ -16,6 +16,8 @@ COPY ingest/requirements.txt ingest/requirements.txt
 RUN pip install --no-cache-dir -r ingest/requirements.txt
 COPY db db
 COPY ingest ingest
+# The plugins: their code, manifests (read at start) and migrations (db/migrate.py).
+COPY plugins plugins
 # uid 1000 owns the archive folder on the server.
 USER 1000:1000
 CMD ["python3", "-m", "ingest", "stream", "idaho511_frames"]
