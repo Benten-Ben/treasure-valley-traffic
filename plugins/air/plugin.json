@@ -1,0 +1,15 @@
+{
+  "name": "air",
+  "title": "Air: smoke and air quality over the valley",
+  "depends": [],
+  "visibility": "public",
+  "order": 61,
+  "sources": [
+    {"name": "noaa_hms_smoke", "module": "ingest.sources.noaa_hms_smoke", "kind": "source",
+     "license": "public domain (U.S. Government work, NOAA)",
+     "credit": "NOAA NESDIS OSPO Hazard Mapping System", "republish": "yes"}
+  ],
+  "tables": ["raw.record"],
+  "storage": "HMS smoke: the month's directory listing (about 2 KB) every 30 min, and a day's national KML (60-450 KB) only when it changed, a few times a day; each changed file archived gzipped (about 10-70 KB) in $TVT_ARCHIVE/air/hms/, under 0.4 MB a day. raw.record gets one small record per changed file and one per polygon touching the ring: nothing on clear days, up to a few dozen records of 1-3 KB on smoky ones, so well under 0.1 MB a day.",
+  "ethics": "Public-domain NOAA data, republished with credit and NOAA's caveats: positions may be slightly offset, the product is for strategic not tactical use, and the polygons are smoke anywhere in the column, not air quality at the ground. robots.txt on satepsanone.nesdis.noaa.gov answers 404 (no rules, Oct 7); we keep 3 s between requests and download a file only when its listing changed. AirNow is not used until the owner returns its guidelines form (docs/17 §17.7); PurpleAir and DEQ's burn decisions are off-limits (§17.6)."
+}

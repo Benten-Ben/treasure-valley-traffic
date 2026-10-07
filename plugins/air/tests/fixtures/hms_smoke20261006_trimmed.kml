@@ -1,0 +1,175 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2" xmlns:gx="http://www.google.com/kml/ext/2.2" xmlns:kml="http://www.opengis.net/kml/2.2" xmlns:atom="http://www.w3.org/2005/Atom">
+<Document>
+<name>HMS Smoke Mapping-20261006</name>
+<description><![CDATA[NOAA Hazard Mapping System multisatellite smoke mapping data.<br>  For product information please visit: <a href="https://www.ospo.noaa.gov/Products/land/hms.html#about">https://www.ospo.noaa.gov/Products/land/hms.html#about</a> ]]></description>
+ <Folder>
+   <name>Overlay</name>
+   <open>0</open>
+   <Style>
+     <ListStyle>
+     <listItemType>check</listItemType>
+     <bgColor>00ffffff</bgColor>
+     <maxSnippetLines>2</maxSnippetLines>
+   </ListStyle>
+   </Style>
+   <ScreenOverlay>
+    <name>NOAA logo</name>
+    <color>ffffffff</color>
+    <visibility>1</visibility>
+    <Icon>
+      <href>https://www.ospo.noaa.gov/graphics/Products/land/fire/hms/png_logo/noaa_logo.png</href>
+    </Icon>
+    <overlayXY x="0" y="1" xunits="fraction" yunits="fraction"/>
+    <screenXY x="1" y="1" xunits="pixels" yunits="insetPixels"/>
+    <size x="100" y="100" xunits="pixels" yunits="pixels"/>
+   </ScreenOverlay>
+   <ScreenOverlay>
+    <name>Analysis Date</name>
+    <color>ffffffff</color>
+    <visibility>1</visibility>
+    <Icon>
+      <href><![CDATA[http://chart.apis.google.com/chart?chst=d_text_outline&chld=FFBBBB|16|h|BB0000|b|Analysis%20for:%2020261006]]></href>
+    </Icon>
+     <overlayXY x="1" y="1" xunits="fraction" yunits="fraction"/>
+    <screenXY x="2" y="92" xunits="insetPixels" yunits="insetPixels"/>
+   </ScreenOverlay>
+   <ScreenOverlay>
+    <name>Generated DateTime</name>
+    <color>ffffffff</color>
+    <visibility>1</visibility>
+    <Icon>
+      <href><![CDATA[http://chart.apis.google.com/chart?chst=d_text_outline&chld=FFBBBB|16|h|BB0000|b|Generated:%201002GMT%2020261007]]></href>
+    </Icon>
+    <overlayXY x="1" y="1" xunits="fraction" yunits="fraction"/>
+    <screenXY x="2" y="130" xunits="insetPixels" yunits="insetPixels"/>
+   </ScreenOverlay>
+   <ScreenOverlay>
+     <name>Legend</name>
+     <color>ffffffff</color>
+     <visibility>1</visibility>
+     <Icon>
+        <href>https://www.ospo.noaa.gov/graphics/Products/land/fire/hms/png_logo/kml_legend.png</href>
+     </Icon>
+     <overlayXY x="1" y="1" xunits="fraction" yunits="fraction"/>
+     <screenXY x="1" y="1" xunits="insetPixels" yunits="insetPixels"/>
+     <size x="300" y="90" xunits="pixels" yunits="pixels"/>
+   </ScreenOverlay>
+ </Folder>
+  <Folder>
+    <name>Smoke (Light)</name>
+    <open>0</open>
+    <Style>
+      <ListStyle>
+      <listItemType>check</listItemType>
+      <bgColor>00ffffff</bgColor>
+      <maxSnippetLines>2</maxSnippetLines>
+    </ListStyle>
+    </Style>
+<Placemark><description><![CDATA[<div style="width:170px;">Start Time: 2026279 1700UTC<br>End Time: 2026279 2000UTC<br>Density: Light<br>Satellite: GOES-EAST</div>]]></description>
+<styleUrl>#Smoke_Light_style</styleUrl>
+<Polygon>
+  <tessellate>1</tessellate>
+  <gx:drawOrder>0</gx:drawOrder>
+  <outerBoundaryIs>
+    <LinearRing>
+      <coordinates>
+        -96.807055,33.950176,0
+        -96.867805,33.953551,0
+        -96.867805,33.953551,0
+        -96.807055,33.950176,0
+      </coordinates>
+    </LinearRing>
+  </outerBoundaryIs>
+</Polygon>
+</Placemark>
+<Placemark><description><![CDATA[<div style="width:170px;">Start Time: 2026279 1800UTC<br>End Time: 2026279 2330UTC<br>Density: Light<br>Satellite: GOES-EAST</div>]]></description>
+<styleUrl>#Smoke_Light_style</styleUrl>
+<Polygon>
+  <tessellate>1</tessellate>
+  <gx:drawOrder>0</gx:drawOrder>
+  <outerBoundaryIs>
+    <LinearRing>
+      <coordinates>
+        -92.347411,36.374529,0
+        -92.394661,36.347529,0
+        -92.418286,36.296904,0
+        -92.371036,36.293529,0
+        -92.327161,36.313779,0
+        -92.310286,36.350904,0
+        -92.303536,36.374529,0
+        -92.347411,36.374529,0
+      </coordinates>
+    </LinearRing>
+  </outerBoundaryIs>
+</Polygon>
+</Placemark>
+  </Folder>
+  <Folder>
+    <name>Smoke (Medium)</name>
+    <open>0</open>
+    <Style>
+      <ListStyle>
+      <listItemType>check</listItemType>
+      <bgColor>00ffffff</bgColor>
+      <maxSnippetLines>2</maxSnippetLines>
+    </ListStyle>
+    </Style>
+<Placemark><description><![CDATA[<div style="width:170px;">Start Time: 2026279 1700UTC<br>End Time: 2026279 2000UTC<br>Density: Medium<br>Satellite: GOES-EAST</div>]]></description>
+<styleUrl>#Smoke_Medium_style</styleUrl>
+<Polygon>
+  <tessellate>1</tessellate>
+  <gx:drawOrder>1</gx:drawOrder>
+  <outerBoundaryIs>
+    <LinearRing>
+      <coordinates>
+        -91.120653,35.227008,0
+        -91.138653,35.227008,0
+        -91.154403,35.215758,0
+        -91.152153,35.200008,0
+        -91.129653,35.191008,0
+        -91.116153,35.193258,0
+        -91.111653,35.204508,0
+        -91.118403,35.224758,0
+        -91.120653,35.227008,0
+      </coordinates>
+    </LinearRing>
+  </outerBoundaryIs>
+</Polygon>
+</Placemark>
+  </Folder>
+  <Folder>
+    <name>Smoke (Heavy)</name>
+    <open>0</open>
+    <Style>
+      <ListStyle>
+      <listItemType>check</listItemType>
+      <bgColor>00ffffff</bgColor>
+      <maxSnippetLines>2</maxSnippetLines>
+    </ListStyle>
+    </Style>
+<Placemark><description><![CDATA[<div style="width:170px;">Start Time: 2026279 1800UTC<br>End Time: 2026279 2330UTC<br>Density: Heavy<br>Satellite: GOES-EAST</div>]]></description>
+<styleUrl>#Smoke_Heavy_style</styleUrl>
+<Polygon>
+  <tessellate>1</tessellate>
+  <gx:drawOrder>2</gx:drawOrder>
+  <outerBoundaryIs>
+    <LinearRing>
+      <coordinates>
+        -123.489620,41.480031,0
+        -123.514370,41.477780,0
+        -123.518870,41.464280,0
+        -123.518870,41.444030,0
+        -123.505370,41.437280,0
+        -123.489620,41.437280,0
+        -123.478370,41.450780,0
+        -123.476120,41.466530,0
+        -123.489620,41.480031,0
+      </coordinates>
+    </LinearRing>
+  </outerBoundaryIs>
+</Polygon>
+</Placemark>
+  </Folder>
+</Document>
+</kml>
