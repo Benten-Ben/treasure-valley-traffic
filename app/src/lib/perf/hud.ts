@@ -186,7 +186,9 @@ function startHud(map: Map): PerfHandle {
 		}
 	});
 
-	const tick = () => {
+	// Checked every 100 ms, so a layer's :on mark is at most that late (the layers enabled at boot
+	// are marked when the HUD starts, as the map is created).
+	const watchLayers = () => {
 		const enabled = new Set(info()?.enabled ?? []);
 		for (const id of enabled) {
 			if (on.has(id)) continue;
@@ -195,6 +197,11 @@ function startHud(map: Map): PerfHandle {
 			mark(layerMark(id, 'on'));
 		}
 		for (const id of [...on]) if (!enabled.has(id)) on.delete(id);
+	};
+	watchLayers();
+	setInterval(watchLayers, 100);
+
+	const tick = () => {
 		const s = snapshot();
 		const tiles = Object.entries(s.tiles)
 			.filter(([, t]) => t.inView || t.cached)
