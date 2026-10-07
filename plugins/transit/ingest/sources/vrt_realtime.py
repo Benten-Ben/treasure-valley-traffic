@@ -13,7 +13,7 @@ The archive is written before the database, so a database outage loses
 nothing: `python3 -m ingest backfill vrt_realtime <archive dir>` reloads it.
 
 After each batch of positions is committed, the playback matcher
-(ingest/transit_progress.py) places the new fixes along their routes. It is
+(../transit_progress.py) places the new fixes along their routes. It is
 isolated so it can never cost a position: it runs only after the commit,
 inside try/except with a rollback, with a 5 s budget and an advisory lock.
 
@@ -33,7 +33,7 @@ import traceback
 from collections import Counter
 from datetime import datetime, timezone
 
-from .. import db, http
+from ingest import db, http
 
 BASE = "https://s3.amazonaws.com/etatransit.gtfs/valleyregionaltransit.etaspot.net/"
 FEEDS = {"position_updates": BASE + "position_updates.pb",
@@ -129,7 +129,7 @@ def store_positions(conn, rows):
 
 def match_progress(conn, rows, matcher=None):
     """Place a just-committed batch of fixes along their routes, for playback
-    (ingest/transit_progress.py). Bus positions are the most valuable live data,
+    (../transit_progress.py). Bus positions are the most valuable live data,
     so this runs only after they're committed, and nothing it does can undo
     them: any error is logged and rolled back, and the stream carries on.
     Returns the matcher's stats, or None if it failed."""

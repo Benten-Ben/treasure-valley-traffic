@@ -22,7 +22,7 @@ current colors) is unchanged, and stored inside a savepoint, so a failed
 build keeps the previous ribbons. vrt_gtfs's daily run calls run().
 
 By hand:
-  python3 -m ingest.transit_ribbons [--force] [--mode rebalance|minimal] [--dry-run]
+  python3 -m ingest transit-ribbons [--force] [--mode rebalance|minimal] [--dry-run]
 """
 
 import argparse
@@ -36,7 +36,7 @@ from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 
 from . import route_colors
-from .utm import from_utm, to_utm
+from ingest.utm import from_utm, to_utm
 
 ALGO = "corridors_v1"
 
@@ -1010,13 +1010,13 @@ def run(conn, force=False, mode=route_colors.DEFAULT_MODE, dry_run=False, now=No
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(prog="python3 -m ingest.transit_ribbons", description=__doc__.split("\n")[0])
+    ap = argparse.ArgumentParser(prog="python3 -m ingest transit-ribbons", description=__doc__.split("\n")[0])
     ap.add_argument("--force", action="store_true", help="rebuild even if the inputs are unchanged")
     ap.add_argument("--mode", choices=route_colors.MODES, default=route_colors.DEFAULT_MODE,
                     help=f"color assignment (default {route_colors.DEFAULT_MODE}, the owner's Q3 answer)")
     ap.add_argument("--dry-run", action="store_true", help="print what would change; write nothing")
     args = ap.parse_args(argv)
-    from . import db
+    from ingest import db
     with db.connect() as conn:
         stats = run(conn, force=args.force or args.dry_run, mode=args.mode, dry_run=args.dry_run)
         if args.dry_run:

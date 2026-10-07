@@ -1,0 +1,29 @@
+{
+  "name": "transit",
+  "title": "Buses (Valley Regional Transit)",
+  "depends": [],
+  "visibility": "public",
+  "order": 20,
+  "sources": [
+    {"name": "vrt_gtfs", "module": "ingest.sources.vrt_gtfs", "kind": "source",
+     "license": "CC BY 3.0", "credit": "Valley Regional Transit", "republish": "yes"},
+    {"name": "vrt_realtime", "module": "ingest.sources.vrt_realtime", "kind": "stream",
+     "license": "CC BY 3.0", "credit": "Valley Regional Transit", "republish": "yes"}
+  ],
+  "tables": [
+    "core.transit_route", "core.transit_stop", "core.transit_shape", "core.transit_trip", "core.transit_ribbon",
+    "obs.vehicle_position", "obs.trip_route_match", "obs.vehicle_progress"
+  ],
+  "commands": [
+    {"name": "match-routes", "module": "ingest.transit_match",
+     "help": "put unlabeled bus trips on routes by their path (the transit stream does this)"},
+    {"name": "transit-progress", "module": "ingest.transit_progress",
+     "help": "match bus fixes to their routes for playback, or report on a window (the stream does this)"},
+    {"name": "transit-ribbons", "module": "ingest.transit_ribbons",
+     "help": "rebuild the side-by-side route ribbons and colors (vrt_gtfs does this daily)"},
+    {"name": "route-colors", "module": "ingest.route_colors",
+     "help": "print the route palette table and its checks"}
+  ],
+  "storage": "Every changed GTFS-realtime feed is archived as published ($TVT_ARCHIVE/vrt-gtfs-rt/, polled every 30 s) and each static GTFS zip ($TVT_ARCHIVE/vrt-gtfs/); one row per bus fix in obs.vehicle_position and obs.vehicle_progress. Not yet measured.",
+  "ethics": "Buses are public vehicles tracked by their operator's open feed; bus numbers are vehicle IDs, not people. CC BY 3.0: credit Valley Regional Transit."
+}

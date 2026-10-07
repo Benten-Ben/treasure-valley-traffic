@@ -16,7 +16,7 @@ with Machado, Oliveira & Fernandes (2009) at full severity, WCAG contrast.
 - assign(...): colors for routes, so that neighbors (routes drawn side by
   side) never clash, in one of two modes (Q3, answered Oct 6: "rebalance").
 
-By hand: python3 -m ingest.route_colors   (prints the palette table and checks)
+By hand: python3 -m ingest route-colors   (prints the palette table and checks)
 """
 
 import math
@@ -438,7 +438,7 @@ def report(old, new, names=None):
     return lines
 
 
-def main():
+def main(argv=None):
     print(f"Route palette: {len(PALETTE)} slots, validated on clay {CLAY}\n")
     print(f"  #  {'name':9} hex      L     C     band chroma  on clay  ghost    badge")
     for i, (name, h) in enumerate(PALETTE_SLOTS, 1):

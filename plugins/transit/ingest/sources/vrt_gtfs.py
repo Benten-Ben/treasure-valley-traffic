@@ -7,9 +7,9 @@ inactive rather than deleted.
 
 Route colors: VRT's own GTFS colors are four shared tier colors, so routes
 can't be told apart by them. Each route gets one of our 13 map colors
-instead (ingest/route_colors.py), chosen so routes drawn side by side never
+instead (../route_colors.py), chosen so routes drawn side by side never
 clash, and the route number always travels with the color. After loading,
-each run calls ingest/transit_ribbons.py, which rebuilds the side-by-side
+each run calls ../transit_ribbons.py, which rebuilds the side-by-side
 ribbons and the colors only when the shapes or the set of dormant routes
 changed (docs/14 §14.4). A route keeps its color unless a new neighbor makes
 it clash. If the ribbon build fails, the previous ribbons stay, and routes
@@ -29,7 +29,8 @@ import os
 import zipfile
 from collections import defaultdict
 
-from .. import db, http, route_colors
+from ingest import db, http
+from .. import route_colors
 
 URL = "https://www.valleyregionaltransit.org/GTFS/vrt_transit1.zip"
 

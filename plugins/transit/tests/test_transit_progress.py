@@ -1,4 +1,4 @@
-"""Tests for the playback matcher (ingest/transit_progress.py; docs/14 §14.4 "Playback").
+"""Tests for the playback matcher (plugins/transit/ingest/transit_progress.py; docs/14 §14.4 "Playback").
 
 The matcher tests are offline, on synthetic shapes in metres. The database tests
 (stream isolation, backfill racing the stream) run only against a scratch
@@ -6,7 +6,7 @@ database, never the server's, named by TVT_TEST_DATABASE_URL (a package clone
 with migration 0007, e.g. tvt_wp7). They add rows for vehicles named wp7-test-*
 and remove them afterwards.
 
-Run: python3 -m unittest discover -s ingest/tests -t .
+Run: python3 -m unittest discover -s plugins -t .
      TVT_TEST_DATABASE_URL=postgres://tvt:...@localhost/tvt_wp7 python3 -m unittest ingest.tests.test_transit_progress
 """
 
@@ -18,8 +18,8 @@ import time
 import unittest
 from datetime import datetime, timedelta, timezone
 
-from ingest import transit_progress as tp
-from ingest.sources import vrt_realtime
+from plugins.transit.ingest import transit_progress as tp
+from plugins.transit.ingest.sources import vrt_realtime
 
 T0 = datetime(2026, 10, 5, 20, 17, tzinfo=timezone.utc)
 

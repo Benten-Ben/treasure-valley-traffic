@@ -5,7 +5,7 @@ real-data tests run against a database only when TVT_TEST_DATABASE_URL names
 one (a package clone such as tvt_wp6, never the server's): they read VRT's
 shapes and write nothing that outlives the test (everything is rolled back).
 
-Run: python3 -m unittest discover -s ingest/tests -t .
+Run: python3 -m unittest discover -s plugins -t .
      TVT_TEST_DATABASE_URL=postgres://tvt:...@localhost/tvt_wp6 python3 -m unittest ingest.tests.test_transit_ribbons
 """
 
@@ -17,8 +17,8 @@ import unittest
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
-from ingest import route_colors as rc
-from ingest import transit_ribbons as tr
+from plugins.transit.ingest import route_colors as rc
+from plugins.transit.ingest import transit_ribbons as tr
 
 X0, Y0 = 560000.0, 4830000.0     # UTM 11N, west Boise
 COVER_M = 45.0
@@ -341,8 +341,8 @@ class RealDataTest(unittest.TestCase):
         self.assertEqual(rc.clashes(colors, {r: set(v) for r, v in self.res["neighbors"].items()}), [])
 
     def test_the_daily_feed_load_builds_the_ribbons(self):
-        from ingest.sources import vrt_gtfs
-        from ingest.tests.test_transit import tiny_gtfs
+        from plugins.transit.ingest.sources import vrt_gtfs
+        from plugins.transit.tests.test_transit import tiny_gtfs
         feed = dict(vrt_gtfs.parse_feed(tiny_gtfs()), version="tiny-test")   # retires every real route
         stats = vrt_gtfs.store(self.conn, feed)
         self.assertEqual(stats["ribbons"], "built")
@@ -354,8 +354,8 @@ class RealDataTest(unittest.TestCase):
             self.assertEqual(text, rc.badge_text_color(color))
 
     def test_a_failed_build_keeps_the_ribbons_and_still_colors_new_routes(self):
-        from ingest.sources import vrt_gtfs
-        from ingest.tests.test_transit import tiny_gtfs
+        from plugins.transit.ingest.sources import vrt_gtfs
+        from plugins.transit.tests.test_transit import tiny_gtfs
         tr.run(self.conn, log=lambda *_: None)
         before = self.conn.execute("select count(*), min(build) from core.transit_ribbon").fetchone()
         self.conn.execute("update core.transit_route set color = null where route_id = '7'")

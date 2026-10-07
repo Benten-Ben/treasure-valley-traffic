@@ -97,7 +97,7 @@ def main():
             STREAMS[args.name].stream()
         return
     if args.cmd == "match-routes":
-        from . import transit_match
+        from plugins.transit.ingest import transit_match
         with db.connect() as conn:
             stats = transit_match.run(conn, args.hours)
         print("match-routes: " + ", ".join(f"{k} {v}" for k, v in stats.items()), flush=True)

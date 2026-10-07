@@ -44,9 +44,9 @@ with a step to that row.
 By hand (idempotent: it only processes fixes with no row, per vehicle in time
 order):
 
-  python3 -m ingest.transit_progress --hours 24
-  python3 -m ingest.transit_progress --from 2026-10-06T11:00Z --to 2026-10-06T15:00Z
-  python3 -m ingest.transit_progress --report --hours 24     # step shares, speeds, backward motion
+  python3 -m ingest transit-progress --hours 24
+  python3 -m ingest transit-progress --from 2026-10-06T11:00Z --to 2026-10-06T15:00Z
+  python3 -m ingest transit-progress --report --hours 24     # step shares, speeds, backward motion
 """
 
 import argparse
@@ -58,7 +58,7 @@ from collections import Counter, defaultdict, deque
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-from . import db
+from ingest import db
 from .sources.vrt_realtime import TRIP_ROUTE
 
 NEAR_M = 40.0             # a fix this close to a shape can be on it
@@ -655,7 +655,7 @@ def _when(text):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(prog="python3 -m ingest.transit_progress",
+    ap = argparse.ArgumentParser(prog="python3 -m ingest transit-progress",
                                  description="Match bus fixes to their routes for playback (docs/14 §14.4).")
     ap.add_argument("--hours", type=float, default=24, help="how far back to look (default 24)")
     ap.add_argument("--from", dest="start", type=_when, help="window start, ISO time (instead of --hours)")

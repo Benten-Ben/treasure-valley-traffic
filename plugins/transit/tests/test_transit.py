@@ -1,6 +1,6 @@
 """Offline tests for the Valley Regional Transit sources.
 
-Run: python3 -m unittest discover -s ingest/tests -t .
+Run: python3 -m unittest discover -s plugins -t .
 """
 
 import io
@@ -10,8 +10,8 @@ import unittest
 import zipfile
 from datetime import datetime, timezone
 
-from ingest import route_colors
-from ingest.sources import vrt_gtfs, vrt_realtime
+from plugins.transit.ingest import route_colors
+from plugins.transit.ingest.sources import vrt_gtfs, vrt_realtime
 
 
 def tiny_gtfs():
@@ -51,7 +51,7 @@ class StaticFeedTest(unittest.TestCase):
 
 
 class ColorTest(unittest.TestCase):
-    """The route palette as vrt_gtfs uses it (ingest/route_colors.py; the rest is in test_route_colors.py)."""
+    """The route palette as vrt_gtfs uses it (plugins/transit/ingest/route_colors.py; the rest is in test_route_colors.py)."""
 
     def test_neighbors_differ_and_existing_colors_stay(self):
         nb = {"a": {"b", "c"}, "b": {"a", "c"}, "c": {"a", "b"}, "d": set()}
@@ -133,16 +133,16 @@ if __name__ == "__main__":
 
 class RouteMatchTest(unittest.TestCase):
     def test_clear_match(self):
-        from ingest import transit_match as tm
+        from plugins.transit.ingest import transit_match as tm
         self.assertEqual(tm.decide(50, {"7": 45, "40": 15}), ("7", 0.9, "40", 0.3))
 
     def test_short_or_ambiguous_trips_stay_unlabeled(self):
-        from ingest import transit_match as tm
+        from plugins.transit.ingest import transit_match as tm
         self.assertIsNone(tm.decide(8, {"7": 8}))                   # too few fixes
         self.assertIsNone(tm.decide(44, {"7": 25, "40": 22}))       # 57% vs 50%: routes share the street
         self.assertIsNone(tm.decide(40, {"7": 20}))                 # only half the trip is on any route
         self.assertIsNone(tm.decide(40, {}))
 
     def test_a_lone_route_needs_no_runner_up(self):
-        from ingest import transit_match as tm
+        from plugins.transit.ingest import transit_match as tm
         self.assertEqual(tm.decide(20, {"28": 20}), ("28", 1.0, None, None))

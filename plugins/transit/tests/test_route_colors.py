@@ -1,14 +1,14 @@
 """Offline tests for the route palette, the "too similar" rule and color
 assignment (docs/14 §14.4 "Route colors", the badge rule in §14.3).
 
-Run: python3 -m unittest discover -s ingest/tests -t .
+Run: python3 -m unittest discover -s plugins -t .
 """
 
 import json
 import os
 import unittest
 
-from ingest import route_colors as rc
+from plugins.transit.ingest import route_colors as rc
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 H = dict(rc.PALETTE_SLOTS)
