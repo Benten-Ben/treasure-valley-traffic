@@ -133,6 +133,7 @@ describe('shields, stops and layers', () => {
 	it('names each bundle shield by its routes in slot order and which run', () => {
 		const fc = shieldFeatures(net, new Set(['42']));
 		expect(fc.features.map((f) => f.properties!.shield)).toEqual([shieldName([1, 2, 3], [false, true, false]), shieldName([2], [true])]);
+		expect(fc.features.map((f) => f.properties!.routes)).toEqual([',40,42,45,', ',42,']);
 		expect(parseShield(shieldName([1, 2, 3], [false, true, false]))).toEqual({ rids: [1, 2, 3], running: [false, true, false] });
 		expect(parseShield('tvt-capsule:3')).toBeNull();
 		expect(parseShield('tvt-shield:1-2:1')).toBeNull();
@@ -157,7 +158,7 @@ describe('shields, stops and layers', () => {
 			[L.routes, 'routes'],
 			[L.trails, 'routes'],
 			[L.stops, 'points'],
-			[L.hubs, 'points'],
+			[L.hubs, 'labels'],
 			[L.shields, 'labels']
 		]);
 		const sources = Object.fromEntries(

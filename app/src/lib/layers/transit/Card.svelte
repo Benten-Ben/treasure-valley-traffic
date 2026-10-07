@@ -3,7 +3,7 @@
 	import { clockText, minSec } from '#lib/state/clock.svelte.js';
 	import Badge from '#lib/ui/Badge.svelte';
 	import type { CardProps } from '../types.js';
-	import { busBadge, routeBadge, type TransitModule } from './index.svelte.js';
+	import { busBadge, routeBadge, towardText, type TransitModule } from './index.svelte.js';
 	import { speedText } from './playback.js';
 	import { CREDIT } from './transit.js';
 
@@ -59,7 +59,7 @@
 	{#if v}
 		<h2><Badge badge={busBadge(v)} big />{busRoute?.longName ?? (v.routeId ? `Route ${v.shortName ?? v.routeId}` : 'Route not reported')}</h2>
 		<p class="meta">
-			Bus <span class="num">{v.label ?? vid}</span>{#if v.headsign} · toward {v.headsign}{/if}
+			Bus <span class="num">{v.label ?? vid}</span>{#if v.headsign} · {towardText(v.headsign)}{/if}
 		</p>
 		{#if b && (b.state === 'moving' || b.state === 'still')}
 			<p class="meta"><strong>{b.state === 'moving' ? (speedText(b.stepSpeed) ?? 'moving') : 'stopped'}</strong></p>

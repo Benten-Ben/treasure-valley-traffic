@@ -22,7 +22,8 @@ import type { SlottedLayer } from '#lib/map/order.js';
  *   order (ghost badges for routes not running), drawn on demand; that
  *   source changes only when the set of running routes does.
  * - Stops are cream capsules across the bundle, turned to the street, from
- *   z14; hubs are station pills from z14.
+ *   z14; hubs are station pills from z14, drawn with the labels so a base
+ *   POI label never covers one.
  */
 
 /** Per-zoom ribbon width w, gap g and bundle cap B, px (§14.4): [zoom, w, g, B]. */
@@ -42,6 +43,8 @@ export const CREAM = '#fffbf4';
 /** Outline and underlay widths beyond the bundle, px. */
 export const OUTLINE_EXTRA = 4.5;
 export const UNDERLAY_EXTRA = 2.5;
+/** The map's global state that names the spotlit route ('' for none): shields without it fade. */
+export const SPOT_STATE = 'transit-spot';
 /** Stops show from this zoom (capsules), hubs too. */
 export const STOP_MINZOOM = 14;
 export const SHIELD_MINZOOM = 13;
@@ -142,6 +145,12 @@ export function bundleWidth(extra: number): ExpressionSpecification {
 	return byZoom((w, g, B) => ['+', ['*', N, pitch(w, g, B)], extra]);
 }
 
+/** While a route is spotlit, shields that don't carry it fade (global state, no setData). */
+export function shieldOpacity(): ExpressionSpecification {
+	const spot: ExpressionSpecification = ['to-string', ['coalesce', ['global-state', SPOT_STATE], '']];
+	return ['case', ['==', spot, ''], 1, ['in', ['concat', ',', spot, ','], ['get', 'routes']], 1, 0.3];
+}
+
 /** One feature per segment carries the outline and underlay. */
 const FIRST: FilterSpecification = ['==', ['get', 'slot'], 0];
 
@@ -207,7 +216,11 @@ export function shieldFeatures(net: Pick<TransitNetwork, 'routes' | 'segments'>,
 		features.push({
 			type: 'Feature',
 			geometry: line(s.coords),
-			properties: { shield: shieldName(routes.map((r) => r.rid), routes.map((r) => running.has(r.id))), seg: s.id }
+			properties: {
+				shield: shieldName(routes.map((r) => r.rid), routes.map((r) => running.has(r.id))),
+				routes: `,${routes.map((r) => r.id).join(',')},`,
+				seg: s.id
+			}
 		});
 	}
 	return { type: 'FeatureCollection', features };
@@ -286,13 +299,15 @@ export function networkLayers(): SlottedLayer[] {
 					[z, ['/', ['+', ['*', N, pitch(w, g, B)], OUTLINE_EXTRA], ['get', 'w15']]])] as unknown as ExpressionSpecification,
 				'icon-allow-overlap': true, 'icon-ignore-placement': true },
 			paint: { 'icon-opacity': ['case', state('idle'), IDLE_STOP_OPACITY, 1] } } },
-		{ slot: 'points', layer: { id: L.hubs, type: 'symbol', source: SOURCES.hubs, minzoom: STOP_MINZOOM,
+		// Above the base labels, so a POI never covers the station's name.
+		{ slot: 'labels', layer: { id: L.hubs, type: 'symbol', source: SOURCES.hubs, minzoom: STOP_MINZOOM,
 			layout: { ...hidden, 'text-field': ['get', 'name'], 'text-font': ['Noto Sans Medium'], 'text-size': 13,
 				'icon-image': IMG.pill, 'icon-text-fit': 'both', 'icon-text-fit-padding': [3, 9, 3, 9],
 				'text-allow-overlap': true, 'icon-allow-overlap': true, 'symbol-sort-key': 0 },
 			paint: { 'text-color': INK } } },
 		{ slot: 'labels', layer: { id: L.shields, type: 'symbol', source: SOURCES.shields, minzoom: SHIELD_MINZOOM,
 			layout: { ...hidden, 'symbol-placement': 'line', 'symbol-spacing': 400, 'icon-image': ['get', 'shield'],
-				'icon-rotation-alignment': 'viewport', 'icon-pitch-alignment': 'viewport', 'icon-padding': 4 } } }
+				'icon-rotation-alignment': 'viewport', 'icon-pitch-alignment': 'viewport', 'icon-padding': 4 },
+			paint: { 'icon-opacity': shieldOpacity() } } }
 	];
 }

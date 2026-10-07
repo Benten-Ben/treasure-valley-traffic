@@ -28,6 +28,7 @@ import {
 	ribbonFeatures,
 	shieldFeatures,
 	SOURCES,
+	SPOT_STATE,
 	stopFeatures
 } from './network.js';
 import { busAt, Feed, positionAt, runningAt, sameSet, smoothAngle, trail, type BusAt, type BusState } from './playback.js';
@@ -73,6 +74,8 @@ const NEXT_WINDOW_S = 120;
 const RELOAD_AFTER_S = 30;
 /** The feed is old (▲) once its newest fix is this old (s). */
 const STALE_FEED_S = 120;
+/** Trails redraw at most this often (ms; the clock ticks once a second, a little jitter allowed). */
+const TRAILS_MS = 990;
 /** The fallback layer's refresh (ms): at most twice a second. */
 const FALLBACK_MS = 500;
 const isBool = (v: unknown): v is boolean => typeof v === 'boolean';
@@ -101,6 +104,9 @@ function headingSprite(): SpriteDef {
 		}
 	};
 }
+
+/** "toward Towne Square Mall" (some headsigns already say "Toward"). */
+export const towardText = (headsign: string) => (/^toward\b/i.test(headsign) ? headsign.replace(/^toward/i, 'toward') : `toward ${headsign}`);
 
 /** A bus's plate (unknown routes: gray with "?", with a halo). */
 export function busBadge(v: TrackVehicle | undefined): Badge {
@@ -231,6 +237,7 @@ export class TransitModule implements LayerModule {
 	#lastPoll: number | null = null;
 	#idle = true;
 	#hovered: number[] = [];
+	#trailsAt = -Infinity;
 	/** The running set last shown on the map (null: none yet). */
 	#shownRunning: ReadonlySet<string> | null = null;
 	#stopTick: (() => void) | null = null;
@@ -278,7 +285,7 @@ export class TransitModule implements LayerModule {
 			id: vid,
 			layer: 'transit',
 			title: `${name} · bus ${v?.label ?? vid}`,
-			fact: v?.headsign ? `toward ${v.headsign}` : 'between reported positions',
+			fact: v?.headsign ? towardText(v.headsign) : 'between reported positions',
 			source: CREDIT,
 			badge: busBadge(v),
 			data: vid
@@ -408,6 +415,7 @@ export class TransitModule implements LayerModule {
 		const map = this.#scope?.map;
 		if (!map || !this.network) return;
 		for (const r of this.network.routes) map.setFeatureState({ source: SOURCES.ribbons, id: r.rid }, { spot: r.id === routeId, dim: routeId !== null && r.id !== routeId });
+		map.setGlobalStateProperty(SPOT_STATE, routeId ?? '');
 		this.#kick();
 	}
 
@@ -581,10 +589,14 @@ export class TransitModule implements LayerModule {
 		this.#shownRunning = running;
 	}
 
+	/** The trails' line source, at most once a second (§14.4: the one exception to "once per poll"). */
 	#drawTrails() {
 		const map = this.#scope?.map;
 		const clock = this.clock;
 		if (!map || !clock) return;
+		const now = performance.now();
+		if (now - this.#trailsAt < TRAILS_MS) return;
+		this.#trailsAt = now;
 		const T = clock.playhead();
 		const features: Feature<MultiLineString>[] = [];
 		for (const [vid, track] of this.feed.tracks) {

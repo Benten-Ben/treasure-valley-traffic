@@ -409,9 +409,9 @@ test.describe('transit', () => {
 		test.setTimeout(400_000);
 		const shots: [string, string, { width: number; height: number }][] = [
 			['transit-1-downtown-hub-z15', '15/43.6152/-116.2035/0/0&layers=transit', { width: 1280, height: 800 }],
-			['transit-2-fairview-five-mile-z14', '14/43.6185/-116.2925/0/0&layers=streets,transit', { width: 1280, height: 800 }],
+			['transit-2-fairview-five-mile-z14', '14/43.6175/-116.3125/0/0&layers=streets,transit', { width: 1280, height: 800 }],
 			['transit-1-downtown-hub-z15-phone', '15/43.6152/-116.2035/0/0&layers=transit', { width: 390, height: 844 }],
-			['transit-2-fairview-five-mile-z14-phone', '14/43.6185/-116.2925/0/0&layers=streets,transit', { width: 390, height: 844 }]
+			['transit-2-fairview-five-mile-z14-phone', '14/43.6175/-116.3125/0/0&layers=streets,transit', { width: 390, height: 844 }]
 		];
 		for (const [name, hash, size] of shots) {
 			await page.setViewportSize(size);
