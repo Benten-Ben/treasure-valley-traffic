@@ -1,18 +1,11 @@
-import {
-	AttributionControl,
-	Map,
-	NavigationControl,
-	ScaleControl,
-	addProtocol,
-	setWorkerUrl,
-	type LngLatLike
-} from 'maplibre-gl';
+import { AttributionControl, Map, ScaleControl, addProtocol, setWorkerUrl, type LngLatLike } from 'maplibre-gl';
 // MapLibre looks for its worker next to its own module, which bundling breaks,
 // so Vite builds the worker and MapLibre gets its URL.
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
 import { Protocol } from 'pmtiles';
 import { dev } from '$app/env';
 import { buildStyle, loadManifest, type BasemapManifest } from './style.js';
+import './controls.css';
 
 let setUp = false;
 
@@ -91,7 +84,9 @@ export async function createMap(container: HTMLElement, o: MapOptions = {}): Pro
 		pixelRatio: Math.min(globalThis.devicePixelRatio || 1, 2),
 		validateStyle: dev
 	});
-	map.addControl(new NavigationControl({ visualizePitch: true }), 'top-right');
+	// The map's own controls (WP3): the scale and the compact (i) attribution in the bottom
+	// corners, restyled in controls.css. The camera widget (CameraWidget.svelte) replaces
+	// MapLibre's NavigationControl.
 	map.addControl(new ScaleControl({ unit: 'imperial' }), 'bottom-left');
 	map.addControl(new AttributionControl({ compact: true }), 'bottom-right');
 	map.on('error', (ev) => console.error('map error', ev.error));
