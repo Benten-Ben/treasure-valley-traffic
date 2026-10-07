@@ -1359,10 +1359,15 @@ What only the owner can do or know is in §17.7 and in
 
 9. **One `worker` image for decoding**, separate from the
    standard-library ingest image.
-   - Contents: Ubuntu 24.04 with GDAL, eccodes, NumPy, pyproj, h5py and
-     PDAL, all from the distribution's packages. Those are built for
+   - Contents: PDAL, GDAL, eccodes, NumPy, pyproj and h5py, built for
      baseline x86-64, which matters on the server's older CPU, so pip's
      prebuilt wheels don't need checking.
+   - **Built Oct 7** (`ingest/Dockerfile.worker`, 2.75 GB) from
+     conda-forge rather than the distribution's packages: neither Ubuntu
+     24.04 nor Debian 13 packages PDAL any more. conda-forge also builds
+     for baseline x86-64, and PDAL 2.10 runs on the server. It adds
+     rasterio, SciPy, scikit-image and scikit-learn for the land-cover
+     spike.
    - Collectors stay standard library. Anything that decodes GRIB2,
      NetCDF, HDF5 or rasters runs in the worker.
    - A second image only when something heavy and rarely used arrives
