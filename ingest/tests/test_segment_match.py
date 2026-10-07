@@ -8,8 +8,11 @@ transaction and roll it back, so nothing is left behind.
 Run: python3 -m unittest discover -s ingest/tests -t .
 """
 
+import contextlib
+import io
 import os
 import unittest
+from unittest import mock
 
 from ingest import segment_match as sm
 
@@ -97,6 +100,31 @@ class RulesTest(unittest.TestCase):
         self.assertEqual(sorted(sm.matchers()), ["achd_msm", "compass_centerline", "itd_hpms", "osm_valley"])
         with self.assertRaises(ValueError):
             sm.rematch_all(None, ["nonesuch"])
+
+    def test_a_failing_matcher_is_rolled_back_and_the_rest_still_run(self):
+        class Conn:
+            commits = rollbacks = 0
+
+            def commit(self):
+                Conn.commits += 1
+
+            def rollback(self):
+                Conn.rollbacks += 1
+
+        def boom(conn):
+            raise RuntimeError("boom")
+
+        fake = {"a": (lambda conn: {"matched lines": 1}, ["a"], ["a"]), "b": (boom, ["b"], ["b"]),
+                "c": (lambda conn: {"matched lines": 2}, ["c"], ["c"])}
+        with mock.patch.object(sm, "matchers", return_value=fake), contextlib.redirect_stdout(io.StringIO()):
+            out = sm.rematch_all(Conn())
+        self.assertEqual(out, {"a": {"matched lines": 1}, "b": {"failed": "RuntimeError: boom"},
+                               "c": {"matched lines": 2}})
+        self.assertEqual((Conn.commits, Conn.rollbacks), (2, 1))
+        # Only the out-of-date ones, when asked.
+        with mock.patch.object(sm, "matchers", return_value=fake), \
+                mock.patch.object(sm, "stale", side_effect=lambda conn, s, r: s == ["c"]):
+            self.assertEqual(sm.rematch_all(Conn(), only_stale=True), {"c": {"matched lines": 2}})
 
 
 DB_URL = os.environ.get("TVT_TEST_DATABASE_URL")
@@ -188,6 +216,24 @@ class GeometryTest(unittest.TestCase):
         got = self.decided("buffer10_name")
         self.assertIsNotNone(got[(5, "M1")])
         self.assertIsNone(got[(5, "M2")])
+
+    def test_stale(self):
+        c = self.conn
+        c.execute("""insert into ops.source (name, title, url, access) values
+                     ('test_stale', 'test', 'https://example.invalid', 'open')""")
+        self.assertFalse(sm.stale(c, ["test_stale"]))                     # no records: nothing to match
+        c.execute("""insert into raw.record (source, source_id, version_hash, payload, first_seen, last_seen)
+                     values ('test_stale', 'x', '\\x01', '{}', now() - interval '2 hours', now())""")
+        self.assertTrue(sm.stale(c, ["test_stale"]))                      # records, no matches
+        seg = c.execute("""insert into core.road_segment (achd_perm_id, name, geom)
+                           values (-990199, 'Test', ST_Multi(ST_Transform(ST_GeomFromText(%s, 26911), 4326)))
+                           returning id""", (line((5000, 0), (5000, 100)),)).fetchone()[0]
+        c.execute("""insert into core.segment_match (road_segment_id, source, source_id, method, matched_at)
+                     values (%s, 'test_stale', 'x', 'buffer15_bearing20', now())""", (seg,))
+        self.assertFalse(sm.stale(c, ["test_stale"]))                     # matched since
+        c.execute("""insert into raw.record (source, source_id, version_hash, payload, first_seen, last_seen)
+                     values ('test_stale', 'x', '\\x02', '{}', now() + interval '1 minute', now())""")
+        self.assertTrue(sm.stale(c, ["test_stale"]))                      # a newer version of its own
 
     def test_rematch_rewrites_a_sources_matches_in_place(self):
         c = self.conn

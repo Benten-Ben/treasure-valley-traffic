@@ -56,6 +56,7 @@ By hand: python3 -m ingest.segment_match [itd_hpms achd_msm compass_centerline o
 import math
 import re
 import sys
+import traceback
 from difflib import SequenceMatcher
 
 MIN_SHARE = 0.6
@@ -320,35 +321,58 @@ def summary(stats):
     return total
 
 
-def stale(conn, sources):
-    """True when a source has no matches yet, or ACHD's segments have changed since its last match."""
-    last = conn.execute("select min(matched_at) from (select max(matched_at) as matched_at from core.segment_match "
-                        "where source = any(%s) group by source) s", (list(sources),)).fetchone()[0]
+def stale(conn, sources, raw_sources=None):
+    """True when a source's matches are out of date: it has records (raw_sources, by default
+    `sources`) but no matches, or its records or ACHD's segments have changed since its
+    oldest last match. A source with no records at all has nothing to match."""
+    raw_sources = list(raw_sources or sources)
+    if not conn.execute("select exists (select 1 from raw.record where source = any(%s) and removed_at is null)",
+                        (raw_sources,)).fetchone()[0]:
+        return False
+    last = conn.execute(
+        """select min(m.last) from unnest(%s::text[]) s(source)
+           left join lateral (select max(matched_at) as last from core.segment_match where source = s.source) m on true""",
+        (list(sources),)).fetchone()[0]
     if last is None:
         return True
-    newer = conn.execute("""select exists (select 1 from raw.record where source = 'achd_roads'
-                              and (first_seen > %s or removed_at > %s))""", (last, last)).fetchone()[0]
-    return bool(newer)
+    return bool(conn.execute(
+        """select exists (select 1 from raw.record where source = any(%s)
+                            and (first_seen > %s or removed_at > %s))""",
+        (raw_sources + ["achd_roads"], last, last)).fetchone()[0])
 
 
 def matchers():
-    """{source name: match(conn) -> stats} for every source matched to ACHD's segments."""
+    """{source name: (match(conn) -> stats, the match sources it writes, its raw sources)}
+    for every source matched to ACHD's segments."""
     from .sources import achd_msm, compass_centerline, itd_hpms, osm_valley
-    out = {m.SOURCE["name"]: m.match for m in (itd_hpms, achd_msm, compass_centerline)}
-    out[osm_valley.SOURCE["name"]] = osm_valley.match_achd_segments
-    return out
+    return {
+        "itd_hpms": (itd_hpms.match, itd_hpms.MATCH_SOURCES, itd_hpms.MATCH_SOURCES + [itd_hpms.NAMES_SOURCE]),
+        "achd_msm": (achd_msm.match, ["achd_msm"], ["achd_msm"]),
+        "compass_centerline": (compass_centerline.match, ["compass_centerline"], ["compass_centerline"]),
+        "osm_valley": (osm_valley.match_achd_segments, ["osm_valley"], ["osm_valley"]),
+    }
 
 
-def rematch_all(conn, names=None):
-    """Rematch every source (or the named ones), committing after each. Returns {name: stats}."""
+def rematch_all(conn, names=None, only_stale=False):
+    """Rematch every source (or the named ones; with only_stale, those whose matches are out
+    of date), committing after each. A matcher that fails is rolled back and logged, and the
+    rest still run; the failures are in the result. Returns {name: stats or {"failed": error}}."""
     found = matchers()
     unknown = [n for n in names or () if n not in found]
     if unknown:
         raise ValueError(f"unknown source(s): {', '.join(unknown)} (choose from {', '.join(found)})")
     out = {}
     for name in names or list(found):
-        out[name] = found[name](conn)
-        conn.commit()
+        match, sources, raw_sources = found[name]
+        try:
+            if only_stale and not stale(conn, sources, raw_sources):
+                continue
+            out[name] = match(conn)
+            conn.commit()
+        except Exception as err:
+            conn.rollback()
+            print(f"segment_match: {name} failed:\n{traceback.format_exc()}", flush=True)
+            out[name] = {"failed": f"{type(err).__name__}: {err}"[:300]}
     return out
 
 
@@ -361,6 +385,8 @@ def main(argv):
             sys.exit(str(err))
     for name, stats in results.items():
         print(f"{name} matching: " + ", ".join(f"{k} {v}" for k, v in stats.items()), flush=True)
+    if any("failed" in s for s in results.values()):
+        sys.exit(1)
 
 
 if __name__ == "__main__":

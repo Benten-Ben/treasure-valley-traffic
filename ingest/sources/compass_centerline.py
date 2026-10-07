@@ -3,7 +3,7 @@ posted speed, functional class and one-way (docs/09 §9.3).
 
 Open GIS layer on swidrdc.org (no robots.txt rules; the COMPASS open-data
 hub lists it with a disclaimer only; credit COMPASS), about 62,200 pieces
-read with ingest/arcgis.py, 2,000 IDs a request, with a pause between
+read with ingest/arcgis.py, 1,000 IDs a request, with a pause between
 requests. The server sometimes resets a connection: requests are retried
 with backoff.
 
@@ -28,7 +28,7 @@ check on the matcher.
 import json
 from collections import Counter
 
-from .. import arcgis, db, segment_match
+from .. import arcgis, db, segment_match, signal_devices
 
 LAYER = "https://swidrdc.org/arcgis/rest/services/COMPASSData/CommonFeatures/FeatureServer/0"
 HUB = "https://share-open-data-compassidaho.hub.arcgis.com/datasets/compassidaho::regionalcenterline-2"
@@ -45,6 +45,7 @@ SOURCE = {
 }
 
 MAX_PIECES = 100000          # the layer had 62,213 (Oct 6, 2026); far more would be a different layer
+BATCH = 1000                 # IDs per request: within swidrdc.org's page size
 VOLATILE = {"objectid", "globalid", "Shape__Length"}
 # Our columns; every other field goes into attributes.
 CORE_FIELDS = {"pm_id", "strtconcat", "county", "funcclass", "postspeed", "lanes", "oneway"}
@@ -132,6 +133,8 @@ on conflict (global_id) do update set
 
 def store(conn, fetch_id, seen_at, features):
     records, rows, counts = parse(features)
+    # An empty or cut-off layer would retire most rows (and could pass for a republish): refuse it.
+    signal_devices.check_snapshot(conn, "core.compass_segment", "true", (), len(rows), SOURCE["name"])
     republish, carried = arcgis.carry_over(conn, label="compass_centerline", source=SOURCE["name"],
                                            table="core.compass_segment", id_column="global_id", records=records,
                                            key_fields=REPUBLISH_KEY)
@@ -180,11 +183,11 @@ def match(conn):
 def run(conn):
     db.ensure_source(conn, SOURCE)
     with db.Fetch(conn, SOURCE["name"]) as f:
-        features, f.bytes, f.http_status, f.robots = arcgis.fetch_layer(LAYER, SOURCE["name"], batch=2000,
+        features, f.bytes, f.http_status, f.robots = arcgis.fetch_layer(LAYER, SOURCE["name"], batch=BATCH,
                                                                         precision=6, max_features=MAX_PIECES)
         stats, changed = store(conn, f.id, f.started_at, [arcgis.esri_feature(x) for x in features])
         f.records = stats["pieces"]
-    if changed or segment_match.stale(conn, [SOURCE["name"]]):
-        stats.update({f"match {k}": v for k, v in match(conn).items()})
-        conn.commit()
+        # Inside the fetch: if matching fails, the store rolls back with it and the run is retried.
+        if changed or segment_match.stale(conn, [SOURCE["name"]]):
+            stats.update({f"match {k}": v for k, v in match(conn).items()})
     return stats

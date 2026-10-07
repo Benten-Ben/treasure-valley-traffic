@@ -23,6 +23,7 @@ keeps its rows).
 """
 
 import hashlib
+import http.client as http_client
 import json
 import math
 import time
@@ -32,7 +33,7 @@ from datetime import datetime, timezone
 
 from . import http
 
-BATCH = 500          # features per request: under every server's maxRecordCount (1,000 or 2,000)
+BATCH = 500          # IDs per request; keep it at or under the layer's maxRecordCount
 PAUSE_S = 2.0        # between requests to the same layer
 RETRY_WAITS_S = (10, 30, 60)
 MAX_FEATURES = 50000 # more IDs than this isn't a layer we expect: fail (callers can raise it)
@@ -74,17 +75,25 @@ def by_ids_url(layer, ids, precision=None):
     return layer + "/query?" + urllib.parse.urlencode(q)
 
 
-def get_with_retries(url, label, get=None, waits=RETRY_WAITS_S, sleep=time.sleep):
-    """http.get, retried with backoff on a network error, a 5xx or an unreadable robots.txt.
-    A real robots.txt disallow and other HTTP errors are not retried."""
+# A cut-off body (IncompleteRead, or JSON that doesn't parse) is retried like a network error.
+RETRYABLE = (http.RobotsUnavailable, OSError, http_client.IncompleteRead, json.JSONDecodeError)
+
+
+def get_with_retries(url, label, get=None, waits=RETRY_WAITS_S, sleep=time.sleep, parse=None):
+    """http.get, retried with backoff on a network error, a 5xx, an unreadable robots.txt or
+    a cut-off body. A real robots.txt disallow and other HTTP errors are not retried. With
+    parse, returns (status, body, decision, parse(body)), parsing inside the retry."""
     get = get or (lambda u: http.get(u, timeout=180))
     for wait in tuple(waits) + (None,):
         try:
-            return get(url)
-        except (http.RobotsUnavailable, OSError) as err:
+            status, body, decision = get(url)
+            if parse is None:
+                return status, body, decision
+            return status, body, decision, parse(body)
+        except RETRYABLE as err:
             if wait is None or (isinstance(err, urllib.error.HTTPError) and err.code < 500):
                 raise
-            print(f"{label}: {err}; retrying in {wait} s", flush=True)
+            print(f"{label}: {type(err).__name__}: {err}; retrying in {wait} s", flush=True)
             sleep(wait)
 
 
@@ -108,10 +117,24 @@ def fetch_layer(layer, label, *, where="1=1", box=None, batch=BATCH, pause_s=PAU
     """Every feature of a layer (or of its rows matching `where` and touching `box`), each
     once, in ID order, as Esri JSON. Returns (features, bytes, http status, robots decision).
     Raises RuntimeError if the layer doesn't come back whole. stats, if given, gets
-    'listed' and 'by_id' (listed rows a range answer left out, fetched by ID)."""
-    status, body, decision = get_with_retries(ids_url(layer, where, box), label, get, sleep=sleep)
-    data = _parse(body, layer)
-    nbytes = len(body)
+    'listed' and 'by_id' (listed rows a range answer left out, fetched by ID).
+
+    Answers come in ID order, so a listed ID below the highest one an answer brings
+    was left out of it (with a box, it lies outside): it's fetched by ID. IDs above
+    it stay pending, since the answer may have been cut at the server's page size;
+    a cut answer shrinks the batch to that size. An answer with none of its range's
+    IDs sends the range to be fetched by ID, and a by-ID request that brings none of
+    its IDs fails the fetch."""
+    nbytes, status, decision = 0, None, None
+
+    def fetch(url):
+        nonlocal nbytes, status, decision
+        status, body, decision, data = get_with_retries(url, label, get, sleep=sleep,
+                                                        parse=lambda b: _parse(b, layer))
+        nbytes += len(body)
+        return data
+
+    data = fetch(ids_url(layer, where, box))
     oid_field = data.get("objectIdFieldName") or "OBJECTID"
     ids = sorted({int(i) for i in data.get("objectIds") or []})
     if len(ids) > max_features:
@@ -119,7 +142,8 @@ def fetch_layer(layer, label, *, where="1=1", box=None, batch=BATCH, pause_s=PAU
     wanted = set(ids)
     got, by_id = {}, []
     pending = ids
-    requests, max_requests = 0, 2 * (len(ids) // batch + 1) + 2
+    requests = 0
+    max_requests = 2 * (len(ids) // batch + 1) + 2
     while pending:
         requests += 1
         if requests > max_requests:
@@ -127,31 +151,38 @@ def fetch_layer(layer, label, *, where="1=1", box=None, batch=BATCH, pause_s=PAU
                                f"{requests - 1} requests")
         chunk = pending[:batch]
         sleep(pause_s)
-        status, body, decision = get_with_retries(
-            query_url(layer, oid_field, chunk[0], chunk[-1], where, box, precision), label, get, sleep=sleep)
-        data = _parse(body, layer)
-        nbytes += len(body)
-        for f in data.get("features") or []:
+        data = fetch(query_url(layer, oid_field, chunk[0], chunk[-1], where, box, precision))
+        features = data.get("features") or []
+        answered = []
+        for f in features:
             oid = object_id(f.get("attributes") or {}, oid_field)
-            if oid in wanted and oid not in got:
-                got[oid] = f
-        left = [i for i in chunk if i not in got]
-        if left and (not _exceeded(data) or len(left) == len(chunk)):
-            # A complete answer that leaves listed IDs out won't bring them next time (with a box,
-            # they lie outside it); neither will a server that ignores the query. Try them by ID.
-            by_id += left
+            if oid in wanted:
+                got.setdefault(oid, f)
+                if chunk[0] <= oid <= chunk[-1]:
+                    answered.append(oid)
+        if not answered:
+            by_id += chunk                       # outside the box, or the server ignored the query
+        else:
+            top = max(answered)
+            by_id += [i for i in chunk if i < top and i not in got]
+            if _exceeded(data) and 0 < len(features) < batch:
+                batch = len(features)            # the server's page size is smaller: ask for that many
+                max_requests = requests + 2 * (len(pending) // batch + 1) + 2
         queued = set(by_id)
         pending = [i for i in pending if i not in got and i not in queued]
     for k in range(0, len(by_id), BY_ID_CHUNK):
+        chunk = by_id[k:k + BY_ID_CHUNK]
         sleep(pause_s)
-        status, body, decision = get_with_retries(by_ids_url(layer, by_id[k:k + BY_ID_CHUNK], precision), label,
-                                                  get, sleep=sleep)
-        data = _parse(body, layer)
-        nbytes += len(body)
+        data = fetch(by_ids_url(layer, chunk, precision))
+        arrived = 0
         for f in data.get("features") or []:
             oid = object_id(f.get("attributes") or {}, oid_field)
-            if oid in wanted and oid not in got:
+            if oid in chunk and oid not in got:
                 got[oid] = f
+                arrived += 1
+        if not arrived:
+            raise RuntimeError(f"{layer}: none of IDs {chunk[:5]}... came back by ID (the server ignored "
+                               "the query, or the layer changed while we read it)")
     lost = [i for i in ids if i not in got]
     if lost:
         raise RuntimeError(f"{layer}: {len(lost)} of the {len(ids)} listed features never came back "
