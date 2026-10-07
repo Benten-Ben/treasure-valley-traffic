@@ -30,8 +30,8 @@ export const DELAYS = [60, 90, 120, 180, 300] as const;
 export const DEFAULT_DELAY = 90;
 /** Polls whose offsets make the median. */
 export const OFFSET_SAMPLES = 5;
-/** No new GPS for this long (s): the pill says the feed has stalled. */
-export const STALL_S = 150;
+/** No new GPS for this long (s): the pill says the feed has stalled (the chips' ▲ uses the same 2 minutes). */
+export const STALL_S = 120;
 
 const DELAY_KEY = 'delay';
 const isDelay = (v: unknown): v is number => typeof v === 'number' && (DELAYS as readonly number[]).includes(v);
@@ -234,7 +234,7 @@ export class Clock {
 			case 'paused':
 				return `PAUSED −${minSec(this.behind)}`;
 			case 'replay':
-				return `REPLAY ${clockText(this.T).replace(/:\d\d (AM|PM)/, ' $1')}`;
+				return `REPLAY · ${dayText(this.T)}`;
 			case 'behind':
 				return `BEHIND −${minSec(this.behind)}`;
 			case 'stalled':
