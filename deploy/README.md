@@ -64,7 +64,24 @@ yet, so it must not be exposed to the internet.
 ## Updating
 
 ```bash
-cd /srv/tvt/repo
-git pull        # or push to it from a checkout
-docker compose -f deploy/docker-compose.yml up -d --build
+# push main to /srv/tvt/repo from a checkout (the server has no GitHub access), then:
+cd /srv/tvt/repo/deploy
+docker compose up -d --build <services>
 ```
+
+Run Compose from `deploy/` **without `-f`**, so it reads `COMPOSE_FILE` from
+`deploy/.env` and includes the overrides that are switched on (live images,
+the preview). With an explicit `-f`, the overrides are skipped.
+
+## Preview of main's app (UI v2)
+
+While UI v2 lands a wave at a time (docs/14 §14.10),
+[`compose.preview.yml`](compose.preview.yml) runs `main`'s app as `app-next`
+beside the live app:
+- the live app keeps the LAN port and the tailnet HTTPS name;
+- the preview is on LAN port 8081 and on port 8444 of the tailnet name.
+
+The live `app` stays pinned to the image tagged `tvt-app:live`, so a rebuild
+can't ship the unfinished UI. Both apps share the database, frames and tiles.
+The override's header has the commands to switch it on, update it and retire
+it at a checkpoint.
