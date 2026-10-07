@@ -1,0 +1,224 @@
+{
+ "displayFieldName": "Name",
+ "geometryType": "esriGeometryPolygon",
+ "spatialReference": {
+  "wkid": 4326,
+  "latestWkid": 4326
+ },
+ "fields": [
+  {
+   "name": "OBJECTID"
+  },
+  {
+   "name": "Name"
+  },
+  {
+   "name": "Stage"
+  },
+  {
+   "name": "Rstrct_Are"
+  },
+  {
+   "name": "Shape.STArea()"
+  },
+  {
+   "name": "Shape.STLength()"
+  },
+  {
+   "name": "last_edited_user"
+  },
+  {
+   "name": "last_edited_date"
+  },
+  {
+   "name": "DateEnacted"
+  },
+  {
+   "name": "DateRescinded"
+  },
+  {
+   "name": "UpcomingStage"
+  },
+  {
+   "name": "GlobalID"
+  },
+  {
+   "name": "Zones"
+  }
+ ],
+ "features": [
+  {
+   "attributes": {
+    "OBJECTID": 901,
+    "Name": "Example North Zone",
+    "Stage": "Stage I",
+    "Rstrct_Are": "Example Fire Restriction Area",
+    "Shape.STArea()": 1234567890.5,
+    "Shape.STLength()": 234567.8,
+    "last_edited_user": "EXAMPLE\\someone",
+    "last_edited_date": 1784129400000,
+    "DateEnacted": 1784124000000,
+    "DateRescinded": null,
+    "UpcomingStage": "Stage II",
+    "GlobalID": "{00000000-0000-4000-8000-00000000000a}",
+    "Zones": "Zone 1"
+   },
+   "geometry": {
+    "rings": [
+     [
+      [
+       -116.6,
+       43.4
+      ],
+      [
+       -116.6,
+       43.5
+      ],
+      [
+       -116.4,
+       43.5
+      ],
+      [
+       -116.4,
+       43.4
+      ],
+      [
+       -116.6,
+       43.4
+      ]
+     ]
+    ]
+   }
+  },
+  {
+   "attributes": {
+    "OBJECTID": 902,
+    "Name": "Example South Zone",
+    "Stage": "None",
+    "Rstrct_Are": "Example Fire Restriction Area",
+    "Shape.STArea()": 2234567890.5,
+    "Shape.STLength()": 334567.8,
+    "last_edited_user": "EXAMPLE\\someone",
+    "last_edited_date": 1788451200000,
+    "DateEnacted": 1788444060000,
+    "DateRescinded": null,
+    "UpcomingStage": null,
+    "GlobalID": "{00000000-0000-4000-8000-00000000000b}",
+    "Zones": ""
+   },
+   "geometry": {
+    "rings": [
+     [
+      [
+       -116.6,
+       43.0
+      ],
+      [
+       -116.6,
+       43.2
+      ],
+      [
+       -116.4,
+       43.2
+      ],
+      [
+       -116.4,
+       43.0
+      ],
+      [
+       -116.6,
+       43.0
+      ]
+     ],
+     [
+      [
+       -116.3,
+       43.0
+      ],
+      [
+       -116.3,
+       43.1
+      ],
+      [
+       -116.2,
+       43.1
+      ],
+      [
+       -116.2,
+       43.0
+      ],
+      [
+       -116.3,
+       43.0
+      ]
+     ],
+     [
+      [
+       -116.55,
+       43.05
+      ],
+      [
+       -116.45,
+       43.05
+      ],
+      [
+       -116.45,
+       43.15
+      ],
+      [
+       -116.55,
+       43.15
+      ],
+      [
+       -116.55,
+       43.05
+      ]
+     ]
+    ]
+   }
+  },
+  {
+   "attributes": {
+    "OBJECTID": 903,
+    "Name": "Example West Zone",
+    "Stage": "None",
+    "Rstrct_Are": "Another Example Area",
+    "Shape.STArea()": 3234567890.5,
+    "Shape.STLength()": 434567.8,
+    "last_edited_user": "EXAMPLE\\someone_else",
+    "last_edited_date": 1789113600000,
+    "DateEnacted": 1789113660000,
+    "DateRescinded": null,
+    "UpcomingStage": null,
+    "GlobalID": "{00000000-0000-4000-8000-00000000000c}",
+    "Zones": null
+   },
+   "geometry": {
+    "rings": [
+     [
+      [
+       -117.2,
+       43.5
+      ],
+      [
+       -117.2,
+       43.9
+      ],
+      [
+       -116.9,
+       43.9
+      ],
+      [
+       -116.9,
+       43.5
+      ],
+      [
+       -117.2,
+       43.5
+      ]
+     ]
+    ]
+   }
+  }
+ ]
+}
