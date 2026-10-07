@@ -70,6 +70,32 @@ describe('ground', () => {
 		expect(g.peek('a')).toBeCloseTo(1020, 9);
 	});
 
+	it('a height from older terrain data isn’t trusted for culling: the next frame queries it again', () => {
+		const g = new GroundTracker();
+		let queries = 0;
+		const q = (v: number) => () => (queries++, v);
+		// Queried before the DEM tile under it arrived: MapLibre answers 0.
+		g.begin();
+		expect(g.sample('a', -116, 43, q(0), 1.3, 0, false, 3, 1)).toBe(0);
+		// The same terrain data: the height stands (a still camera queries nothing).
+		expect(g.peek('a', 1)).toBe(0);
+		g.begin();
+		g.sample('a', -116, 43, q(9999), 1.3, 16, false, 3, 1);
+		expect(queries).toBe(1);
+		// The tile arrived (a new data epoch): no height to cull with, so it's drawn and queried again.
+		expect(g.peek('a', 2)).toBeUndefined();
+		expect(g.peek('a')).toBe(0);
+		g.begin();
+		expect(g.sample('a', -116, 43, q(1300), 1.3, 32, false, 4, 2)).toBe(0);
+		expect(queries).toBe(2);
+		// While it eases up, culling uses where it's going, not the eased height (or it could freeze off screen).
+		expect(g.tweening).toBe(true);
+		expect(g.peek('a', 2)).toBeCloseTo(1000, 9);
+		g.begin();
+		expect(g.sample('a', -116, 43, q(1300), 1.3, 32 + TWEEN_MS, false, 4, 2)).toBeCloseTo(1000, 9);
+		expect(queries).toBe(2);
+	});
+
 	it('under reduced motion heights jump', () => {
 		const g = new GroundTracker();
 		g.begin();

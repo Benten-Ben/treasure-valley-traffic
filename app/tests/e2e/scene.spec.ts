@@ -308,6 +308,66 @@ test.describe('scene', () => {
 		expect(after.stats.drawCalls).toBeGreaterThanOrEqual(1);
 	});
 
+	test('a model whose ground was read before its terrain tile arrived comes back when the tile does', { tag: '@wp9' }, async ({ page }) => {
+		test.setTimeout(600_000);
+		await openTest(page, `#map=16/${FOOTHILLS.center[1]}/${FOOTHILLS.center[0]}/20/55&layers=none`);
+		const frame = () =>
+			page.evaluate(
+				() =>
+					new Promise<{ instances: number; queries: number }>((resolve) => {
+						const map = (globalThis as any).__tvt.map;
+						map.once('render', () => {
+							const s = (globalThis as any).__tvtSceneTest.stats();
+							resolve({ instances: s.instances, queries: s.groundQueries });
+						});
+						map.triggerRepaint();
+					})
+			);
+		const before = await frame();
+		expect(before.instances).toBe(1000);
+		// As while DEM tiles load (after a context restore, or somewhere new): where MapLibre has no DEM it answers 0.
+		// The models sink toward 0, and those it puts off screen are culled (and so not read again).
+		await page.evaluate(() => {
+			const map = (globalThis as any).__tvt.map;
+			map.queryTerrainElevation = () => 0;
+			map.fire('sourcedata', { sourceId: map.getTerrain().source, dataType: 'source' });
+		});
+		let lost = before;
+		for (let i = 0; i < 6; i++) lost = await frame();
+		await page.screenshot({ path: screenPath('dem-missing.png') });
+		// The tile arrives: in the next frame every model is read again and drawn, culled or not.
+		const back = await page.evaluate(
+			() =>
+				new Promise<{ instances: number; queries: number }>((resolve) => {
+					const map = (globalThis as any).__tvt.map;
+					delete map.queryTerrainElevation;
+					map.once('render', () => {
+						const s = (globalThis as any).__tvtSceneTest.stats();
+						resolve({ instances: s.instances, queries: s.groundQueries });
+					});
+					map.fire('sourcedata', { sourceId: map.getTerrain().source, dataType: 'source' });
+					map.triggerRepaint();
+				})
+		);
+		await page.waitForTimeout(1000);
+		await mapReady(page);
+		const settled = await page.evaluate(async () => {
+			const t = (globalThis as any).__tvtSceneTest;
+			const s = await t.probe();
+			return { n: s.n, max: s.max, baseMax: s.baseMax, instances: t.stats().instances };
+		});
+		await page.screenshot({ path: screenPath('dem-arrived.png') });
+		record('dem-late.json', { before, lost, back, settled });
+		console.log(`DEM late: ${before.instances} drawn, ${lost.instances} while the DEM answered 0, ${back.instances} (${back.queries} reads) when it came, ${settled.n} settled within ${settled.max.toFixed(4)} px`);
+		expect(lost.instances, 'some models culled while the ground read 0').toBeLessThan(1000);
+		expect(back.instances, 'every model drawn the frame the tile arrives').toBe(1000);
+		expect(back.queries, 'every model read again').toBe(1000);
+		expect(settled.instances).toBe(1000);
+		expect(settled.n).toBe(1000);
+		expect(settled.max).toBeLessThanOrEqual(0.1);
+		expect(settled.baseMax).toBeLessThanOrEqual(0.2);
+	});
+
 	test('the hit radius is at least 14 px, and a 3D click selects the model, never also the route under it', { tag: '@wp9' }, async ({ page }) => {
 		test.setTimeout(600_000);
 		await openTest(page, '#map=15.5/43.6150/-116.2023/0/30&layers=transit');

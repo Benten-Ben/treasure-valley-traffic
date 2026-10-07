@@ -37,6 +37,8 @@ interface Track {
 	/** The terrain epoch and exaggeration it was sampled at. */
 	epoch: number;
 	exag: number;
+	/** The terrain-data epoch (DEM tiles arrived or terrain was set) it was last queried in. */
+	data: number;
 }
 
 /**
@@ -63,22 +65,32 @@ export class GroundTracker {
 		if (this.#frame % 600 === 0) for (const [k, t] of this.#tracks) if (this.#frame - t.seen > 600) this.#tracks.delete(k);
 	}
 
-	/** The true ground last shown under `id`, if any. */
-	peek(id: string): number | undefined {
-		return this.#tracks.get(id)?.shown;
+	/**
+	 * The true ground last queried under `id` (where it's easing to), if any:
+	 * what the scene culls with. Not the eased height, so a model easing up
+	 * from off screen isn't culled (and so frozen) halfway. With `data` (≥ 0),
+	 * only if it was queried in that terrain-data epoch: a height queried
+	 * before the DEM tile under it arrived (MapLibre answers 0 then) isn't
+	 * trusted.
+	 */
+	peek(id: string, data = -1): number | undefined {
+		const t = this.#tracks.get(id);
+		if (!t || (data >= 0 && t.data !== data)) return undefined;
+		return t.to;
 	}
 
 	/**
 	 * True ground under `id` at (lng, lat): the drawn ground (exaggerated, a
 	 * number or a function that queries it) divided by `exag`. A still object
 	 * eases to a changed value; one that moved, or wasn't drawn in the last
-	 * frame, takes it at once. With the same `epoch` (≥ 0), exaggeration and
-	 * position as last time, the ground isn't queried again.
+	 * frame, takes it at once. With the same `epoch` (≥ 0), terrain-data epoch
+	 * `data`, exaggeration and position as last time, the ground isn't queried
+	 * again.
 	 */
-	sample(id: string, lng: number, lat: number, drawn: number | (() => number), exag: number, now: number, reducedMotion = false, epoch = -1): number {
+	sample(id: string, lng: number, lat: number, drawn: number | (() => number), exag: number, now: number, reducedMotion = false, epoch = -1, data = -1): number {
 		const t = this.#tracks.get(id);
 		const frame = this.#frame;
-		if (t && epoch >= 0 && t.epoch === epoch && t.exag === exag && t.lng === lng && t.lat === lat && frame - t.seen <= 1) {
+		if (t && epoch >= 0 && t.epoch === epoch && t.data === data && t.exag === exag && t.lng === lng && t.lat === lat && frame - t.seen <= 1) {
 			t.seen = frame;
 			return this.#advance(t, now);
 		}
@@ -86,12 +98,12 @@ export class GroundTracker {
 		const d = typeof drawn === 'number' ? drawn : drawn();
 		const target = exag > 0 ? d / exag : 0;
 		if (!t) {
-			this.#tracks.set(id, { lng, lat, shown: target, from: target, to: target, t0: now, seen: frame, epoch, exag });
+			this.#tracks.set(id, { lng, lat, shown: target, from: target, to: target, t0: now, seen: frame, epoch, exag, data });
 			return target;
 		}
 		const away = frame - t.seen > 1;
 		const moved = t.lng !== lng || t.lat !== lat;
-		Object.assign(t, { lng, lat, seen: frame, epoch, exag });
+		Object.assign(t, { lng, lat, seen: frame, epoch, exag, data });
 		if (moved || away || reducedMotion) {
 			t.shown = t.from = t.to = target;
 			return target;

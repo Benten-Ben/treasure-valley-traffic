@@ -290,6 +290,8 @@ export class Scene implements HitSource {
 	#selectedKey = '';
 	/** Bumped when the drawn ground may have changed (camera moved, terrain tiles or settings changed). */
 	#epoch = 0;
+	/** Bumped only when terrain data changed (DEM tiles arrived, terrain set, context restored): heights queried before aren't trusted for culling. */
+	#dataEpoch = 0;
 	#selectedAt = 0;
 	#cleanup: (() => void)[] = [];
 	#times: number[] = [];
@@ -327,6 +329,8 @@ export class Scene implements HitSource {
 		const onLost = () => this.#lose();
 		// MapLibre rebuilds its style after a restore and drops custom layers: add ours again once it's back.
 		const onRestored = () => {
+			this.#epoch++;
+			this.#dataEpoch++;
 			const readd = () => {
 				try {
 					addSceneLayer(map, this.#layer);
@@ -339,21 +343,25 @@ export class Scene implements HitSource {
 		};
 		// The drawn ground changes only when the camera moves, terrain tiles arrive or terrain is set.
 		const bump = () => void this.#epoch++;
+		const bumpData = () => {
+			this.#epoch++;
+			this.#dataEpoch++;
+		};
 		const onSource = (e: { sourceId?: string }) => {
-			if (e.sourceId && e.sourceId === map.getTerrain()?.source) this.#epoch++;
+			if (e.sourceId && e.sourceId === map.getTerrain()?.source) bumpData();
 		};
 		map.on('resize', onResize);
 		map.on('webglcontextlost', onLost);
 		map.on('webglcontextrestored', onRestored);
 		map.on('move', bump);
-		map.on('terrain', bump);
+		map.on('terrain', bumpData);
 		map.on('sourcedata', onSource);
 		this.#cleanup.push(() => {
 			map.off('resize', onResize);
 			map.off('webglcontextlost', onLost);
 			map.off('webglcontextrestored', onRestored);
 			map.off('move', bump);
-			map.off('terrain', bump);
+			map.off('terrain', bumpData);
 			map.off('sourcedata', onSource);
 		});
 		const d = this.#deps;
@@ -579,9 +587,10 @@ export class Scene implements HitSource {
 
 		/** True ground under a point (eased), and the drawn base height for a true height (or the ground). */
 		const epoch = this.#epoch;
+		const data = this.#dataEpoch;
 		const groundAt = (id: string, lng: number, lat: number, groundAlt: number | undefined, fallback: number) => {
 			if (!terrain) return groundAlt ?? fallback;
-			return this.#ground.sample(id, lng, lat, () => map.queryTerrainElevation([lng, lat]) ?? 0, exag, now, still, epoch);
+			return this.#ground.sample(id, lng, lat, () => map.queryTerrainElevation([lng, lat]) ?? 0, exag, now, still, epoch, data);
 		};
 		const zAt = (id: string, lng: number, lat: number, alt: number | undefined, groundAlt: number | undefined) => {
 			const g = groundAt(id, lng, lat, groundAlt, alt ?? 0);
@@ -607,8 +616,10 @@ export class Scene implements HitSource {
 				const sv = typeof inst.scale === 'number' ? this.#sv.fill(inst.scale) : (inst.scale ?? ONES);
 				let s = selected ? SELECT_SCALE * (1 + 0.08 * pulse) : 1;
 				const lift = (inst.lift ?? 0) + (selected ? SELECT_LIFT : 0);
-				// Off screen (judged at the height it was last drawn at): neither drawn, picked nor queried for its ground.
-				const prev = terrain ? this.#ground.peek(inst.id) : undefined;
+				// Off screen (judged on the ground last read under it): neither drawn, picked nor queried for its ground.
+				// That reading counts only from the current terrain data: one taken before its DEM tile arrived
+				// (0) could place it off screen for good, since a culled model isn't read again.
+				const prev = terrain ? this.#ground.peek(inst.id, data) : undefined;
 				if (prev !== undefined || !terrain) {
 					const approx = terrain ? (inst.alt === undefined ? exag * prev! : renderedZ(inst.alt, prev!, exag)) : zAt(inst.id, inst.lng, inst.lat, inst.alt, inst.groundAlt);
 					offset(f, mx, my, approx + lift, local);
