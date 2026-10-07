@@ -361,6 +361,9 @@ test.describe('flavors', () => {
 		await page.keyboard.press('Escape');
 		await page.keyboard.press('4');
 		await expect.poll(async () => (await info(page)).flavor).toBe('clay');
+		// Let Transit's first draw settle: under a loaded SwiftShader the page can starve the
+		// animation frames Playwright's click waits on.
+		await mapReady(page);
 		await toolbar(page).getByRole('button', { name: 'Base' }).click();
 		await expect(pop.getByText('Now Clay: a data layer is on')).toBeVisible();
 	});
