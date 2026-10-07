@@ -15,6 +15,7 @@ const def: LayerDef = {
 	prefetch: (ctx) => {
 		void ctx.dataUrl('/api/cameras', 'cameras').then(prefetch);
 		void ctx.dataUrl('/api/calibrations', 'calibrations').then(prefetch);
+		void ctx.dataUrl('/api/cameras/views', 'cameras').then(prefetch);
 	},
 	load: () => import('./index.svelte.js').then((m) => m.create())
 };

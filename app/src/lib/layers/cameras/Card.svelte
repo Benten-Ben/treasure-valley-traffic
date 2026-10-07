@@ -17,7 +17,7 @@
 <h2>{cam.name}</h2>
 <p class="meta">
 	<i class="dot {cam.status.replace('_', '-')}" aria-hidden="true"></i>{STATUS_SHAPE[cam.status]}
-	{STATUS_TEXT[cam.status]}{#if cam.achdCamId}<span class="num"> · ACHD #{cam.achdCamId}</span>{/if}{#if recorded}<span> · recorded</span>{/if}
+	{STATUS_TEXT[cam.status]}{#if cam.achdCamId}{' · '}<span class="num">ACHD #{cam.achdCamId}</span>{/if}{#if recorded}{' · recorded'}{/if}
 </p>
 <div class="row">
 	<button class="pill" onclick={() => cams.open(cam.id)}>{cams.windowOf(cam.id) === null ? 'Open its window' : 'Show its window'}</button>
