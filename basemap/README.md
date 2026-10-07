@@ -17,7 +17,7 @@ The contract is `BasemapManifest` in
 | Terrain (2.5D) | USGS 3DEP 1 m DEM (read at its 2 m level), newest survey wins; a 0.2° ring of the ~10 m 3DEP DEM around it; the ~30 m 1 arc-second DEM for z6–10 across the whole z6 tile (about 5.6° × 4.1°), so the zoomed-out view has no edge in sight | `terrain.pmtiles` (terrain-RGB, 512-px PNG, z6–14, about 3.5 m per pixel at z14) | ✅ Built Oct 5: 1,030 MB, 7,820 tiles (z6–10 from the wide layer). Re-tiling from the kept elevation rasters (`--skip-warp`) takes about 18 minutes on 4 cores. |
 | Terrain, re-encoded | `terrain.pmtiles`, tile for tile (`terrain_reencode.py`): heights rounded to 1 m up to z10, 0.5 m at z11, 0.4 m at z12, 0.2 m at z13 and not at all at z14 (never more than half a step off), then lossless WebP | `terrain-webp-YYYYMMDD.pmtiles` (the same 7,820 tiles and zooms, `format: webp`), plus a copy of `manifest.json` that points at it | ✅ Built locally Oct 6 in 7 minutes on 3 cores: 1,030 → 568 MB (−44.9%); first load at the default view 8.64 → 4.57 MB (terrain 7.69 → 3.63 MB). Every tile decoded and checked. The steps were tuned by before/after screenshots: coarser ones drew contour lines across flat ground. Not on the server yet: the lead runs it at deploy. |
 | Buildings with heights | Overture 2026-09-23.1 buildings | `buildings.pmtiles` (z14–15) | ✅ Built Oct 5: 351,776 buildings, 83% with heights, 14 MB |
-| Imagery | USDA NAIP. Valley-wide: Idaho 0.6 m, July 2023 (the Oregon edge 0.3 m, 2022), from Microsoft Planetary Computer (anonymous token), each image's ~2.4 m level. Detail: **NAIP 2025 at 0.3 m** from USDA's image service (`--detail-source usda`), one export per zoom-16 block, one at a time, 2.5 s apart. | `imagery.pmtiles` (512-px WebP, z8–14, ~3.5 m at z14) and `imagery-detail.pmtiles` (z15–18, ~0.22 m at z18, within 250 m of the 228 cameras and 150 m of COMPASS's 585 signals, so around 813 points; drawn over the valley layer) | `imagery.py`: tested on a sample (full-resolution tiles checked against the source pixels). ✅ Valley built Oct 5 in about 7 minutes (173 MB). ✅ Detail rebuilt Oct 7 from NAIP 2025: 1,232 exports in about 95 minutes, 13,958 tiles, 398 MB; 0.85 m from NAIP 2023 at Eagle & Fairview. Its absolute position is still unchecked ([below](#naip-2025-detail-layer-oct-67)). |
+| Imagery | USDA NAIP. Valley-wide: Idaho 0.6 m, July 2023 (the Oregon edge 0.3 m, 2022), from Microsoft Planetary Computer (anonymous token), each image's ~2.4 m level. Detail: **NAIP 2025 at 0.3 m** from USDA NRCS's county mosaics for Ada and Canyon (MrSID; `naip_ccm.py` and `imagery_county.py`, below). Before Oct 7 the detail came from USDA's image service (`--detail-source usda`), one export per zoom-16 block, one at a time, 2.5 s apart. | `imagery.pmtiles` (512-px WebP, z8–14, ~3.5 m at z14) and `imagery-detail.pmtiles` (z15–17, ~0.43 m at z17, across all of Ada and Canyon; z18, ~0.22 m, within 250 m of the 228 cameras and 150 m of COMPASS's 585 signals, so around 813 points; drawn over the valley layer) | `imagery.py`: tested on a sample (full-resolution tiles checked against the source pixels). ✅ Valley built Oct 5 in about 7 minutes (173 MB). ✅ Detail rebuilt Oct 7 from NAIP 2025: 1,232 exports in about 95 minutes, 13,958 tiles, 398 MB; 0.85 m from NAIP 2023 at Eagle & Fairview. ✅ **County-wide Oct 7:** 1,030 windows, 154,338 tiles, 5.6 GB ([below](#county-wide-detail-from-the-naip-county-mosaics-oct-7)). Its absolute position is still unchecked ([below](#naip-2025-detail-layer-oct-67)). |
 
 Background on all of these: [docs/09](../docs/09-base-map-data.md).
 
@@ -175,6 +175,65 @@ What went wrong, and what the scripts do now.
   0.85 m from NAIP 2023 at Eagle & Fairview). Before NAIP 2025 positions are
   trusted for camera calibration, check them against our lidar terrain.
   Not done yet.
+
+## County-wide detail from the NAIP county mosaics (Oct 7)
+
+The owner chose to cover all of Ada and Canyon at zoom 17 (DECISIONS,
+Oct 7). USDA NRCS publishes NAIP as one compressed county mosaic per county
+on its public Box share (`nrcs.app.box.com/v/naip`, 2025 → ID → id_m):
+`ortho_1-1_hm_s_id001_2025_1` (Ada) and `…id027…` (Canyon), each a zip
+holding one MrSID MG4 file at 0.3 m with **five bands: red, green, blue,
+near-infrared and the county mask** (255 inside). The TIFF the decoder
+writes calls band 4 "alpha"; it's near-infrared.
+
+**Reading MrSID.** Our GDAL can't. LizardTech's MrSID Decode SDK can: free,
+closed source, licensed for internal use only, so it's **never included in
+this repo** and is run only inside a throwaway container with no network,
+as an unprivileged user, with read-only mounts. Its `mrsiddecode` cuts any
+window out at any power-of-two scale.
+
+**Steps** (the decoder in its container, GDAL in the official
+`ghcr.io/osgeo/gdal` image, `pmtiles` from Protomaps):
+1. Decode the whole county at 1/32 (`mrsiddecode -s 5`, about 10 s).
+2. `python3 basemap/naip_ccm.py plan overview.tif --size W H --prefix ada >
+   windows.txt`: one line per 8,192 px window (2.5 km) holding county
+   pixels. Ada: 630 of 714; Canyon: 400 of 672.
+3. `basemap/naip_ccm_decode.sh` (decoder container) decodes each window,
+   about 4–7 s each and 335 MB raw, pausing while three wait, while
+   `python3 basemap/naip_ccm.py convert raw/ tifs/` (GDAL container) turns
+   each into a JPEG GeoTIFF (RGB, quality 90, YCbCr, 512 px blocks) with the
+   county mask as its internal mask and deletes the raw window. Ada took 54
+   minutes, Canyon 43; the windows came to 14 GB.
+4. `python3 basemap/imagery_county.py --tifs tifs/ --detail
+   cameras.geojson@250 --detail compass-signals.geojson@150 --manifest
+   tiles/manifest.json --out new/ --workers 6 [--resume]`: every zoom-17
+   tile touching a window is rendered (cubic, 512 px WebP at quality 82) and
+   kept unless it's fully outside the counties; zooms 16 and 15 by
+   shrinking; zoom 18 within the points' radius. `--resume` keeps the tiles
+   already built.
+5. Swap the new `imagery-detail.pmtiles` and `manifest.json` into the served
+   tiles folder, keeping the old file as a backup, then delete the windows.
+
+**Result (Oct 7):** 154,338 tiles (63,472 at z17 in the last pass, 27,790
+at z16, 7,099 at z15, plus z18 around the points), **5.6 GB**, about half
+the 10 GB estimate. Spot checks: lane lines, crosswalks, cars and the
+mast-arm shadow at Eagle & Fairview (z18); fields, a golf course and houses
+west of Nampa (z17); downtown Boise (z15).
+
+**Memory: run it with a hard cap and outside the nightly roll-up.** The
+first tile run (5 workers, no memory limit) started at 00:31 MDT next to the
+camera roll-up's video encodes and ran the server out of memory for about
+20 minutes; it was reset and recovered. The build now waits until no video
+encodes have run for 5 minutes and runs inside `docker run --memory 6g
+--memory-swap 6g` (about 1.7 GB used at 3 workers). At 3 workers it ran
+about 15 MB of tiles a minute; 6 workers took the rest (69,699 tiles tried)
+in 78 minutes.
+
+**Kept:** the two county files (8.5 GB) and the decoder stay on the server
+until land cover is designed: they're the only copy of the near-infrared
+band at 0.3 m ([ch. 16 §16.3](../docs/16-ideas-and-personas.md#163-what-the-aerial-imagery-could-do-oct-6-brainstorm)).
+**Not done yet:** refreshing the valley-wide layer (z8–14) with NAIP 2025
+inside the counties; it's still NAIP 2023.
 
 ## Licenses and credit
 
