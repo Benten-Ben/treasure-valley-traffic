@@ -72,7 +72,10 @@ what to build next:
 ## 16.2 Ideas by persona
 
 Each persona lists what they'd see, the data it needs, the plugin it would
-live in, and its status as of Oct 7.
+live in, and its status as of Oct 7. The Oct 7 source research for the
+owner's interests (verified source catalogs, a first thing to build per
+persona, and open questions) is in [chapter 17](17-sources-for-new-plugins.md)
+and [docs/sources/](sources/).
 
 ### Aviation watcher (`aircraft`; the first new plugin)
 
@@ -137,7 +140,9 @@ Aircraft are genuinely transportation, so this plugin is in scope.
     seasons;
   - dispersed-camping rules, mining claims, grazing allotments.
 - **Trails:** Ridge to Rivers with its mud closures ⚠️, plus OpenStreetMap
-  trails (loaded Oct 7) and Forest Service trails.
+  and Forest Service trails. The Oct 7 OpenStreetMap load kept roads only;
+  paths, footways and the Greenbelt need a separate pass
+  ([ch. 17](17-sources-for-new-plugins.md)).
 - **Water:**
   - Boise River flows from USGS gauges (float season opens around 1,500
     cfs ⚠️);
@@ -181,8 +186,11 @@ Aircraft are genuinely transportation, so this plugin is in scope.
 
 ### Cyclist and pedestrian (`safety`, `roads`)
 
-- **Infrastructure:** bike lanes and the Greenbelt, from OpenStreetMap's bike
-  tags (loaded Oct 7) and city data.
+- **Infrastructure:** bike lanes and the Greenbelt, from ACHD's and COMPASS's
+  bike and pedestrian layers (ACHD has already scored Level of Traffic Stress)
+  and OpenStreetMap. The Oct 7 OpenStreetMap load kept roads only: on-street
+  bike tags on major roads are recorded, but paths, footways and the Greenbelt
+  need a separate pass ([ch. 17](17-sources-for-new-plugins.md)).
 - **Crashes:** bike and pedestrian crashes. COMPASS's crash data records the
   road-user type, and that type may be published (DECISIONS, Oct 6).
 - **Sidewalk gaps,** and **scooter-share feeds** where they're published ⚠️.
@@ -358,7 +366,7 @@ them after UI v2 gives the most persona value per hour.
 | Full replay (time bar, 60x and 600x, scrubbing) | aviation, commuter, history, hazards | Deferred; the tracks contract is done |
 | Search (places, roads, cameras, routes, trailheads) | everyone | Deferred; "places and search" is core (§15.1) |
 | The Valley Feed (a stream of events) | commuter, hazards, civic | Deferred |
-| A regular OpenStreetMap load | cyclist, hiker, lanes, Canyon County | First load done by hand Oct 7; weekly hand downloads until Geofabrik answers |
+| A regular OpenStreetMap load | cyclist, hiker, lanes, Canyon County | First load done by hand Oct 7, roads only (paths, footways and points of interest aren't loaded yet); weekly hand downloads until Geofabrik answers |
 | The 3D engine | aviation, cameras, 3D weather, 3D trees | UI v2 WP9 (wave D) |
 | Readings and lifecycles (§15.1) | weather, water, gardening, hazards, trails | Core design; displays come with the time-series card and the Valley Feed |
 
@@ -390,8 +398,13 @@ fog and precipitation reconstructed from radar and other data as volumes,
 - fog layers from fog products and visibility;
 - particles for rain and snow.
 
-It would all be synced to the replay clock. A phased design, MVP first, will
-be added here once the research is verified.
+It would all be synced to the replay clock. The verified research (Oct 7)
+turned this into a phased design, MVP first: radar volumes from MRMS when it's
+raining, then HRRR clouds checked against GOES, then fog, inversions and
+smoke, then particles, lightning and wind. It's in
+[chapter 17](17-sources-for-new-plugins.md), with the sources in
+[sources/weather.md](sources/weather.md) and
+[sources/weather-3d.md](sources/weather-3d.md).
 
 ## 16.6 Research analyses from data we already record
 

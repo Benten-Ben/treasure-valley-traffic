@@ -124,6 +124,31 @@ signal nodes with no COMPASS match and need review
 | Probe speeds (NPMRDS, INRIX) | ITD, COMPASS | Partnership |
 | Police crash narratives | Police, ITD | $7 per report, or records request |
 
+## Candidate sources for new plugins (researched Oct 7)
+
+For the owner's interests beyond traffic, 306 sources were researched on
+Oct 7 and checked against their official pages, robots.txt and terms
+(160 confirmed, 134 corrected, 7 unverifiable). None is approved: they go
+to the owner one at a time. The recommendations, the first thing to build
+per persona, the sources to avoid and why, and the open questions are in
+[chapter 17](17-sources-for-new-plugins.md). The catalogs:
+
+| Theme | Catalog | Sources |
+|---|---|---|
+| Weather (radar, satellite, models, observations, climate) | [sources/weather.md](sources/weather.md) | 30 |
+| Weather in 3D (data and rendering) | [sources/weather-3d.md](sources/weather-3d.md) | 31 |
+| Fire and hazards (smoke, alerts, floods, quakes, drought) | [sources/hazards.md](sources/hazards.md) | 34 |
+| Wildlife | [sources/wildlife.md](sources/wildlife.md) | 28 |
+| Sky (sun, moon, glare, satellites, night sky) | [sources/sky.md](sources/sky.md) | 43 |
+| Gardening (sun and shade, frost, soil, water) | [sources/gardening.md](sources/gardening.md) | 32 |
+| Farms and crops | [sources/farm.md](sources/farm.md) | 29 |
+| Land ownership and permissions | [sources/lands.md](sources/lands.md) | 22 |
+| Trails, camping and recreation | [sources/trails.md](sources/trails.md) | 29 |
+| Cycling and walking | [sources/cycling.md](sources/cycling.md) | 28 |
+
+Several of them keep only their current state, so their history exists only
+if we poll from now on (ch. 17 §17.1).
+
 ## Suggested order
 
 1. **Signals and intersections** (COMPASS's signals, ACHD's poles,
