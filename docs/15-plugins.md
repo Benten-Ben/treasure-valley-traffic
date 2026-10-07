@@ -6,9 +6,9 @@ chapter splits the code into a **core** that every subject needs and
 **plugins**, one per subject. Some plugins may be **private**, for data
 we're allowed to use but not to share.
 
-Status: the boundary and private plugins were agreed on Oct 7, 2026
-([DECISIONS](DECISIONS.md)). The plugin list (§15.4) and the refactor plan
-(§15.6) are proposals for the owner to approve.
+Status: agreed with the owner on Oct 7, 2026 ([DECISIONS](DECISIONS.md)):
+the boundary, private plugins, the plugin list after one more pass (§15.4)
+and the refactor plan (§15.6), which the lead carries out step by step.
 
 ## 15.1 What's core
 
@@ -29,6 +29,37 @@ Core is everything a plugin needs, and nothing tied to one subject:
 - **Licensing and visibility:** every source states its license and whether
   we may republish it, and every plugin is public or private (§15.3).
 - **Deploy:** Compose, Caddy, migrations, backups.
+
+The rule for anything else: it moves into core when any subject could use
+it, or when two plugins already need it. By that rule, four more pieces
+are core:
+
+- **Three shapes of time.** Everything we collect is one of:
+  - **tracks**: things that move (buses; aircraft next), §15.5;
+  - **readings**: values at a fixed place over time (counts, road weather,
+    river flows, camera frames);
+  - **lifecycles**: things that start and end (work zones, incidents,
+    closures, flight and fire restrictions, trail mud closures), today's
+    `evt.event`.
+  Core owns all three contracts and their generic displays: the player for
+  tracks, a time-series card for readings, and the Valley Feed and "what
+  was active at this moment" for lifecycles. A new plugin mostly fills
+  them.
+- **Evidence and review.** Intersections are built from several sources
+  with confidence, candidates and a review file; lanes pick a winner per
+  segment with conflicts flagged. Land ownership, trails and aircraft
+  identity will need the same. Core gives entities one way to carry
+  evidence and confidence, and one review table for human decisions
+  (confirm, retire, hold until new evidence), replacing per-plugin files
+  such as `ingest/intersection_reviews.json`.
+- **Places and search.** Each plugin adds its searchable names (roads,
+  intersections, stops, cameras, trailheads, airports) to one index.
+- **Areas.** The valley box and the regional ring become named areas;
+  aircraft want a circle of about 250 km, lands the national forest. Each
+  plugin says which area it covers.
+
+The base map's streets (for drawing) are core; the road network as data
+(ACHD's segments, lanes) is the `roads` plugin.
 
 ## 15.2 What a plugin is
 
@@ -112,27 +143,36 @@ The private files we already have fit this: the ACHD table tools and
 copies, the 511 probe, the parcels copy and its terms, and the camera
 sampler.
 
-## 15.4 The plugins we already have (proposal)
+## 15.4 The plugins we already have
 
 | Plugin | What's in it today | Depends on | Visibility |
 |---|---|---|---|
 | `roads` | ACHD's road segments and the road tiles (`/api/tiles/roads`, the Streets layer's data), the lane inventories (ITD HPMS, ACHD's Master Street Map, COMPASS's centerline), OpenStreetMap's ways, lanes and signal nodes, the shared segment matcher, `core.segment_lanes`, and the coming Lanes layer | — | public (OSM parts ODbL) |
-| `signals` | COMPASS's signals and Regional_Signals, ACHD's 2022 signal points, the intersection build and its reviews, FRA rail crossings and their links | `roads` | public, internal until COMPASS answers |
+| `intersections` | Everywhere traffic streams meet and are controlled: COMPASS's signals and Regional_Signals, ACHD's 2022 signal points (signals, beacons, school and fire signals), the intersection build and its reviews, FRA rail crossings and their links; later roundabouts | `roads` | public, internal until COMPASS answers |
 | `cameras` | ACHD's camera list, 511's views, the key-camera and road-weather frame streams, daily videos, the video library, calibration | `roads` | public (images not republished) |
 | `transit` | VRT's GTFS and live positions, route matching, ribbons, progress, tracks | `roads` | public |
-| `conditions` | ITD's work zones (WZDx), the 511 API (events, message signs, advisories, road weather, truck restrictions, winter roads) | `roads` | public (511 data internal) |
-| `safety` | COMPASS's crashes and high-injury network; crash people in `restricted` | `roads`, `signals` | public, aggregates only for people |
-| `demand` | COMPASS's counts, congestion measures and commute times, traffic zones, permits and plats | `roads` | public (congestion internal) |
-| `achd-tables` | ACHD's count and turn-movement copies and their tools | `signals` | **private** |
-| `parcels` | Ada County Assessor parcels and characteristics, aggregates by corridor | `roads` | **private** |
+| `conditions` | Live road conditions: ITD's work zones (WZDx), the 511 API (events, message signs, advisories, road weather, truck restrictions, winter roads) | `roads` | public (511 data internal) |
+| `safety` | COMPASS's crashes and high-injury network; crash people in `restricted` | `roads`, `intersections` | public, aggregates only for people |
+| `flow` | How traffic moves: COMPASS's counts, congestion measures and commute travel times; later speeds from buses and GPS drives | `roads` | public (congestion internal) |
+| `development` | Why traffic will change: COMPASS's traffic zones and forecasts, building permits and plats; later Boise's development pipeline | — | public |
+| `achd-tables` | ACHD's count and turn-movement copies and their tools (extends `flow`) | `flow`, `intersections` | **private** |
+| `parcels` | Ada County Assessor parcels and characteristics, aggregates by corridor | `development` | **private** |
 
-Together, `roads` through `demand` make up "traffic". They're separate
-plugins so each can be switched off, tested and documented on its own.
-A "traffic" lens can still turn several on at once.
+Lenses group plugins: **Traffic** (roads, intersections, cameras,
+conditions, safety, flow), **Transit**, **Land** (development and the
+coming lands and trails, with parcels for the owner) and **Sky** (the
+coming aircraft).
+
+Considered and rejected: plugins by agency (ACHD, COMPASS, ITD), because
+subjects cross agencies; one big "traffic" plugin, because cameras alone
+are most of the storage and should switch off on their own. Earlier drafts
+had `signals` (rail crossings fit better under `intersections`) and a
+`demand` grab bag (now `flow` and `development`).
 
 Staying in core: `basemap/` (terrain, imagery, streets, buildings), the
-GL and 3D engine, the tracks contract and player, the layer system, the
-ingest framework, `core.source_link`, deploy and `tools/check_public.py`.
+GL and 3D engine, the three time contracts and their displays, evidence
+and review, places and search, areas, the layer system, the ingest
+framework, `core.source_link`, deploy and `tools/check_public.py`.
 
 ## 15.5 Tracks: one contract for everything that moves
 
@@ -169,8 +209,10 @@ sources, tables and URLs), with every test green, before the next one starts.
    - `LayerId` is opened up to whatever plugins register.
    Screenshots and the existing end-to-end specs must match before and after.
 3. **Private plugins:**
-   - the private GitHub repo is created (the owner creates it, or approves
-     that we do) and checked out on the server;
+   - the private repo starts on the server (`/srv/tvt/plugins-private`,
+     Oct 7); the owner approved a private GitHub copy, which needs the
+     owner to create the repo and give Claude's GitHub app access to it
+     (this session's GitHub access can't create repositories);
    - Compose gets the extra build context;
    - the private tools and parcels move into `achd-tables` and `parcels`;
    - `check_public` gets its new rule.

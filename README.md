@@ -34,7 +34,7 @@ historical data layers.
 | 12 | [Database schema v1 (draft)](docs/12-database-schema.md) | PostGIS + TimescaleDB layout: sources and fetches, raw record versions, our own intersection and camera IDs, time series, event lifecycles; decisions for review |
 | 13 | [Visual design](docs/13-visual-design.md) | The app as a friendly, game-inspired command center: lenses, the Valley Feed, time replay, camera wall, type and color |
 | 14 | [UI v2: one map, every layer](docs/14-ui-v2.md) | The rebuilt map interface: one persistent map, layers, live images, playback, 3D buses and cameras, windows |
-| 15 | [Core and plugins](docs/15-plugins.md) | What every subject needs (base map, time and playback, layers, ingest framework) versus plugins per subject (roads, signals, cameras, transit, conditions, safety, demand; later aircraft, lands, trails), private plugins, and the refactor plan |
+| 15 | [Core and plugins](docs/15-plugins.md) | What every subject needs (base map, time and playback, layers, ingest framework) versus plugins per subject (roads, intersections, cameras, transit, conditions, safety, flow, development; later aircraft, lands, trails), private plugins, and the refactor plan |
 
 **Working files:**
 
