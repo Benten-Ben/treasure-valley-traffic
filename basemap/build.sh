@@ -6,13 +6,27 @@
 #
 # Terrain and buildings are separate steps, still to come (see README.md).
 #
-# Needs: pmtiles (go-pmtiles CLI), git, curl, python3.
+# Needs: pmtiles (go-pmtiles CLI), git, curl, python3, gzip.
 # Usage: basemap/build.sh            # output in data/tiles/
 #        TILES_DIR=/srv/tvt/tiles basemap/build.sh
+#        basemap/build.sh --precompress-glyphs   # only step 2b, on an existing folder
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 OUT=${TILES_DIR:-data/tiles}
+
+# Glyphs precompressed: a .gz beside each range, which Caddy serves to
+# browsers that accept gzip (file_server { precompressed gzip }; docs/14 §14.9,
+# fix 6). The ranges are protobuf, which Caddy's encode doesn't compress.
+precompress_glyphs() {
+	find "$1/fonts" -type f -name '*.pbf' -print0 | xargs -0 gzip -9 -n -k -f
+	echo "precompressed $(find "$1/fonts" -type f -name '*.pbf.gz' | wc -l | tr -d ' ') glyph ranges in $1/fonts"
+}
+if [[ ${1:-} == --precompress-glyphs ]]; then
+	[[ -d "$OUT/fonts" ]] || { echo "no $OUT/fonts: build the basemap first" >&2; exit 1; }
+	precompress_glyphs "$OUT"
+	exit 0
+fi
 BBOX=${BBOX:--117.05,43.00,-115.95,43.85}   # west,south,east,north: Ada + Canyon counties
 CENTER=${CENTER:--116.40,43.60}
 MAXZOOM=${MAXZOOM:-15}
@@ -44,6 +58,8 @@ git -C "$tmp/assets" sparse-checkout set --no-cone "${patterns[@]}"
 git -C "$tmp/assets" checkout --quiet
 rm -rf "$OUT/fonts" "$OUT/sprites"
 cp -r "$tmp/assets/fonts" "$tmp/assets/sprites" "$OUT/"
+# 2b. Glyphs precompressed (see precompress_glyphs above).
+precompress_glyphs "$OUT"
 
 # 3. Manifest. Later steps (terrain, buildings) add their own entries.
 python3 - "$OUT" "$BBOX" "$CENTER" "$BUILD" "$FLAVOR" <<'EOF'

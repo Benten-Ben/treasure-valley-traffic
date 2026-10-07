@@ -10,11 +10,20 @@
 	# The app to proxy to is the snippet's argument: app:3000 for the live
 	# app, app-next:3000 for the preview (compose.preview.yml).
 	# Basemap output from basemap/ (PMTiles, fonts, sprites, manifest.json).
-	# file_server answers HTTP range requests, which PMTiles depends on.
+	# file_server answers HTTP range requests, which PMTiles depends on, with
+	# strong ETags. manifest.json is always revalidated, so a rebuilt basemap
+	# shows up at once; glyphs go out gzipped from the .gz files basemap/build.sh
+	# writes beside them (docs/14 §14.9, fix 6). The app's dev and preview
+	# server mirrors this block: app/src/lib/server/tiles-static.ts.
 	handle_path /tiles/* {
 		root * /srv/tiles
-		header Cache-Control "public, max-age=3600"
-		file_server
+		@manifest path /manifest.json
+		@files not path /manifest.json
+		header @manifest Cache-Control "no-cache"
+		header @files Cache-Control "public, max-age=3600"
+		file_server {
+			precompressed gzip
+		}
 	}
 
 	# The camera video library (deploy/library/). The videos are 511 Idaho's
