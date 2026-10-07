@@ -14,7 +14,9 @@ smoke, air and alerts").
 
 Each run (every 30 minutes):
 1. reads the month's directory listing (one ~2 KB request; two in a month's
-   first days), whose times are UTC (they match each file's "Generated" stamp);
+   first days), whose times are UTC (they match each file's "Generated" stamp).
+   A new month's folder that isn't there yet (404) lists nothing; a listing
+   that names no smoke files at all fails the run;
 2. downloads a watched file (today, yesterday and the day before, UTC) only
    if the listing shows it changed since we last saw it, or we never have;
 3. a file whose smoke is unchanged only moves last_seen. A changed one is
@@ -26,6 +28,9 @@ Each run (every 30 minutes):
    Records of that day that the new version no longer has get removed_at: each
    file is a full snapshot of its own day, so the latest version of every
    record of a day is the one with removed_at null.
+Each day is stored on its own: a day whose file fails (missing, cut off,
+refused) stores nothing, the other days are still stored, and the run then
+fails naming that file, so ops.fetch logs it.
 
 A polygon's source_id is its day, satellite, imagery window, density and
 ordinal among the ring's polygons with those four (e.g.
@@ -47,6 +52,7 @@ import json
 import math
 import os
 import re
+import urllib.error
 import urllib.parse
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
@@ -55,7 +61,7 @@ from ingest import db, http
 
 HOST = "satepsanone.nesdis.noaa.gov"
 BASE = f"https://{HOST}/pub/FIRE/web/HMS/Smoke_Polygons/KML/"
-RING = (-117.30, 42.90, -115.60, 44.30)     # west, south, east, north: the regional ring (DECISIONS, Oct 5-6)
+RING = (-117.30, 42.90, -115.60, 44.30)     # west, south, east, north: the regional ring (DECISIONS; adopted Oct 7)
 WATCH_DAYS = 3                              # today, yesterday (final about 10:00 UTC today), and a day's margin
 CHANGE_MARGIN = timedelta(minutes=10)       # the listing's minute resolution plus clock skew
 SNAPSHOT_MIN_SHARE = 0.5                    # a day's file may grow; one that loses half its polygons is refused
@@ -415,8 +421,8 @@ def records(day, parsed, box=RING):
 
 def check_file_snapshot(previous, n, label):
     """Refuse a day's file that lost most of the polygons its last version had: a day's analysis
-    grows, so that looks like a cut-off file. The fetch fails and nothing is stored (the file is
-    already archived)."""
+    grows, so that looks like a cut-off file. Nothing of that day is stored (the file is already
+    archived), and the run fails once the other days are done."""
     if previous is not None and previous >= SNAPSHOT_GUARD_FROM and n < SNAPSHOT_MIN_SHARE * previous:
         raise RuntimeError(f"{label}: only {n} polygons against {previous} in its last version; "
                            f"not taken as the day's snapshot")
@@ -485,44 +491,60 @@ def poll(conn, fetch, seen_at, root):
     stats = {"files watched": len(days), "not listed yet": 0, "unchanged per listing": 0, "downloaded": 0,
              "unchanged": 0, "changed": 0, "archived": 0 if root else "off (TVT_ARCHIVE not set)",
              "record versions new": 0, "removed": 0, "polygons in ring": 0}
-    listing, nbytes, touched = {}, 0, 0
-    for year, month in sorted({(d.year, d.month) for d in days}):
-        status, body, decision = http.get(month_url(year, month), timeout=60, compressed=True)
+    listing, nbytes, touched, failed = {}, 0, 0, []
+    months = sorted({(d.year, d.month) for d in days})
+    for year, month in months:
+        try:
+            status, body, decision = http.get(month_url(year, month), timeout=60, compressed=True)
+        except urllib.error.HTTPError as err:
+            if err.code == 404 and (year, month) != months[0]:
+                continue        # a new month's folder may not exist yet in the first hours of the 1st (UTC)
+            raise
         nbytes += len(body)
         fetch.http_status, fetch.robots, fetch.bytes = status, decision, nbytes
         listing.update(parse_listing(body))
+    if not listing:
+        raise ValueError("the month's listing names no smoke files; has its format changed?")
     for day in days:
         name = file_name(day)
         if name not in listing:
             stats["not listed yet"] += 1
             continue
-        held = current(conn, day)
-        if held and not needs_download(listing[name], held[1]):
-            touched += heartbeat(conn, day, seen_at)
-            stats["unchanged per listing"] += 1
-            stats["polygons in ring"] += held[0].get("in_ring", 0)
-            continue
-        status, body, decision = http.get(file_url(day), timeout=120, compressed=True)
-        nbytes += len(body)
-        fetch.http_status, fetch.robots, fetch.bytes = status, decision, nbytes
-        stats["downloaded"] += 1
-        parsed = parse_kml(body, day)
-        if held and held[0].get("content_sha256") == parsed["content_sha256"]:
-            touched += heartbeat(conn, day, seen_at)
-            stats["unchanged"] += 1
-            stats["polygons in ring"] += held[0].get("in_ring", 0)
-            continue
-        if archive(root, day, parsed, body):
-            stats["archived"] += 1
-        check_file_snapshot(held[0].get("polygons") if held else None, len(parsed["placemarks"]),
-                            f"{SOURCE['name']} {name}")
-        counts = store(conn, fetch.id, seen_at, day, parsed)
-        touched += counts["new"] + counts["unchanged"]
-        stats["changed"] += 1
-        stats["record versions new"] += counts["new"]
-        stats["removed"] += counts["removed"]
-        stats["polygons in ring"] += counts["in_ring"]
+        try:
+            with conn.transaction():        # one day's failure doesn't hold back the others
+                held = current(conn, day)
+                if held and not needs_download(listing[name], held[1]):
+                    touched += heartbeat(conn, day, seen_at)
+                    stats["unchanged per listing"] += 1
+                    stats["polygons in ring"] += held[0].get("in_ring", 0)
+                    continue
+                status, body, decision = http.get(file_url(day), timeout=120, compressed=True)
+                nbytes += len(body)
+                fetch.http_status, fetch.robots, fetch.bytes = status, decision, nbytes
+                stats["downloaded"] += 1
+                parsed = parse_kml(body, day)
+                if held and held[0].get("content_sha256") == parsed["content_sha256"]:
+                    touched += heartbeat(conn, day, seen_at)
+                    stats["unchanged"] += 1
+                    stats["polygons in ring"] += held[0].get("in_ring", 0)
+                    continue
+                if archive(root, day, parsed, body):
+                    stats["archived"] += 1
+                check_file_snapshot(held[0].get("polygons") if held else None, len(parsed["placemarks"]),
+                                    "this version")
+                counts = store(conn, fetch.id, seen_at, day, parsed)
+                touched += counts["new"] + counts["unchanged"]
+                stats["changed"] += 1
+                stats["record versions new"] += counts["new"]
+                stats["removed"] += counts["removed"]
+                stats["polygons in ring"] += counts["in_ring"]
+        except Exception as err:
+            failed.append(f"{name}: {type(err).__name__}: {err}")
     fetch.records = touched
+    if failed:
+        conn.commit()       # keep the days that went through; the run is still logged as failed
+        raise RuntimeError(f"{len(failed)} of {len(days)} files failed (the others were stored): "
+                           + "; ".join(failed))
     return stats
 
 

@@ -58,13 +58,21 @@ no map layer yet.
     version) get `removed_at`, so a day's current records are the ones
     with `removed_at` null. An unchanged file only moves `last_seen`.
   - A changed file with less than half the polygons of its last version
-    (once that had 5 or more) is refused: the fetch fails and nothing is
-    written, though the file is already archived. A day's analysis only
-    grows, so that looks like a cut-off file.
+    (once that had 5 or more) is refused: nothing of that day is written,
+    though the file is already archived. A day's analysis only grows, so
+    that looks like a cut-off file.
+  - Each day is stored on its own: a day whose file is refused, cut off or
+    missing doesn't hold back the others. They're stored, then the run
+    fails naming the file, so `ops.fetch` logs it, and the file is tried
+    again on the next run.
+  - A new month's folder may not exist yet in the first hours of the 1st
+    (UTC), so until then its listing (404) counts as empty. A listing that
+    names no smoke files at all fails the run.
 - **The ring:** west −117.30, south 42.90, east −115.60, north 44.30, the
-  regional ring proposed in [DECISIONS](../../docs/DECISIONS.md) and used by
-  the 511 sources. A polygon counts if it meets the ring (a real
-  intersection test, not just bounding boxes).
+  regional ring in [DECISIONS](../../docs/DECISIONS.md), adopted for the new
+  plugins' regional data on Oct 7 and used by the 511 sources. A polygon
+  counts if it meets the ring (a real intersection test, not just bounding
+  boxes).
 
 **Caveats to carry into any use** (hazards.md): HMS shows smoke anywhere in
 the column, not at the ground, so it isn't air quality; analyses are daytime

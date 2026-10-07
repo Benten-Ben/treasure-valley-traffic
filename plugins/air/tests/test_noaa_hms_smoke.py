@@ -9,10 +9,12 @@ is the real same-day file as it stood at 13:43 UTC, before the first analysis; l
 is the folder's index at 14:35 UTC on Oct 7. The polygons over the ring below are made up.
 """
 
+import contextlib
 import gzip
 import os
 import tempfile
 import unittest
+import urllib.error
 from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest import mock
@@ -290,14 +292,31 @@ class ArchiveTest(unittest.TestCase):
 
 
 class FakeHttp:
-    def __init__(self, files):
-        self.files, self.urls = files, []
+    def __init__(self, files, missing=()):
+        self.files, self.missing, self.urls = files, missing, []
 
     def get(self, url, timeout=90, compressed=False):
         self.urls.append(url)
+        if url in self.missing:
+            err = urllib.error.HTTPError(url, 404, "Not Found", {}, None)
+            err.close()                 # nothing to read; keeps unittest's ResourceWarning quiet
+            raise err
         if url.endswith("/"):
             return 200, fixture("listing_2026_10.html"), "no_rules"
         return 200, self.files[url.rsplit("/", 1)[1]], "no_rules"
+
+
+class FakeConn:
+    """Stands in for the connection when the database calls are stubbed."""
+
+    def __init__(self):
+        self.commits = 0
+
+    def transaction(self):
+        return contextlib.nullcontext()
+
+    def commit(self):
+        self.commits += 1
 
 
 class PollTest(unittest.TestCase):
@@ -311,9 +330,10 @@ class PollTest(unittest.TestCase):
                       "hms_smoke20261007.kml": fixture("hms_smoke20261007_early.kml")}
         self.http = FakeHttp(self.files)
         self.fetch = SimpleNamespace(id=1, http_status=None, robots=None, bytes=None, records=None)
+        self.conn = FakeConn()
         self.stored = []
 
-    def poll(self, held, root=None):
+    def poll(self, held, root=None, seen=None):
         def store(conn, fetch_id, seen_at, day, parsed):
             self.stored.append(day)
             return {"new": 1, "unchanged": 0, "removed": 0, "in_ring": len(hms.records(day, parsed)[1])}
@@ -321,7 +341,7 @@ class PollTest(unittest.TestCase):
                 mock.patch.object(hms, "current", lambda conn, day: held.get(day)), \
                 mock.patch.object(hms, "heartbeat", lambda conn, day, seen: 1), \
                 mock.patch.object(hms, "store", store):
-            return hms.poll(None, self.fetch, self.SEEN, root)
+            return hms.poll(self.conn, self.fetch, seen or self.SEEN, root)
 
     def held(self, day, last_seen, **payload):
         parsed = hms.parse_kml(self.files[hms.file_name(day)], day)
@@ -358,10 +378,21 @@ class PollTest(unittest.TestCase):
         held = {OCT5: self.held(OCT5, datetime(2026, 10, 7, 14, 5, tzinfo=UTC)),
                 OCT6: self.held(OCT6, earlier, polygons=200, content_sha256="0" * 64)}
         with tempfile.TemporaryDirectory() as root:
-            with self.assertRaisesRegex(RuntimeError, "only 4 polygons against 200"):
+            with self.assertRaisesRegex(RuntimeError, r"1 of 3 files failed .*hms_smoke20261006\.kml: "
+                                                      r"RuntimeError: .*only 4 polygons against 200"):
                 self.poll(held, root)
-            self.assertEqual(len(os.listdir(os.path.join(root, "air", "hms", "2026", "10"))), 1)
-        self.assertEqual(self.stored, [])
+            # Oct 6 is archived but not stored; Oct 7 still goes through, and is kept before the run fails.
+            self.assertEqual(len(os.listdir(os.path.join(root, "air", "hms", "2026", "10"))), 2)
+        self.assertEqual((self.stored, self.conn.commits), ([OCT7], 1))
+
+    def test_a_broken_file_does_not_hold_back_the_other_days(self):
+        self.files["hms_smoke20261005.kml"] = self.files["hms_smoke20261005.kml"][:200]           # cut off
+        self.http.missing = {hms.file_url(OCT6)}                                                   # listed, gone
+        with self.assertRaisesRegex(RuntimeError, r"2 of 3 files failed") as caught:
+            self.poll({})
+        self.assertIn("hms_smoke20261005.kml: ValueError: not a complete KML", str(caught.exception))
+        self.assertIn("hms_smoke20261006.kml: HTTPError", str(caught.exception))
+        self.assertEqual((self.stored, self.fetch.records, self.conn.commits), ([OCT7], 1, 1))
 
     def test_a_day_not_listed_yet_is_skipped(self):
         del self.files["hms_smoke20261007.kml"]
@@ -370,11 +401,30 @@ class PollTest(unittest.TestCase):
             stats = self.poll({})
         self.assertEqual((stats["not listed yet"], stats["downloaded"]), (1, 2))
 
+    def test_a_new_month_not_there_yet(self):
+        # 00:10 UTC on Nov 1: November's folder may not exist yet.
+        nov1 = datetime(2026, 11, 1, 0, 10, tzinfo=UTC)
+        self.http.missing = {hms.month_url(2026, 11)}
+        stats = self.poll({}, seen=nov1)
+        self.assertEqual(self.http.urls, [hms.month_url(2026, 10), hms.month_url(2026, 11)])
+        self.assertEqual((stats["not listed yet"], stats["downloaded"]), (3, 0))   # the fixture stops at Oct 7
+        # The oldest watched day's month missing is an error.
+        self.http.missing = {hms.month_url(2026, 10)}
+        with self.assertRaises(urllib.error.HTTPError):
+            self.poll({}, seen=nov1)
+
+    def test_a_listing_naming_no_files_fails_the_run(self):
+        with mock.patch.object(hms, "parse_listing", lambda body: {}):
+            with self.assertRaisesRegex(ValueError, "names no smoke files"):
+                self.poll({})
+        self.assertEqual(self.stored, [])
+
 
 class ManifestTest(unittest.TestCase):
     def test_the_manifest_and_the_module_agree(self):
         plugin = manifest.load(PLUGIN)
         self.assertEqual((plugin.name, plugin.visibility, plugin.order, plugin.depends), ("air", "public", 61, []))
+        self.assertEqual(plugin.manifest["tables"], [])        # it owns none: its rows are in core's raw.record
         (entry,) = plugin.entries("source")
         self.assertEqual(entry["name"], hms.SOURCE["name"])
         self.assertEqual((entry["license"], entry["credit"]), (hms.SOURCE["license"], hms.SOURCE["credit"]))
@@ -465,6 +515,25 @@ class DatabaseTest(unittest.TestCase):
             stats = hms.poll(c, fetch2, later, None)
         self.assertEqual((stats["unchanged per listing"], stats["downloaded"], fetch2.records), (3, 0, 4))
         self.assertEqual(len(fake.urls), 5)          # two listings, three files once
+
+    def test_a_failed_day_rolls_back_alone(self):
+        c = self.conn
+        seen = datetime(2026, 10, 7, 14, 35, tzinfo=UTC)
+        files = {"hms_smoke20261005.kml": kml(placemarks=[placemark(BOISE)]),
+                 "hms_smoke20261006.kml": fixture("hms_smoke20261006_trimmed.kml")[:500],      # cut off
+                 "hms_smoke20261007.kml": fixture("hms_smoke20261007_early.kml")}
+        c.execute("delete from raw.record where source = %s and source_id similar to '2026100(6|7)%%'",
+                  (hms.SOURCE["name"],))
+        fetch = SimpleNamespace(id=self.fetch(seen), http_status=None, robots=None, bytes=None, records=None)
+        with mock.patch.object(hms.http, "get", FakeHttp(files).get), \
+                mock.patch.object(c, "commit") as commit:          # tearDown rolls everything back
+            with self.assertRaisesRegex(RuntimeError, r"1 of 3 files failed .*hms_smoke20261006\.kml: ValueError"):
+                hms.poll(c, fetch, seen, None)
+        commit.assert_called_once()
+        live = sorted(r[0] for r in c.execute(
+            """select source_id from raw.record where source = %s and removed_at is null
+               and source_id similar to '2026100(5|6|7)%%'""", (hms.SOURCE["name"],)).fetchall())
+        self.assertEqual(live, ["20261005", "20261005/GOES-WEST/20261005T1800Z-20261005T2100Z/light/1", "20261007"])
 
 
 if __name__ == "__main__":
