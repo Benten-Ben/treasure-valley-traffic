@@ -2,19 +2,29 @@
 	import { onMount } from 'svelte';
 	import type { AppCtx } from '#lib/app/context.js';
 	import type { Look } from '#lib/layers/manager.svelte.js';
+	import { GROUND } from '#lib/map/flavors.js';
 
 	/**
-	 * The Base popover (docs/14 §14.3, "Base"): Look (Auto · Map · Clay; Auto
-	 * means Clay whenever a data layer is on), Aerial, Buildings, Terrain and
-	 * Labels. Look drives the one temporary wash until WP4's flavors replace it.
+	 * The Base popover (docs/14 §14.3, "Base"; §14.5): Look (Auto · Map · Clay;
+	 * Auto means Clay whenever a data layer is on), Aerial, Buildings, Terrain
+	 * and Labels. Look picks the basemap flavor: Map is the Valley look, Clay
+	 * the pale backdrop for data, crossfading in 350 ms.
 	 */
 	let { app, onclose }: { app: AppCtx; onclose: () => void } = $props();
 	const base = $derived(app.layers.base.settings);
 	const looks: { id: Look; label: string; hint: string }[] = [
 		{ id: 'auto', label: 'Auto', hint: 'Clay whenever a data layer is on' },
-		{ id: 'map', label: 'Map', hint: 'The full-color map' },
-		{ id: 'clay', label: 'Clay', hint: 'Muted, so data stands out' }
+		{ id: 'map', label: 'Map', hint: 'The full-color valley' },
+		{ id: 'clay', label: 'Clay', hint: 'Pale and quiet, so data stands out' }
 	];
+	const flavor = $derived(app.layers.flavor);
+	const exploring = $derived(app.modes.current === 'explore');
+	/** What the Look does right now, in words. */
+	const now = $derived.by(() => {
+		if (!exploring) return 'Kept while this mode is open, with the photo in full color';
+		if (base.look === 'auto') return flavor === 'clay' ? 'Now Clay: a data layer is on' : 'Now Map: no data layer is on';
+		return base.look === 'clay' ? 'Clay, whatever is on' : 'Map, whatever is on';
+	});
 	let first: HTMLInputElement | undefined = $state();
 	onMount(() => first?.focus());
 </script>
@@ -34,11 +44,12 @@
 				</label>
 			{/each}
 		</div>
+		<p class="now" data-flavor={flavor}><i class="chip" style:background={flavor === 'clay' ? GROUND.clay : GROUND.valley} aria-hidden="true"></i>{now}</p>
 	</fieldset>
 	{#if app.manifest?.imagery}
 		<label class="switch">
 			<input type="checkbox" role="switch" checked={app.aerial} onchange={(e) => app.setAerial(e.currentTarget.checked)} />
-			<span>Aerial photos <small>(NAIP)</small></span>
+			<span>Aerial photos <small>(NAIP{flavor === 'clay' ? ', muted in Clay' : ''})</small></span>
 		</label>
 	{/if}
 	{#if app.manifest?.buildings}
@@ -59,6 +70,9 @@
 			<label><input type="radio" name="labels" value="full" checked={base.labels === 'full'} onchange={() => app.layers.setBase('labels', 'full')} /><span>Full</span></label>
 			<label><input type="radio" name="labels" value="fewer" checked={base.labels === 'fewer'} onchange={() => app.layers.setBase('labels', 'fewer')} /><span>Fewer</span></label>
 		</div>
+		{#if flavor === 'clay' && base.labels === 'full'}
+			<p class="now">Clay leaves out addresses, places of interest and minor street names</p>
+		{/if}
 	</fieldset>
 	<button class="done pill" onclick={onclose}>Done</button>
 </div>
@@ -119,6 +133,22 @@
 		box-shadow:
 			0 0 0 2px var(--ink),
 			0 0 0 5px var(--accent);
+	}
+	.now {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		margin: 6px 2px 0;
+		font-size: 12px;
+		line-height: 1.3;
+		color: var(--ink-soft);
+	}
+	.chip {
+		flex: none;
+		width: 12px;
+		height: 12px;
+		border-radius: 4px;
+		box-shadow: inset 0 0 0 1px #b9ad99;
 	}
 	.switch {
 		display: flex;

@@ -1,8 +1,8 @@
 import type { Map } from 'maplibre-gl';
 import { untrack } from 'svelte';
 import type { AppCtx } from '#lib/app/context.js';
-import { ANCHORS } from '#lib/map/order.js';
-import { BUILDINGS_LAYER } from '#lib/map/style.js';
+import type { FlavorName } from '#lib/map/flavors.js';
+import { BUILDINGS_LAYER, flavorDiff, flavorKit } from '#lib/map/style.js';
 import { ringSprite } from '#lib/overlay/sprites.js';
 import {
 	chooseLayers,
@@ -29,8 +29,9 @@ import type { Chip, LayerDef, LayerId, LayerModule, LayerStatus, Selection } fro
  * - While a mode (look-through, calibrate) owns the map, no data layer shows.
  * - Statuses for the toolbar and legends: idle, loading, ready, stale, error
  *   (with the reason, and Retry).
- * - It also holds the Base look (the Base popover) and the one temporary
- *   shared wash, which WP4's basemap flavors replace.
+ * - It also holds the Base look (the Base popover): the basemap flavor
+ *   (Valley or Clay, docs/14 §14.5; Auto means Clay whenever a data layer is
+ *   on), buildings, terrain and labels.
  */
 
 export type Look = 'auto' | 'map' | 'clay';
@@ -45,14 +46,8 @@ export interface BaseSettings {
 const BASE_KEY = 'base';
 const DEFAULT_BASE: BaseSettings = { look: 'auto', buildings: true, terrain: true, labels: 'full' };
 
-/** Basemap labels hidden by "Labels: fewer" (the same set Clay hides, §14.5). */
-export const FEWER_LABELS_HIDDEN = ['address_label', 'pois', 'roads_oneway', 'roads_labels_minor', 'roads_shields'];
-
-/** The temporary shared wash (removed by WP4's flavors): one layer, whatever is on. */
-export const WASH_LAYER = 'base-wash';
 const SELECTION_GROUP = 'selection';
 const SELECTION_RING = 'selection-ring';
-const WASH = { color: '#f6f0e6', opacity: 0.5 };
 
 const isBase = (v: unknown): v is BaseSettings => {
 	const b = v as BaseSettings;
@@ -72,7 +67,7 @@ export class BaseLook {
 		writeStored(BASE_KEY, this.settings);
 	}
 
-	/** Whether the clay wash shows: Clay, or Auto with any data layer on. */
+	/** Whether the map wants the Clay flavor: Clay, or Auto with any data layer on. */
 	clay(anyLayerOn: boolean): boolean {
 		const look = this.settings.look;
 		return look === 'clay' || (look === 'auto' && anyLayerOn);
@@ -84,7 +79,10 @@ export interface LayersInfo {
 	shown: LayerId[];
 	status: Record<string, LayerStatus>;
 	errors: Record<string, string | null>;
+	/** The Base look wants Clay (Clay, or Auto with a layer on). */
 	clay: boolean;
+	/** The flavor the map is drawn in now (a mode keeps the one it found). */
+	flavor: FlavorName;
 	selection: { kind: string; id: string; layer: string; title: string } | null;
 	/** WP1's lens-era fields, kept for its specs: the layer acted on last, and whether Transit and Cameras loaded. */
 	lens: LayerId | null;
@@ -164,7 +162,6 @@ export class LayerManager {
 			.then((map) => {
 				if (this.#destroyed) return;
 				this.#map = map;
-				this.#addWash(map);
 				this.#applyAll();
 				const prefetch = () => {
 					if (this.#destroyed) return;
@@ -205,17 +202,11 @@ export class LayerManager {
 	destroy(): void {
 		this.#destroyed = true;
 		this.#stopEffects?.();
+		this.#stopDrape?.();
 		for (const f of this.#cleanup.splice(0)) f();
 		for (const f of Object.values(this.#unpick)) f?.();
 		for (const m of Object.values(this.modules)) m?.destroy();
 		this.modules = {};
-		const map = this.#map;
-		try {
-			if (map?.getLayer(WASH_LAYER)) map.removeLayer(WASH_LAYER);
-			if (map?.getSource(WASH_LAYER)) map.removeSource(WASH_LAYER);
-		} catch {
-			/* the map is going away */
-		}
 	}
 
 	// --- the set ------------------------------------------------------------------
@@ -285,6 +276,7 @@ export class LayerManager {
 			status,
 			errors,
 			clay: this.base.clay(this.set.enabled.length > 0),
+			flavor: this.#map ? flavorKit().appliedFlavor(this.#map) : 'valley',
 			selection: sel ? { kind: sel.kind, id: sel.id, layer: sel.layer, title: sel.title } : null,
 			lens: this.set.last,
 			transit: ready('transit'),
@@ -362,20 +354,19 @@ export class LayerManager {
 
 	// --- the base look ------------------------------------------------------------------
 
-	#addWash(map: Map) {
-		if (map.getLayer(WASH_LAYER)) return;
-		map.addSource(WASH_LAYER, {
-			type: 'geojson',
-			data: { type: 'Polygon', coordinates: [[[-180, -85], [180, -85], [180, 85], [-180, 85], [-180, -85]]] }
-		});
-		map.addLayer(
-			{ id: WASH_LAYER, type: 'fill', source: WASH_LAYER, layout: { visibility: 'none' }, paint: { 'fill-color': WASH.color, 'fill-opacity': WASH.opacity } },
-			map.getLayer(ANCHORS.base) ? ANCHORS.base : undefined
-		);
+	/** The flavor the Base look wants (reactive): Clay, or Auto with a data layer on; otherwise Valley. */
+	get flavor(): FlavorName {
+		return this.base.clay(this.set.enabled.length > 0) ? 'clay' : 'valley';
 	}
+
+	/** Whether a flavor was applied to this map yet (the first goes in instantly, before the first frame). */
+	#flavored = false;
+	/** Stops keeping the terrain drape fresh after a crossfade. */
+	#stopDrape: (() => void) | null = null;
 
 	#applyBase() {
 		const map = this.#map;
+		const manifest = this.#ctx.manifest;
 		if (!map) return;
 		const exploring = this.#ctx.modes.current === 'explore';
 		const s = this.base.settings;
@@ -383,11 +374,29 @@ export class LayerManager {
 		const set = (id: string, on: boolean) => {
 			if (map.getLayer(id) && map.getLayoutProperty(id, 'visibility') !== vis(on)) map.setLayoutProperty(id, 'visibility', vis(on));
 		};
-		// In a mode the base belongs to the mode (calibration turns Aerial on, clay off).
-		if (!exploring) return set(WASH_LAYER, false);
-		set(WASH_LAYER, this.base.clay(this.set.enabled.length > 0));
+		// (The flavors module loads with the basemap style, so it's here whenever a map is.)
+		const kit = flavorKit();
+		// In a mode the base belongs to the mode (calibration turns Aerial on). It keeps the flavor it
+		// found: switching would lay the basemap out again, which drops its cached tiles, and the way
+		// back must find them (the persistent spec). It sees the photo in full color, though.
+		kit.setTrueColorPhoto(map, !exploring);
+		if (!exploring) return;
+		// The flavor (§14.5): a 350 ms crossfade, instant under reduced motion and the first time.
+		const flavor = this.flavor;
+		if (manifest) {
+			const duration = !this.#flavored || kit.prefersReducedMotion() ? 0 : kit.FLAVOR_FADE_MS;
+			if (kit.applyFlavor(map, flavorDiff(manifest), flavor, { duration }) && duration) {
+				// Frames for the whole crossfade, and a drape that follows it (terrain caches it otherwise).
+				this.#ctx.loop.tween('flavor', duration + 100);
+				this.#stopDrape?.();
+				this.#stopDrape = kit.keepDrapeFresh(map, duration + 100);
+			}
+			this.#flavored = true;
+		}
+		// Clay's hidden labels, which "Labels: fewer" hides in either flavor.
+		const hidden = kit.hiddenBaseLabels(flavor, s.labels);
+		for (const id of kit.CLAY_HIDDEN) set(id, !hidden.has(id));
 		set(BUILDINGS_LAYER, s.buildings);
-		for (const id of FEWER_LABELS_HIDDEN) set(id, s.labels === 'full');
 		const m = this.#ctx.manifest;
 		if (m?.terrain) {
 			const t = map.getTerrain();

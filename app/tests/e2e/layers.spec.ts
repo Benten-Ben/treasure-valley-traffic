@@ -9,7 +9,8 @@ import { expect, mapReady, screenPath, test } from './fixtures.js';
  * chrome. Any combination of layers toggles cleanly and keeps one draped
  * run; the set survives a reload and travels in the hash; the keys behave;
  * the picker gives a bus over a road the bus card and lists every route where
- * several share a street; one wash, whatever is on; labels under the buses;
+ * several share a street; one base flavor (WP4: Valley or Clay, no wash layer),
+ * whatever is on; labels under the buses;
  * a loaded toggle makes no request; loading and error states show; the
  * overlay draws 1,000 sprites where map.project says, picks them and moves
  * them without setData; Space on a focused button only presses it.
@@ -21,6 +22,7 @@ type Info = {
 	status: Record<string, string>;
 	errors: Record<string, string | null>;
 	clay: boolean;
+	flavor: 'valley' | 'clay';
 	selection: { kind: string; id: string; layer: string; title: string } | null;
 	keys: string[];
 	overlay: { ok: boolean; frames: number };
@@ -194,7 +196,8 @@ test.describe('layers', () => {
 		await expect.poll(async () => (await info(page)).status.transit).toBe('ready');
 		await page.waitForTimeout(1500);
 		const pt = await page.evaluate(([lng, lat]) => (globalThis as any).__tvt.map.project([lng, lat]), [lng, lat]);
-		const onRoad = await page.evaluate((p) => (globalThis as any).__tvt.map.queryRenderedFeatures([[p.x - 3, p.y - 3], [p.x + 3, p.y + 3]], { layers: ['streets-speed'] }).length, pt);
+		// With Transit on, streets draw on the slate ramp (WP4: 'streets-speed-under').
+		const onRoad = await page.evaluate((p) => (globalThis as any).__tvt.map.queryRenderedFeatures([[p.x - 3, p.y - 3], [p.x + 3, p.y + 3]], { layers: ['streets-speed', 'streets-speed-under'] }).length, pt);
 		expect(onRoad, 'the bus sits on a drawn road').toBeGreaterThan(0);
 		// Hover first: the tooltip names the bus (not the road), with its source.
 		await page.mouse.move(pt.x, pt.y);
@@ -253,7 +256,7 @@ test.describe('layers', () => {
 		expect((await info(page)).selection?.kind).toBe('route');
 	});
 
-	test('a park pixel is unchanged when a second layer turns on (one wash)', { tag: '@wp2' }, async ({ page }) => {
+	test('a park pixel is unchanged when a second layer turns on (one base flavor)', { tag: '@wp2' }, async ({ page }) => {
 		test.setTimeout(300_000);
 		await page.goto('/#map=14.5/43.6075/-116.2058/0/0&layers=cameras');
 		await mapReady(page);
@@ -291,8 +294,11 @@ test.describe('layers', () => {
 			for (let k = 0; k < 3; k++) expect(Math.abs(before[i][k] - after[i][k]), `pixel ${JSON.stringify(candidates[i])} channel ${k}: ${before[i]} → ${after[i]}`).toBeLessThanOrEqual(2);
 		}
 		expect(compared, 'park pixels clear of the streets').toBeGreaterThan(0);
+		// WP4 replaced the wash with the Clay flavor: no wash layer at all, and the ground is clay.
 		const washes = await page.evaluate(() => ((globalThis as any).__tvt.map.getLayersOrder() as string[]).filter((id) => id.includes('wash')));
-		expect(washes).toEqual(['base-wash']);
+		expect(washes).toEqual([]);
+		expect((await info(page)).flavor).toBe('clay');
+		expect(await page.evaluate(() => (globalThis as any).__tvt.map.getPaintProperty('earth', 'fill-color'))).toBe('#f3ede2');
 	});
 
 	test('base labels sit below the bus layers', { tag: '@wp2' }, async ({ page }) => {
@@ -479,19 +485,20 @@ test.describe('layers', () => {
 		await expect(toolbar(page).getByRole('button', { name: 'Base' })).toBeFocused();
 	});
 
-	test('the Base popover drives the wash, buildings, terrain and labels; Help and Esc', { tag: '@wp2' }, async ({ page }) => {
+	test('the Base popover drives the flavor, buildings, terrain and labels; Help and Esc', { tag: '@wp2' }, async ({ page }) => {
 		test.setTimeout(300_000);
 		await page.goto('/#map=15/43.6152/-116.2035/0/45&layers=none');
 		await mapReady(page);
 		const vis = (id: string) => page.evaluate((id) => (globalThis as any).__tvt.map.getLayoutProperty(id, 'visibility') ?? 'visible', id);
-		expect(await vis('base-wash'), 'Auto with no layer: the map look').toBe('none');
+		// The look is the basemap flavor now (WP4), not a wash layer.
+		expect((await info(page)).flavor, 'Auto with no layer: the map look').toBe('valley');
 		await toolbar(page).getByRole('button', { name: 'Base' }).click();
 		const pop = page.getByRole('dialog', { name: 'Base map' });
 		await expect(pop).toBeVisible();
 		await pop.getByRole('radio', { name: 'Clay' }).check();
-		expect(await vis('base-wash')).toBe('visible');
+		expect((await info(page)).flavor).toBe('clay');
 		await pop.getByRole('radio', { name: 'Map' }).check();
-		expect(await vis('base-wash')).toBe('none');
+		expect((await info(page)).flavor).toBe('valley');
 		await pop.getByRole('switch', { name: '3D buildings' }).uncheck();
 		expect(await vis('buildings-3d')).toBe('none');
 		await pop.getByRole('switch', { name: 'Terrain' }).uncheck();
