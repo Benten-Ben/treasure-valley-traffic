@@ -9,6 +9,7 @@ transaction and rolls it back.
 Run: python3 -m unittest discover -s ingest/tests -t .
 """
 
+import contextlib
 import json
 import os
 import re
@@ -17,7 +18,9 @@ import urllib.parse
 from datetime import datetime, timezone
 from unittest import mock
 
-from ingest import arcgis
+import http.client
+
+from ingest import arcgis, db
 from ingest.db import version_hash
 from ingest.sources import achd_msm, achd_roads, compass_centerline, itd_hpms
 
@@ -35,9 +38,9 @@ class BoxServer:
     `outside`, rows the box query itself never returns; by ID, every row comes back.
     Answers at most `cap` features, in ID order; `lose` drops rows altogether."""
 
-    def __init__(self, ids, outside=(), cap=4, lose=(), oid_field="OBJECTID"):
+    def __init__(self, ids, outside=(), cap=4, lose=(), oid_field="OBJECTID", flag=True):
         self.ids, self.outside, self.cap, self.lose = list(ids), set(outside), cap, set(lose)
-        self.oid_field, self.asked = oid_field, []
+        self.oid_field, self.asked, self.flag = oid_field, [], flag      # flag: say when an answer is cut
 
     def get(self, url):
         self.asked.append(url)
@@ -52,7 +55,7 @@ class BoxServer:
                 lo, hi = (int(t) for t in re.findall(r"(?:>=|<=) (\d+)", q["where"][0]))
                 sel = [i for i in sorted(self.ids) if lo <= i <= hi and i not in self.outside]
             sel = [i for i in sel if i not in self.lose]
-            body = {"exceededTransferLimit": len(sel) > self.cap,
+            body = {"exceededTransferLimit": self.flag and len(sel) > self.cap,
                     "features": [{"attributes": {self.oid_field: i},
                                   "geometry": {"paths": [[[-119.5, 43.3], [-119.5, 43.301]]]}} for i in sel[:self.cap]]}
         return 200, json.dumps(body).encode(), "no_rules"
@@ -103,6 +106,28 @@ class PagerTest(unittest.TestCase):
             return 200, json.dumps({"error": {"code": 400, "message": "bad"}}).encode(), "no_rules"
         with self.assertRaises(RuntimeError):
             arcgis.fetch_layer("https://example.invalid/0", "test", get=broken, sleep=lambda s: None)
+
+    def test_answers_cut_at_the_servers_page_size_shrink_the_batch(self):
+        # The server answers at most 1,000 rows; we asked for 2,000. Nothing should go by ID.
+        for flag in (True, False):
+            server = BoxServer(range(1, 12151), cap=1000, flag=flag)
+            (features, *_), stats = self.fetch(server, batch=2000)
+            self.assertEqual((len(features), stats["by_id"], len(server.asked)), (12150, 0, 1 + 13), msg=flag)
+            self.assertFalse([u for u in server.asked if "objectIds" in u])
+
+    def test_a_cut_off_answer_is_retried(self):
+        for broken in (b'{"features": [{"attri', http.client.IncompleteRead(b"")):
+            server, calls = BoxServer(range(1, 4)), []
+
+            def flaky(url):
+                calls.append(url)
+                if len(calls) == 2:
+                    if isinstance(broken, Exception):
+                        raise broken
+                    return 200, broken, "no_rules"
+                return server.get(url)
+            features, *_ = arcgis.fetch_layer("https://example.invalid/0", "test", get=flaky, sleep=lambda s: None)
+            self.assertEqual((len(features), len(calls)), (3, 3))
 
     def test_esri_geometry_becomes_geojson(self):
         g = arcgis.esri_geometry
@@ -208,19 +233,24 @@ class HpmsTest(unittest.TestCase):
              "lanes_descending": 2, "share": 0.9}
         self.assertEqual(itd_hpms.carriageway_lanes([a, d]),
                          {"ascending": 2, "descending": 2, "divided": True, "conflict": False})
-        self.assertEqual(itd_hpms.carriageway_lanes([a, d], facility="one_way")["conflict"], False)
+        # ITD codes a divided highway's inventory direction as a two-way roadway (I-84): it still pairs.
+        self.assertEqual(itd_hpms.carriageway_lanes([a, d], facility="two_way"),
+                         {"ascending": 2, "descending": 2, "divided": True, "conflict": False})
         # An A row with lanes both ways is an undivided road: the D row on its line is a placeholder.
         a_both = {**a, "lanes_ascending": 1, "lanes_descending": 1}
         placeholder = {**d, "lanes_descending": 2}
-        self.assertEqual(itd_hpms.carriageway_lanes([a_both, placeholder]),
-                         {"ascending": 1, "descending": 1, "divided": False, "conflict": False})
-        # ...unless the facility type says it's one carriageway of a divided road, which disagrees with the row.
-        self.assertEqual(itd_hpms.carriageway_lanes([a_both, placeholder], facility="one_way"),
-                         {"ascending": 1, "descending": 2, "divided": True, "conflict": True})
-        # A D route of another highway never pairs: alone, a one-way A row is a one-way stretch.
+        for facility in (None, "two_way"):
+            self.assertEqual(itd_hpms.carriageway_lanes([a_both, placeholder], facility),
+                             {"ascending": 1, "descending": 1, "divided": False, "conflict": False})
+        # A one-way facility has no other direction; one whose row claims both ways is a conflict.
+        self.assertEqual(itd_hpms.carriageway_lanes([a, d], facility="ramp"),
+                         {"ascending": 2, "descending": 0, "divided": False, "conflict": False})
+        self.assertEqual(itd_hpms.carriageway_lanes([a_both], facility="one_way"),
+                         {"ascending": 1, "descending": 0, "divided": False, "conflict": True})
+        # A D route of another highway never pairs: the other direction is unknown.
         other_d = {**d, "route_id": "08880DSH088"}
         self.assertEqual(itd_hpms.carriageway_lanes([a, other_d]),
-                         {"ascending": 2, "descending": 0, "divided": False, "conflict": False})
+                         {"ascending": 2, "descending": None, "divided": False, "conflict": False})
         self.assertEqual(itd_hpms.carriageway_lanes([d]),
                          {"ascending": None, "descending": 2, "divided": True, "conflict": False})
 
@@ -384,6 +414,29 @@ class FakeFetch:
         return False
 
 
+class MatchInsideFetchTest(unittest.TestCase):
+    def test_a_failing_match_fails_the_fetch_so_the_store_rolls_back(self):
+        exits = []
+
+        class Fetch(FakeFetch):
+            def __exit__(self, exc_type, *rest):
+                exits.append(exc_type)
+                return False
+
+        for module, stored in ((achd_msm, {"arterials": 1}), (compass_centerline, {"pieces": 1}),
+                               (itd_hpms, {"sections": 1})):
+            with contextlib.ExitStack() as stack:
+                stack.enter_context(mock.patch.object(arcgis, "fetch_layer", return_value=([], 0, 200, "no_rules")))
+                stack.enter_context(mock.patch.object(itd_hpms, "fetch_all", return_value=({}, [], 0)))
+                stack.enter_context(mock.patch.object(module, "store", return_value=(stored, 1)))
+                stack.enter_context(mock.patch.object(db, "ensure_source"))
+                stack.enter_context(mock.patch.object(db, "Fetch", Fetch))
+                stack.enter_context(mock.patch.object(module, "match", side_effect=RuntimeError("boom")))
+                with self.assertRaises(RuntimeError):
+                    module.run(object())
+        self.assertEqual(exits, [RuntimeError] * 3)
+
+
 class AchdRoadsRematchTest(unittest.TestCase):
     def run_roads(self, stats):
         with mock.patch.object(achd_roads, "fetch_all", return_value=([], 0, "no_rules")), \
@@ -395,14 +448,14 @@ class AchdRoadsRematchTest(unittest.TestCase):
 
     def test_a_run_that_changes_the_segments_rematches_every_source(self):
         stats, rm = self.run_roads({"segments": 5, "record versions new": 1, "removed": 0, "retired": 0})
-        rm.assert_called_once()
+        self.assertEqual(rm.call_args.kwargs, {"only_stale": False})
         self.assertEqual((stats["itd_hpms rematched"], stats["osm_valley rematched"]), (3, 2))
         for change in ("removed", "retired"):
             self.assertTrue(achd_roads.changed({change: 2}))
 
-    def test_an_unchanged_run_rematches_nothing(self):
+    def test_an_unchanged_run_rematches_only_what_is_out_of_date(self):
         stats, rm = self.run_roads({"segments": 5, "record versions new": 0, "unchanged": 5, "removed": 0, "retired": 0})
-        rm.assert_not_called()
+        self.assertEqual(rm.call_args.kwargs, {"only_stale": True})
 
 
 # --- storing (database) --------------------------------------------------------
@@ -436,33 +489,85 @@ class StoreTest(unittest.TestCase):
         return self.conn.execute("insert into ops.fetch (source, started_at, ok) values (%s, now(), true) returning id",
                                  (source["name"],)).fetchone()[0]
 
-    def test_hpms_store_and_a_republish(self):
+    def empty_hpms(self):
+        """Start from no HPMS rows at all (rolled back), and a fetch to log them under."""
         c = self.conn
         for kind in [*itd_hpms.LAYERS, "road_names"]:
-            from ingest import db
             db.ensure_source(c, itd_hpms.layer_source(kind))
-        fid = self.fetch_row(itd_hpms.SOURCE)
-        layers = {k: [] for k in itd_hpms.LAYERS}
-        layers["through_lanes"] = [through("test-e1", 4, 2, 2, route="09990AUS099", oid=1),
-                                   through("test-e2", 0, 0, 0, route="09990AUS099", oid=2, frm=1, to=2)]
-        layers["turn_lanes"] = [hpms("test-t1", route="09990AUS099", oid=3, TurnLanesLeft=2, TurnLanesRight=4)]
+        c.execute(r"delete from raw.record where source like 'itd\_hpms\_%%'")
+        c.execute("delete from core.hpms_section")
+        return self.fetch_row(itd_hpms.SOURCE)
+
+    LAYER_VALUES = {"turn_lanes": {"TurnLanesLeft": 2, "TurnLanesRight": 4}, "lane_width": {"LaneWidth": 12},
+                    "median": {"MedianType": 3}, "shoulders": {"ShoulderType": 2}, "access_control": {"AccessControl": 3},
+                    "peak_lanes": {"PeakLanes": 2}, "facility_type": {"FacilityType": 2}}
+
+    def hpms_layers(self, through_rows=1):
+        layers = {k: [hpms(f"test-{k}", route="09990AUS099", oid=10 + i, **v)]
+                  for i, (k, v) in enumerate(self.LAYER_VALUES.items())}
+        layers["through_lanes"] = [through(f"test-e{i}", 4, 2, 2, route="09990AUS099", oid=100 + i, frm=i, to=i + 1)
+                                   for i in range(through_rows)]
         names = [{"type": "Feature", "geometry": geojson_line(),
-                  "properties": {"EventID": "test-n1", "RouteID": "09990AUS099", "FromMeasure": 0, "ToMeasure": 3,
+                  "properties": {"EventID": "test-n1", "RouteID": "09990AUS099", "FromMeasure": 0, "ToMeasure": 9,
                                  "ToDate": None, "FullRoadName": "Sample Blvd"}}]
+        return layers, names
+
+    def test_hpms_store_and_a_republish(self):
+        c = self.conn
+        fid = self.empty_hpms()
+        layers, names = self.hpms_layers()
+        layers["through_lanes"].append(through("test-zero", 0, 0, 0, route="09990AUS099", oid=2, frm=5, to=6))
         t1 = datetime(2026, 10, 6, 1, tzinfo=timezone.utc)
         stats, changed = itd_hpms.store(c, fid, t1, layers, names)
-        self.assertEqual((stats["sections"], stats["zero-lane rows skipped"], stats["record versions new"]), (2, 1, 3))
+        self.assertEqual((stats["sections"], stats["zero-lane rows skipped"], stats["record versions new"]), (8, 1, 9))
         row = c.execute("""select route_id, direction, through_lanes, lanes_ascending, road_name, ST_GeometryType(geom)
-                           from core.hpms_section where kind = 'through_lanes' and event_id = 'test-e1'""").fetchone()
+                           from core.hpms_section where kind = 'through_lanes' and event_id = 'test-e0'""").fetchone()
         self.assertEqual(row, ("09990AUS099", "A", 4, 2, "Sample Blvd", "ST_MultiLineString"))
         # The same records renumbered: no new versions, rows kept.
-        for f in layers["through_lanes"] + layers["turn_lanes"]:
-            f["properties"]["OBJECTID"] += 1000
+        for features in layers.values():
+            for f in features:
+                f["properties"]["OBJECTID"] += 1000
         t2 = datetime(2026, 10, 7, 1, tzinfo=timezone.utc)
         stats, changed = itd_hpms.store(c, fid, t2, layers, names)
-        self.assertEqual((stats["record versions new"], stats["unchanged"]), (0, 3))
+        self.assertEqual((stats["record versions new"], stats["unchanged"], changed), (0, 9, 0))
         self.assertEqual(c.execute("""select count(*) from core.hpms_section
-                                      where event_id like 'test-%%' and active and last_seen = %s""", (t2,)).fetchone()[0], 2)
+                                      where event_id like 'test-%%' and active and last_seen = %s""", (t2,)).fetchone()[0], 8)
+
+    def test_a_short_or_empty_hpms_layer_is_refused(self):
+        c = self.conn
+        fid = self.empty_hpms()
+        layers, names = self.hpms_layers(through_rows=4)
+        itd_hpms.store(c, fid, datetime(2026, 10, 6, 1, tzinfo=timezone.utc), layers, names)
+        t2 = datetime(2026, 10, 7, 1, tzinfo=timezone.utc)
+        for cut in ("short", "empty", "no names"):
+            layers, names = self.hpms_layers(through_rows=1 if cut == "short" else 4)
+            if cut == "empty":
+                layers["median"] = []
+            if cut == "no names":
+                names = []
+            with self.assertRaises(RuntimeError, msg=cut):
+                itd_hpms.store(c, fid, t2, layers, names)
+        self.assertEqual(c.execute("select count(*) from core.hpms_section where active").fetchone()[0], 4 + 7)
+
+    def test_a_short_or_empty_msm_or_compass_layer_is_refused(self):
+        c = self.conn
+        c.execute("delete from raw.record where source in ('achd_msm', 'compass_centerline')")
+        c.execute("delete from core.msm_arterial")
+        c.execute("delete from core.segment_match where source = 'compass_centerline'")
+        c.execute("delete from core.compass_segment")
+        t1, t2 = datetime(2026, 10, 6, 1, tzinfo=timezone.utc), datetime(2026, 10, 7, 1, tzinfo=timezone.utc)
+        fid = self.fetch_row(achd_msm.SOURCE)
+        feats = [msm(f"{{M-{i}}}", code=f"SA{i}") for i in range(4)]
+        achd_msm.store(c, fid, t1, feats)
+        for cut in ([], feats[:1]):
+            with self.assertRaises(RuntimeError):
+                achd_msm.store(c, fid, t2, cut)
+        fid = self.fetch_row(compass_centerline.SOURCE)
+        pieces = [centerline(f"Sam{i}", oid=i) for i in range(4)]
+        compass_centerline.store(c, fid, t1, pieces)
+        with self.assertRaises(RuntimeError):
+            compass_centerline.store(c, fid, t2, pieces[:1])
+        self.assertEqual(c.execute("select count(*) from core.msm_arterial where active").fetchone()[0], 4)
 
     def test_msm_republish_carries_rows_over(self):
         c = self.conn

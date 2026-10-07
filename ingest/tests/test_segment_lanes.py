@@ -1,7 +1,7 @@
 """Tests for the lanes rule (core.segment_lanes and its per-source views, migration 0017).
 
 Database only: they run against a scratch database named by
-TVT_TEST_DATABASE_URL (a clone migrated through 0017), inside one transaction
+TVT_TEST_DATABASE_URL (a clone migrated through 0018), inside one transaction
 that is rolled back. Every row is synthetic: made-up segments, routes, ways
 and lines in UTM 11N far from the valley, with their matches written directly
 (the matcher has its own tests).
@@ -24,7 +24,7 @@ def wkt(*pts):
     return "LINESTRING(" + ", ".join(f"{X0 + x} {Y0 + y}" for x, y in pts) + ")"
 
 
-@unittest.skipUnless(DB_URL, "set TVT_TEST_DATABASE_URL to a scratch database migrated through 0017")
+@unittest.skipUnless(DB_URL, "set TVT_TEST_DATABASE_URL to a scratch database migrated through 0018")
 class SegmentLanesTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -32,7 +32,7 @@ class SegmentLanesTest(unittest.TestCase):
         cls.conn = psycopg.connect(DB_URL)
         if not cls.conn.execute("select to_regclass('core.segment_lanes') is not null").fetchone()[0]:
             cls.conn.close()
-            raise unittest.SkipTest("core.segment_lanes is missing: apply migration 0017")
+            raise unittest.SkipTest("core.segment_lanes is missing: apply migrations 0017 and 0018")
 
     @classmethod
     def tearDownClass(cls):
@@ -77,12 +77,15 @@ class SegmentLanesTest(unittest.TestCase):
             (kind, sid, f"test-{self.n}", route, route[5], self.geom(*pts), *values.values()))
         self.match(seg, f"itd_hpms_{kind}", sid)
 
-    def msm(self, seg, lanes, **kw):
+    def msm(self, seg, lanes, x=None, also=(), **kw):
+        """A Master Street Map line (drawn north at x, if given) matched to seg and the also segments."""
         self.n += 1
         gid = f"{{TEST-MSM-{self.n}}}"
-        self.conn.execute("insert into core.msm_arterial (global_id, existing_lanes, funded_lanes, geom) values (%s, %s, %s, null)",
-                          (gid, lanes, kw.get("funded")))
-        self.match(seg, "achd_msm", gid, method="buffer10_name")
+        geom = self.geom((x, -50), (x, 350)) if x is not None else None
+        self.conn.execute("""insert into core.msm_arterial (global_id, existing_lanes, funded_lanes, geom)
+                             values (%s, %s, %s, ST_Multi(%s::geometry))""", (gid, lanes, kw.get("funded"), geom))
+        for s in (seg, *also):
+            self.match(s, "achd_msm", gid, method="buffer10_name")
 
     def compass(self, seg, lanes):
         self.n += 1
@@ -198,6 +201,90 @@ class SegmentLanesTest(unittest.TestCase):
         r = self.lanes(seg)
         self.assertEqual((r["lanes_total"], r["lanes_forward"], r["lanes_backward"], r["centre_turn_lane"]),
                          (3, 0, 3, False))
+
+    def test_a_divided_highway_coded_two_way_keeps_both_carriageways(self):
+        # ITD codes a divided highway's inventory direction as a two-way roadway (I-84): no halving.
+        seg = self.segment(8000, "Interstate")
+        self.hpms(seg, "through_lanes", "07070AIN077", 8007, through_lanes=3, lanes_ascending=3, lanes_descending=0)
+        self.hpms(seg, "through_lanes", "07070DIN077", 7993, south=True, through_lanes=0, lanes_ascending=0,
+                  lanes_descending=3)
+        self.hpms(seg, "facility_type", "07070AIN077", 8007, facility_type="two_way")
+        r = self.lanes(seg)
+        self.assertEqual((r["source"], r["lanes_total"], r["lanes_forward"], r["lanes_backward"], r["flags"]),
+                         ("itd_hpms", 6, 3, 3, []))
+        self.assertTrue(r["candidates"]["itd_hpms"]["divided"])
+
+    def test_facility_and_turn_rows_must_be_the_a_routes(self):
+        seg = self.segment(8500, "Principal Arterial")
+        self.hpms(seg, "through_lanes", "06060ASH066", 8507, through_lanes=2, lanes_ascending=2, lanes_descending=0)
+        self.hpms(seg, "through_lanes", "06060DSH066", 8493, south=True, through_lanes=0, lanes_ascending=0,
+                  lanes_descending=2)
+        self.hpms(seg, "facility_type", "05550AUS055", 8500, facility_type="one_way")      # another route's
+        self.hpms(seg, "turn_lanes", "05550AUS055", 8500, turn_lanes_left=3, turn_lanes_right=3)
+        r = self.lanes(seg)
+        self.assertEqual((r["lanes_total"], r["centre_turn_lane"]), (4, None))
+        self.assertNotIn("facility", r["candidates"]["itd_hpms"])
+
+    def test_a_one_way_carriageway_takes_only_its_own_direction(self):
+        # Both carriageways lie within 15 m of each one-way segment; only the one running its way counts.
+        north = self.segment(9000, "Interstate", one_way="forward")
+        south = self.segment(9100, "Interstate", one_way="backward")
+        for seg, x in ((north, 9000), (south, 9100)):
+            self.hpms(seg, "through_lanes", "04040AIN044", x + 5, through_lanes=3, lanes_ascending=3,
+                      lanes_descending=0)
+            self.hpms(seg, "through_lanes", "04040DIN044", x - 5, south=True, through_lanes=0, lanes_ascending=0,
+                      lanes_descending=2)
+        r = self.lanes(north)
+        self.assertEqual((r["lanes_total"], r["lanes_forward"], r["lanes_backward"], r["centre_turn_lane"]),
+                         (3, 3, 0, False))
+        self.assertEqual(r["candidates"]["itd_hpms"]["carriageway"], "A")
+        r = self.lanes(south)
+        self.assertEqual((r["lanes_total"], r["lanes_forward"], r["lanes_backward"]), (2, 0, 2))
+        self.assertEqual(r["candidates"]["itd_hpms"]["carriageway"], "D")
+        # A carriageway only the D route runs along, shared with a US route whose D row there is a 1-lane
+        # placeholder: the interstate's wins.
+        alone = self.segment(9200, "Interstate", one_way="forward")
+        self.hpms(alone, "through_lanes", "02020DUS022", 9200, south=True, through_lanes=0, lanes_ascending=0,
+                  lanes_descending=1)
+        self.hpms(alone, "through_lanes", "04040DIN044", 9200, south=True, through_lanes=0, lanes_ascending=0,
+                  lanes_descending=2)
+        r = self.lanes(alone)
+        self.assertEqual((r["source"], r["lanes_total"], r["lanes_forward"], r["lanes_backward"]), ("itd_hpms", 2, 2, 0))
+        self.assertEqual(r["candidates"]["itd_hpms"]["d_route"], "04040DIN044")
+
+    def test_an_hpms_total_of_0_is_unknown(self):
+        seg = self.segment(9500, "Principal Arterial")
+        self.hpms(seg, "through_lanes", "03030ASH033", 9500, through_lanes=0, lanes_ascending=0, lanes_descending=0)
+        self.way(seg, 9500, lanes=4, rows=[("forward", 2), ("backward", 2)])
+        r = self.lanes(seg)
+        self.assertEqual((r["road_class"], r["source"], r["lanes_total"]), ("state", "osm_valley", 4))
+
+    def test_one_lane_on_a_two_way_road_is_one_lane_flagged(self):
+        seg = self.segment(10500, "Minor Arterial")
+        self.msm(seg, 1)
+        r = self.lanes(seg)
+        self.assertEqual((r["lanes_total"], r["lanes_forward"], r["lanes_backward"], r["centre_turn_lane"],
+                          r["flags"], r["confidence"]), (1, None, None, False, ["single_lane"], 0.5))
+        local = self.segment(10600, "Local")
+        self.compass(local, 1)
+        r = self.lanes(local)
+        self.assertEqual((r["source"], r["lanes_total"], r["flags"], r["confidence"]),
+                         ("compass_centerline", 1, ["single_lane"], 0.5))
+
+    def test_a_divided_roads_carriageways_split_the_master_street_maps_cross_section(self):
+        north = self.segment(9993 + 1000, "Minor Arterial", one_way="forward")       # x 10993, runs north
+        south = self.segment(10007 + 1000, "Minor Arterial", one_way="backward")     # x 11007, runs south
+        self.msm(north, 5, x=11000, also=[south])
+        r = self.lanes(north)
+        self.assertEqual((r["lanes_total"], r["lanes_forward"], r["lanes_backward"], r["centre_turn_lane"],
+                          r["flags"], r["split_estimated"]), (2, 2, 0, False, ["carriageway_split"], True))
+        r = self.lanes(south)
+        self.assertEqual((r["lanes_total"], r["lanes_forward"], r["lanes_backward"]), (2, 0, 2))
+        # A one-way street (its line has segments running one way only) keeps every lane.
+        street = self.segment(12000, "Minor Arterial", one_way="forward")
+        self.msm(street, 3, x=12000)
+        r = self.lanes(street)
+        self.assertEqual((r["lanes_total"], r["lanes_forward"], r["lanes_backward"], r["flags"]), (3, 3, 0, []))
 
     def test_every_active_segment_has_a_row(self):
         seg = self.segment(7000, "Driveway")

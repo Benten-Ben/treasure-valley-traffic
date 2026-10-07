@@ -4,7 +4,9 @@ Open GIS layer (the host has no robots.txt), about 38,700 segments, read in
 pages of 2,000 with a pause between requests. Each segment is keyed by
 ACHD's PermID, which survives edits (OBJECTID doesn't). A run that changes
 the segments rematches every source matched to them (the lane inventories
-and OpenStreetMap; ingest/segment_match.py), in the same run.
+and OpenStreetMap; ingest/segment_match.py), in the same run; any other run
+rematches those whose matches are out of date (a rematch that failed). One
+matcher failing doesn't stop the others or the run.
 
 Field notes, checked Oct 5, 2026:
 - PostSpeed is set on every segment; most local streets read 20 mph, likely a
@@ -161,8 +163,9 @@ def run(conn):
         features, f.bytes, f.robots = fetch_all(f)
         stats = store(conn, f.id, f.started_at, features)
         f.records = stats["segments"]
-    if changed(stats):
-        # Every source matched to the segments is rematched (owner, Oct 6), each committed in turn.
-        for name, s in segment_match.rematch_all(conn).items():
-            stats[f"{name} rematched"] = s.get("matched lines", s.get("ways matched"))
+    # Changed segments: every source matched to them is rematched (owner, Oct 6); otherwise any
+    # whose matches are out of date (an earlier rematch that failed). Each is committed in turn;
+    # one that fails is logged and the rest still run.
+    for name, s in segment_match.rematch_all(conn, only_stale=not changed(stats)).items():
+        stats[f"{name} rematched"] = s.get("failed") or s.get("matched lines", s.get("ways matched"))
     return stats

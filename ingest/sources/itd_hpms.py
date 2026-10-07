@@ -45,7 +45,7 @@ import time
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 
-from .. import arcgis, db, segment_match
+from .. import arcgis, db, segment_match, signal_devices
 
 BASE = "https://gisp.itd.idaho.gov/server/rest/services/GDWarehouse"
 HPMS = f"{BASE}/HPMS/FeatureServer"
@@ -250,24 +250,28 @@ def road_name(index, route_id, from_mi, to_mi):
     return best
 
 
+ONE_WAY_FACILITIES = {"one_way", "ramp"}
+
+
 def carriageway_lanes(rows, facility=None):
     """Through lanes each way on one stretch, from the HPMS through-lane rows along it
     (dicts with route_id, direction, through_lanes, lanes_ascending, lanes_descending and,
     optionally, share: the best-matching row of each direction wins). facility: the A
-    route's facility type there, if known ('one_way', 'two_way').
+    route's facility type there, if known.
 
     Every state route has a D route in ITD's network, but on an undivided road it's
     drawn on the A route's own line, and its HPMS rows are placeholders for the
-    non-inventory direction (facility type 6; SH-55's D row spans the whole highway
-    with 1 lane). So:
+    non-inventory direction (SH-55's D row spans the whole highway with 1 lane). So:
     - an A row with lanes both ways describes the whole road, and a D row there is
       ignored;
     - an A row with lanes in its own direction only is one carriageway of a divided
-      road, and the D row of the same route gives the other carriageway's lanes;
-      with no D row along, it's a one-way street (Fairview Ave's couplet reads 4+0)
-      or the stretch is one carriageway on its own.
-    A known facility type overrides this ('one_way' is one carriageway or a one-way
-    street, 'two_way' an undivided road), and a disagreement sets conflict.
+      road, and the D row of the same route gives the other carriageway's lanes; with
+      no D row along, the other direction is unknown;
+    - on a one-way facility (facility type one-way roadway, or a ramp) there is no
+      other direction: 0. A one-way facility whose A row has lanes both ways sets
+      conflict.
+    Facility type can't tell a divided highway from an undivided one: ITD codes I-84's
+    inventory direction, which carries one direction, as a two-way roadway (Oct 6).
     Returns {"ascending", "descending", "divided", "conflict"}.
     """
     def base(r):
@@ -288,11 +292,13 @@ def carriageway_lanes(rows, facility=None):
         out.update(descending=d_lanes, divided=d is not None)
         return out
     own_only = bool(a.get("lanes_ascending")) and not a.get("lanes_descending")
-    divided = {"one_way": True, "two_way": False}.get(facility, own_only)
-    out["conflict"] = facility in ("one_way", "two_way") and divided != own_only
     out["ascending"] = a.get("lanes_ascending")
-    if divided and d is not None:
+    if facility in ONE_WAY_FACILITIES:
+        out.update(descending=0, conflict=not own_only)
+    elif own_only and d is not None:
         out.update(descending=d_lanes, divided=True)
+    elif own_only:
+        out["descending"] = None
     else:
         out["descending"] = a.get("lanes_descending")
     return out
@@ -330,17 +336,32 @@ on conflict (kind, source_id) do update set
 """
 
 
+def check_snapshot(conn, layers, name_records):
+    """Refuse a snapshot that would retire most of what we hold: an empty layer, or one with
+    under half the rows now active (a layer mid-overwrite, a box that stops matching), the
+    road names included. layers: {kind: (records, rows, counts)}. Raises before anything
+    is written, so the fetch is logged as failed and nothing is retired."""
+    for kind, (records, rows, counts) in layers.items():
+        signal_devices.check_snapshot(conn, "core.hpms_section", "kind = %s", (kind,), len(rows), f"itd_hpms {kind}")
+    held = conn.execute("select count(*) from raw.record where source = %s and removed_at is null",
+                        (NAMES_SOURCE,)).fetchone()[0]
+    if not name_records or len(name_records) < signal_devices.MIN_SHARE * held:
+        raise RuntimeError(f"itd_hpms names: only {len(name_records)} records against {held} held; "
+                           "not taken as a full snapshot")
+
+
 def store(conn, fetch_id, seen_at, layers, name_features):
     """Raw versions for every layer and the names; core rows; retire rows gone from the box.
     Returns (stats, number of changes)."""
     stats, changed = Counter(), 0
     name_records, index = parse_names(name_features, seen_at)
+    parsed = {kind: parse_layer(kind, features, seen_at) for kind, features in layers.items()}
+    check_snapshot(conn, parsed, name_records)
     new, unchanged, removed = db.upsert_records(conn, NAMES_SOURCE, name_records, fetch_id, seen_at)
     changed += new + removed
     stats["road names"] = len(name_records)
     all_rows = []
-    for kind, features in layers.items():
-        records, rows, counts = parse_layer(kind, features, seen_at)
+    for kind, (records, rows, counts) in parsed.items():
         new, unchanged, removed = db.upsert_records(conn, f"itd_hpms_{kind}", records, fetch_id, seen_at)
         changed += new + removed
         stats["record versions new"] += new
@@ -384,7 +405,7 @@ def run(conn):
         stats, changed = store(conn, f.id, f.started_at, layers, names)
         stats["rows just outside the box (fetched by ID)"] = by_id
         f.records = stats["sections"]
-    if changed or segment_match.stale(conn, MATCH_SOURCES):
-        stats.update({f"match {k}": v for k, v in match(conn).items()})
-        conn.commit()
+        # Inside the fetch: if matching fails, the store rolls back with it and the run is retried.
+        if changed or segment_match.stale(conn, MATCH_SOURCES, MATCH_SOURCES + [NAMES_SOURCE]):
+            stats.update({f"match {k}": v for k, v in match(conn).items()})
     return stats
