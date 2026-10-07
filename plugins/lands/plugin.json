@@ -1,0 +1,23 @@
+{
+  "name": "lands",
+  "title": "Public lands: forest orders, closures and restrictions",
+  "depends": [],
+  "visibility": "public",
+  "order": 64,
+  "sources": [
+    {"name": "usfs_r4_orders", "module": "ingest.sources.usfs_r4_orders", "kind": "source",
+     "license": "public domain (US federal work); USFS: not legal documents",
+     "credit": "USDA Forest Service, Intermountain Region", "republish": "yes"},
+    {"name": "idpr_route_closures", "module": "ingest.sources.idpr_route_closures", "kind": "source",
+     "license": "IDPR terms: non-commercial use, attribution required (no licence stated)",
+     "credit": "Idaho Department of Parks and Recreation (trails.idaho.gov), with the agencies it represents",
+     "republish": "aggregates"},
+    {"name": "idpr_area_restrictions", "module": "ingest.sources.idpr_area_restrictions", "kind": "source",
+     "license": "IDPR terms: non-commercial use, attribution required (no licence stated)",
+     "credit": "Idaho Department of Parks and Recreation (trails.idaho.gov), with the agencies it represents",
+     "republish": "aggregates"}
+  ],
+  "tables": [],
+  "storage": "No tables of its own: rows go to core's raw.record (a version only when an order or closure changes) and evt.event (one row per order or closure). About 2 MB holds the Oct 7 set (15 orders and closures, mostly the fire closures' polygons, in both tables); a few changes a month add well under 1 MB a day. Plus 72 ops.fetch rows a day (3 sources, hourly). Download: about 1 MB a day of layer metadata, plus 0.3-1.1 MB per full read (at most hourly after edits, at least daily).",
+  "ethics": "Query-only reads of public ArcGIS layers (ingest/http.py refuses edit operations); robots.txt at services1.arcgis.com answers 403 (no rules). Order PDFs, alert pages and other links are kept as links and never fetched. Staff user-name fields are dropped; office phone numbers (agency offices, not people) are kept. USFS orders are public domain, but the signed order is the authority, not the polygon. IDPR's terms allow non-commercial use with attribution: internal or published only as aggregates until IDPR gives a licence or a yes, and a courtesy note to IDPR is due (ch. 17 Q17)."
+}
