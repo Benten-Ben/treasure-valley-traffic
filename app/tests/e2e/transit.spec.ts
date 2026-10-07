@@ -90,6 +90,19 @@ async function framesOver(page: Page, ms: number): Promise<number> {
 	}, ms);
 }
 
+/** Resolves once the map has drawn everything it has (MapLibre's idle), at most 30 s. */
+async function settled(page: Page) {
+	await page.evaluate(
+		() =>
+			new Promise<void>((resolve) => {
+				const map = (globalThis as any).__tvt.map;
+				const done = setTimeout(resolve, 30_000);
+				map.once('idle', () => (clearTimeout(done), resolve()));
+				map.triggerRepaint();
+			})
+	);
+}
+
 async function setVisibility(page: Page, state: 'hidden' | 'visible') {
 	await page.evaluate((state) => {
 		Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => state });
@@ -256,6 +269,9 @@ test.describe('transit', () => {
 		// The layer off: no frames, and the buses stop asking for them.
 		await page.keyboard.press('4');
 		await expect(layerButton(page, 'Transit')).toHaveAttribute('aria-pressed', 'false');
+		// With no data layer left, Auto turns Clay back into Map (WP4): a 350 ms crossfade and the
+		// labels' tiles draw a few frames of their own. Count only once the map has settled.
+		await settled(page);
 		await page.waitForTimeout(1000);
 		const offFrames = await framesOver(page, 4000);
 		expect(offFrames, 'frames with Transit off').toBe(0);

@@ -258,6 +258,9 @@ test.describe('tracks API', () => {
 			if (has() === 'f') await ask('before migration 0007');
 			dbTool('migrate', name);
 			expect(has()).toBe('t');
+			// The template is a copy of the server's data, which has progress rows since Oct 7: empty
+			// the scratch clone's table, so this case is the one it names.
+			execFileSync('psql', ['-X', '-At', url, '-c', 'truncate obs.vehicle_progress'], { encoding: 'utf8' });
 			expect(execFileSync('psql', ['-X', '-At', url, '-c', 'select count(*) from obs.vehicle_progress'], { encoding: 'utf8' }).trim()).toBe('0');
 			await ask('0007 applied, table empty');
 			evidence('no-progress.json', results);
