@@ -59,6 +59,27 @@ are core:
   aircraft want a circle of about 250 km, lands the national forest. Each
   plugin says which area it covers.
 
+Chapter 17's research added six more core pieces, decided Oct 7
+([§17.8](17-sources-for-new-plugins.md#178-decisions-on-the-open-questions-oct-7)):
+
+- **Fields**, a fourth shape of time: gridded 2D or 3D frames (radar,
+  clouds, smoke, model forecasts) with valid and issue times, kept as files
+  with an index in the database.
+- **Recurring lifecycles** and one rules-by-date evaluator (seasons,
+  weekdays, hours, overrides), in Python and TypeScript.
+- **The sun and moon ephemeris** and lighting state, in Python and
+  TypeScript.
+- **Surface-model (nDSM) tiles** in the base map: heights of buildings and
+  trees above the ground.
+- **Occurrences** (point events with no duration) and **versioned
+  geometry** (a shape with the time range it's valid for).
+- **Routing**, with pgRouting on our own graph.
+
+And two rules for drawing the lines between plugins: plugins own data
+domains while toolbar groups own presentation, and named areas include the
+backcountry (the Boise National Forest and the Owyhee wilderness) and a
+weather context of about 300 km.
+
 The base map's streets (for drawing) are core; the road network as data
 (ACHD's segments, lanes) is the `roads` plugin.
 
@@ -306,19 +327,25 @@ sources, tables and URLs), with every test green, before the next one starts.
 ## 15.7 Ideas for later plugins
 
 The full catalog, by persona and with every detail from the Oct 6–7
-brainstorms, is [chapter 16](16-ideas-and-personas.md). None is approved
-yet. At the plugin level:
+brainstorms, is [chapter 16](16-ideas-and-personas.md), and the sources
+for them are in [chapter 17](17-sources-for-new-plugins.md). On Oct 7 the
+lead settled where things go (§17.8 Q7) and started Wave A's pollers for
+`hazards`, `air`, `water`, `trails`, `lands`, `weather`, `wildlife`, `farm`
+and `sky`. At the plugin level:
 
 - **aircraft** (being built, §15.6 step 4): live and recorded positions in
   3D, special aircraft, FAA airspace and flight restrictions.
 - **lands:** who owns and manages what, public access, and the rules on it.
 - **trails:** trails, closures, trailheads, campgrounds.
 - **water:** river flows, reservoirs, snowpack, the float season, canals.
-- **hazards:** fire, smoke and air quality, warnings, earthquakes, floods.
+- **hazards:** fire, warnings, earthquakes, floods.
+- **air:** air quality, smoke and the camera haze index (its own plugin,
+  §17.8 Q7).
 - **weather:** observations and forecasts, and real weather drawn in 3D
   (§16.5).
-- **sky:** sun and moon paths and shadows, glare, satellite passes, dark
-  skies.
+- **sky:** the aurora, satellite passes, dark skies and the night dome. The
+  sun and moon ephemeris that sky, glare and gardening share is core (§17.8
+  Q3).
 - **gardening:** sun and shade hours from buildings and trees, frost, soil,
   canal water.
 - **farm:** crops by field, irrigation, field burning, farmland lost to
@@ -331,5 +358,7 @@ yet. At the plugin level:
 - **home** (private): the owner's own sensors, drives and receiver.
 
 Some ideas extend existing plugins instead: commuter features (`flow`,
-`conditions`), cyclist and pedestrian safety (`safety`, `roads`), and the
-homeowner's view (`parcels`, private).
+`conditions`), cycling and walking (LTS and facilities in `roads`,
+counters in `flow`, crashes in `safety`, off-street paths in `trails`,
+gathered by a "Walk and bike" toolbar group; there's no `active` plugin),
+and the homeowner's view (`parcels`, private).

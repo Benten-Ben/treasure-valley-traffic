@@ -161,7 +161,10 @@ Front-end rules:
   model and usability rules. Never use red/green alone.
 
 Python 3.11, standard library only, except `gtfs-realtime-bindings` for
-live bus positions (`requirements.txt`).
+live bus positions (`requirements.txt`). Decoding gridded data (GRIB2,
+NetCDF, HDF5, rasters, lidar) runs in a separate `worker` image with GDAL,
+eccodes, NumPy, pyproj, h5py and PDAL from Ubuntu's packages (decided Oct 7,
+docs/17 §17.8 Q9); collectors stay standard library.
 
 ## Environment notes (local session, the driver)
 

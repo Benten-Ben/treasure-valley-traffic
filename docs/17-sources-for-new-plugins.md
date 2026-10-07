@@ -13,10 +13,11 @@ actions and open questions. Every source's details (endpoints, licenses,
 robots.txt results, sizes and evidence links) are in the ten theme
 catalogs under [docs/sources/](sources/).
 
-**Status: research only; nothing here is decided.** Each source still goes
-to the owner one at a time before we commit to how it's used
-([SOURCES](SOURCES.md), [DECISIONS](DECISIONS.md)). The order in §17.4 and
-the 3D weather design in §17.5 are proposals. ⚠️ marks anything resting on
+**Status (Oct 7):** the 34 open questions are settled (§17.8): the owner
+asked the lead to decide them and to start polling. The order in §17.4 and
+the 3D weather design in §17.5 are now the plan, and Wave A's pollers are
+being built. Sources beyond Wave A still go through one at a time
+([SOURCES](SOURCES.md), [DECISIONS](DECISIONS.md)). ⚠️ marks anything resting on
 secondary or unverified sources, or a figure the verification didn't re-run.
 
 **How it was checked.** For each theme, a researcher catalogued sources on
@@ -121,6 +122,10 @@ far the study area reaches"): about 117.30° W to 115.60° W and 42.90° N to
 ---
 
 ## 17.2 Recommendations by persona
+
+The "Owner actions" lists below were written before Oct 7. The questions
+they mention (Q1–Q34) are now settled in §17.8; the accounts, asks and hand
+downloads still stand (§17.7).
 
 Each persona covers its best sources (with the verdict), the first concrete
 thing to build, what follows, owner actions, and watch-outs. Effort: S is
@@ -898,8 +903,8 @@ The design is in §17.5.
 | Evidence and review | lands ownership, trail conflation, LTS provenance | Same pattern as lanes |
 | Areas | every plugin | Add the ring, an Oregon-strip flag, and possibly a 300 km weather-context area |
 
-**New core pieces proposed by this research** (not decided; Q1–Q6, Q16,
-Q21)
+**New core pieces from this research** (decided Oct 7; Q1–Q6, Q16,
+Q21 in §17.8)
 
 | New core piece | Plugins it unlocks | Why core |
 |---|---|---|
@@ -916,7 +921,7 @@ Q21)
 
 ## 17.4 Proposed order with rough effort
 
-**Not decided.** Effort: S is about 1–2 days, M about a week, L 2–3 weeks
+**The plan (Oct 7, §17.8).** Effort: S is about 1–2 days, M about a week, L 2–3 weeks
 or more. The proposal is consistent with
 [ch. 16 §16.4](16-ideas-and-personas.md#164-shared-core-pieces-serve-almost-every-persona):
 after UI v2, hazards and water first as the cheapest, then lands and
@@ -989,7 +994,7 @@ and the contract, then S–M per source)
 
 ## 17.5 Weather in 3D: a phased design
 
-A proposal, not decided. The sources and rendering references are in
+The plan (Oct 7, §17.8). The sources and rendering references are in
 [sources/weather-3d.md](sources/weather-3d.md) and
 [sources/weather.md](sources/weather.md).
 
@@ -1009,7 +1014,7 @@ A proposal, not decided. The sources and rendering references are in
 - MapLibre `sky` fog driven by visibility. Fog extinction is
   **σ = 3.0 / visibility**, the 5% meteorological optical range that ASOS
   and RTMA report; Koschmieder's 3.912/V makes fog about 30% too dense.
-- Decisions needed: the fields contract and the worker image (numpy,
+- Decided (§17.8 Q1, Q9): the fields contract and the worker image (numpy,
   eccodes, pyproj, h5py).
 
 **Phase 1, MVP: radar in 3D** (2–3 weeks)
@@ -1212,94 +1217,286 @@ gambling content" is unverified and was deliberately not fetched.
 | | ACHD: republishing the bike and pedestrian layers, category codes, counters | cycling |
 | | COMPASS: hourly counter data, Data Bike, republishing the swidrdc layers | cycling |
 | | IDFG IFWIS (see Wildlife in §17.2); IDL (a courtesy note, the camping stay limit); IDWR and the Water District 63 watermaster; Reclamation (`/pn-bin`) | wildlife, lands, farm, gardening |
-| | NWS (API robots.txt); USGS (water API robots.txt); CelesTrak; Cornell BirdCast; IBO; Idaho Power; Ada County Emergency Management (Genasys); DEQ (a zone-level burn feed); Ridge to Rivers (its imagery source) | various |
-| Local helper | Check gis2.idaho.gov, landfoliogis, rockyweb.usgs.gov and conservationeasement.us from the owner's network; WESM lidar coverage at the owner's location; pgRouting in the database image | lands, gardening, cycling |
-| Queries on our database | ITD versus COMPASS bike and pedestrian counts; COMPASS `crash_unit.event` animal values; crash direction of travel; OSM wildlife-crossing tags on SH-21 | cycling, wildlife, sky |
+| | USGS (the new water API's robots.txt; optional, Q14); Cornell BirdCast; IBO; Idaho Power; Ada County Emergency Management (Genasys); DEQ (a zone-level burn feed); Ridge to Rivers (its imagery source). Not NWS (Q13) and not CelesTrak (Q15) | various |
+| A fact only the owner knows | Does the server's internet connection have a monthly data cap, and how large (Q11)? | weather |
+| Local session | Done Oct 7: from the owner's network too, gis2.idaho.gov and rockyweb.usgs.gov time out, and landfoliogis.idl.idaho.gov and conservationeasement.us fail TLS (an incomplete certificate chain; a certificate for another name), so all four stay treated as disallowed. pgRouting 4.0.1 is already in the database image. Still to do: WESM lidar coverage at the owner's location | lands, gardening, cycling |
+| Queries on our database | Done Oct 7: `crash_unit.event` has "Animal - Wild" (955 units) and "Animal - Domestic" (622); 99.9% of crash units carry a direction of travel (Q28). Still to do: ITD versus COMPASS bike and pedestrian counts; OSM wildlife-crossing tags on SH-21 | cycling, wildlife, sky |
 
 ---
 
-## 17.8 Open questions
+## 17.8 Decisions on the open questions (Oct 7)
+
+The owner asked the lead to settle these "however you think is strongest,
+best, most elegant and permanent" and to start polling the new sources
+(Oct 7). Each answer is the decision, with the reason in a sentence or two.
+What only the owner can do or know is in §17.7 and in
+[DECISIONS](DECISIONS.md#owner-actions).
 
 **Structure**
 
-1. Add **fields** as a fourth core time shape?
-2. Put **recurring lifecycles and the rules-by-date evaluator** in core?
-3. Move the **sun and moon ephemeris and lighting** into core (this changes
-   §15.7)?
-4. Add **nDSM surface tiles** to the core basemap, with PDAL as a build
-   tool?
-5. Add **point occurrences** as a shape, plus **versioned geometry**?
-6. A **routing graph**: pgRouting on our own graph, or BRouter or Valhalla?
-7. Plugin boundaries:
-   - who owns smoke and air quality, fire detections, snow and gauges
-     (weather, hazards or water);
-   - `hazards` with or without a separate `air`;
-   - `wildlife` with or without a separate `nature`;
-   - the float season in `water`;
-   - `active` as its own plugin or spread across existing ones;
-   - WMAs and refuges in `lands`.
-8. One `core.met_station` table with a network column, replacing today's
-   511-keyed station table?
+1. **Fields: yes, a fourth core time shape**, beside readings, lifecycles
+   and tracks. A field frame is a gridded 2D or 3D array with
+   `valid_start`/`valid_end`, `issue_time` (for forecasts), its grid, its
+   quantization (scale, offset and nodata codes) and a file path in the
+   archive. The database keeps only the index of frames; the arrays are
+   files. Six plugins need the same thing, and one contract keeps replay,
+   the time bar and the 3D engine generic.
+2. **Recurring lifecycles and the rules-by-date evaluator: core.**
+   - An RFC 5545 subset: yearly date windows, weekday sets, hours of the
+     day.
+   - Evaluated in America/Boise, with windows that wrap past New Year.
+   - A fixed precedence: a dated order beats a closure, which beats a
+     seasonal rule, which beats the default.
+   - The source's raw text is kept beside the parsed rule.
+   - Python and TypeScript twins, both checked against one shared file of
+     test cases.
+
+   At least four plugins need it, and two implementations that drift
+   would give different answers on the map and in the feed.
+3. **Sun and moon ephemeris and lighting: core**, moved out of `sky`
+   ([§15.7](15-plugins.md#157-ideas-for-later-plugins) is updated).
+   - Python and TypeScript twins with shared conventions: degrees, azimuth
+     clockwise from true north, refraction-corrected elevation.
+   - Shared test cases against NOAA's published values.
+   - Our own code from the published algorithms (Meeus; NOAA's
+     calculator), since NREL's SPA code isn't licensed for us (§17.6).
+4. **nDSM surface tiles: yes, a core basemap layer, built with PDAL.**
+   - PDAL runs in the worker image (Q9), not the ingest image.
+   - Lidar is processed area by area and its point clouds are deleted
+     afterwards. Only the height-above-ground tiles are kept, in the same
+     pipeline and encoding as terrain-RGB.
+   - The full QL1 download waits on the disk (Q10). The first areas are
+     small (Q31).
+5. **Occurrences and versioned geometry: both, yes.**
+   - **Occurrences:** a point event with a time and no duration (a
+     roadkill report, a lightning flash, a fire detection, a quake). It's
+     never "active" at an instant, so maps show occurrences over a time
+     window.
+   - **Versioned geometry:** a geometry carries the range it's valid for,
+     and a new version closes the old one, as `raw.record` already does
+     for attributes. Fire perimeters, IDL zones, trails and lanes use it.
+
+   Both are small additions to the existing tables, not new systems.
+6. **Routing: pgRouting on our own graph.**
+   - It's already in the database image: pgRouting 4.0.1 and H3 are
+     available on the server (checked Oct 7).
+   - It routes on our own segments, paths and evidence, and its costs (LTS,
+     grades, closures by date) are columns we control.
+   - BRouter or Valhalla only if pgRouting, after tuning, can't answer a
+     valley-wide route in about half a second.
+7. **Plugin boundaries: plugins own data domains, and the toolbar groups
+   own presentation.** A layer group ("Walk and bike", "Outdoors") can
+   gather layers from several plugins, so no plugin has to exist just to
+   be a menu. So:
+   - **`weather`** owns the atmosphere's state: observations, radar,
+     clouds, fog, lightning, wind, and the 3D weather layer.
+   - **`air` is its own plugin.** It owns:
+     - air-quality monitors;
+     - smoke (HMS polygons and HRRR's smoke field);
+     - the camera haze index.
+
+     It has its own mandated colours, its own consent form (AirNow) and
+     its own question ("is the air OK today?"). Its 3D smoke uses
+     weather's fields contract and renderer.
+   - **`hazards`** owns:
+     - fire: restriction stages, incidents, perimeters and detections;
+     - warnings (NWS WWA, IPAWS);
+     - quakes;
+     - floods as events.
+   - **`water`** owns rivers, canals and snow:
+     - gauges and SNOTEL;
+     - E. coli results and river notices;
+     - drought;
+     - the float season.
+   - **`wildlife` stays one plugin, with no separate `nature`.** Plants and
+     phenology go to gardening. The sensitivity rules (Q21) are core.
+   - **No `active` plugin.** Cycling and walking data goes where its domain
+     is, and a "Walk and bike" group gathers it:
+     - LTS and facilities in `roads`;
+     - counters in `flow`;
+     - crashes in `safety`;
+     - off-street paths and their conditions in `trails`.
+   - **WMAs and refuges are in `lands`**, which owns land units and access
+     rules. `wildlife` refers to them.
+8. **Yes: one `core.met_station` table with a network column** (`rwis`,
+   `asos`, `awos`, `raws`, `snotel`, `agrimet`, `coop` and so on), keyed by
+   network and station ID. It replaces the 511-keyed table, whose
+   stations become the `rwis` network; a view keeps the old name for one
+   release. Readings join to stations the same way whatever the network.
+   Until it lands, the Wave A pollers keep readings in `raw.record`, which
+   loses nothing.
 
 **Infrastructure** (decisions about the server)
 
-9. A **worker image** beyond the standard library (numpy, eccodes, GDAL,
-   h5py, pyproj; later Py-ART, a Parquet reader, R with vol2bird)? One
-   image or several? The prebuilt wheels need checking against the server
-   first (see the private notes).
-10. **Disk:** about 80 GB was free on Oct 6 ([DECISIONS](DECISIONS.md)).
-    Agree on weather retention (full cadence for 14 days, then thinned), a
-    lazy NEXRAD archive (no raw Level II, which is 0.45–1 TB a year), and
-    whether the big one-offs wait on the disk decision.
-11. **Bandwidth:** does the server's internet connection have a data cap?
-    Weather is about 5–15 GB a day typical and 20+ GB on 2-minute storm
-    days.
-12. Adding pgRouting changes the database image; approve?
+9. **One `worker` image for decoding**, separate from the
+   standard-library ingest image.
+   - Contents: Ubuntu 24.04 with GDAL, eccodes, NumPy, pyproj, h5py and
+     PDAL, all from the distribution's packages. Those are built for
+     baseline x86-64, which matters on the server's older CPU, so pip's
+     prebuilt wheels don't need checking.
+   - Collectors stay standard library. Anything that decodes GRIB2,
+     NetCDF, HDF5 or rasters runs in the worker.
+   - A second image only when something heavy and rarely used arrives
+     (Py-ART, or R with vol2bird).
+10. **Disk: agreed as proposed.**
+    - Weather keeps full cadence for 14 days, then thins to hourly plus
+      each event's peaks.
+    - Derived bricks are kept permanently. Raw files are cropped, then
+      deleted.
+    - NEXRAD is a lazy archive: no raw Level II is stored, and it's
+      fetched again from AWS when a replay needs it.
+    - The big one-offs wait for the disk decision: QL1 lidar, Wildfire
+      Risk to Communities, CSB national, CDL and NLCD clips, FPA FOD.
+    - Every plugin's manifest states its growth per day, so the disk plan
+      adds up.
+11. **Bandwidth: design for 15 GB a day or less on average**, with more
+    allowed on storm days. The ingest framework gets a daily budget per
+    host that stops non-essential fetches when reached. Whether the
+    connection has a data cap is for the owner to tell (§17.7); if it
+    does, the budget is set under it.
+12. **No image change needed**: pgRouting is already in the database image
+    (timescaledb-ha; pgRouting 4.0.1, checked Oct 7). Turning it on is one
+    migration (`create extension pgrouting`) when the routing work starts.
 
 **Policy and robots.txt**
 
-13. Treat api.weather.gov as off-limits (recommended), ask NWS, or write an
-    exception?
-14. USGS Water Data API: ask USGS. Use NWPS meanwhile, and decide whether
-    to run a one-off legacy backfill before the planned outages start in
-    January 2027 (shutdown Feb 22, 2027).
-15. CelesTrak: ask for written permission, or skip it?
-16. Approve the robots.txt group-merge fix, with disallow on exact ties?
-17. Extend "no license: use it and send a courtesy note" from city and
-    county imagery to state agency GIS (IDFG, IDL, IDWR)?
+13. **api.weather.gov stays off-limits**, with no exception and no ask. The
+    WWA map service, tgftp, NOMADS, AWC and IEM cover what we need on
+    allowed paths.
+14. **The USGS Water Data API stays off-limits while robots.txt disallows
+    it, and NWPS serves the gauges.**
+    - A one-off backfill from the legacy waterservices.usgs.gov runs in
+      December 2026, before the planned outages start in January 2027: the
+      ring's gauges, daily values and 15-minute history, paced, if its
+      robots.txt still allows it then.
+    - A note asking USGS about the new API goes in the owner's drafts
+      (optional).
+15. **CelesTrak: skip it.** Satellite data will come from Space-Track (an
+    optional account, owner action), the official source with written API
+    terms, when the sky plugin gets that far.
+16. **Approved and done** (`ingest/http.py`, Oct 7):
+    - the robots.txt groups naming our agent are merged as RFC 9309
+      requires, or else every `*` group;
+    - an exact allow/disallow tie counts as disallow;
+    - ArcGIS edit operations are refused for every host.
+
+    ScienceBase stays hand-download only.
+17. **Yes, extended to state agency GIS** (IDFG, IDL, IDWR, IDPR). A
+    public, unauthenticated service with no stated licence may be used
+    with credit:
+    - its data stays internal, or is published only as aggregates;
+    - a courtesy note goes to the agency (drafted for the owner to send).
+
+    Republishing the data itself waits for a licence or a yes.
 
 **Scope**
 
-18. The Oregon strip: clip to Idaho with "no data", or add Oregon sources
-    (the national SMA, PAD-US Oregon, BLM Vale, ODFW, Oregon law)?
-19. Larger areas: a roughly 300 km weather-context area, the whole Boise NF
-    and the Owyhee wilderness for lands, and a terrain build for the ring
-    (only 10–30 m there today)?
-20. Public weather and hazard layers now, or tailnet-only for the moment?
+18. **Cover Oregon; don't clip it.**
+    - Prefer national sources over state ones wherever they're equivalent
+      (BLM's national surface management layer, PAD-US for every state,
+      national hazard and weather sources), so the Oregon strip is covered
+      without extra work.
+    - Every layer declares its coverage area. Outside it, the map shows
+      "no data" hatching, never a blank that reads as "nothing here".
+    - Oregon-only sources (BLM Vale, ODFW, Oregon law) are added one at a
+      time, like any source.
+19. **Yes to named areas**, each source declaring which ones it covers:
+    - **the valley:** the Ada and Canyon box, as today, for
+      intersection-level work;
+    - **the ring** (about 117.30° W to 115.60° W, 42.90° N to 44.30° N, as
+      proposed in DECISIONS), adopted for the new plugins: weather,
+      hazards, lands, trails, water and events;
+    - **the backcountry:** the whole Boise National Forest and the Owyhee
+      wilderness, for lands and trails reference layers (vectors, which are
+      cheap);
+    - **the weather context:** about 300 km around Boise, for radar,
+      satellite and model fields only, since storms arrive from outside
+      the ring.
+
+    A better terrain build for the ring (3DEP 10 m now, 1 m where it
+    exists) is basemap work for after the disk decision.
+20. **Tailnet-only for now, built ready to go public.** Weather and hazard
+    layers appear in the owner's app as it's reached today (LAN and
+    tailnet). Each layer already follows the public rules (NOAA inputs
+    only on public layers; RWIS stays internal), so making the app public
+    is a separate decision, not a rework.
 
 **Privacy and display**
 
-21. Approve the sensitive-species rules, and the rule that winter range is
-    never drawn?
-22. Drop person-related IPAWS alerts at ingest?
-23. Aggregate yard-scale results for any guest view?
-24. Keep the mandated AQI and HeatRisk colours, always with the word and
-    number?
-25. May the camera haze index be published?
-26. Weather drawn below labels? The atmosphere at the terrain's
-    exaggeration, with an optional labelled stretch?
+21. **Approved, both.**
+    - Sensitive species: a per-taxon table (IDFG flags, ESA and eagles,
+      NatureServe S1–S2, an owner list) plus a per-record "obscured" flag.
+      Such records appear only in cells of 0.2° or coarser, aligned to
+      0.2° multiples, or not at all.
+    - Nests, dens, leks and roosts are never drawn.
+    - Winter range is never drawn.
+22. **Yes: person-related IPAWS alerts are dropped at ingest** (child
+    abduction, blue alerts, missing or endangered people). We never store
+    a description of a person, and nothing we show needs the alert itself.
+23. **Yes.** Anything at yard scale (the owner's home, a private garden, a
+    volunteer's track) is for the owner only. A guest view shows only
+    aggregates no finer than about 1 km, and never a point at a home.
+24. **Yes: the mandated AQI and HeatRisk colours, always with the category
+    word and the number.** People know those colours, and the word and
+    number mean colour is never the only signal (our rule).
+25. **Yes, once it's validated.** The camera haze index may be published:
+    - as a number per camera and hour;
+    - labelled experimental;
+    - never with the images, which stay under 511's terms.
+
+    Validating it against monitors needs AirNow (the form, §17.7) or AQS.
+26. **Yes to both.**
+    - Weather draws below labels and point symbols, so labels always stay
+      readable.
+    - Heights follow the terrain's exaggeration. An optional extra
+      vertical stretch shows a "heights ×N" badge while it's on.
 
 **Research choices**
 
-27. The fog-study definition: for example, under ¼ mile at BOI or in RTMA
-    cells along key corridors, 6–9 am?
-28. Glare thresholds, and do COMPASS crash records carry each vehicle's
-    direction of travel?
-29. After Nov 3: stay on HRRR (still the only 3D smoke source) behind a
-    model adapter, or add RRFS forecasts and its fire nest?
-30. Night dome scope: magnitude 6.5 or 9?
-31. Which lidar area first?
-32. Start collecting R2R labels this wet season for the mud model?
-33. Publish the landlocked-land results, or keep them owner-only?
-34. Optional asks that are worth it: American Farmland Trust's Farms Under
-    Threat 2040, OpenET, Audubon's Christmas Bird Count?
+27. **Fog study: dense fog is visibility under ¼ mile (400 m)**, the NWS
+    dense-fog threshold.
+    - Where: at BOI's 1-minute ASOS, or in RTMA cells along the key
+      corridors (I-84, I-184, US-20/26, SH-55, SH-44, SH-16, SH-69).
+    - When: 6–9 AM on weekdays.
+    - Under ½ mile is recorded too, as a second threshold, so results can
+      be compared.
+28. **Glare.**
+    - The threshold: the sun 0–15° above the horizon and within 25° of the
+      direction of travel, with the horizon checked against terrain and
+      the surface model, under a clear sky (the GOES clear-sky mask). Up
+      to 25° of elevation and 45° of azimuth is reported as a looser band.
+    - **Yes, COMPASS crash records carry each vehicle's direction of
+      travel** (checked Oct 7): 99.9% of the 345,152 crash units have one.
+      N, S, E and W cover 99.6%, diagonals 0.3%, and 189 are blank.
+29. **Stay on HRRR after Nov 3, behind a model adapter.** HRRR keeps
+    running and is the only 3D smoke source. An RRFS adapter is added for
+    the fire nest once RRFS's products on AWS have run steadily for a
+    season. Neither replaces the other in the archive: each frame records
+    its model.
+30. **Magnitude 6.5**, what eyes can see (about 9,000 stars from HYG),
+    dimmed by the measured sky brightness at the viewpoint, so the dome
+    shows the sky you'd actually see from there. Deeper stars would draw a
+    sky no one in the valley sees.
+31. **Downtown Boise first, then the owner's neighbourhood.**
+    - Downtown: about 2 × 2 km around the key cameras and signals, for
+      building shadows, glare and transit stop shade.
+    - The owner's neighbourhood: for the gardening card, with results kept
+      private.
+
+    Both are small enough to build before the disk decision.
+32. **Yes.** The R2R conditions poller starts with Wave A (Oct 7), so this
+    wet season's labels are being collected.
+33. **Publish the totals, not the routes.** These may be published:
+    - acres and counts of landlocked public land by agency and area;
+    - the public parcels' outlines.
+
+    Nothing that names private owners, shows private parcels or suggests a
+    way across private land, corner crossing included.
+34. **The optional asks:**
+    - **American Farmland Trust's Farms Under Threat 2040:** worth asking;
+      it fits the farm and development personas.
+    - **OpenET:** no; its terms forbid our use (§17.6).
+    - **Audubon's Christmas Bird Count:** ask when the wildlife plugin
+      reaches birds.
+
+    Drafts go to the owner's private drafts, and the owner sends them.
