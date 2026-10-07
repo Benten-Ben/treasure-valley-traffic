@@ -236,6 +236,9 @@ directly or by a public records request:
 7. Whether ACHD, ITD or Boise participate in Waze for Cities or have
    considered Google Green Light.
 
+Research questions of our own, from chapter 5's notes, are listed under
+[chapter 5](docs/05-ai-and-emerging-tech.md) (its open questions).
+
 ## How this was researched
 
 Desk research in October 2026 drew on primary sources where possible:

@@ -1,12 +1,13 @@
 # 16. Ideas by persona
 
 Where the platform could go beyond traffic, and who each idea is for. It
-collects the brainstorms from the Oct 6–7 chats (the imagery brainstorm,
-the persona list that led to [chapter 15](15-plugins.md), and the owner's
-interests stated on Oct 7) with every detail kept, so nothing is lost
-between sessions. **None of it is approved** unless it says so; decisions
-are in [DECISIONS.md](DECISIONS.md), and data sources still to vet are in
-[SOURCES.md](SOURCES.md).
+collects the brainstorms from the Oct 4–7 chats (the owner's first
+questions, the imagery brainstorm, the persona list that led to
+[chapter 15](15-plugins.md), the owner's interests stated on Oct 7, and
+research analyses offered but not yet chosen) with every detail kept, so
+nothing is lost between sessions. **None of it is approved** unless it says
+so; decisions are in [DECISIONS.md](DECISIONS.md), and data sources still
+to vet are in [SOURCES.md](SOURCES.md).
 
 The principles that frame every idea here come from [CLAUDE.md](../CLAUDE.md)
 and chapter 15:
@@ -19,7 +20,41 @@ and chapter 15:
 - **One source at a time with the owner** before committing to how it's
   used.
 
-## 16.1 The owner's interests (Oct 7)
+## 16.1 The owner's interests
+
+### Where it started: traffic (Oct 4–5)
+
+The project began with the valley's traffic, which the owner said on Oct 4
+"is bad and getting worse", adding that "a big issue is first just that our
+lights are very poorly timed". The owner asked for three things, in this order:
+1. how systems like this are run, including local specifics
+   ([ch. 1](01-how-signal-systems-work.md), [ch. 2](02-treasure-valley-signal-system.md));
+2. how a team would go about starting to improve things
+   ([ch. 4](04-improvement-playbook.md));
+3. emerging areas, such as how Google teams have tested AI-integrated
+   systems ([ch. 5](05-ai-and-emerging-tech.md)).
+
+On Oct 5 the questions widened, then turned into the platform:
+- **01:05:** can AI agents, or more automated tools in general, close the
+  gap between the retiming resources available and those required
+  ([ch. 6](06-automation-and-ai-agents.md))? And what data can we collect
+  ourselves: "harvesting from Google if that's allowed/possible via API"
+  (it isn't, [ch. 7](07-diy-data-collection.md)), or government,
+  alternative-map or OpenStreetMap sources "to supplement or
+  cross-compare" ([ch. 7](07-diy-data-collection.md),
+  [ch. 8](08-data-inventory.md))?
+- **03:49:** "start building ingestors and an aggregator for everything we
+  can get our hands on and start building a bit of a gods eye view of the
+  region" ([ch. 10](10-architecture.md)).
+- **03:55:** "I want like my own map of the valley that we can start
+  visually overlaying data on", and does the state provide 3D terrain scans
+  and streets "that we can start building together ourselves"
+  ([ch. 9](09-base-map-data.md)).
+
+That is where the platform began. These traffic questions remain the
+project's starting point; the interests below came later.
+
+### Beyond traffic (Oct 7)
 
 The owner named these as personal interests, so they break ties when we pick
 what to build next:
@@ -52,15 +87,40 @@ Aircraft are genuinely transportation, so this plugin is in scope.
     Interagency Fire Center is in Boise).
 - **FAA open data:** airspace, temporary flight restrictions, drone no-fly
   maps.
-- **Sources:**
-  - Decided Oct 7: adsb.lol's live feed (ODbL), with the FAA registry for
-    aircraft types; owners' names are never stored. The privacy rules (LADD
-    and PIA aircraft, medical flights) are in [DECISIONS](DECISIONS.md).
-  - Best long term: the owner's own receiver, a roughly $30–60 USB radio
-    and antenna running readsb, often with 150+ km range ⚠️. It's radio, so
-    no terms apply. A dual-band receiver (1090 and 978 MHz) is suggested.
-- **Status:** the ingestor was half-built when the cloud session stopped. It
-  deploys switched off until the owner sends the courtesy note to adsb.lol.
+- **Sources** (research agent, Oct 7, 00:15 UTC):
+
+  | Source | Terms and access | Use |
+  |---|---|---|
+  | adsb.lol live data | ODbL; no key needed today; one query covers the whole valley box | **Decided Oct 7** |
+  | adsb.lol daily open archives | Each day is about 3.6 GB for the whole world | No backfill for now |
+  | FAA aircraft registry | Public domain; gives tail number, type, model and year | Decided Oct 7, for types; owners' names are never stored |
+  | adsb.fi | Personal use only, and silent on storing | Not used |
+  | ADS-B Exchange | Paid, no redistribution | Not used ([DECISIONS](DECISIONS.md)) |
+  | OpenSky | Needs a written agreement | Not used |
+  | airplanes.live | Asks to be contacted | Not used |
+  | The owner's own receiver | A roughly $30–60 USB radio and antenna running readsb, often with 150+ km range ⚠️. It's radio, so no terms apply | Best long term; a dual-band receiver (1090 and 978 MHz) is suggested |
+
+  The privacy rules (LADD and PIA aircraft, medical flights) are in
+  [DECISIONS](DECISIONS.md).
+- **A sample** (Tuesday Oct 6, 6:07 pm Boise time): 12 aircraft over the
+  valley, three of them helicopters (a Bell 407, a Robinson R22 and a
+  Bell 429). Two carried the FAA privacy flags (LADD or PIA, as marked by
+  adsb.lol).
+- **Storage:** about 33 MB a day at a 5 s poll (about 12 GB a year), and
+  half that at 10 s.
+- **Gaps:**
+  - aircraft without ADS-B don't appear, which may include some of Gowen
+    Field's Guard helicopters;
+  - light planes on 978 MHz appear only through a ground station's
+    rebroadcast, which is why a dual-band receiver is suggested.
+- **Polling:** start at 10 s once the courtesy note is sent, and speed up
+  later if adsb.lol is fine with it.
+- **Build plan** (Oct 7): the collector deploys switched off, behind a
+  Compose profile `aircraft`, and starts once the owner has sent the note.
+  The map layer comes with the app-plugin step ([§15.6](15-plugins.md#156-refactor-plan)).
+- **Status:** the ingestor was half-built when the cloud session stopped,
+  and isn't in this repository yet. It deploys switched off until the owner
+  sends the courtesy note to adsb.lol.
 
 ### Hiker, backpacker, camper, hunter, angler, floater (`lands`, `trails`, water)
 
@@ -113,6 +173,8 @@ Aircraft are genuinely transportation, so this plugin is in scope.
 - **Sun glare:** low sun straight down an east–west road at commute time.
   It's computable from the sun's position and each road's bearing, and it's
   also a real crash-risk research question (see Sky).
+- **How long buses wait at signals** on State St, Fairview and Chinden, by
+  time of day: a research analysis from our own bus GPS (§16.6).
 - **Builds on:** the Valley Feed, search and full replay (deferred).
 - **Status:** mostly traffic core already; nothing commuter-specific is
   planned.
@@ -330,3 +392,28 @@ fog and precipitation reconstructed from radar and other data as volumes,
 
 It would all be synced to the replay clock. A phased design, MVP first, will
 be added here once the research is verified.
+
+## 16.6 Research analyses from data we already record
+
+Analyses that answer the research questions in §16.1 from data the
+platform already collects. None has been chosen or built.
+
+### How long buses wait at signals (offered Oct 6)
+
+The pilot offered this on Oct 6 as "a first research result from data we're
+already recording", option 3 of 4 in a list of next steps. The owner moved
+on to the aerial imagery and the source reviews instead, so it was never
+chosen or built.
+- **What:** with the roughly day and a half of VRT bus GPS on hand then,
+  measure how long buses wait at signals along State St, Fairview and
+  Chinden, by time of day, with the recorded work zones as context.
+- **How:** a standalone analysis script that touches nothing else.
+- **Why:** the pilot called it "the project's core question, answered with
+  our own data". It's the specific version of
+  [§8.7](08-data-inventory.md#87-most-useful-next-additions) item 1 (bus
+  travel times through signalized corridors).
+- **What the data allows** ([§8.2](08-data-inventory.md#82-bucket-a-reachable-and-allowed),
+  VRT row): each bus reports about every 30 s, 22% of fixes are stationary
+  (stops and signals), and there's no speed field, so speeds come from
+  consecutive fixes. The feed looks complete for the fixed-route fleet (42
+  buses at the Oct 5 peak).

@@ -51,6 +51,12 @@ them before relying on them.*
 | **HERE** (Traffic API v7) | Speed, free-flow speed and jam factor for *every segment in a bounding box* per call | 5,000/month free; one box per 15 min ≈ 2,900 calls/month[^herepricing] | **No** (≤30 days) | §6.4: no "derivative works"; no providing "Results … to another person or entity"; no caching or storing Results "for more than 30 days" except for internal testing/evaluation or audit.[^hereterms] |
 | **Mapbox** (Directions/Matrix, `driving-traffic`) | Duration, typical duration, congestion levels | 100,000/month free | **No** | Product terms: "only query the Services in response to human user queries … not perform bulk or automated queries … not export, download, cache or store."[^mapbox] |
 
+**Google's price:** polling 20 corridors in both directions through the
+Routes API (Pro tier) would cost about **$1,070 a month** at 15-minute
+intervals, or **$2,915 a month** at 5 minutes, and the results still
+couldn't be stored ⚠️ (source not yet re-checked). Google for Nonprofits
+credits start at $250 a month ⚠️ (source not yet re-checked).
+
 **Bottom line:** these APIs are fine for a *live* look, such as an app that
 shows current conditions on a Google map. They're not usable for a
 longitudinal study. Building one anyway would breach the terms and could
@@ -125,6 +131,10 @@ stopped, for how long, and total travel time.
 **What it is:** stand on a public sidewalk and record when each signal
 indication changes, with a stopwatch app or phone video. This is a classic
 manual technique, and it measures timing directly instead of inferring it.
+
+There's no shortcut online: no internet SPaT (signal phase and timing) feed
+covers Boise. Neither Traffic Technology Services nor Audi's Traffic Light
+Information lists it ⚠️ (source not yet re-checked).
 
 **What it tells you:**
 

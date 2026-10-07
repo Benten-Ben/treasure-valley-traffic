@@ -47,7 +47,7 @@ context, and what it all could mean for the Treasure Valley.
 
 | Date | Milestone |
 |---|---|
-| Oct 2021 | First disclosed: AI-timed lights piloted at 4 locations in Israel (Haifa, Beer-Sheva), claiming 10–20% lower fuel use and intersection delay. Rio de Janeiro next.[^engadget] |
+| Oct 2021 | First disclosed: AI-timed lights piloted at 4 locations in Israel (Haifa, Beer-Sheva), claiming 10–20% lower fuel use and intersection delay. Rio de Janeiro next.[^engadget] Google's Kate Brandt disclosed it on **Oct 6, 2021**, and the Israel National Roads Company was a partner alongside Haifa and Beer-Sheva ⚠️ (source not yet re-checked). |
 | Late 2022 | Work with Seattle begins (first US city).[^seatoday] |
 | Oct 10, 2023 | Public launch at Sustainable with Google: **70 intersections in 12 cities**, including Abu Dhabi, Bali, Bangalore, Budapest, Haifa, Hamburg, Hyderabad, Jakarta, Kolkata, Manchester, Rio de Janeiro and Seattle.[^launch] |
 | Jan 2024 | Seattle DOT publishes its experience.[^sdot] |
@@ -104,6 +104,11 @@ time of day."[^cbs]
   dependent on the baseline you're comparing to." Badly timed signals improve
   a lot; well-timed ones barely improve.[^sciam]
 - **Induced demand.** Smoother driving can attract more driving.[^sciam]
+- **Emissions framing.** At launch, Google said pollution at intersections
+  can be **29 times** that on open road, and that about half of intersection
+  emissions come from stop-and-go traffic.[^launch] Scientific American's
+  critique cites the Congressional Budget Office (CBO, 2022): congestion
+  accounts for about **2% of US transport emissions**.[^sciam]
 - **It retunes static plans offline.** It's not real-time adaptive, so it
   can't respond to incidents or events as they happen.
 - **It depends on Maps data density** and on agency staff time to act on
@@ -124,6 +129,16 @@ time of day."[^cbs]
 - **How to join:** agencies (city representatives or traffic engineers) fill
   in a waitlist form on the program site.[^site] Individuals can't sign up a
   city, but they can ask their agency to.
+
+### Still to find out
+
+1. **Eligibility minimums:** how dense the probe data must be, whether a
+   central signal system is needed, and whether a county highway district
+   (like ACHD) is eligible.
+2. **Acceptance and persistence:** what share of Green Light
+   recommendations cities accept, and whether the benefits persist.
+3. **Henry Liu's probe-based retiming case in Birmingham, Michigan:** what
+   was done and what it showed ⚠️ (source not yet re-checked).
 
 ## 5.3 How Google tests mobility AI more broadly
 
@@ -166,13 +181,19 @@ by building in the stronger designs:
 - **pre-registered metrics**;
 - a **third-party evaluator** (as Boston used INRIX), or a university partner.
 
+**A cautionary case on data access.** Replica, a Sidewalk Labs spin-out,
+ran a pilot that Portland approved in Dec 2018 for **$457,300**. It ended
+around Feb 2021 after Metro (the Portland region's government) asked for
+raw, disaggregated data and Replica refused ⚠️ (source not yet re-checked).
+
 ## 5.4 Other AI and adaptive signal systems
 
 | System | Approach | Evidence | Notes |
 |---|---|---|---|
 | **Surtrac** (CMU → Rapid Flow → Miovision) | Decentralized, real-time schedule-driven adaptive | 9-intersection Pittsburgh pilot (2012): >25% better travel time, stops and wait. Floating-car before/after, run by the developers, no control group.[^surtrackrs] | About 350 intersections when Miovision acquired it in 2022.[^miovision] |
-| **NoTraffic** | AI sensors at the intersection + cloud optimization | Phoenix pilot (2020) with university evaluators. Vendor claims PM delay −29%; method not disclosed.[^notraffic] | No Idaho deployment found |
-| **LYT** | Cloud-based transit and emergency signal priority | San Jose: transit red-light wait −50% (vendor-reported)[^lyt] | Relevant to VRT's State Street priority |
+| **NoTraffic** | AI sensors at the intersection + cloud optimization | Phoenix pilot (2020) with university evaluators. Vendor claims PM delay −29%; method not disclosed.[^notraffic] The pilot ran on Glendale Ave from Aug 2020; the Maricopa Association of Governments (MAG) funded it through its emerging-technology program, and ASU, the University of Arizona and NAU evaluated it ⚠️ (source not yet re-checked). | No Idaho deployment found |
+| **Maricopa County AI adaptive pilot** | AI adaptive control | ⚠️ Delay −46% (29.5 s to 13.7 s) over one week at one intersection, extrapolated to 170 intersections (USDOT ITS Knowledge Resources, ITS-KRS 2025-b02021, from a search excerpt). Those two delays are a 54% cut, not 46%, so the source needs checking. | Vendor unconfirmed |
+| **LYT** | Cloud-based transit and emergency signal priority | San Jose: transit red-light wait −50% (vendor-reported)[^lyt] | Relevant to VRT's State Street priority. Maryland MTA contract for 90 intersections (Sep 2025) ⚠️ (source not yet re-checked) |
 | **Econolite Centracs + PTV Flows** | Machine-learning traffic prediction up to 60 min ahead, plugged into Centracs | Vendor-announced (2024)[^econoliteptv] | **ACHD now runs Centracs**, so this is the AI add-on closest to ACHD's platform. Paid product |
 | **Yunex (ex-Siemens) Flow AI** | AI adaptive control | 47% less waiting, in simulation (Hagen, Germany)[^yunex] | Simulation only |
 | **Alibaba City Brain** (Hangzhou) | City-scale AI traffic management | Vendor/government claims (15% faster passage)[^citybrain] | No independent evaluation |
@@ -180,6 +201,11 @@ by building in the stronger designs:
 FHWA's baseline for comparison: conventional adaptive control improves travel
 time by more than 10% on average.[^asct] Adaptive control runs on roughly
 4–5% of US signals.[^sciam]
+
+**Ownership changes.** Besides Miovision's 2022 purchase of Rapid
+Flow,[^miovision] Almaviva bought **Iteris** for $335M (Nov 2024), and
+Siemens sold **Yunex Traffic** to Atlantia for €950M (closed Jun 30, 2022)
+⚠️ (source not yet re-checked).
 
 ## 5.5 The research frontier
 
@@ -214,13 +240,27 @@ learning and LLM controllers are **research**.
     organizations" are at maturity level zero.[^itsjpo]
   - USDOT announced a broader AI initiative for infrastructure in July 2026;
     program details were still emerging at the time of writing.[^usdotai]
+    Secretary Duffy and Assistant Secretary Seval Oz announced it on
+    **Jul 22, 2026**, with the Department of Energy (DOE) and the National
+    Science Foundation (NSF) as partners ⚠️ (source not yet re-checked).
+- **SMART grants for signal projects** (the program is listed among
+  funding sources in [chapter 4](04-improvement-playbook.md#411-funding-sources)):
+  - Regional Transportation Commission (RTC) of Southern Nevada: **$2M**
+    (Mar 2023) for cloud signal timing with AI analytics ⚠️ (source not yet
+    re-checked).
+  - Manchester, NH: **$2M** Stage 1 (Dec 2024), live at 22 intersections by
+    Aug 2026 ⚠️ (source not yet re-checked).
 - **Connected vehicles (V2X).** The national deployment plan targets V2X at
-  25% of signalized intersections in the top 75 metros by 2028.[^v2x] ACHD
-  already ran a 20-intersection SPaT (Signal Phase and Timing broadcast)
-  pilot in 2017–19 (see [chapter 2](02-treasure-valley-signal-system.md#23-operations-center-and-technology-timeline)).
+  25% of signalized intersections in the top 75 metros by 2028.[^v2x]
+  Whether Boise is among those 75 metros is still to find out. The FCC's
+  C-V2X rules began a **2-year transition on Dec 13, 2024** ⚠️ (source not
+  yet re-checked). ACHD already ran a 20-intersection SPaT (Signal Phase and
+  Timing broadcast) pilot in 2017–19 (see [chapter 2](02-treasure-valley-signal-system.md#23-operations-center-and-technology-timeline)).
 - **Cybersecurity:**
   - In 2024, a controller vulnerability (Intelight X-1, CVE-2024-38944)
     allowed unauthenticated signal control over the internet.[^cve]
+  - In Mar 2026, flaws in **Daktronics** sign controllers were patched
+    ⚠️ (source not yet re-checked).
   - The 2019 benchmarking report found more than half of agencies had no
     cybersecurity policy.
   - Advisory, offline systems like Green Light avoid adding new network

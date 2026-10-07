@@ -51,7 +51,7 @@ still work and name the new commands.
 | `achd_signal_points` | open (ACHD's 2022 layers on ArcGIS Online, frozen Aug 2, 2022; no robots rules) | monthly | `raw.record` (`<layer>:<OBJECTID>`), `core.signal_device` (2,469 signal poles, 182 pedestrian signals, 33 school flashers, 68 fire signals) |
 | `compass_signals` | open (COMPASS on ArcGIS Online; no license, "meant only for reference": internal until COMPASS answers) | weekly | `raw.record` (`synchro:<id>`, else `loc:<operator>:<location>`), `core.signal_device` (585 signalized intersections with operator, coordination and per-approach lanes, phasing and modelled volumes) |
 | `compass_regional_signals` | open (COMPASS on swidrdc.org; internal until COMPASS answers) | weekly | `raw.record`, `core.signal_device` (1,076 devices: 586 traffic signals, the rest pedestrian signals, flashers and fire signals) |
-| `intersections` | derived (fetches nothing; by hand: `python3 -m ingest match-intersections [--dry-run]`) | daily | `core.intersection` (591: 585 active, 1 candidate, 5 retired by review in `plugins/intersections/ingest/intersection_reviews.json`), `core.approach`, `core.signal_device.intersection_id`, camera and OSM links in `core.source_link` (199 cameras), `core.rail_crossing.intersection_id` (nearest active signal within 300 m) |
+| `intersections` | derived (fetches nothing; by hand: `python3 -m ingest match-intersections [--dry-run]`) | daily | `core.intersection` (633 after the Oct 7 OpenStreetMap load: 585 active, 43 candidates, 5 retired by review in `plugins/intersections/ingest/intersection_reviews.json`; 42 of the candidates are new, from OSM signal nodes with no COMPASS match, and need review. Before the load it was 591 with 1 candidate), `core.approach` (2,276), `core.signal_device.intersection_id`, camera and OSM links in `core.source_link` (199 cameras, 3 of them to interchanges; 711 OSM nodes), `core.rail_crossing.intersection_id` (nearest active signal within 300 m; 56 crossings). Since OSM nodes now confirm and create intersections, `core.intersection` is an ODbL derivative database: credit "© OpenStreetMap contributors", and anything published from it stays ODbL ([docs/12 §12.5](../docs/12-database-schema.md#125-core-our-entities)) |
 | `osm_valley` | open (OpenStreetMap, ODbL; credit "© OpenStreetMap contributors"); by hand only: Geofabrik's robots.txt disallows scripted downloads (Oct 6), so the owner downloads the Idaho extract in a browser into `$TVT_ARCHIVE/osm/inbox/`. Not a scheduled source; no download code | by hand, weekly (`python3 -m ingest osm-load --inbox`) | `raw.record` (`w<id>`/`n<id>`: tags and a geometry hash), `core.osm_way` (major ways and every way with lanes), `core.osm_lane`, `core.osm_node` (intersection signals, crossing signals, level crossings), `core.segment_match` (ACHD segments, by the shared matcher: `buffer15_bearing20`, and `way_in_buffer15_bearing20` for turn-bay ways); extracts archived in `$TVT_ARCHIVE/osm/` (last two) |
 | `compass_crashes` | open (COMPASS hub, disclaimer only; swidrdc.org has no robots.txt) | monthly (unchanged layers skipped; 6 h back-off) | `raw.record`, `obs.crash` (174,038 crashes 2008-2025: local time, KABCO severity, pm_id/int_id, unit types), `restricted.crash_unit` (345,152 people: age group, Idaho resident or not, coded citations; no sex; never in `raw.record`; aggregates only), `core.hin_junction` (1,924), `core.hin_segment` (14,487) |
 | `compass_counts` | open (COMPASS hub) | monthly | `raw.record`, `obs.traffic_count` (latest short count on 4,387 segments from every agency; 115 permanent counters; earlier counts kept) |
@@ -92,3 +92,20 @@ Rules carried over from the prototype, which all ingestors must follow:
   [docs/08](../docs/08-data-inventory.md). Never store Google, TomTom, HERE,
   Mapbox or Waze data.
 - Log every fetch (status and robots decision) so gaps are visible.
+
+## Verifying a source
+
+When the owner asked to verify the ingestors one at a time (Oct 5, 2026),
+the prototype's `achd_cameras` went through six checks. They make a
+reusable acceptance test for each new ingestor or plugin source. Checks 5
+and 6 were never run: the owner then chose to go over each source in detail
+before committing to how it is used.
+
+| Check | What it asks | `achd_cameras` (Oct 5) |
+|---|---|---|
+| 1. Count against the source | Does what we stored match what the source lists, after deduplication? | 232 source records, 228 unique cameras, 228 stored |
+| 2. Duplicates | Which copy wins when the source lists a thing twice? | The 4 double-listed cameras each kept the copy with coordinates (2 had a second copy with none) |
+| 3. Field sanity | Are positions, labels and links plausible? | Everything inside the valley box, labels clean, image links match camera IDs |
+| 4. Re-run safety | Does a second run add nothing and keep history? | No duplicates added; the original first-seen dates kept |
+| 5. Cross-check against a second source | Does an independent copy agree? | Not run (planned against 511 Idaho's copy of the cameras) |
+| 6. Liveness from the source's own metadata | Can we flag dead items without fetching them? | Not run (planned from the GIS timestamp field, without fetching images). It can't work per camera: the layer has one timestamp for the whole layer ([docs/10 §10.5](../docs/10-architecture.md#105-what-the-prototype-taught-us-kept-as-lessons-not-code)). Camera health now comes from reading 511's timestamp bar ([docs/11](../docs/11-camera-validation-layer.md)) |

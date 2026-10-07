@@ -3,8 +3,10 @@
 How the app should look and feel. The owner asked for something closer to
 SimCity, Cities: Skylines and Civilization than to a corporate dashboard,
 with the usefulness of a traffic management center. The owner left the
-final call to the pilot (Oct 5, 2026). Chapter 12 is reserved for the
-database schema.
+final call to the pilot (Oct 5, 2026). How that choice was made, the
+directions set aside and the owner's own words are in
+[§13.11](#1311-how-the-direction-was-chosen-oct-5). Chapter 12 is reserved
+for the database schema.
 
 ---
 
@@ -45,6 +47,10 @@ explore, and traffic data has the same problem.
 | **Strategic view** | Civilization VI's flat parchment map | Later, a **Print view**: flat, paper-and-ink style for reports and screenshots |
 
 ## 13.3 A walk through the screen
+
+This section is written as a walk-through on purpose: the owner liked
+hearing the design described as it would look and behave in the actual UI,
+and asked for more of that (§13.11).
 
 **Opening the app.**
 
@@ -151,6 +157,20 @@ How it works:
    image automatically. If the camera shifts slightly, the zones follow.
    If an operator moves it to an unknown view, the Valley Feed says
    *"Camera X has a new view and needs calibration"*.
+
+**Tips for a good fit** (the pilot's how-to for the owner, Oct 5):
+
+- Opening Calibrate pulls a fresh frame from 511's allowed image route
+  (`/map/Cctv/<id>`), so the frame is current.
+- Click sharp ground features: the end of a stop bar, a lane-line corner,
+  a crosswalk corner. Then click the same spot on the map.
+- Position, heading and tilt are solved from 4 pairs and update live with
+  each new pair. Aim for **6 or more, spread out**: near and far, left and
+  right in the frame.
+- Saving turns the camera's node teal and draws its view cone on the main
+  map.
+- The first camera opened to try it was Park & Parkcenter, picked as an
+  easy one.
 
 **Foggy mornings.** When the Boise airport reports fog, the stats-bar chip
 says so. In the Normal lens a light haze settles over the map, and a feed
@@ -279,6 +299,10 @@ simulator when we build it.
 | Feed cards | 250 ms slide with a slight bounce |
 | Buses | Glide continuously between GPS updates |
 
+Motion is for moving through place and time (fly-to, replay, scrubbing),
+not decoration: there's no staggered page-load reveal, because this is a
+tool people open every day (§13.11).
+
 When the system asks for reduced motion, lenses switch instantly, fly-to
 becomes a jump, and nothing bounces.
 
@@ -304,8 +328,15 @@ becomes a jump, and nothing bounces.
 - The dark "security operations" or corporate BI look: gray cards, tiny
   type, neon on black.
 - Glassmorphism and frosted panels, and purple gradients on white.
-- Default fonts (Inter, Roboto, system UI).
+- Default fonts (Inter, Roboto, system UI). The app's first header was
+  exactly that, system fonts on white.
 - Cartoonish styling inside the data: numbers stay crisp and monospaced.
+- Staggered page-load reveals and other motion for its own sake.
+- Fonts or other assets from third-party CDNs, even where general
+  front-end advice recommends them (§13.7).
+
+The other directions considered on Oct 5, and why they were set aside, are
+in §13.11.
 
 ## 13.10 Build order
 
@@ -321,3 +352,104 @@ becomes a jump, and nothing bounces.
    then the camera wall and queue gauges once camera measurements exist
    ([chapter 11](11-camera-validation-layer.md)).
 7. Later: Findings, Print view, real-sun lighting.
+
+## 13.11 How the direction was chosen (Oct 5)
+
+The look in §13.1 came out of one short exchange on Oct 5, 2026. The
+directions set aside are kept here so they aren't proposed again as new,
+and so the reasons are on record.
+
+### The owner's aesthetics guide
+
+The owner first shared a general front-end aesthetics guide and asked
+whether it still applied. Its main point is that without a stated direction
+a UI drifts to generic defaults. The pilot's reading:
+
+| The guide's advice | Here | Why |
+|---|---|---|
+| Give the UI a direction, or it falls back to generic choices | **Applies** | Our first header was system fonts on white, exactly the default the guide names (§13.9) |
+| Load fonts from Google Fonts | **Doesn't apply** | It breaks the self-hosted, no-third-party rule; fonts are bundled with the app (§13.7) |
+| Backgrounds and atmosphere; dominant colors with sharp accents | **Applies, moved to the basemap** | On a map app the map *is* the background, so color work belongs in the basemap style. A muted basemap lets the data layers be the sharp accents (the clay look, §13.4) |
+| Motion: a staggered page-load reveal | **Doesn't apply** | It adds little to a tool opened every day. The motion that matters is fly-to transitions and scrubbing through time: bus trails, before and after (§13.7) |
+| Stack advice (plain HTML, Tailwind, Motion for React) | **Doesn't apply** | The app is Svelte, which has its own transitions |
+| (Not covered) | **Matters more here** | Colorblind-safe color (red/green fails for about 8% of men) and readable numbers in dense panels. The guide itself says dashboards are where the generic look shows most, and this app is a dashboard |
+
+The guide stays outside the repo, as its own note intends.
+
+### The first three directions
+
+| Direction | Look |
+|---|---|
+| Signal cabinet | Dark map, amber and green accents like signal heads, monospace numbers |
+| USGS topo print | Paper-cream map, serif labels, contour-brown and survey-red accents |
+| High desert | Sagebrush green, basalt gray, sunset amber |
+
+The owner's reply:
+
+> "my first suggestion was like gods eye view (idk what that looks
+> like/means exactly though) but maybe also like a command center or
+> something, maybe more techno aesthetic"
+
+### What "god's-eye view" means
+
+The pilot described it as a viewpoint as much as a style: looking down at
+a slight tilt over the whole valley, with everything live at once on a
+dark, quiet map. Roads glow by how busy they are, buses leave light
+trails, incidents pulse, and labels and screen furniture are kept to a
+minimum. Think spy-thriller satellite shots, Google Earth flyovers and
+SimCity's info views.
+
+### The 17 directions
+
+| # | Family | Direction | Look |
+|---|---|---|---|
+| 1 | Command and operations | Traffic management center | Dark navy, tiled panels, a strip of camera thumbnails, status lights, monospace numbers |
+| 2 | Command and operations | NASA mission control, 1960s–70s | Black, phosphor green and amber, big numerals, grid lines, a faint monitor glow |
+| 3 | Command and operations | Military ops / HUD | Near-black, thin cyan-white lines, bracketed symbols, crosshairs, coordinates everywhere |
+| 4 | Command and operations | Spy-thriller satellite | Washed-out teal-tinted imagery, scanlines, zoom-to-target reticles, time stamps |
+| 5 | Command and operations | Bloomberg Terminal | Black, amber text, extremely dense, all monospace |
+| 6 | Techno | Neon Tron / Blade Runner | Roads as glowing cyan and magenta traces |
+| 7 | Techno | Arcade wireframe vector | Terrain as a green line mesh |
+| 8 | Techno | Data art (deck.gl / kepler.gl demo style) | Bus trails as particle streams, crashes as 3D hexagon columns |
+| 9 | Techno | NASA Black Marble city lights | Black base, roads glowing sodium-orange by volume; "the most literal god's-eye view" |
+| 10 | Techno | Weather radar ("traffic weather") | Congestion as radar-style color blobs, looped through time |
+| 11 | Engineering and maps | Engineering blueprint | Prussian blue, white linework, drafting lettering, dimension callouts |
+| 12 | Engineering and maps | Highway signage (MUTCD) | Asphalt gray, sign green, warning orange, the open-source Overpass font |
+| 13 | Engineering and maps | USGS topo print | As above |
+| 14 | Engineering and maps | Swiss transit map | White, a strict grid, bold primary-colored route lines |
+| 15 | Place and play | High desert | As above, plus foothills gold and sunset amber over the Owyhees |
+| 16 | Place and play | SimCity / Cities: Skylines | Toy-like 3D, each layer a colored info view |
+| 17 | Place and play | Civilization-style strategy | Territories, unit-like markers, a "turn" timeline |
+
+The pilot's own pick was a dark city-lights base (9) with control-room
+panels (1), plus a light blueprint (11) or topo (13) mode for reports. It
+offered to render three to five of these as side-by-side mock screens;
+those were never made.
+
+### The owner's decision
+
+> "those are all great inspirations. I think you can decide which would
+> both look best and be nicest to actually use. i do like the way you were
+> describing things as you were imagining them in the actual UI so maybe
+> do that more to flesh everything out. I'm drawn most to the simcity,
+> city skylines, civilization ... because obviously a lot was put into
+> making those aesthetic and enjoyable. I think the traffic management
+> center look but maybe that more friendly vibe than like 'corporate
+> app'."
+
+So the pilot went with the city-builder look (16, with ideas from 17) and
+the traffic management center's usefulness (1), made friendly. The
+owner's pull toward friendly over "corporate app" is why the pilot's dark
+city-lights pick gave way to the warm, light model in §13.1, and why
+§13.9 avoids dark, neon-on-black screens. The request for UI walk-throughs
+is why §13.3 is written as one.
+
+**What survived from the other directions:**
+
+| Kept | From | Where it is now |
+|---|---|---|
+| Overpass type | 12, highway signage | §13.7 |
+| Hexagon columns for crashes | 8, data art, and Civilization's hex map | Safety lens, §13.5 |
+| A flat paper-and-ink view for reports | An echo of 11 (blueprint) and 13 (topo) | Print view, later (§13.2) |
+| The camera wall | 1, traffic management center, made friendly | §13.3 |
+| The god's-eye name | The owner's first wish | The overview key (O), §13.4 |

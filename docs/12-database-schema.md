@@ -170,10 +170,28 @@ create table core.source_link (             -- how source records map to our ent
 );
 ```
 
-The **453 intersections** come from clustering ACHD's 2022 signal points
-and OSM signal nodes within 60 m (prototype lesson). ACHD turn-movement
-names ("Eagle & Fairview") and camera locations link to them through
-`source_link`.
+The prototype got **453 intersections** by clustering ACHD's 2022 signal
+points and OSM signal nodes within 60 m. That radius over-merges, so the
+build below seeds from COMPASS instead and clusters leftovers at 45 m.
+ACHD's 2022 `Traffic_Signals` layer (`services2.arcgis.com/9rTo9NcUHIKASKwi`,
+layer 15; frozen Aug 2, 2022, "Official Bike Map 2022") holds 2,469 signal
+**poles**, not intersections, with only `OBJECTID` and `Purpose` (Eagle &
+Fairview has 12). Grouping the poles at different radii:
+
+| Radius | Groups | Note |
+|---|---|---|
+| 30 m | 799 | Far more groups than intersections |
+| 45 m | 464 | Matches COMPASS's 464 ACHD signals |
+| 60 m | 453 | The prototype's figure; the widest group spans 209 m, merging neighbours |
+| 80 m | 418 | |
+
+Its companion layers are `Pedestrian_Signals` (layer 13; 182: 96 hybrid
+beacons, 76 RRFBs, 4 conventional signals, 3 warning beacons and 3 with a
+blank purpose, which the build counts as conventional, 7 in all),
+`School_Flasher_Signal` (layer 40; 33) and `Fire_Signals` (layer 14; 68).
+Nothing newer is public on `gis.achdidaho.org`; ten of its folders need a
+token. ACHD turn-movement names ("Eagle & Fairview") and camera locations
+link to intersections through `source_link`.
 
 **Cameras:**
 
@@ -254,6 +272,64 @@ an ODbL derivative database: credit "© OpenStreetMap contributors", and
 anything published from it stays ODbL. Until COMPASS answers, it is also
 internal only.
 
+Scoring rules the builder added, accepted Oct 6 ([DECISIONS](DECISIONS.md)):
+
+- Regional_Signals alone scores 0.5. ACHD's 2022 poles plus Regional_Signals
+  with nothing current scores 0.55, which catches removed signals such as
+  Chinden & Hwy 16.
+- A named junction found 40–150 m from the point costs 0.1.
+- At COMPASS's single-point urban interchanges, poles attach within 120 m;
+  otherwise each SPUI showed up as duplicate candidates.
+- A junction counts only where the centerlines share a vertex, so bridges
+  don't.
+- State routes match their local names (SH 44 = State St, SH 69 = Meridian
+  Rd, US 20/26 = Chinden), and single-letter misspellings are tolerated.
+- An ingest or build that would drop below half of what's held is refused.
+
+Data conventions: Regional_Signals devices are stored by their own device
+type, and only traffic signals feed the build. That layer adds essentially
+no signals (584 of its 586 traffic signals lie within 10 m of a COMPASS
+point) but is newer than ACHD's 2022 layer for pedestrian devices ([ch. 8
+§8.9](08-data-inventory.md#89-second-source-review-oct-6-2026)). COMPASS's
+Synchro IDs 215, 256 and 428 each appear on two points (two of the pairs
+are kilometres apart), so those records key on Synchro ID plus location.
+COMPASS's "northbound approach" is the south leg when it fills
+`core.approach`. Rail crossings link within 300 m, not 200 m, because no
+open Union Pacific crossing is within 200 m of a signal: the nearest is
+Karcher Rd, Nampa, at 238 m, and Caldwell's are 279–307 m from the Blaine
+St signals. The 14 open at-grade crossings within 200 m are all Boise Valley
+Railroad, from Cole Rd at 37 m (list in [ch. 8
+§8.9](08-data-inventory.md#89-second-source-review-oct-6-2026)).
+
+**The first run** (Oct 6, into a trial database, before OpenStreetMap)
+made 8 requests (FRA 1, ACHD 5, COMPASS 1, `swidrdc.org` 1); responses were
+cached, so reruns made none.
+
+- **591 intersections:** 585 active, 6 candidates. A rerun gave 0 new and 0
+  retired, so the IDs hold.
+- **Snapping:** 442 of the 465 Ada points snapped to their named junction.
+  Confidence 0.85 for 442, 0.70 for 142 (mostly Canyon, which has no ACHD
+  poles).
+- **Poles:** 2,429 attached, 12 unattached. 23 active Ada signals have no
+  2022 pole, mostly newer ones such as Hwy 16 & Beacon Light and Ustick &
+  McDermott.
+- **Examples:** Eagle & Fairview is active at 0.85, Synchro 213, 12 poles,
+  camera linked at 35 m. Chinden & Cloverdale is active at 0.85, 6 poles,
+  camera at 23 m.
+- **Cameras:** 196 of 228 linked before the freeway rule. The 32 unlinked
+  were freeway cameras (the I-84 SPUI cameras are 120–133 m from their
+  signal), 3 at roundabouts and a few with no signal nearby. The freeway
+  rule brought it to 199 ([ingest README](../ingest/README.md)).
+- **The six candidates:** Chinden & Hwy 16 at 0.55 (2022 poles at the old
+  at-grade junction; COMPASS's two points are 130 m away); Capitol & Island
+  (4 poles plus a hybrid beacon); Franklin & Wayfinder (8 poles, not in
+  COMPASS); Lake Hazel & Maple Grove and Victory & Locust Grove (poles plus
+  4 RRFBs each); and one Regional point with a blank type near 43.6478,
+  −116.4864. Their outcomes are in [DECISIONS](DECISIONS.md), Oct 6.
+
+After the Oct 7 OpenStreetMap load the table held 633 rows, with 43
+candidates (counts in the [ingest README](../ingest/README.md)).
+
 **OpenStreetMap (`osm_valley`, Oct 6, 2026).** Geofabrik's robots.txt, read
 Oct 6, 2026, disallows its extracts for every robot (`Disallow: *.osm.pbf`,
 `*.md5`, `*updates*` and more). So the owner downloads the Idaho extract by
@@ -273,24 +349,97 @@ stays in its own tables (ODbL, "© OpenStreetMap contributors"); only the
 road network's major and laned ways are kept, so residential street names
 come from ACHD, not OpenStreetMap.
 
+The builder's tagging choices, which the lead let stand (Oct 6):
+
+- **Signals:** `crossing:signals=yes` (the newer tagging) counts alongside
+  `crossing=traffic_signals`. A `highway=traffic_signals` node tagged
+  `traffic_signals=crossing` is a crossing signal. One tagged
+  `crossing=traffic_signals` was at first kept as an intersection signal,
+  with its tags; the junction rule added later that day replaced that.
+- **Junction rule:** a node is at a junction when three or more road ways
+  pass through it, or road ways with different names (from osmium's
+  way-node lists). Footways don't count, and neither does a road split at
+  the signal (two ways, one name). If it can't be told, the node counts as
+  a crossing signal.
+- **Skipped kinds** (`traffic_signals=emergency`, `ramp_meter`, `blinker`,
+  `level_crossing`) are counted in the load's statistics, not stored.
+- **Ways:** the keep filter drops proposed, construction, abandoned and
+  similar ways, and `area=yes`. `oneway` stores the effective value (yes is
+  implied on motorways and roundabouts); `bridge` is false when absent.
+- **Lanes:** a two-way road with an even lane count and no direction split
+  is split evenly. An odd count with no split (e.g. `lanes=5` alone) gets
+  no lane rows. When the turn-lane slots disagree with the lane count, it's
+  logged and the lanes get no turns. Odd values such as `2;3` or `2.5`
+  become null, with the raw tag kept.
+- **History:** the `raw.record` payload is `{tags, geom_hash}`, without
+  version or timestamp, so an OSM version bump that changes neither adds no
+  row.
+- **Matching:** confidence is share × cos(bearing difference). The 15 m
+  buffer has round ends, so a way "covers" up to 13.7 m past its own ends (a
+  test turn bay of 25% shows share 0.28). When both rules pass, the
+  segment rule wins. In the Eagle Rd sample, turn-bay ways were 16 of 43
+  approaches.
+
+**Guards.** A load with fewer than half the active ways (when 1,000 or more
+are active) won't retire the rest without `--allow-shrink`. An extract with
+the same MD5 as the last load is skipped unless `--force`. The last two
+extracts are kept, and pruning never removes the file just loaded.
+
+**Sizes and timings** (the builder's figures; the image size is an
+estimate):
+
+| What | Figure |
+|---|---|
+| Matching at server scale | About 47 s with the turn-bay rule, 21 s without |
+| A whole load | 1.5–2 min |
+| `osmium-tool` in the ingest image | About 4 MB more |
+| Disk | About 250 MB of archived extracts, plus about 150 MB temporary |
+| `raw.record` growth | Roughly 150–500 new versions (60–200 KB) a week |
+
+**What OpenStreetMap holds in the valley box** (counted through the
+`overpass.private.coffee` mirror, data of May 31, 2026 ⚠️):
+
+| Feature | Count |
+|---|---|
+| `highway=traffic_signals` nodes | 752 |
+| `crossing=traffic_signals` nodes | 1,709 |
+| `railway=level_crossing` nodes | 342 |
+| Major ways (motorway to tertiary) | 7,823: `lanes` on 5,632 (72%), `lanes:forward`/`backward` on 1,177 (15%), any `turn:lanes` on 1,460 (19%), `width` on 6 |
+| Residential, unclassified and service ways | 79,611: `lanes` on 5,176 (6.5%) |
+
 **COMPASS (built Oct 6, 2026, migration 0012).** Crashes are `obs.crash`,
 one row per ITD serial number. `crashed_at` is the reported local time, so
 the key is serial number plus time; with TimescaleDB it's a hypertable in
 1-year chunks. The people in them are `restricted.crash_unit`: the
 `restricted` schema of §12.8 (foreseen for Assessor data) now also holds
-these crash people. Only coded fields are kept: an age group, Idaho resident
-or not, and coded citations. Sex isn't collected, and nothing is copied to
-raw.record. `obs.crash.unit_types` is the one crash-level aggregate taken
+these crash people. Only coded fields are kept, and nothing is copied to
+`raw.record`:
+
+- **Age** only in bands: 0–15, 16–20, 21–24, then 10-year bands up to 75 and
+  over.
+- **Residence** reduced to Idaho resident or not.
+- **Citations:** coded types only; case and ticket numbers are dropped.
+- **Sex** isn't collected: the lead dropped it as not needed for
+  road-network work.
+
+`obs.crash.unit_types` is the one crash-level aggregate taken
 from it, and it may be published. Counts are `obs.traffic_count`, shaped as
 in §12.6 but keyed by source, the source's location key and `counted_on`;
 it adds `period` (what `counted_on` stands for), a nullable `direction`
 ('both' or 'one_direction') and `count_type`. Growth is `core.taz` with
 `obs.taz_demographic` (zone, year, measure, kind: census, estimate or
 forecast), `obs.building_permit` and `core.plat`. The high-injury network is
-`core.hin_junction` and `core.hin_segment`. The congestion measures and
-commute travel times are internal until COMPASS answers. `ops.layer_signature`
-records each layer's count and highest object ID at its last full read, so
-monthly runs skip layers that haven't changed.
+`core.hin_junction` and `core.hin_segment`. COMPASS's building permits do
+include 2025 (9,150 permits that year), although the layer's statistics
+queries stop at 2023
+([ch. 8 §8.9](08-data-inventory.md#89-second-source-review-oct-6-2026)).
+The congestion measures and commute travel times are internal until COMPASS
+answers; their segment numbers also look like INRIX's network ⚠️. `ops.layer_signature` records each layer's
+count and highest object ID at its last full read, so monthly runs skip
+layers that haven't changed. That check matters because a full crash pull
+downloads about 350 MB for data that changes about once a year, and takes
+about 15–20 minutes at our pace; a redeploy that cuts it off resumes after
+the 6-hour back-off.
 
 **Lane inventories and segment matching (Oct 6, 2026; 0011, re-keyed in
 0016).** Three sources keep their own lane values, each in its own table:
@@ -313,6 +462,19 @@ that changes it, and every source's after `achd_roads` changes ACHD's
 segments; by hand, `python3 -m ingest segment-match`. Canyon County has no
 ACHD segments, so its lines stay unmatched and keep their own geometry.
 
+Guards added in the same Oct 7 fix as migration 0018:
+
+- **Snapshots:** HPMS (each layer, and the road names), the Master Street
+  Map and COMPASS refuse an empty snapshot, or one under half the active
+  rows, before writing anything (the same check as the signal sources).
+- **Matching** runs inside the fetch's transaction, so a failed match rolls
+  the store back too. Rematching every source logs and rolls back a
+  matcher that fails and lets the rest run.
+- **ArcGIS paging:** a cut-off answer shrinks the batch to the server's page
+  size (a synthetic 12,150-row case takes 13 range requests). A by-ID
+  request that returns nothing fails the fetch. Truncated reads and
+  unparseable JSON are retried. COMPASS is read 1,000 IDs a request.
+
 **`core.segment_lanes` (0017, corrected in 0018)** applies the lanes rule of
 [ch. 9 §9.3](09-base-map-data.md#93-streets-network-and-lanes), one row per
 active ACHD segment: `lanes_total` (through lanes both ways),
@@ -333,9 +495,46 @@ when its total agrees. Collectors and local streets take OpenStreetMap, else
 an assumed 1+1. One lane on a two-way road is one lane, flagged, at half
 confidence. COMPASS's 2 is unknown unless a trusted source agrees. Each
 source's best match (by share) is its own view (`core.segment_lanes_hpms`,
-`_msm`, `_compass`, `_osm`). It is a plain view: reading all 38,727 rows takes
-about 4 s. Since it uses OpenStreetMap, it is an ODbL derivative database if
-published.
+`_msm`, `_compass`, `_osm`). It is a plain view: reading all 38,727 rows took
+about 4 s, and about 5 s after 0018's fixes. Since it uses OpenStreetMap, it
+is an ODbL derivative database if published.
+
+What 0018 fixed (found in review, Oct 7; 0017 was already merged, and the
+runner refuses edited migrations):
+
+- **Divided highways.** The evidence for the facility-type rule above:
+  I-84's A route carries 2–6 lanes one way and 0 the other, coded facility
+  type 2 (two-way), for 281 miles. 0017 let facility type override
+  the A/D reading, so it read divided state routes as undivided and halved
+  them: 147 segments (51 km) under "two-way" had `ad_conflict` set. Now only
+  a one-way roadway or a ramp means "no other direction", and an A route
+  with lanes one way and no D route alongside leaves the other direction
+  unknown. Three readings still carry `ad_conflict`: one-way facilities
+  whose A row claims both directions.
+- **Concurrent routes.** Westbound I-84 read 1 lane for 28.8 km: US-26 runs
+  with it, its D route is a 1-lane placeholder, and it tied with I-84's own
+  D route on share. Ties now go to the interstate, then the US route, then
+  the state route. Westbound I-84 now reads 2–5 lanes; 3.1 km of interstate
+  (I-184 branches and ramps) still read 1.
+- **Carriageway split.** 76 one-way segments that are one carriageway of a
+  divided road get half the Master Street Map count, flagged
+  `carriageway_split`. "One carriageway" means the Master Street Map line
+  has one-way segments running both ways along it; a one-way street keeps
+  all its lanes.
+
+**Which source won, after the first OpenStreetMap load** (Oct 7; Ada only,
+since Canyon has no ACHD segments):
+
+| Winning source | Segments |
+|---|---|
+| OpenStreetMap | 7,636 |
+| Master Street Map | 3,776 |
+| ITD HPMS | 1,116 |
+| COMPASS centerline | 206 |
+| Assumed 1+1 | 25,699 (33,023 before OpenStreetMap) |
+
+Conflict flags rose from 207 to 651: OpenStreetMap adds a second opinion
+where HPMS or the Master Street Map had already decided.
 
 ## 12.6 `obs`: time series (TimescaleDB)
 
@@ -343,12 +542,20 @@ published.
 |---|---|---|---|---|---|
 | `obs.vehicle_position` | Bus GPS ping | `ts`, `vehicle_id`, `trip_id`, `route_id`, `geom`, `bearing`, `speed` | 1 day | 7 days | ~30 M |
 | `obs.weather` | Station report | `ts`, `station`, `visibility_m`, `temp_c`, `wind_ms`, `precip_mm`, `present_weather` | 30 days | 30 days | small |
-| `obs.weather_reading` (built Oct 6, migration 0010) | ITD road-weather station reading (511 API) | `station_id`, `ts`, air, surface and dew-point °F, humidity, wind, precipitation, visibility, surface status and friction, `status` | 7 days | 14 days | ~6.5 M (127 stations, every ~15 min) |
+| `obs.weather_reading` (built Oct 6, migration 0010) | ITD road-weather station reading (511 API) | `station_id`, `ts`, air, surface and dew-point °F, humidity, wind, precipitation, visibility, surface status and friction, `status` | 7 days | 14 days | ~4.4 M (127 stations, every 15 min; measured Oct 6) |
 | `obs.camera_frame` | Kept frame | `taken_at` (from the 511 bar), `fetched_at`, `view_id`, `archive_file`, `frame_index`, `quality` flags, `scene_hash` | 1 day | 7 days | ~110 M (all cameras) |
 | `obs.camera_measurement` | Frame × zone | `taken_at`, `view_id`, `zone_id`, `pipeline_version`, `vehicles`, `occupancy`, `queue_back_m`, `signal_color` | 1 day | 7 days | ~600 M (all cameras, ~6 zones) |
 | `obs.traffic_count` | Count × direction | `counted_on`, `station_id`, `direction`, `count_24h`, `am_peak`, `pm_peak`, `count_type` | (plain table) | — | small |
 | `obs.turn_count` | Count × period × approach × movement | `counted_on`, `intersection_id`, `period` (AM/NOON/PM/WKND), `leg`, `movement` (L/T/R/U), `volume` | (plain table) | — | small |
 | `obs.atr_volume` | ITD counter × month | `month`, `station_id`, `volume` | (plain table) | — | small |
+
+**Road-weather volume, measured.** Before any data arrived we estimated
+about 18,000 readings a day (about 6.5 M a year). Measured on the server on
+Oct 6: all 127 stations report every 15 minutes (two full batches, at 16:15
+and 16:30 UTC), so about 12,000 readings a day statewide and about 4.4 M a
+year. The same check of the 511 ingest found 46 API calls in its first ~25
+minutes, none failed; 180 events marked as seen on every poll; 15 signs
+showing messages; and the API key absent from every log and error record.
 
 **Camera notes:**
 
@@ -449,7 +656,9 @@ order); blank periods have no row. Road-weather stations are in
 
 - **Migrations:** plain SQL files in `db/migrations/NNNN_name.sql`,
   applied in order by a small Python runner that records them in
-  `ops.schema_migration`. No ORM, so the schema stays readable.
+  `ops.schema_migration`. No ORM, so the schema stays readable. The runner
+  stores each file's checksum and refuses one that changed after it was
+  applied, so a fix goes in a new migration (0018 corrects 0017).
 - **Testing:**
   - The PostGIS parts can be tested in the cloud sandbox now (PostgreSQL
     16 + PostGIS 3 install from apt).

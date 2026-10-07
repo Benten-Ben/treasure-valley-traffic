@@ -158,7 +158,7 @@ sampler.
 | `transit` | VRT's GTFS and live positions, route matching, ribbons, progress, tracks | — | public |
 | `conditions` | Live road conditions: ITD's work zones (WZDx), the 511 API (events, message signs, advisories, road weather, truck restrictions, winter roads) | — | public (511 data internal) |
 | `safety` | COMPASS's crashes and high-injury network; crash people in `restricted` | `roads`, `intersections` | public, aggregates only for people |
-| `flow` | How traffic moves: COMPASS's counts, congestion measures and commute travel times; later speeds from buses and GPS drives | `roads` | public (congestion internal) |
+| `flow` | How traffic moves: COMPASS's counts, congestion measures and commute travel times; later speeds from buses (method below) and GPS drives | `roads` | public (congestion internal) |
 | `development` | Why traffic will change: COMPASS's traffic zones and forecasts, building permits and plats; later Boise's development pipeline | — | public |
 | `achd_tables` | ACHD's count and turn-movement copies and their tools (extends `flow`) | `flow`, `intersections` | **private** |
 | `parcels` | Ada County Assessor parcels and characteristics, aggregates by corridor | `development` | **private** |
@@ -183,6 +183,57 @@ Staying in core: `basemap/` (terrain, imagery, streets, buildings), the
 GL and 3D engine, the three time contracts and their displays, evidence
 and review, places and search, areas, the layer system, the ingest
 framework, `core.source_link`, deploy and `tools/check_public.py`.
+
+### Speeds from buses (planned for `flow`)
+
+How `flow` would turn bus GPS into travel speeds and signal delay. The
+pilot proposed it on Oct 5, when the owner said "we were thinking about
+utilizing their GPS locations to model travel speeds/traffic". Only step 1
+is built. As a method it sits beside the
+GPS runs of [ch. 7](07-diy-data-collection.md#a-gps-floating-car-runs-the-most-valuable),
+and it's how the bus-signal-delay analysis in
+[§16.6](16-ideas-and-personas.md#how-long-buses-wait-at-signals-offered-oct-6)
+would be done.
+
+1. **Place each fix on its route.** Snap each fix to its route line, giving
+   distance along the route plus time, so each trip becomes a
+   time–distance trajectory. Built as `obs.vehicle_progress`
+   ([ch. 14](14-ui-v2.md)), made for playback.
+2. **Time each crossing.** Interpolate when each bus crossed each segment
+   boundary, such as each signalized intersection. With fixes 30 s apart a
+   single crossing is known to ±15 s, which averages out over many trips.
+3. **Take out what buses do and cars don't.** Dwell at stops, pulling in
+   and out, and layovers aren't traffic. The stop status each fix carries,
+   with the stop locations, separates stopped at a stop from stopped at a
+   signal or crawling in traffic.
+4. **Aggregate** by segment, hour and weekday: typical travel time, its
+   spread, and delay against free-flowing runs. Clusters of stationary
+   fixes just before a stop bar point to signal delay.
+
+What the Oct 5 sample (4,637 fixes from 34 buses; the VRT row of
+[§8.2](08-data-inventory.md#82-bucket-a-reachable-and-allowed)) says about
+resolution:
+
+| Measure | Oct 5 value |
+|---|---|
+| Distance a moving bus covers between fixes | about 200 m (a quarter 330 m or more, p90 440 m): roughly one fix per block, or 3–4 between signals on a typical arterial |
+| Moving speed | median 24 km/h (15 mph); the fastest 10% above 51 km/h (32 mph) |
+| Stationary fixes | 22%, which is useful signal (stops, signals, queues), not noise |
+
+Limits and baselines:
+
+- **Only streets with bus service,** which still include State, Fairview,
+  Chinden, Overland, Vista, Orchard, Franklin and Ustick.
+- **Thin samples.** Headways of 30–60 minutes give a segment only a few
+  buses an hour, so time-of-day profiles need **2–4 weeks** of recording.
+- **Buses aren't cars.** They accelerate more slowly and serve stops, so
+  they measure congestion trends and relative delay, not car speeds.
+  Calibrating against car data would close that gap: the owner's GPS runs
+  with `tools/gps_runs.py`, or camera measurements.
+- **Baselines.** ACHD's posted speeds are the free-flow baseline, and also
+  the progression speeds that matter for signal timing; functional class
+  helps pick which segments to analyze. COMPASS's congestion measures are
+  the official history to compare against ([SOURCES](SOURCES.md)).
 
 ## 15.5 Tracks: one contract for everything that moves
 
