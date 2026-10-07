@@ -1,0 +1,59 @@
+{
+  "about": "Reviewed decisions the intersection build applies (intersections.py, beside this file). Each review applies to the built intersection nearest its point (key: 'lat,lon') within 50 m, unless that intersection has since gained a source listed in reopen_on: then it no longer applies and the build reports it for another look. status: 'retired' (never deleted), 'candidate' or 'active'. Add new reviews here.",
+  "reviews": [
+    {
+      "key": "43.66300,-116.47232",
+      "name": "Chinden Blvd & Hwy 16",
+      "status": "retired",
+      "reason": "superseded by the interchange (COMPASS 2026)",
+      "evidence": ["achd_2022", "compass_regional"],
+      "reopen_on": ["compass"],
+      "decided": "2026-10-06"
+    },
+    {
+      "key": "43.54653,-116.29425",
+      "name": "Lake Hazel Rd & Maple Grove Rd",
+      "status": "retired",
+      "reason": "probably a roundabout now (RRFBs, not in COMPASS)",
+      "evidence": ["achd_2022"],
+      "reopen_on": ["compass"],
+      "decided": "2026-10-06"
+    },
+    {
+      "key": "43.57572,-116.37463",
+      "name": "Victory Rd & Locust Grove Rd",
+      "status": "retired",
+      "reason": "probably a roundabout now (RRFBs, not in COMPASS)",
+      "evidence": ["achd_2022"],
+      "reopen_on": ["compass"],
+      "decided": "2026-10-06"
+    },
+    {
+      "key": "43.60702,-116.21024",
+      "name": "Capitol Blvd & Island Ave",
+      "status": "retired",
+      "reason": "not a signalized intersection: a pedestrian hybrid beacon (its poles are in ACHD's signal layer); the devices stay as pedestrian devices",
+      "evidence": ["achd_2022"],
+      "reopen_on": ["compass"],
+      "decided": "2026-10-06"
+    },
+    {
+      "key": "43.64782,-116.48638",
+      "name": "Regional_Signals point with no type",
+      "status": "retired",
+      "reason": "no operator, location or device type, and no other source",
+      "evidence": ["compass_regional"],
+      "reopen_on": ["compass", "achd_2022", "osm"],
+      "decided": "2026-10-06"
+    },
+    {
+      "key": "43.60477,-116.42904",
+      "name": "Franklin Rd & Wayfinder Ave",
+      "status": "candidate",
+      "reason": "8 poles in ACHD's 2022 layer, not in COMPASS; becomes active if OpenStreetMap's signal nodes confirm it",
+      "evidence": ["achd_2022"],
+      "reopen_on": ["compass", "osm"],
+      "decided": "2026-10-06"
+    }
+  ]
+}

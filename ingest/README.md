@@ -4,6 +4,35 @@ Python ingestors that write to the database (see [db/](../db)). This is a
 clean rebuild that keeps the prototype's lessons, not its code (the
 prototype is [`tvt/`](../tvt)).
 
+**Core and plugins** ([docs/15](../docs/15-plugins.md)). This folder is the
+core every subject shares: the CLI (`__main__.py`), polite HTTP with the
+robots.txt parser (`http.py`), sources, fetch logs and record versions
+(`db.py`), event lifecycles (`events.py`), the shared readers for ArcGIS
+layers (`arcgis.py`) and COMPASS's layers (`compass_layer.py`), the UTM
+projection (`utm.py`), and the plugin loader (`manifest.py` reads and orders
+the manifests; `sources/__init__.py` builds `SOURCES`, `STREAMS` and the
+plugin commands from them). Each subject's sources live in its plugin,
+`plugins/<name>/`, with a `plugin.json` (sources, licenses, whether we may
+republish, tables, commands), a README, its migrations and its tests. Source
+names didn't change, so `ops.source` and `ops.fetch` carry on:
+
+| Plugin | Sources (in run order) | Commands |
+|---|---|---|
+| [cameras](../plugins/cameras) | `achd_cameras`, `idaho511_views_oneoff`; stream `idaho511_frames` | `rollup` |
+| [transit](../plugins/transit) | `vrt_gtfs`; stream `vrt_realtime` | `match-routes`, `transit-progress`, `transit-ribbons`, `route-colors` |
+| [roads](../plugins/roads) | `achd_roads`, `itd_hpms`, `achd_msm`, `compass_centerline`; by hand `osm_valley` | `osm-load`, `segment-match` |
+| [conditions](../plugins/conditions) | streams `itd_wzdx`, `idaho511_api` | |
+| [intersections](../plugins/intersections) | `fra_crossings`, `achd_signal_points`, `compass_signals`, `compass_regional_signals`, `intersections` | `match-intersections` |
+| [safety](../plugins/safety) | `compass_crashes` | |
+| [flow](../plugins/flow) | `compass_counts`, `compass_congestion` | |
+| [development](../plugins/development) | `compass_growth`, `compass_plats` | |
+
+Private plugins (ACHD's tables, parcels) live on the server, outside this
+repository: `TVT_PLUGIN_PATH` names their parent folders and they load the
+same way. The old module entry points (`python3 -m ingest.osm_load`,
+`ingest.segment_match`, `ingest.transit_progress`, `ingest.transit_ribbons`)
+still work and name the new commands.
+
 **Status:** camera sources (for the calibrator), Valley Regional Transit (buses), ITD's work zones and the 511 Idaho API.
 
 | Source | Access | Schedule | Writes |
@@ -22,8 +51,8 @@ prototype is [`tvt/`](../tvt)).
 | `achd_signal_points` | open (ACHD's 2022 layers on ArcGIS Online, frozen Aug 2, 2022; no robots rules) | monthly | `raw.record` (`<layer>:<OBJECTID>`), `core.signal_device` (2,469 signal poles, 182 pedestrian signals, 33 school flashers, 68 fire signals) |
 | `compass_signals` | open (COMPASS on ArcGIS Online; no license, "meant only for reference": internal until COMPASS answers) | weekly | `raw.record` (`synchro:<id>`, else `loc:<operator>:<location>`), `core.signal_device` (585 signalized intersections with operator, coordination and per-approach lanes, phasing and modelled volumes) |
 | `compass_regional_signals` | open (COMPASS on swidrdc.org; internal until COMPASS answers) | weekly | `raw.record`, `core.signal_device` (1,076 devices: 586 traffic signals, the rest pedestrian signals, flashers and fire signals) |
-| `intersections` | derived (fetches nothing; by hand: `python3 -m ingest match-intersections [--dry-run]`) | daily | `core.intersection` (591: 585 active, 1 candidate, 5 retired by review in `ingest/intersection_reviews.json`), `core.approach`, `core.signal_device.intersection_id`, camera and OSM links in `core.source_link` (199 cameras), `core.rail_crossing.intersection_id` (nearest active signal within 300 m) |
-| `osm_valley` | open (OpenStreetMap, ODbL; credit "© OpenStreetMap contributors"); by hand only: Geofabrik's robots.txt disallows scripted downloads (Oct 6), so the owner downloads the Idaho extract in a browser into `$TVT_ARCHIVE/osm/inbox/`. Not a scheduled source; no download code | by hand, weekly (`python3 -m ingest.osm_load --inbox`) | `raw.record` (`w<id>`/`n<id>`: tags and a geometry hash), `core.osm_way` (major ways and every way with lanes), `core.osm_lane`, `core.osm_node` (intersection signals, crossing signals, level crossings), `core.segment_match` (ACHD segments, by the shared matcher: `buffer15_bearing20`, and `way_in_buffer15_bearing20` for turn-bay ways); extracts archived in `$TVT_ARCHIVE/osm/` (last two) |
+| `intersections` | derived (fetches nothing; by hand: `python3 -m ingest match-intersections [--dry-run]`) | daily | `core.intersection` (591: 585 active, 1 candidate, 5 retired by review in `plugins/intersections/ingest/intersection_reviews.json`), `core.approach`, `core.signal_device.intersection_id`, camera and OSM links in `core.source_link` (199 cameras), `core.rail_crossing.intersection_id` (nearest active signal within 300 m) |
+| `osm_valley` | open (OpenStreetMap, ODbL; credit "© OpenStreetMap contributors"); by hand only: Geofabrik's robots.txt disallows scripted downloads (Oct 6), so the owner downloads the Idaho extract in a browser into `$TVT_ARCHIVE/osm/inbox/`. Not a scheduled source; no download code | by hand, weekly (`python3 -m ingest osm-load --inbox`) | `raw.record` (`w<id>`/`n<id>`: tags and a geometry hash), `core.osm_way` (major ways and every way with lanes), `core.osm_lane`, `core.osm_node` (intersection signals, crossing signals, level crossings), `core.segment_match` (ACHD segments, by the shared matcher: `buffer15_bearing20`, and `way_in_buffer15_bearing20` for turn-bay ways); extracts archived in `$TVT_ARCHIVE/osm/` (last two) |
 | `compass_crashes` | open (COMPASS hub, disclaimer only; swidrdc.org has no robots.txt) | monthly (unchanged layers skipped; 6 h back-off) | `raw.record`, `obs.crash` (174,038 crashes 2008-2025: local time, KABCO severity, pm_id/int_id, unit types), `restricted.crash_unit` (345,152 people: age group, Idaho resident or not, coded citations; no sex; never in `raw.record`; aggregates only), `core.hin_junction` (1,924), `core.hin_segment` (14,487) |
 | `compass_counts` | open (COMPASS hub) | monthly | `raw.record`, `obs.traffic_count` (latest short count on 4,387 segments from every agency; 115 permanent counters; earlier counts kept) |
 | `compass_growth` | open (COMPASS hub) | monthly (unchanged layers skipped) | `raw.record`, `core.taz` (2,498 zones), `obs.taz_demographic` (2020 Census, estimates 2022-26, forecasts 2030-55), `obs.building_permit` (174,244 since 2000; no addresses, parcels or comments) |
@@ -41,11 +70,13 @@ TVT_ARCHIVE=data/archive python3 -m ingest stream itd_wzdx                # ITD 
 TVT_ARCHIVE=data/archive IDAHO511_API_KEY=... python3 -m ingest stream idaho511_api   # the 511 API (key never committed)
 python3 -m ingest backfill itd_wzdx data/archive/wzdx                     # load snapshots the database missed
 python3 -m ingest match-intersections --dry-run                         # rebuild core.intersection from the signal sources
-TVT_ARCHIVE=data/archive python3 -m ingest.osm_load --inbox             # OSM extract downloaded by hand (needs osmium-tool)
+TVT_ARCHIVE=data/archive python3 -m ingest osm-load --inbox             # OSM extract downloaded by hand (needs osmium-tool)
 TVT_COMPASS_MAX_PAGES=3 python3 -m ingest run compass_crashes          # dev only: at most 3 pages per layer, logged as failed
 TVT_COMPASS_FORCE=1 python3 -m ingest run compass_growth               # skip the freshness and change checks
-python3 -m ingest.segment_match [itd_hpms achd_msm compass_centerline osm_valley]   # rematch to ACHD segments by hand
-python3 -m unittest discover -s ingest/tests -t .
+python3 -m ingest segment-match [itd_hpms achd_msm compass_centerline osm_valley]   # rematch to ACHD segments by hand
+python3 -m ingest -h                                                    # every command, the plugins' included
+python3 -m unittest discover -s ingest/tests -t .                       # core
+python3 -m unittest discover -s plugins -t .                            # the plugins
 ```
 
 Each run logs to `ops.fetch`. Records are versioned in `raw.record`, so a

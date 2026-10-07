@@ -72,7 +72,7 @@ Before every push, check the diff for these.
   - require an explicit flag (`--one-off`, `--have-permission`);
   - be run by hand only;
   - cap their work and pause between requests.
-  Never call them from `ingest/`, cron or any scheduler.
+  Never call them from `ingest/`, `plugins/`, cron or any scheduler.
 - **Allowed camera route:** 511 Idaho's republished images at
   `/map/Cctv/<id>`, with IDs from the official 511 API (key required;
   10 calls per 60 s).
@@ -95,14 +95,18 @@ Before every push, check the diff for these.
 ```
 README.md               research summary and index
 docs/01-08              research chapters (signals, local system, data, playbook, AI, automation, DIY data, inventory)
-docs/09-14              platform: base-map data, architecture, camera layer, DB schema (draft), visual design, UI v2 plan
+docs/09-15              platform: base-map data, architecture, camera layer, DB schema (draft), visual design, UI v2 plan, core and plugins
 docs/DECISIONS.md       decision log + pending questions + owner actions
 docs/SOURCES.md         data source backlog: what's in use, what's left, suggested order
 docs/data/README.md     what the reference datasets are (kept privately, not published)
 app/                    SvelteKit + MapLibre map (the platform front end)
 basemap/                builds self-hosted map layers into data/tiles/ (served at /tiles/)
 db/                     migrations (db/migrations/*.sql) and the runner db/migrate.py; design in docs/12
-ingest/                 clean Python ingestors (cameras so far; psycopg is the one dependency)
+ingest/                 the ingest core: CLI, polite HTTP, database helpers, shared ArcGIS and COMPASS readers,
+                        the plugin loader (psycopg is the one dependency)
+plugins/                one folder per subject (roads, intersections, cameras, transit, conditions, safety, flow,
+                        development): plugin.json, README, ingest code, migrations, tests (docs/15). Private
+                        plugins live on the server (TVT_PLUGIN_PATH), never here
 deploy/                 Docker Compose + Caddy for the server VM
 tools/                  standalone research scripts (GPS run analysis, etc.)
 tvt/                    THROWAWAY PROTOTYPE ingestion package; lessons only, not the foundation
@@ -122,16 +126,19 @@ cd app && npm run dev                  # map at http://localhost:5173 (needs dat
 basemap/build.sh                       # build self-hosted basemap into data/tiles/
 
 export DATABASE_URL=postgres://tvt:<password>@localhost/tvt   # never commit a real password
-python3 db/migrate.py                  # apply db/migrations/
+python3 db/migrate.py                  # apply db/migrations/, then the plugins' migrations
 python3 -m ingest run all              # every scheduled source (cameras, signals, crossings, COMPASS, ...)
 python3 -m ingest stream idaho511_frames   # key-camera frames (needs TVT_ARCHIVE)
 python3 -m ingest stream itd_wzdx         # ITD work zones every 5 min (needs TVT_ARCHIVE)
 python3 -m ingest stream idaho511_api     # the 511 API (needs TVT_ARCHIVE and IDAHO511_API_KEY)
 python3 -m ingest rollup --day 2026-10-05  # daily camera videos by hand (normally automatic)
 python3 -m ingest match-intersections --dry-run   # rebuild intersections from the signal sources
-python3 -m ingest.osm_load --inbox         # OSM extract downloaded by hand (needs TVT_ARCHIVE, osmium)
-python3 -m ingest.segment_match           # rematch lane sources and OSM to ACHD segments by hand
-python3 -m unittest discover -s ingest/tests -t .
+python3 -m ingest osm-load --inbox         # OSM extract downloaded by hand (needs TVT_ARCHIVE, osmium)
+python3 -m ingest segment-match           # rematch lane sources and OSM to ACHD segments by hand
+python3 -m ingest -h                      # every command, the plugins' included
+python3 -m unittest discover -s ingest/tests -t .   # ingest core (set TVT_TEST_DATABASE_URL for the database tests)
+python3 -m unittest discover -s plugins -t .        # every plugin's tests
+python3 tools/check_public.py              # nothing private in what would be pushed
 ```
 
 Front-end rules:

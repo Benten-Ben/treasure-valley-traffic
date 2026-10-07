@@ -1,0 +1,16 @@
+{
+  "name": "development",
+  "title": "Development: traffic zones, forecasts, permits and plats",
+  "depends": [],
+  "visibility": "public",
+  "order": 80,
+  "sources": [
+    {"name": "compass_growth", "module": "ingest.sources.compass_growth", "kind": "source",
+     "license": "none stated (COMPASS's disclaimer only: no warranty, no liability)", "credit": "COMPASS and COMPASS member agencies", "republish": "yes"},
+    {"name": "compass_plats", "module": "ingest.sources.compass_plats", "kind": "source",
+     "license": "none stated (COMPASS's disclaimer only: no warranty, no liability)", "credit": "COMPASS and COMPASS member agencies", "republish": "yes"}
+  ],
+  "tables": ["core.taz", "obs.taz_demographic", "obs.building_permit", "core.plat"],
+  "storage": "Small and slow: zones and permits re-read monthly (unchanged layers skipped), plats weekly; raw.record grows only by changed versions.",
+  "ethics": "Building permits are stored without addresses, parcel numbers or comments, and plats without comments. Ada County's parcels ('do not re-distribute') belong only in the private parcels plugin."
+}

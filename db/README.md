@@ -22,6 +22,13 @@ Plain SQL files in `db/migrations/`, applied in order by `db/migrate.py`,
 which records each one (with a checksum) in `ops.schema_migration`. Never
 edit an applied migration; add a new one.
 
+Plugins ([docs/15](../docs/15-plugins.md)) keep their own migrations in
+`plugins/<name>/migrations/NNNN_*.sql`. They apply after core's, plugin by
+plugin in dependency order (private plugins' too, from `TVT_PLUGIN_PATH`),
+and are recorded as `<plugin>/<file>` under the same checksum rule.
+Migrations 0001–0018 stay here: the server has them recorded by name. New
+migrations for one subject go in its plugin.
+
 | File | What |
 |---|---|
 | `0001_foundation.sql` | `ops.source` (it refuses to schedule one-off sources), `ops.fetch`, `raw.record` |

@@ -1,0 +1,33 @@
+{
+  "name": "roads",
+  "title": "Roads: segments, lanes and OpenStreetMap ways",
+  "depends": [],
+  "visibility": "public",
+  "order": 30,
+  "sources": [
+    {"name": "achd_roads", "module": "ingest.sources.achd_roads", "kind": "source",
+     "license": "none stated", "credit": "Ada County Highway District", "republish": "internal"},
+    {"name": "itd_hpms", "module": "ingest.sources.itd_hpms", "kind": "source",
+     "license": "none stated", "credit": "Idaho Transportation Department", "republish": "internal"},
+    {"name": "achd_msm", "module": "ingest.sources.achd_msm", "kind": "source",
+     "license": "none stated", "credit": "Ada County Highway District", "republish": "internal"},
+    {"name": "compass_centerline", "module": "ingest.sources.compass_centerline", "kind": "source",
+     "license": "none stated (disclaimer only)",
+     "credit": "COMPASS (Community Planning Association of Southwest Idaho) and its member agencies", "republish": "yes"},
+    {"name": "osm_valley", "module": "ingest.sources.osm_valley", "kind": "manual",
+     "license": "ODbL", "credit": "© OpenStreetMap contributors", "republish": "yes"}
+  ],
+  "tables": [
+    "core.road_segment", "core.segment_match", "core.hpms_section", "core.msm_arterial", "core.compass_segment",
+    "core.osm_way", "core.osm_lane", "core.osm_node", "core.segment_lanes", "core.segment_lanes_hpms",
+    "core.segment_lanes_msm", "core.segment_lanes_compass", "core.segment_lanes_osm"
+  ],
+  "commands": [
+    {"name": "osm-load", "module": "ingest.osm_load",
+     "help": "load an OpenStreetMap extract downloaded by hand (--inbox, or --file PATH)"},
+    {"name": "segment-match", "module": "ingest.segment_match",
+     "help": "rematch the lane sources and OpenStreetMap to ACHD's segments by hand [names...]"}
+  ],
+  "storage": "Small: reference layers re-read weekly or monthly; raw.record grows only by changed versions. The last two OpenStreetMap extracts are kept in $TVT_ARCHIVE/osm/.",
+  "ethics": "OpenStreetMap is ODbL: credit \"© OpenStreetMap contributors\", and anything published from it stays ODbL. Geofabrik's robots.txt disallows scripted downloads, so extracts are downloaded by hand and there is no download code. ACHD's and ITD's layers state no license: used internally, credited."
+}

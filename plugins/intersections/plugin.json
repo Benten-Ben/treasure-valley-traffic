@@ -1,0 +1,29 @@
+{
+  "name": "intersections",
+  "title": "Intersections: signals, beacons and rail crossings",
+  "depends": ["roads", "cameras"],
+  "visibility": "public",
+  "order": 50,
+  "sources": [
+    {"name": "fra_crossings", "module": "ingest.sources.fra_crossings", "kind": "source",
+     "license": "public domain", "credit": "Federal Railroad Administration", "republish": "yes"},
+    {"name": "achd_signal_points", "module": "ingest.sources.achd_signal_points", "kind": "source",
+     "license": "none stated", "credit": "Ada County Highway District", "republish": "internal"},
+    {"name": "compass_signals", "module": "ingest.sources.compass_signals", "kind": "source",
+     "license": "none stated",
+     "credit": "COMPASS (Community Planning Association of Southwest Idaho) and its member agencies", "republish": "internal"},
+    {"name": "compass_regional_signals", "module": "ingest.sources.compass_regional_signals", "kind": "source",
+     "license": "none stated",
+     "credit": "COMPASS (Community Planning Association of Southwest Idaho) and its member agencies", "republish": "internal"},
+    {"name": "intersections", "module": "ingest.intersections", "kind": "source",
+     "license": "derived", "credit": "COMPASS; Ada County Highway District; © OpenStreetMap contributors",
+     "republish": "internal"}
+  ],
+  "tables": ["core.intersection", "core.approach", "core.signal_device", "core.rail_crossing"],
+  "commands": [
+    {"name": "match-intersections", "module": "ingest.intersections",
+     "help": "rebuild core.intersection from the signal sources (the 'intersections' source does this daily)"}
+  ],
+  "storage": "Small: the signal and crossing layers are re-read weekly or monthly and the intersections rebuilt daily; raw.record grows only by changed versions.",
+  "ethics": "COMPASS's signal layers are 'meant only for reference' with no license: they, and the intersections built from them, stay internal until COMPASS answers (owner, Oct 6, 2026). Once OpenStreetMap nodes confirm intersections, the build is an ODbL derivative."
+}

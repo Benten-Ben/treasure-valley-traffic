@@ -479,7 +479,7 @@ JPEG, 752 about 32 KB.
   up to 9.6 s with one keyframe.
 - **Container:** MP4, one file per camera per day, rolled up from the
   JPEGs after midnight
-  ([`ingest/camera_video.py`](../ingest/camera_video.py)). MKV until
+  ([`plugins/cameras/ingest/camera_video.py`](../plugins/cameras/ingest/camera_video.py)). MKV until
   Oct 6: browsers don't play MKV, and the video library needs them to. The
   next roll-up remuxes an old MKV into MP4 without re-encoding (the same
   AV1 bitstream, checked by a test).
@@ -608,7 +608,7 @@ Answered Oct 5:
   original JPEGs until they've been measured, or longer if disk allows.
 
 - **Key cameras for step 2:** the suggested set (owner, Oct 5), 34
-  cameras in [`ingest/key_cameras.csv`](../ingest/key_cameras.csv): the
+  cameras in [`plugins/cameras/ingest/key_cameras.csv`](../plugins/cameras/ingest/key_cameras.csv): the
   COMPASS most-congested segments on Chinden, Eagle Rd and I-84 (Karcher
   and Nampa-Caldwell are left out because Canyon County has no cameras);
   the COMPASS safety plan's high-crash intersections that have cameras;

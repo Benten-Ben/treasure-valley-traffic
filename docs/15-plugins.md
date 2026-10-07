@@ -9,6 +9,7 @@ we're allowed to use but not to share.
 Status: agreed with the owner on Oct 7, 2026 ([DECISIONS](DECISIONS.md)):
 the boundary, private plugins, the plugin list after one more pass (§15.4)
 and the refactor plan (§15.6), which the lead carries out step by step.
+Step 1 (ingest plugins) is built: `plugins/<name>/` in the repository.
 
 ## 15.1 What's core
 
@@ -51,7 +52,7 @@ are core:
   identity will need the same. Core gives entities one way to carry
   evidence and confidence, and one review table for human decisions
   (confirm, retire, hold until new evidence), replacing per-plugin files
-  such as `ingest/intersection_reviews.json`.
+  such as `plugins/intersections/ingest/intersection_reviews.json`.
 - **Places and search.** Each plugin adds its searchable names (roads,
   intersections, stops, cameras, trailheads, airports) to one index.
 - **Areas.** The valley box and the regional ring become named areas;
@@ -82,8 +83,10 @@ The manifest says:
 | `name`, `title` | `transit`, "Buses (Valley Regional Transit)" |
 | `depends` | `["roads"]` (other plugins it builds on) |
 | `visibility` | `public` or `private` |
-| `sources` | each source's name, license, credit, and `republish`: `yes`, `aggregates`, `internal` or `no` |
+| `order` | where its sources run among plugins it doesn't depend on (lower first) |
+| `sources` | each source's name, module, kind (`source`, `stream`, or `manual` for by-hand loads), license, credit, and `republish`: `yes`, `aggregates`, `internal` or `no` |
 | `tables` | the tables it owns (for exports and backups) |
+| `commands` | its own `python3 -m ingest` subcommands (e.g. `osm-load`) |
 | `storage` | expected growth per day, so the disk plan can add them up |
 | `ethics` | anything special (e.g. "no plate or face recognition") |
 
@@ -91,12 +94,14 @@ How the pieces plug in:
 
 - **Ingest:** `python3 -m ingest` finds `plugins/*/plugin.json` (and any
   folders on `TVT_PLUGIN_PATH`, for private plugins) and builds its
-  `SOURCES` and `STREAMS` from them, in dependency order. Source names
-  don't change, so `ops.fetch` history carries on.
+  `SOURCES` and `STREAMS` from them, in dependency order, then by each
+  plugin's `order`. Source names don't change, so `ops.fetch` history
+  carries on. Plugin folder names are Python names (`achd_tables`), so a
+  plugin imports as `plugins.<name>`.
 - **Database:** tables stay in the shared schemas by kind (`core`
   entities, `obs` time series, `evt` lifecycles), as
   [ch. 12](12-database-schema.md) designs them; the manifest says who owns
-  which. Migrations 0001–0017 stay where they are (they're history on the
+  which. Migrations 0001–0018 stay where they are (they're history on the
   server); new ones live in each plugin and are recorded as
   `<plugin>/<file>`. A private plugin keeps its tables in its own schema
   (`private_<name>`), so exports and published tiles can leave it out by
@@ -148,15 +153,20 @@ sampler.
 | Plugin | What's in it today | Depends on | Visibility |
 |---|---|---|---|
 | `roads` | ACHD's road segments and the road tiles (`/api/tiles/roads`, the Streets layer's data), the lane inventories (ITD HPMS, ACHD's Master Street Map, COMPASS's centerline), OpenStreetMap's ways, lanes and signal nodes, the shared segment matcher, `core.segment_lanes`, and the coming Lanes layer | — | public (OSM parts ODbL) |
-| `intersections` | Everywhere traffic streams meet and are controlled: COMPASS's signals and Regional_Signals, ACHD's 2022 signal points (signals, beacons, school and fire signals), the intersection build and its reviews, FRA rail crossings and their links; later roundabouts | `roads` | public, internal until COMPASS answers |
-| `cameras` | ACHD's camera list, 511's views, the key-camera and road-weather frame streams, daily videos, the video library, calibration | `roads` | public (images not republished) |
-| `transit` | VRT's GTFS and live positions, route matching, ribbons, progress, tracks | `roads` | public |
-| `conditions` | Live road conditions: ITD's work zones (WZDx), the 511 API (events, message signs, advisories, road weather, truck restrictions, winter roads) | `roads` | public (511 data internal) |
+| `intersections` | Everywhere traffic streams meet and are controlled: COMPASS's signals and Regional_Signals, ACHD's 2022 signal points (signals, beacons, school and fire signals), the intersection build and its reviews, FRA rail crossings and their links; later roundabouts | `roads`, `cameras` | public, internal until COMPASS answers |
+| `cameras` | ACHD's camera list, 511's views, the key-camera and road-weather frame streams, daily videos, the video library, calibration | — | public (images not republished) |
+| `transit` | VRT's GTFS and live positions, route matching, ribbons, progress, tracks | — | public |
+| `conditions` | Live road conditions: ITD's work zones (WZDx), the 511 API (events, message signs, advisories, road weather, truck restrictions, winter roads) | — | public (511 data internal) |
 | `safety` | COMPASS's crashes and high-injury network; crash people in `restricted` | `roads`, `intersections` | public, aggregates only for people |
 | `flow` | How traffic moves: COMPASS's counts, congestion measures and commute travel times; later speeds from buses and GPS drives | `roads` | public (congestion internal) |
 | `development` | Why traffic will change: COMPASS's traffic zones and forecasts, building permits and plats; later Boise's development pipeline | — | public |
-| `achd-tables` | ACHD's count and turn-movement copies and their tools (extends `flow`) | `flow`, `intersections` | **private** |
+| `achd_tables` | ACHD's count and turn-movement copies and their tools (extends `flow`) | `flow`, `intersections` | **private** |
 | `parcels` | Ada County Assessor parcels and characteristics, aggregates by corridor | `development` | **private** |
+
+The dependencies are what the ingest code needs (step 1): the intersection
+build links cameras, and nothing in the camera, transit or conditions
+ingest uses the road tables, so those three load first, as they did before
+the split. Step 2 adds a dependency where an app layer needs one.
 
 Lenses group plugins: **Traffic** (roads, intersections, cameras,
 conditions, safety, flow), **Transit**, **Land** (development and the
@@ -189,17 +199,32 @@ Buses already play back through the tracks contract
 - **3D:** the GL engine draws each kind with its own model (bus, airliner,
   small plane, helicopter), at its altitude for aircraft.
 
-## 15.6 Refactor plan (proposal)
+## 15.6 Refactor plan
 
 Each step leaves the server doing exactly what it did before (same
 sources, tables and URLs), with every test green, before the next one starts.
 
-1. **Ingest plugins** (after the lanes fixes are merged):
-   - the manifest format and loader;
-   - `git mv` each source and its helpers into `plugins/<name>/ingest/`;
-   - `SOURCES` and `STREAMS` built from manifests;
-   - the migrations runner learns plugin folders (new migrations only);
-   - tests move with their plugins.
+1. **Ingest plugins.** **Done, Oct 7:** merged and pushed; the new images
+   were built on the server and list the same sources (the services switch
+   at their next restart):
+   - the manifest format and loader (`ingest/manifest.py`,
+     `ingest/sources/__init__.py`);
+   - each source and its helpers moved with `git mv` into
+     `plugins/<name>/ingest/`; what two plugins share went to core
+     (`compass_layer.py`, the UTM projection, the snapshot guard);
+   - `SOURCES` and `STREAMS` built from manifests, with the same names and
+     run order (a test pins them), and plugin commands
+     (`python3 -m ingest osm-load`, `segment-match`, ...);
+   - the migrations runner learns plugin folders (new migrations only),
+     recorded as `<plugin>/<file>`;
+   - tests moved with their plugins (`python3 -m unittest discover -s
+     plugins -t .`);
+   - `tools/check_public.py` rejects `plugins-private/` paths and private
+     manifests.
+   The old module entry points (`python3 -m ingest.osm_load`, ...) remain
+   as shims, and three paths the app reads (`ingest/key_cameras.csv`,
+   `ingest/route_colors.py`, `ingest.sources.idaho511_frames`) are kept
+   until step 2 points the app at the plugins.
    Deploy, then compare a day of `ops.fetch` with the day before.
 2. **App plugins** (after the UI v2 round now being built finishes, to
    avoid colliding with it):
@@ -208,17 +233,22 @@ sources, tables and URLs), with every test green, before the next one starts.
    - the catch-all API route goes in;
    - `LayerId` is opened up to whatever plugins register.
    Screenshots and the existing end-to-end specs must match before and after.
-3. **Private plugins:**
-   - the private repo starts on the server (`/srv/tvt/plugins-private`,
-     Oct 7); the owner approved a private GitHub copy, which needs the
-     owner to create the repo and give Claude's GitHub app access to it
-     (this session's GitHub access can't create repositories);
-   - Compose gets the extra build context;
-   - the private tools and parcels move into `achd-tables` and `parcels`;
-   - `check_public` gets its new rule.
+3. **Private plugins.** **Started, Oct 7:**
+   - the private repo is on the server (`/srv/tvt/plugins-private`, a git
+     repository); a private GitHub copy (approved) needs the owner to
+     create the repo and give Claude's GitHub app access to it, since this
+     session's GitHub access can't create repositories;
+   - `achd_tables` holds the ACHD table tool and its tests, `parcels` the
+     Assessor copy's manifest and terms, and `tools/` the one-off 511 probe
+     and camera sampler; the data stays in `/srv/tvt/private/data`, which
+     the ingest service mounts read-only;
+   - Compose gets the extra build context when a private plugin first has
+     code a service runs (none yet).
 4. **New plugins,** one source at a time with the owner:
-   - `aircraft`, if an existing source's terms fit (research Oct 7), until
-     the owner's own receiver arrives;
+   - `aircraft` (being built Oct 7): adsb.lol's live data (ODbL) every
+     10 s, with the FAA registry for types; it starts once the owner has
+     sent adsb.lol a courtesy note, and moves to the owner's own receiver
+     later;
    - then `lands` (ownership, management, access and restrictions) and
      `trails`.
 

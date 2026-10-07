@@ -2,5 +2,7 @@
 *
 !ingest/
 !db/
+!plugins/
 **/__pycache__
 ingest/tests
+plugins/*/tests

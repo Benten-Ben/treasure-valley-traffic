@@ -1,0 +1,14 @@
+{
+  "name": "safety",
+  "title": "Safety: crashes and the high-injury network",
+  "depends": ["roads", "intersections"],
+  "visibility": "public",
+  "order": 60,
+  "sources": [
+    {"name": "compass_crashes", "module": "ingest.sources.compass_crashes", "kind": "source",
+     "license": "none stated (COMPASS's disclaimer only: no warranty, no liability)", "credit": "COMPASS and COMPASS member agencies", "republish": "yes"}
+  ],
+  "tables": ["obs.crash", "restricted.crash_unit", "core.hin_junction", "core.hin_segment"],
+  "storage": "Small and slow: the crash layers (174,038 crashes, 345,152 people) are re-read monthly, unchanged layers skipped; raw.record grows only by changed versions, and the people never enter it.",
+  "ethics": "Crash records may be republished with credit (COMPASS's open-data hub). The people in them go only to the restricted schema, coded and coarsened (age group, Idaho resident or not, coded citations; no sex), and are published only as aggregates."
+}

@@ -98,6 +98,18 @@ class CheckPublicTest(unittest.TestCase):
     def test_data_files(self):
         self.assertIn("data/", self.plant("data/achd/counts.csv", "a,b\n1,2\n"))
 
+    def test_private_plugins(self):
+        self.assertIn("private plugin", self.plant("plugins-private/achd_tables/README.md", "ACHD's tables\n"))
+        self.assertIn("private plugin", self.plant("deploy/plugins-private/x.py", "x = 1\n"))
+        found = self.plant("plugins/parcels/plugin.json", '{"name": "parcels", "visibility" : "private"}\n')
+        self.assertIn("manifest", found)
+
+    def test_public_plugins_pass(self):
+        self.write("plugins/roads/plugin.json", '{"name": "roads", "visibility": "public"}\n')
+        self.write("docs/notes.md", 'A private plugin says "visibility": "private" in its plugin.json.\n')
+        run_git(self.root, "add", "-f", "plugins/roads/plugin.json", "docs/notes.md")
+        self.assertEqual(self.problems(), [])
+
     def test_staged_mode_sees_only_staged_changes(self):
         self.assertEqual(self.problems(staged=True), [])
         self.write("docs/frame.png", b"\x89PNG\r\n\x1a\n" + b"\x00" * 32)

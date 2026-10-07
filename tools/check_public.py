@@ -11,7 +11,9 @@ index, so staged changes count and unstaged ones don't):
     (100.64.0.0/10, fd7a:115c:a1e0::/48) and Tailscale auth keys;
   - private keys;
   - deploy/.env or any other .env file (the server's settings and secrets);
-  - anything under data/ or site/data/ (collected and third-party data).
+  - anything under data/ or site/data/ (collected and third-party data);
+  - private plugins: any path under plugins-private/, and any plugin.json
+    that says "visibility": "private" (docs/15 §15.3; they live on the server).
 
 It can't judge prose: hardware, user names, other guests on the server and
 unsent drafts still need a read of the diff before every push.
@@ -54,6 +56,7 @@ IPV4 = re.compile(r"(?<![\w.])(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})(?!\.?\d
 TS_IPV6 = re.compile(r"\bfd7a:115c:a1e0:[0-9a-f:]*(?![0-9a-f:]*/\d)", re.I)
 TS_KEY = re.compile(r"\btskey-[a-z]+-[A-Za-z0-9]{6,}")
 PRIVATE_KEY = re.compile(r"-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----")
+PRIVATE_PLUGIN = re.compile(r'"visibility"\s*:\s*"private"')
 
 
 def git(root, *args, data=None):
@@ -95,6 +98,8 @@ def check_path(path):
     problems = []
     if path.startswith(("data/", "site/data/")):
         problems.append("collected data (data/ and site/data/ stay local)")
+    if path.startswith("plugins-private/") or "/plugins-private/" in path:
+        problems.append("a private plugin (plugins-private/ lives on the server, never in this repository)")
     name = os.path.basename(path)
     if name == ".env" or (name.startswith(".env.") and not name.endswith(".example")):
         problems.append("an .env file (server settings and secrets stay on the server)")
@@ -111,6 +116,8 @@ def check_content(path, blob):
     if b"\x00" in blob[:8000]:
         return problems  # binary: no text checks
     text = blob.decode("utf-8", errors="replace")
+    if os.path.basename(path) == "plugin.json" and PRIVATE_PLUGIN.search(text):
+        problems.append((0, "a private plugin's manifest (private plugins live on the server, never in this repository)"))
     for n, line in enumerate(text.splitlines(), 1):
         for m in TS_NET.finditer(line):
             problems.append((n, f"a Tailscale name ({mask(m.group(0))})"))
