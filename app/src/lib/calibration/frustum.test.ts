@@ -9,6 +9,7 @@ import {
 	eyePose,
 	fadeOpacity,
 	focalPx,
+	framedCrop,
 	imageToScreen,
 	interpolate,
 	letterbox,
@@ -192,6 +193,23 @@ describe('frustum: the photo plane', () => {
 				expect(metresBetween(p, corners[i])).toBeLessThan(1e-6);
 			});
 		}
+	});
+
+	it('a framed crop puts the frame just outside the picture: the crop spans uv [edge, 1 − edge]', () => {
+		const crop = photoCrop(SD, false);
+		const edge = 0.012;
+		const f = framedCrop(crop, edge);
+		expect((crop.x - f.x) / f.width).toBeCloseTo(edge, 12);
+		expect((crop.y - f.y) / f.height).toBeCloseTo(edge, 12);
+		expect((crop.x + crop.width - f.x) / f.width).toBeCloseTo(1 - edge, 12);
+		expect((crop.y + crop.height - f.y) / f.height).toBeCloseTo(1 - edge, 12);
+		// And its plane still lands on the picture: the crop's corners where its pixels are.
+		const pose = POSES[0][1];
+		const plane = photoPlane(pose, SD, f);
+		const inner = planeCorners(pose, { ...plane, tx: plane.tx * (1 - 2 * edge), ty: plane.ty * (1 - 2 * edge) }, 3);
+		const px = project(pose, SD, inner[2])!;
+		expect(px[0]).toBeCloseTo(crop.x + crop.width, 6);
+		expect(px[1]).toBeCloseTo(crop.y + crop.height, 6);
 	});
 
 	it('crops the 511 bar by its measured height', () => {

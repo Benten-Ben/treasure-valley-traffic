@@ -9,8 +9,11 @@ import type { CameraDetail, CameraDetailView } from './detail.js';
 export interface CameraHooks {
 	/** Look through a calibrated view (WP13: the view stack, true-scale terrain, the camera's pose). */
 	lookThrough: ((camera: CameraDetail, view: CameraDetailView) => void) | null;
-	/** The photo in the cone for an open window, on or off (WP13). */
-	photo: { isOn(cameraId: number): boolean; set(cameraId: number, on: boolean): void } | null;
+	/**
+	 * The photo in the cone for an open window, on or off (WP13), and which of
+	 * the camera's views its window shows (null when the window closes).
+	 */
+	photo: { isOn(cameraId: number): boolean; set(cameraId: number, on: boolean): void; view?(cameraId: number, viewId: number | null): void } | null;
 }
 
 export const cameraHooks: CameraHooks = $state({ lookThrough: null, photo: null });

@@ -154,6 +154,20 @@ export function photoCrop(size: ImageSize, centred: boolean): Crop {
 }
 
 /**
+ * A crop grown on every side so that a frame drawn over the outer `edge` of
+ * the texture (in uv, as the scene's photo planes draw their cream edge)
+ * falls just outside `crop`: the picture inside stays whole. The grown area
+ * lies partly outside the image, which `createImageBitmap` fills with
+ * transparent pixels (and the frame covers).
+ */
+export function framedCrop(crop: Crop, edge: number): Crop {
+	const a = edge / (1 - 2 * edge);
+	const px = a * crop.width;
+	const py = a * crop.height;
+	return { x: crop.x - px, y: crop.y - py, width: crop.width + 2 * px, height: crop.height + 2 * py };
+}
+
+/**
  * Where the scene's apex goes for a plane at distance d: the scene draws
  * planes centred on their apex's view axis, so an off-centre crop moves the
  * apex by `d·(cx·right + cy·down)`. The camera's own apex when the crop is

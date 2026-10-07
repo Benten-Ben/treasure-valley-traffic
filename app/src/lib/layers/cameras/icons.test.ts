@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { CAMERA_ICONS } from './icons.js';
+import { CAMERA_ICONS, LOOK_ICONS } from './icons.js';
 
 /** phosphor-svelte's own duotone branch of an icon component: [tone path, line path]. */
 function phosphorDuotone(name: string): [string, string] {
@@ -20,6 +20,18 @@ describe('camera window icons', () => {
 	it('are Phosphor’s duotone paths, exactly as phosphor-svelte ships them', () => {
 		expect(CAMERA_ICONS.length).toBe(4);
 		for (const icon of CAMERA_ICONS) {
+			const [tone, line] = phosphorDuotone(icon.name);
+			expect(tone, `${icon.name} tone`).not.toBe('');
+			expect(icon.tone, `${icon.name} tone`).toBe(tone);
+			expect(icon.line, `${icon.name} line`).toBe(line);
+		}
+	});
+});
+
+describe('look-through banner icons', () => {
+	it('are Phosphor’s duotone paths, exactly as phosphor-svelte ships them', () => {
+		expect(LOOK_ICONS.map((i) => i.name)).toEqual(['CaretLeft', 'CaretRight', 'SignOut']);
+		for (const icon of LOOK_ICONS) {
 			const [tone, line] = phosphorDuotone(icon.name);
 			expect(tone, `${icon.name} tone`).not.toBe('');
 			expect(icon.tone, `${icon.name} tone`).toBe(tone);
