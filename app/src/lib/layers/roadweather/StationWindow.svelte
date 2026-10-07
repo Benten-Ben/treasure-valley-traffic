@@ -83,7 +83,9 @@
 			return { kind: 'offline', shape: '■', word: 'no live feed', color: SOFT, detail: "No picture recorded lately while capture runs: 511 is showing its “no live feed” picture" };
 		if (!live && age !== null)
 			return shown({ viewId: v.id, imageId: v.imageId, source: 'archive', frame: { url: '', firstSeenAt: v.seenAt ?? 0, width: 0, height: 0, sha: '' }, cadence: 'road_weather', cadenceS: 600, state: 'ok' }, age);
-		return shown(live, age);
+		// Road-weather thresholds whatever the source: 511 refreshes these pictures about every 15 minutes,
+		// even when one comes on demand rather than from the capture archive.
+		return shown(live && { ...live, cadence: 'road_weather' }, age);
 	}
 
 	/** "4 min", "1 h", "2 d": the tab's short age. */

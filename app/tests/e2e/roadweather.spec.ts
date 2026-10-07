@@ -138,7 +138,7 @@ test.describe('road weather', () => {
 		const legend = page.getByRole('region', { name: 'Road weather legend' });
 		const hollowCount = (await drawn(page)).filter((s) => s.hollow).length;
 		await expect(legend.getByText('No live feed on any view')).toContainText(`(${hollowCount})`);
-		await page.screenshot({ path: screenPath('roadweather-stations.png') });
+		await page.screenshot({ path: screenPath('roadweather-stations.png'), animations: 'disabled' });
 
 		// Off hides it (the layer stays loaded); key 9 turns it back on.
 		await button(page).click();
@@ -184,7 +184,7 @@ test.describe('road weather', () => {
 		// The poll asks for the station's three pictures (not the view 511 lists as disabled).
 		const want = grade.views.filter((v) => !v.disabled).map((v) => v.id).sort((a, b) => a - b).join(',');
 		expect(live.some((u) => new URL(u).searchParams.get('views') === want), live.join('\n')).toBe(true);
-		await page.screenshot({ path: screenPath('roadweather-window.png') });
+		await page.screenshot({ path: screenPath('roadweather-window.png'), animations: 'disabled' });
 
 		// 30 min: late (road-weather thresholds: live under 20 min, stale over 45).
 		await tabs.nth(1).click();
@@ -215,7 +215,7 @@ test.describe('road weather', () => {
 		for (let i = 0; i < 2; i++) await expect(hollow.getByRole('tab').nth(i)).toHaveAttribute('data-state', 'offline');
 		await expect(hollow.locator('header .status')).toHaveText(/no live feed/);
 		await expect(hollow.locator('.seen')).toHaveText('no live feed · no picture recorded lately');
-		await page.screenshot({ path: screenPath('roadweather-window-hollow.png') });
+		await page.screenshot({ path: screenPath('roadweather-window-hollow.png'), animations: 'disabled' });
 		expect(consoleErrors).toEqual([]);
 		expect(offsite).toEqual([]);
 	});
@@ -237,7 +237,7 @@ test.describe('road weather', () => {
 		await expect.poll(() => pictureSrc(panel), { timeout: 60_000 }).toMatch(/^\/camera-frames\/990011\//);
 		await expect(panel.locator('img[data-frame-url]').last()).toBeVisible();
 		expect(await page.evaluate(() => document.documentElement.scrollWidth), 'no horizontal scroll').toBeLessThanOrEqual(390);
-		await page.screenshot({ path: screenPath('roadweather-phone.png') });
+		await page.screenshot({ path: screenPath('roadweather-phone.png'), animations: 'disabled' });
 		expect(consoleErrors).toEqual([]);
 		expect(offsite).toEqual([]);
 	});
