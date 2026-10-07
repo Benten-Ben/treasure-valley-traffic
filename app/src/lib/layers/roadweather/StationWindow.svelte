@@ -176,18 +176,29 @@
 			{/each}
 		</div>
 		<div class="panel" role="tabpanel" id={panelId} aria-labelledby={tabId(tab)}>
-			<Frame
-				url={frame?.url ?? null}
-				alt="Road-weather picture from {name}, {view?.label} ({credit})"
-				{aspect}
-				empty={noFeed ? 'No live feed: 511 has no picture from this camera now' : live && live.state !== 'ok' && live.state !== 'waiting' ? `No picture: ${status?.word}` : null}
-			/>
+			<!-- One frame per view: another tab never shows the last tab's picture (nor crossfades from it). -->
+			{#key view?.id}
+				<Frame
+					url={frame?.url ?? null}
+					alt="Road-weather picture from {name}, {view?.label} ({credit})"
+					{aspect}
+					empty={noFeed && !frame
+						? 'No live feed: 511 has no picture from this camera now'
+						: live && live.state !== 'ok' && live.state !== 'waiting'
+							? `No picture: ${status?.word}`
+							: null}
+				/>
+			{/key}
 			<div class="foot">
 				{#if status}
 					<Freshness shown={status} progress={age === null || !live ? 0 : ringProgress(age, live.cadenceS)} pulse={frame?.sha ?? null} />
 				{/if}
 				<span class="seen num" title={SEEN} data-age={age === null ? '' : Math.round(age)}>
-					{view?.disabled ? 'no live feed · 511 lists this view as disabled' : footText(live, age)}
+					{view?.disabled
+						? 'no live feed · 511 lists this view as disabled'
+						: noFeed && !frame
+							? 'no live feed · no picture recorded lately'
+							: footText(live, age)}
 				</span>
 				<span class="credit">{credit}</span>
 			</div>
@@ -213,7 +224,7 @@
 		display: flex;
 		gap: 4px;
 		padding: 6px 8px;
-		overflow-x: auto;
+		flex-wrap: wrap;
 	}
 	.tab {
 		display: inline-flex;

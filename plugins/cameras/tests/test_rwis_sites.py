@@ -142,7 +142,7 @@ class DatabaseTest(unittest.TestCase):
         self.assertEqual([(c[1], c[2], c[3], float(c[4]), float(c[5]), c[8]) for c in cams],
                          [("Example Grade (synthetic)", "ITD RWIS", True, -116.24, 43.56, "880001"),
                           ("Test Summit (synthetic)", "ITD RWIS", True, -116.43, 43.69, "880002"),
-                          ("Sample Bridge OR (synthetic)", "ODOT", True, -117.01, 43.72, "880003")])
+                          ("Sample Bridge OR (synthetic)", "ODOT", True, -117.04, 43.55, "880003")])
         per_camera = {}
         for v in views:
             per_camera.setdefault(v[1], []).append(v)

@@ -13,6 +13,12 @@ import { BADGE_PX, CREAM, INK, INK_SOFT } from './layers.js';
  *
  * Shape tells them apart, never color alone. Browser only (canvas).
  */
+
+/** The icon inside the badge, CSS px. */
+const ICON_PX = 22;
+/** Extra line width in the icon's 256 box, so the thin duotone lines hold up at map size. */
+const THICKEN = 9;
+
 export function badgeImage(hollow: boolean, ratio = 2): ImageData | null {
 	if (typeof document === 'undefined') return null;
 	const px = BADGE_PX * ratio;
@@ -44,10 +50,11 @@ export function badgeImage(hollow: boolean, ratio = 2): ImageData | null {
 		g.lineWidth = lw;
 		g.stroke();
 	}
-	const icon = 18 * ratio;
+	const icon = ICON_PX * ratio;
 	g.save();
 	g.translate((px - icon) / 2, (px - icon) / 2);
 	g.scale(icon / 256, icon / 256);
+	g.lineJoin = 'round';
 	for (const p of ROAD_WEATHER_ICON) {
 		g.save();
 		g.translate(p.x, p.y);
@@ -55,18 +62,21 @@ export function badgeImage(hollow: boolean, ratio = 2): ImageData | null {
 		const line = new Path2D(p.icon.line);
 		if (hollow) {
 			g.strokeStyle = CREAM;
-			g.lineWidth = 28;
-			g.lineJoin = 'round';
+			g.lineWidth = 34;
 			g.stroke(line);
-			g.fillStyle = INK_SOFT;
-			g.fill(line);
 		} else {
 			g.globalAlpha = 0.2;
 			g.fillStyle = INK;
 			g.fill(new Path2D(p.icon.tone));
 			g.globalAlpha = 1;
-			g.fill(line);
 		}
+		// Phosphor's lines are drawn for 24 px and up; on a map badge they're thickened a little.
+		const ink = hollow ? INK_SOFT : INK;
+		g.fillStyle = ink;
+		g.strokeStyle = ink;
+		g.lineWidth = THICKEN;
+		g.fill(line);
+		g.stroke(line);
 		g.restore();
 	}
 	g.restore();

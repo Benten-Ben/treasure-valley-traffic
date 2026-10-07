@@ -36,7 +36,7 @@
       "roadway": "US-20",
       "direction": "Unknown",
       "location": "Sample Bridge OR (synthetic)",
-      "latLng": {"geography": {"coordinateSystemId": 4326, "wellKnownText": "POINT (-117.0100 43.7200)"}},
+      "latLng": {"geography": {"coordinateSystemId": 4326, "wellKnownText": "POINT (-117.0400 43.5500)"}},
       "images": [
         {"id": 990031, "sortOrder": 0, "description": "Northbound"},
         {"id": 990032, "sortOrder": 1, "description": "Southbound", "blocked": true}

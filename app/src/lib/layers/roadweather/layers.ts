@@ -24,7 +24,7 @@ export const INK_SOFT = '#5d5a66';
 export const CREAM = '#fffbf4';
 
 /** Badge size, CSS px (the images are drawn at 2× for sharp edges). */
-export const BADGE_PX = 26;
+export const BADGE_PX = 30;
 
 /** GeoJSON for the stations inside the base map (the rest are loaded but not drawn). */
 export function stationFeatures(stations: readonly RoadWeatherStation[], bounds: Bounds | null | undefined): FeatureCollection {
@@ -54,7 +54,7 @@ export function roadWeatherLayers(): SlottedLayer[] {
 				layout: {
 					visibility: 'none',
 					'icon-image': ['case', ['boolean', ['get', 'hollow'], false], HOLLOW_IMAGE, SOLID_IMAGE],
-					'icon-size': num(['interpolate', ['linear'], ['zoom'], 7, 0.7, 11, 0.85, 15, 1]),
+					'icon-size': num(['interpolate', ['linear'], ['zoom'], 7, 0.8, 11, 0.9, 15, 1]),
 					'icon-allow-overlap': true,
 					'icon-ignore-placement': true,
 					'text-field': ['step', ['zoom'], '', 11, ['get', 'name']],
