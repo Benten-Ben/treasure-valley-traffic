@@ -519,7 +519,9 @@ test.describe('layers', () => {
 		await pop.getByRole('radio', { name: 'Map' }).check();
 		expect((await info(page)).flavor).toBe('valley');
 		await pop.getByRole('switch', { name: '3D buildings' }).uncheck();
+		// Both tones: measured heights and estimated ones.
 		expect(await vis('buildings-3d')).toBe('none');
+		expect(await vis('buildings-3d-estimated')).toBe('none');
 		await pop.getByRole('switch', { name: 'Terrain' }).uncheck();
 		expect(await page.evaluate(() => (globalThis as any).__tvt.map.getTerrain())).toBeNull();
 		await pop.getByRole('radio', { name: 'Fewer' }).check();
@@ -545,6 +547,7 @@ test.describe('layers', () => {
 		await page.reload();
 		await mapReady(page);
 		expect(await vis('buildings-3d')).toBe('none');
+		expect(await vis('buildings-3d-estimated')).toBe('none');
 		expect(await vis('pois')).toBe('none');
 	});
 

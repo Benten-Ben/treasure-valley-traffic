@@ -182,7 +182,7 @@ card notes reduced visibility. Context like this explains odd data.
 |---|---|---|
 | Ground | Warm sand `#EEE7DA` with soft hillshade | Same, slightly paler |
 | Terrain | 3DEP terrain, exaggeration about 1.3 so the Foothills read | Same |
-| Buildings | Cream extrusions `#F8F4EC`, sides shading darker | Light gray-cream, 60% opacity |
+| Buildings | Cream extrusions `#F8F4EC`, sides shading darker; buildings with no measured height a lighter tone (§13.8) | Light gray-cream, 60% opacity; estimates lighter |
 | Water | Turquoise `#7CC4E4` | Pale blue-gray |
 | Parks | Soft green `#B9D88F` | Very pale green |
 | Roads | White with a warm gray casing; major roads a little wider | Thin, pale; the lens paints over them |
@@ -312,6 +312,10 @@ becomes a jump, and nothing bounces.
   - Every number shows its source and age on hover.
   - Missing data says "not measured yet" or "not built yet"; it's never
     filled in with a guess.
+  - An estimate that is drawn looks like one. A building with no height in
+    the data (or 0 m) stands at an estimated height (its floors × 3.2 m,
+    else 4 m) in a lighter tone, so it's never mistaken for a measured one
+    (owner, Oct 7; [ch. 14 §14.5](14-ui-v2.md#145-streets-and-the-base-look)).
   - No made-up grades.
 - **Play without gamification.** No points, achievements or streaks. The
   game influence is about legibility and enjoyment, not engagement tricks.

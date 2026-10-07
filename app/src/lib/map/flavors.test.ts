@@ -9,11 +9,14 @@ import {
 	aerialShown,
 	appliedFlavor,
 	applyFlavor,
+	BUILDINGS_ESTIMATED_LAYER,
 	BUILDINGS_LAYER,
+	BUILDINGS_LAYERS,
 	BUILDINGS_PAINT,
 	CLAY_HIDDEN,
 	CLAY_OVERRIDES,
 	clayPaintDiff,
+	ESTIMATED_BUILDINGS_PAINT,
 	FLAVOR_FADE_MS,
 	flavorOf,
 	GROUND,
@@ -147,6 +150,9 @@ describe('flavors', () => {
 		const b3d = row('3D buildings');
 		expect(BUILDINGS_PAINT.valley).toEqual({ color: hexes(b3d[0])[0], opacity: Number(/at ([\d.]+)/.exec(b3d[0])![1]) });
 		expect(BUILDINGS_PAINT.clay).toEqual({ color: hexes(b3d[1])[0], opacity: Number(/at ([\d.]+)/.exec(b3d[1])![1]) });
+		const est = row('3D buildings, estimated height');
+		expect(ESTIMATED_BUILDINGS_PAINT.valley).toEqual({ color: hexes(est[0])[0], opacity: Number(/at ([\d.]+)/.exec(est[0])![1]) });
+		expect(ESTIMATED_BUILDINGS_PAINT.clay).toEqual({ color: hexes(est[1])[0], opacity: Number(/at ([\d.]+)/.exec(est[1])![1]) });
 		const roads = (f: Flavor, keys: (keyof Flavor)[]) => [...new Set(keys.map((k) => f[k]))];
 		const major: (keyof Flavor)[] = ['major', 'highway', 'link', 'bridges_major', 'bridges_highway', 'bridges_link'];
 		const majorCasing: (keyof Flavor)[] = ['major_casing_early', 'major_casing_late', 'highway_casing_early', 'highway_casing_late', 'link_casing'];
@@ -200,9 +206,15 @@ describe('flavors', () => {
 			const want = byId(to);
 			for (const l of map.layers) expect(plain(paintOf(l)), l.id).toEqual(plain(paintOf(want.get(l.id)!)));
 		}
-		// What it covers: the ground, parks, water, roads, labels, buildings, hillshade and imagery.
-		for (const id of ['background', 'earth', 'landuse_park', 'water', 'roads_major', 'roads_minor', 'roads_highway_casing_late', 'buildings', 'places_locality', 'hillshade', BUILDINGS_LAYER, ...IMAGERY_LAYERS])
+		// What it covers: the ground, parks, water, roads, labels, buildings (both 3D tones), hillshade and imagery.
+		for (const id of ['background', 'earth', 'landuse_park', 'water', 'roads_major', 'roads_minor', 'roads_highway_casing_late', 'buildings', 'places_locality', 'hillshade', ...BUILDINGS_LAYERS, ...IMAGERY_LAYERS])
 			expect(changed, id).toContain(id);
+		// Both 3D tones change color and opacity, as constants, so they crossfade; their shape (height, base, filter) is the same in both.
+		for (const id of BUILDINGS_LAYERS) {
+			const props = diff.filter((d) => d.layer === id);
+			expect(props.map((d) => d.property).sort(), id).toEqual(['fill-extrusion-color', 'fill-extrusion-opacity']);
+			for (const d of props) expect([typeof d.valley, typeof d.clay], `${id} ${d.property}`).not.toContain('object');
+		}
 		// Never the data slots, the rail or the anchors.
 		for (const id of changed) expect(id).not.toMatch(/^(anchor:|rail-)/);
 		test_transitionable(diff);
@@ -260,7 +272,12 @@ describe('flavors', () => {
 		const map = fakeMap(style.layers);
 		const m = map as unknown as FlavorMap;
 		const diff = flavorDiff(manifest);
-		const b3d = () => (map.getLayer(BUILDINGS_LAYER) as { paint: Paint }).paint['fill-extrusion-opacity'];
+		// Both 3D tones always share one opacity; this reads it.
+		const b3d = () => {
+			const [m, e] = BUILDINGS_LAYERS.map((id) => (map.getLayer(id) as { paint: Paint }).paint['fill-extrusion-opacity']);
+			expect(e, 'the estimated tone follows the measured one').toBe(m);
+			return m;
+		};
 		const sat = (id: string) => (map.getLayer(id) as { paint: Paint }).paint['raster-saturation'];
 		applyFlavor(m, diff, 'clay', { force: true });
 		expect(b3d()).toBe(BUILDINGS_PAINT.clay.opacity);
@@ -309,6 +326,10 @@ describe('flavors', () => {
 		expect([earth(v), earth(c)]).toEqual([GROUND.valley, GROUND.clay]);
 		expect(paintOf(c.layers.find((l) => l.id === 'hillshade')!)).toEqual(HILLSHADE_PAINT.clay);
 		expect(paintOf(c.layers.find((l) => l.id === BUILDINGS_LAYER)!)).toMatchObject({ 'fill-extrusion-color': BUILDINGS_PAINT.clay.color, 'fill-extrusion-opacity': BUILDINGS_PAINT.clay.opacity });
+		expect(paintOf(c.layers.find((l) => l.id === BUILDINGS_ESTIMATED_LAYER)!)).toMatchObject({
+			'fill-extrusion-color': ESTIMATED_BUILDINGS_PAINT.clay.color,
+			'fill-extrusion-opacity': ESTIMATED_BUILDINGS_PAINT.clay.opacity
+		});
 	});
 
 	it('keeps the terrain drape fresh through the crossfade, then lets go', () => {

@@ -2,7 +2,7 @@ import type { Map } from 'maplibre-gl';
 import { untrack } from 'svelte';
 import type { AppCtx } from '#lib/app/context.js';
 import type { FlavorName } from '#lib/map/flavors.js';
-import { BUILDINGS_LAYER, flavorDiff, flavorKit } from '#lib/map/style.js';
+import { BUILDINGS_LAYERS, flavorDiff, flavorKit } from '#lib/map/style.js';
 import { ringSprite } from '#lib/overlay/sprites.js';
 import {
 	chooseLayers,
@@ -397,7 +397,7 @@ export class LayerManager {
 		// Clay's hidden labels, which "Labels: fewer" hides in either flavor.
 		const hidden = kit.hiddenBaseLabels(flavor, s.labels);
 		for (const id of kit.CLAY_HIDDEN) set(id, !hidden.has(id));
-		set(BUILDINGS_LAYER, s.buildings);
+		for (const id of BUILDINGS_LAYERS) set(id, s.buildings);
 		const m = this.#ctx.manifest;
 		if (m?.terrain) {
 			const t = map.getTerrain();

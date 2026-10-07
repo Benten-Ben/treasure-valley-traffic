@@ -1,8 +1,8 @@
 import type { Flavor } from '@protomaps/basemaps';
 import type { LayerSpecification, Map } from 'maplibre-gl';
-import { BUILDING_OPACITY, BUILDINGS_LAYER, IMAGERY_LAYERS } from './style.js';
+import { BUILDING_OPACITY, BUILDINGS_LAYERS, IMAGERY_LAYERS } from './style.js';
 
-export { BUILDINGS_LAYER, buildingOpacity, HILLSHADE_LAYER, IMAGERY_LAYERS } from './style.js';
+export { BUILDINGS_ESTIMATED_LAYER, BUILDINGS_LAYER, BUILDINGS_LAYERS, buildingOpacity, HILLSHADE_LAYER, IMAGERY_LAYERS } from './style.js';
 
 /**
  * The base flavors (docs/14 §14.5 "Base flavors"; §14.3 "Base").
@@ -162,6 +162,18 @@ export const BUILDINGS_PAINT: Record<FlavorName, { color: string; opacity: numbe
 	clay: { color: '#efe9df', opacity: BUILDING_OPACITY.clay }
 };
 
+/**
+ * 3D buildings drawn at an estimated height (no height in the data, or 0 m:
+ * `#lib/map/buildings`): a slightly lighter tone than the measured ones,
+ * ΔE 3.3–3.4 (OKLab ×100) in both flavors, so the map still tells measured
+ * from guessed. In Valley that's as far as white allows. The opacity is the
+ * measured blocks', Aerial's included.
+ */
+export const ESTIMATED_BUILDINGS_PAINT: Record<FlavorName, { color: string; opacity: number }> = {
+	valley: { color: '#ffffff', opacity: BUILDING_OPACITY.valley },
+	clay: { color: '#f7f4ef', opacity: BUILDING_OPACITY.clay }
+};
+
 /** Building opacity while Aerial is on, in either flavor (see style.ts). */
 export const AERIAL_BUILDING_OPACITY = BUILDING_OPACITY.aerial;
 
@@ -260,7 +272,7 @@ export function applyFlavor(map: FlavorMap, diff: readonly PaintChange[], name: 
 	for (const ch of diff) {
 		if (!map.getLayer(ch.layer)) continue;
 		let value = ch[name];
-		if (aerial && ch.layer === BUILDINGS_LAYER && ch.property === 'fill-extrusion-opacity') value = AERIAL_BUILDING_OPACITY;
+		if (aerial && BUILDINGS_LAYERS.includes(ch.layer) && ch.property === 'fill-extrusion-opacity') value = AERIAL_BUILDING_OPACITY;
 		if (trueColor.get(map) && IMAGERY_LAYERS.includes(ch.layer) && ch.property === 'raster-saturation') value = 0;
 		set(ch.layer, `${ch.property}-transition`, { duration, delay: 0 });
 		set(ch.layer, ch.property, value);

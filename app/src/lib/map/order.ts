@@ -20,7 +20,7 @@ import type { BackgroundLayerSpecification, LayerSpecification } from 'maplibre-
  * | footprints | camera view footprints and cones (`anchor:footprints`) |
  * | routes | corridor outline, underlay, ribbons, trails (`anchor:routes`) |
  * | — | end of the single draped block |
- * | buildings | `buildings-3d` (the style's own) |
+ * | buildings | `buildings-3d`, `buildings-3d-estimated` (the style's own) |
  * | scene | the 3D scene layer (`anchor:scene`) |
  * | points | stop capsules, camera icons, hub pills (`anchor:points`) |
  * | base labels | the style's own |
