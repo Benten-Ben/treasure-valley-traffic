@@ -1,4 +1,4 @@
-import type { GeoJSONSource, Map, MapGeoJSONFeature, MapStyleImageMissingEvent } from 'maplibre-gl';
+import type { GeoJSONSource, Map, MapGeoJSONFeature, MissingStyleImageResolver } from 'maplibre-gl';
 import type { Feature, MultiLineString, Point } from 'geojson';
 import { untrack } from 'svelte';
 import { MapScope } from '#lib/app/cleanup.js';
@@ -231,6 +231,8 @@ export class TransitModule implements LayerModule {
 	#lastPoll: number | null = null;
 	#idle = true;
 	#hovered: number[] = [];
+	/** The running set last shown on the map (null: none yet). */
+	#shownRunning: ReadonlySet<string> | null = null;
 	#stopTick: (() => void) | null = null;
 	#releaseKeys: (() => void) | null = null;
 	#fallbackTimer: ReturnType<typeof setInterval> | undefined;
@@ -315,7 +317,11 @@ export class TransitModule implements LayerModule {
 		scope.addSource(SOURCES.trails, { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
 		const pill = pillImage();
 		scope.addImage(IMG.pill, pill.data, pill.options);
-		scope.on('styleimagemissing', (e: MapStyleImageMissingEvent) => this.#drawImage(map, e.id));
+		// Shields and capsules are drawn the first time a layer needs one. MapLibre has one resolver per
+		// map: chain to whoever set one before, and put it back on cleanup.
+		const before = (map as unknown as { _missingStyleImageResolver?: MissingStyleImageResolver | null })._missingStyleImageResolver ?? null;
+		map.setMissingStyleImageResolver((id) => (this.#drawImage(map, id) ? undefined : before?.(id)));
+		scope.defer(() => map.setMissingStyleImageResolver(before));
 		addSlotted(map, networkLayers(), def.order, (l, before) => scope.addLayer(l, before));
 		this.#useOverlay = ctx.overlay.ok;
 		if (this.#useOverlay) {
@@ -345,10 +351,17 @@ export class TransitModule implements LayerModule {
 				untrack(() => this.#second());
 			});
 		});
+		// Back from a hidden tab: catch up at once (the poller reloads the window by itself).
+		const onVisibility = () => {
+			if (hidden()) return;
+			this.#second();
+			this.#kick();
+		};
+		document.addEventListener('visibilitychange', onVisibility);
+		scope.defer(() => document.removeEventListener('visibilitychange', onVisibility));
 		this.#installDebug();
 		this.status = this.#useOverlay ? 'ready' : 'stale';
 		this.updatedAt = Date.now();
-		this.#applyRunning(new Set(), true);
 		this.setVisible(this.#visible);
 	}
 
@@ -362,6 +375,7 @@ export class TransitModule implements LayerModule {
 		if (on) {
 			this.poller.start();
 			this.#build();
+			this.#second();
 			if (this.#useOverlay) this.#kick();
 			else this.#startFallback();
 		} else {
@@ -520,7 +534,8 @@ export class TransitModule implements LayerModule {
 		const clock = this.clock;
 		if (!clock || !this.network || this.#destroyed) return;
 		const T = clock.playhead();
-		this.#applyRunning(runningAt(this.feed.routeRuns, T));
+		const running = runningAt(this.feed.routeRuns, T);
+		if (!sameSet(running, this.running)) this.running = running;
 		const buses: Record<string, BusSummary> = {};
 		let moving = false;
 		let changed = false;
@@ -533,29 +548,37 @@ export class TransitModule implements LayerModule {
 			if (before[vid]?.state !== at.state) changed = true;
 		}
 		this.buses = buses;
-		if (this.#visible && this.trails.value) this.#drawTrails();
+		// Nothing touches the map while the layer is off or the tab is hidden: the loop stays stopped.
+		if (!this.#visible || hidden()) return;
+		this.#applyRunning();
+		if (this.trails.value) this.#drawTrails();
 		// Something moves (or changed look) while the frame loop sleeps: wake it.
-		if (this.#visible && this.#useOverlay && this.#idle && (moving || changed)) this.#kick();
+		if (this.#useOverlay && this.#idle && (moving || changed)) this.#kick();
 	}
 
-	/** Which routes run changed: feature-state on the ribbons and stops, and the shields' badges. Never the ribbon source. */
-	#applyRunning(running: Set<string>, force = false) {
+	/**
+	 * Show which routes run: feature-state on the ribbons and stops, and the
+	 * shields' badges, for whatever changed since it was last shown. Never
+	 * the ribbon source.
+	 */
+	#applyRunning() {
 		const map = this.#scope?.map;
 		const net = this.network;
-		if (!map || !net) return;
-		if (!force && sameSet(running, this.running)) return;
-		const was = this.running;
+		const running = this.running;
+		const was = this.#shownRunning;
+		if (!map || !net || (was && sameSet(running, was))) return;
 		for (const r of net.routes) {
 			const on = running.has(r.id);
-			if (force || on !== was.has(r.id)) map.setFeatureState({ source: SOURCES.ribbons, id: r.rid }, { active: on });
+			if (!was || on !== was.has(r.id)) map.setFeatureState({ source: SOURCES.ribbons, id: r.rid }, { active: on });
 		}
 		const idleNow = idleStops(net, running);
-		const idleWas = idleStops(net, was);
+		const idleWas = was ? idleStops(net, was) : null;
 		idleNow.forEach((idle, i) => {
-			if (force || idle !== idleWas[i]) map.setFeatureState({ source: SOURCES.stops, id: i + 1 }, { idle });
+			if (!idleWas || idle !== idleWas[i]) map.setFeatureState({ source: SOURCES.stops, id: i + 1 }, { idle });
 		});
-		this.running = running;
-		if (!force) (map.getSource(SOURCES.shields) as GeoJSONSource | undefined)?.setData(shieldFeatures(net, running));
+		// The shields were built with nothing running (at mount).
+		if (was || running.size) (map.getSource(SOURCES.shields) as GeoJSONSource | undefined)?.setData(shieldFeatures(net, running));
+		this.#shownRunning = running;
 	}
 
 	#drawTrails() {
@@ -613,7 +636,7 @@ export class TransitModule implements LayerModule {
 
 	/** Ask for frames again (the frame function then decides how many). */
 	#kick() {
-		if (!this.#useOverlay || !this.#visible || !this.#ctx) return;
+		if (!this.#useOverlay || !this.#visible || !this.#ctx || hidden()) return;
 		this.#idle = false;
 		this.#ctx.overlay.update(BUS_GROUP, this.#frame);
 	}
@@ -714,8 +737,9 @@ export class TransitModule implements LayerModule {
 		this.#hovered = ids;
 	}
 
-	#drawImage(map: Map, id: string) {
-		if (map.hasImage(id)) return;
+	/** Draw one of this layer's images on demand; false when the name isn't ours. */
+	#drawImage(map: Map, id: string): boolean {
+		if (map.hasImage(id)) return true;
 		let img: ReturnType<typeof shieldImage> | null = null;
 		const shield = parseShield(id);
 		if (shield) {
@@ -725,9 +749,10 @@ export class TransitModule implements LayerModule {
 			const n = Number(id.slice(IMG.capsule.length));
 			if (Number.isInteger(n) && n > 0) img = capsuleImage(n);
 		}
-		if (!img) return;
+		if (!img) return false;
 		// Added on demand; removed with the layer's other images on cleanup.
 		this.#scope?.addImage(id, img.data, img.options);
+		return true;
 	}
 
 	#debug: object | null = null;
@@ -759,6 +784,8 @@ export class TransitModule implements LayerModule {
 		this.#debug = handle;
 	}
 }
+
+const hidden = () => typeof document !== 'undefined' && document.visibilityState === 'hidden';
 
 function toPairs(flat: number[]): [number, number][] {
 	const out: [number, number][] = [];

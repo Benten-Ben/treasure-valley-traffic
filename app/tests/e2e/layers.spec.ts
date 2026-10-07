@@ -178,14 +178,18 @@ test.describe('layers', () => {
 		await sql.end();
 		expect(road, 'an arterial downtown').toBeTruthy();
 		const [lng, lat] = [Number(road.lng), Number(road.lat)];
-		// One bus, reporting now, right on the road (the local positions are from this morning).
-		await page.route('**/api/transit/vehicles', (r) => {
+		// One bus, reporting now, right on the road (the local positions are from this morning). WP8: the
+		// tracks API replaced the vehicles one; the bus's newest fix is 10 s before the playhead (now − 90 s).
+		await page.route('**/api/transit/tracks**', (r) => {
 			const now = Date.now() / 1000;
 			r.fulfill({
 				json: {
+					contract: 1,
 					now,
-					vehicles: [{ vehicleId: 'test-bus', label: '2213', routeId: null, routeMatched: false, shortName: '9', longName: 'State Street',
-						color: '#2a78d6', textColor: '#ffffff', ts: now - 20, lon: lng, lat, bearing: 90, status: 2, stopName: null, trail: [] }]
+					vehicles: { 'test-bus': { label: '2213', routeId: '9', routeSource: 'feed', shortName: '9', color: '#2a78d6', textColor: '#ffffff', halo: true, headsign: null } },
+					steps: [['test-bus', now - 100, null, null, lng, lat, 90, null, null]],
+					routeRuns: { '9': [[now - 100, now - 100]] },
+					lastFix: now - 100
 				}
 			});
 		});
@@ -327,9 +331,9 @@ test.describe('layers', () => {
 		};
 		// A first round shows every legend and tooltip once, so their fonts are in.
 		await toggleAll();
-		// Then right after a vehicles poll, so its 15 s interval isn't due while Transit is back on;
+		// Then right after a tracks poll, so its 10 s interval isn't due while Transit is back on;
 		// Transit stays off for the rest, so its regular poll can't land in the count either.
-		await page.waitForResponse((r) => r.url().includes('/api/transit/vehicles'), { timeout: 30_000 });
+		await page.waitForResponse((r) => r.url().includes('/api/transit/tracks'), { timeout: 30_000 });
 		const net = await recordNetwork(page, { bodies: false });
 		const mark = net.mark();
 		await layerButton(page, 'Transit').click();
@@ -350,7 +354,7 @@ test.describe('layers', () => {
 
 	test('a slow routes request shows the ring and "Loading routes…"; a 500 shows ▲ and Retry', { tag: '@wp2' }, async ({ page }) => {
 		test.setTimeout(300_000);
-		await page.route('**/api/transit/routes**', async (r) => {
+		await page.route('**/api/transit/network**', async (r) => {
 			await new Promise((res) => setTimeout(res, 3000));
 			await r.continue();
 		});
@@ -362,8 +366,8 @@ test.describe('layers', () => {
 		await expect(transit).toHaveAttribute('aria-busy', 'false', { timeout: 30_000 });
 		await expect(page.getByRole('region', { name: 'Transit legend' }).getByText('Loading routes…')).toHaveCount(0);
 
-		await page.unroute('**/api/transit/routes**');
-		await page.route('**/api/transit/routes**', (r) => r.fulfill({ status: 500, json: { message: 'the database is resting' } }));
+		await page.unroute('**/api/transit/network**');
+		await page.route('**/api/transit/network**', (r) => r.fulfill({ status: 500, json: { message: 'the database is resting' } }));
 		await page.reload();
 		await mapReady(page);
 		await expect(transit.locator('.warn')).toHaveText('▲');
@@ -372,7 +376,7 @@ test.describe('layers', () => {
 		await transit.hover();
 		await expect(page.getByRole('tooltip')).toContainText('▲');
 		await page.screenshot({ path: screenPath('layers-error-retry.png') });
-		await page.unroute('**/api/transit/routes**');
+		await page.unroute('**/api/transit/network**');
 		await legend.getByRole('button', { name: 'Retry' }).click();
 		await expect.poll(async () => (await info(page)).status.transit, { timeout: 30_000 }).toBe('ready');
 		await expect(transit.locator('.warn')).toHaveCount(0);
