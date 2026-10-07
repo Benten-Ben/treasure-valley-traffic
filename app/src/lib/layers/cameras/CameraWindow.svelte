@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { onDestroy, untrack } from 'svelte';
 	import { getAppCtx } from '#lib/app/context.js';
-	import { historyOf } from '#lib/state/history.svelte.js';
 	import { windowsOf, type WindowStatus, type WinState } from '#lib/state/windows.svelte.js';
 	import Icon from '#lib/ui/Icon.svelte';
 	import { CREDIT } from './cameras.js';
@@ -13,7 +12,8 @@
 	import { CALIBRATE, FLY_TO, LOOK, PHOTO_3D } from './icons.js';
 	import type { CamerasModule } from './index.svelte.js';
 	import { liveOf } from './live.svelte.js';
-	import { flyTarget } from './place.js';
+	import { flyToCamera } from './fly.js';
+	import { landBeside, landing } from './place.js';
 
 	/**
 	 * A camera window's content (docs/14 §14.6, "Camera windows" and "Live
@@ -68,11 +68,13 @@
 	const noView = $derived(!!camera && (camera.views.length === 0 || camera.views.every((v) => v.imageId === null)));
 	const cal = $derived(view?.calibration ?? null);
 
-	// Poll this view's picture while the window is open (and only this view).
+	// Poll this view's picture while the window is open (and only this view). Keyed by the id, so
+	// a refetched camera doesn't restart the poll.
+	const watched = $derived(view && view.imageId !== null ? view.id : null);
 	$effect(() => {
-		const v = view;
-		if (!v || v.imageId === null) return;
-		return feed.watch([v.id]);
+		const v = watched;
+		if (v === null) return;
+		return feed.watch([v]);
 	});
 
 	// The UI's 1 Hz clock: ages and the ring move once a second, never per frame.
@@ -112,13 +114,14 @@
 		untrack(() => windows.update(key, { status: st, aspect: a }));
 	});
 
+	/** Fly to the camera, landing it beside this window (above the sheet on a phone). */
 	function flyTo() {
 		const map = app.map;
 		if (!map || !camera) return;
-		const to = flyTarget(camera.pole, map.getBearing());
-		const h = historyOf(app);
-		if (h.attached) h.fly(to);
-		else map.flyTo(to);
+		const box = map.getContainer().getBoundingClientRect();
+		const w = windows.get(key);
+		const land = windows.layout === 'phone' || !w ? landing(box, win.rect.w, windows.layout) : landBeside(w.rect, box);
+		flyToCamera(app, map, camera.pole, land);
 	}
 
 	const module = () => app.layers?.modules.cameras as CamerasModule | undefined;
@@ -158,7 +161,12 @@
 	{:else if noView}
 		<p class="note"><span class="shape" aria-hidden="true">■</span> Not on 511 Idaho: no live picture for this camera.</p>
 	{:else}
-		<Frame url={frame?.url ?? null} alt="Live picture from {name} ({CREDIT})" {aspect} />
+		<Frame
+			url={frame?.url ?? null}
+			alt="Live picture from {name} ({CREDIT})"
+			{aspect}
+			empty={live && live.state !== 'ok' && live.state !== 'waiting' ? `No picture: ${status.word}` : null}
+		/>
 		<div class="foot">
 			<Freshness shown={status} progress={age === null || !live ? 0 : ringProgress(age, live.cadenceS)} pulse={frame?.sha ?? null} />
 			<span class="seen num" title={SEEN_NOTE} data-age={age === null ? '' : Math.round(age)}>{footText(live, age)}</span>
@@ -198,7 +206,7 @@
 		<button class="pill" disabled={!camera} onclick={flyTo}><Icon icon={FLY_TO} size={18} /> Fly to</button>
 	</div>
 	{#if camera && !noView && blocked}
-		<p class="reason" id={reasonId}>Look through: {blocked}</p>
+		<p class="reason" id={reasonId}><span aria-hidden="true">◌</span> {blocked}</p>
 	{/if}
 </div>
 

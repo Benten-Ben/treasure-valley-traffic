@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { ALL_LAYERS, cameraLayers, CAMERA_LAYERS, FOOTPRINT_MINZOOM, metres, movedLines, notchImage, type Calibration } from './cameras.js';
-import { cameraIdOf, cameraKey, flyTarget, paddedCentre } from './place.js';
+import { ALL_LAYERS, cameraLayers, CAMERA_LAYERS, checkImage, FOOTPRINT_MINZOOM, metres, movedLines, notchImage, type Calibration } from './cameras.js';
+import { cameraIdOf, cameraKey, flyTarget, landBeside, landing, paddedCentre } from './place.js';
 import { clampZoom, IDENTITY, MAX_ZOOM, panBy, wheelFactor, zoomAt } from './zoom.js';
 
 const cal = (id: number, cameraId: number, lon: number, lat: number): Calibration => ({
@@ -55,6 +55,18 @@ describe('camera icons and footprints', () => {
 		expect(px(7, 5)).toEqual([0x2b, 0x2a, 0x33, 255]);
 		expect(px(7, 0)).toEqual([0xff, 0xfb, 0xf4, 255]);
 	});
+
+	it('draws the calibrated check as an image (the basemap glyphs have no ✓): cream on clear', () => {
+		const c = checkImage(2);
+		expect([c.width, c.height]).toEqual([20, 20]);
+		const alpha = (x: number, y: number) => c.data[(y * 20 + x) * 4 + 3];
+		// On the stroke's corner (4.3, 7.3 CSS px), clear at the top left.
+		expect(alpha(8, 14)).toBe(255);
+		expect([...c.data.subarray((14 * 20 + 8) * 4, (14 * 20 + 8) * 4 + 3)]).toEqual([0xff, 0xfb, 0xf4]);
+		expect(alpha(0, 0)).toBe(0);
+		const layer = cameraLayers().find((l) => l.layer.id === 'cameras-calibrated-check')!.layer as { layout: Record<string, unknown> };
+		expect(layer.layout['icon-image']).toBe('camera-check');
+	});
 });
 
 describe('camera clicks', () => {
@@ -65,6 +77,22 @@ describe('camera clicks', () => {
 	it('open the window beside where the camera lands: the middle of the padded map', () => {
 		expect(paddedCentre({ left: 0, top: 0, width: 1280, height: 800 }, { top: 0, right: 0, bottom: 0, left: 0 })).toEqual({ x: 640, y: 400 });
 		expect(paddedCentre({ left: 0, top: 0, width: 1280, height: 800 }, { left: 312, right: 392 })).toEqual({ x: 600, y: 400 });
+	});
+
+	it('land the camera where its window fits between the legend and inspect columns', () => {
+		const box = { left: 0, top: 0, width: 1280, height: 800 };
+		// Free middle 312…888: the camera at 388, its 400 px window at 412…812.
+		expect(landing(box, 400, 'desktop')).toEqual({ x: 388, y: 400 });
+		expect(landing({ ...box, width: 1024 }, 400, 'desktop')).toBeNull();
+		expect(landing({ ...box, width: 800 }, 400, 'tablet')).toBeNull();
+		expect(landing({ left: 0, top: 0, width: 390, height: 844 }, 400, 'phone')).toEqual({ x: 195, y: 228 });
+	});
+
+	it('land a camera whose window is open 24 px left of it, or right when the left has no room', () => {
+		const box = { left: 0, top: 0, width: 1280, height: 800 };
+		expect(landBeside({ x: 412, y: 200, w: 400, h: 400 }, box)).toEqual({ x: 388, y: 400 });
+		expect(landBeside({ x: 20, y: 200, w: 400, h: 400 }, box)).toEqual({ x: 444, y: 400 });
+		expect(landBeside({ x: 412, y: 0, w: 400, h: 60 }, box).y).toBe(90);
 	});
 
 	it('key windows by camera', () => {

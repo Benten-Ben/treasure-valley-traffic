@@ -98,7 +98,7 @@ describe('freshness', () => {
 	});
 
 	it('says why look-through is off', () => {
-		expect(lookThroughBlocked({ calibrated: false, sizeChanged: null, available: true })).toMatch(/not calibrated/i);
+		expect(lookThroughBlocked({ calibrated: false, sizeChanged: null, available: true })).toMatch(/needs a calibration/i);
 		expect(lookThroughBlocked({ calibrated: true, sizeChanged: 'Image size changed (a → b); recalibrate', available: true })).toMatch(/^Image size changed/);
 		expect(lookThroughBlocked({ calibrated: true, sizeChanged: null, available: false })).toMatch(/3D cameras/);
 		expect(lookThroughBlocked({ calibrated: true, sizeChanged: null, available: true })).toBeNull();

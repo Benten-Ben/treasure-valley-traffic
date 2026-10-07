@@ -7,7 +7,8 @@ import type { ImageSize, Pose } from '#lib/calibration/solver.js';
  * ported from the Cameras lens by WP2, icons and footprints by WP12). Camera
  * icons are told apart by shape as well as color (never color alone):
  *
- * - **calibrated:** a teal disc with a white ring and a check; from z14 its
+ * - **calibrated:** a teal disc with a white ring and a check (an image:
+ *   the basemap's glyphs have no ✓); from z14 its
  *   view footprint is draped on the ground in teal (fill 0.10, line 0.8;
  *   0.22 and 1.0 on hover);
  * - **not calibrated:** a hollow amber ring with "?";
@@ -47,6 +48,7 @@ export const SOURCE = 'cameras';
 export const CONES = 'cones';
 export const MOVES = 'camera-moves';
 export const NOTCH_IMAGE = 'camera-notch';
+export const CHECK_IMAGE = 'camera-check';
 export const CREDIT = 'ITD 511 / ACHD';
 /** The clickable icon layers. */
 export const CAMERA_LAYERS = ['cameras-no-image', 'cameras-uncalibrated', 'cameras-calibrated'];
@@ -139,10 +141,47 @@ export function notchImage(ratio = 2): { width: number; height: number; data: Ui
 	return { width: w, height: h, data };
 }
 
+/** Distance from (px, py) to the segment (ax, ay)–(bx, by). */
+function segDist(px: number, py: number, ax: number, ay: number, bx: number, by: number): number {
+	const dx = bx - ax;
+	const dy = by - ay;
+	const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy)));
+	return Math.hypot(px - ax - t * dx, py - ay - t * dy);
+}
+
+/**
+ * The calibrated icon's check: a cream tick on a clear 10 × 10 CSS px square,
+ * antialiased, at `ratio` device pixels per CSS pixel (RGBA with straight
+ * alpha, for map.addImage). Drawn here because the basemap's glyphs have no ✓.
+ */
+export function checkImage(ratio = 2): { width: number; height: number; data: Uint8Array } {
+	const size = 10 * ratio;
+	const data = new Uint8Array(size * size * 4);
+	const pts = [
+		[2.4, 5.3],
+		[4.3, 7.3],
+		[7.7, 3.1]
+	].map(([x, y]) => [x * ratio, y * ratio]);
+	const half = 0.95 * ratio;
+	for (let y = 0; y < size; y++) {
+		for (let x = 0; x < size; x++) {
+			const cx = x + 0.5;
+			const cy = y + 0.5;
+			const d = Math.min(segDist(cx, cy, pts[0][0], pts[0][1], pts[1][0], pts[1][1]), segDist(cx, cy, pts[1][0], pts[1][1], pts[2][0], pts[2][1]));
+			const a = Math.max(0, Math.min(1, half + 0.5 - d));
+			if (a <= 0) continue;
+			data.set([0xff, 0xfb, 0xf4, Math.round(a * 255)], (y * size + x) * 4);
+		}
+	}
+	return { width: size, height: size, data };
+}
+
 /** Icon radius by zoom (CSS px). */
 const RADIUS = ['interpolate', ['linear'], ['zoom'], 10, 4, 14, 7, 18, 11];
-/** Symbols on the icons (✓, ?) by zoom. */
+/** The "?" on uncalibrated icons by zoom (text px). */
 const MARK_SIZE = ['interpolate', ['linear'], ['zoom'], 12, 8, 14, 10, 18, 14];
+/** The check on calibrated icons by zoom (its image is 10 px at 1). */
+const CHECK_SIZE = ['interpolate', ['linear'], ['zoom'], 12, 0.6, 14, 0.9, 18, 1.4];
 
 const hover = (on: number, off: number) => ['case', ['boolean', ['feature-state', 'hover'], false], on, off];
 
@@ -173,9 +212,7 @@ export function cameraLayers(): SlottedLayer[] {
 		{ slot: 'points', layer: { id: 'cameras-calibrated', type: 'circle', source: SOURCE, filter: filter(calibrated), layout: hidden,
 			paint: { 'circle-radius': num(RADIUS), 'circle-color': TEAL, 'circle-stroke-color': CREAM, 'circle-stroke-width': 2 } } },
 		{ slot: 'points', layer: { id: 'cameras-calibrated-check', type: 'symbol', source: SOURCE, filter: filter(calibrated), minzoom: 12,
-			layout: { ...hidden, 'text-field': '✓', 'text-size': num(MARK_SIZE), 'text-font': ['Noto Sans Medium'], 'text-allow-overlap': true,
-				'text-ignore-placement': true },
-			paint: { 'text-color': CREAM } } },
+			layout: { ...hidden, 'icon-image': CHECK_IMAGE, 'icon-size': num(CHECK_SIZE), 'icon-allow-overlap': true, 'icon-ignore-placement': true } } },
 		{ slot: 'points', layer: { id: 'cameras-uncalibrated-mark', type: 'symbol', source: SOURCE, filter: filter(uncalibrated), minzoom: 12,
 			layout: { ...hidden, 'text-field': '?', 'text-size': num(MARK_SIZE), 'text-font': ['Noto Sans Medium'], 'text-allow-overlap': true,
 				'text-ignore-placement': true },

@@ -1,12 +1,12 @@
 import type { FeatureCollection } from 'geojson';
 import type { GeoJSONSource, MapGeoJSONFeature, MapMouseEvent } from 'maplibre-gl';
+import { untrack } from 'svelte';
 import { MapScope } from '#lib/app/cleanup.js';
 import type { AppCtx } from '#lib/app/context.js';
 import type { CamerasStatus } from '#lib/contracts/live.js';
 import { addSlotted } from '#lib/map/order.js';
 import { discSprite, type OverlayInstance } from '#lib/overlay/index.js';
-import { historyOf } from '#lib/state/history.svelte.js';
-import { windowsOf, type Point, type WindowSpec } from '#lib/state/windows.svelte.js';
+import { WIDTH, windowsOf, type Point, type WindowSpec } from '#lib/state/windows.svelte.js';
 import { take } from '../prefetch.js';
 import { PRIORITY, type Chip, type Interactive, type LayerModule, type LayerStatus, type Selection } from '../types.js';
 import CameraWindow from './CameraWindow.svelte';
@@ -14,6 +14,8 @@ import {
 	ALL_LAYERS,
 	CAMERA_LAYERS,
 	cameraLayers,
+	CHECK_IMAGE,
+	checkImage,
 	CONES,
 	counts,
 	CREAM,
@@ -34,7 +36,8 @@ import def from './def.js';
 import type { CameraViewRow } from './detail.js';
 import Legend from './Legend.svelte';
 import { liveOf } from './live.svelte.js';
-import { cameraIdOf, cameraKey, flyTarget, paddedCentre } from './place.js';
+import { flyToCamera } from './fly.js';
+import { cameraIdOf, cameraKey, landBeside, landing } from './place.js';
 
 async function getJson(url: string, init?: RequestInit) {
 	const res = await take(url, init);
@@ -44,6 +47,7 @@ async function getJson(url: string, init?: RequestInit) {
 	}
 	return res.json();
 }
+
 
 /** The overlay group of window number badges on cameras. */
 export const BADGES = 'camera-windows';
@@ -69,7 +73,9 @@ interface Cam {
  *   look through);
  * - each open window's number badge drawn on its camera (the overlay);
  * - hovering a camera (or its window) lights its footprint up;
- * - pinned camera windows reopen on the next visit ('camera' window kind).
+ * - pinned camera windows reopen on the next visit ('camera' window kind);
+ * - while a mode (calibrate, look-through) is active, camera windows step
+ *   aside; the mode's view snapshot brings them back when it ends.
  *
  * The ground drape of reference frames is gone from the main map (§14.6);
  * calibration keeps its own.
@@ -109,6 +115,8 @@ export class CamerasModule implements LayerModule {
 	#hoverCamera: number | null = null;
 	#windowCamera: number | null = null;
 	#lit: number[] = [];
+	/** The badges set on the overlay now: window key → number. */
+	#badges = new Map<string, number>();
 	#debug: object | null = null;
 
 	async mount(ctx: AppCtx): Promise<void> {
@@ -134,8 +142,8 @@ export class CamerasModule implements LayerModule {
 		const map = await ctx.styleReady;
 		if (this.#destroyed) return;
 		const scope = (this.#scope = new MapScope(map));
-		const notch = notchImage(2);
-		scope.addImage(NOTCH_IMAGE, notch, { pixelRatio: 2 });
+		scope.addImage(NOTCH_IMAGE, notchImage(2), { pixelRatio: 2 });
+		scope.addImage(CHECK_IMAGE, checkImage(2), { pixelRatio: 2 });
 		scope.addSource(SOURCE, { type: 'geojson', data });
 		scope.addSource(CONES, { type: 'geojson', data: EMPTY });
 		scope.addSource(MOVES, { type: 'geojson', data: EMPTY });
@@ -158,6 +166,15 @@ export class CamerasModule implements LayerModule {
 		for (let n = 1; n <= 4; n++) ctx.overlay.sprite(discSprite({ key: badgeKey(n), text: String(n), color: INK, textColor: CREAM, size: 22 }));
 		scope.defer(windows.registerKind('camera', (d) => this.#reopen(d)));
 		scope.defer(windows.listen(() => this.#syncBadges()));
+		// A mode (calibrate, look-through) owns the screen: camera windows step aside. The mode's
+		// view snapshot holds them (§14.3), so leaving the mode puts them back.
+		scope.defer(
+			$effect.root(() => {
+				$effect(() => {
+					if (ctx.modes.current !== 'explore') untrack(() => this.#closeWindows());
+				});
+			})
+		);
 		scope.defer(() => ctx.overlay.remove(BADGES));
 		this.#installDebug();
 		scope.defer(() => this.#uninstallDebug());
@@ -268,6 +285,13 @@ export class CamerasModule implements LayerModule {
 		};
 	}
 
+	#closeWindows() {
+		const ctx = this.#ctx;
+		if (!ctx) return;
+		const windows = windowsOf(ctx);
+		for (const w of [...windows.list]) if (cameraIdOf(w.key) !== null) windows.close(w.key, { returnFocus: false, forget: false });
+	}
+
 	#reopen(data: unknown): WindowSpec | null {
 		const id = (data as { id?: unknown } | null)?.id;
 		const cam = typeof id === 'number' ? this.#byId.get(id) : undefined;
@@ -285,21 +309,26 @@ export class CamerasModule implements LayerModule {
 		const cam = this.#byId.get(id);
 		if (!ctx || !cam) return false;
 		const map = this.#scope?.map ?? null;
+		const windows = windowsOf(ctx);
+		const key = cameraKey(id);
 		let anchor: Point | undefined;
 		if (map) {
 			const box = map.getContainer().getBoundingClientRect();
 			if (o.fly) {
-				const to = flyTarget(cam.at, map.getBearing());
-				const h = historyOf(ctx);
-				if (h.attached) h.fly(to);
-				else map.flyTo(to);
-				anchor = paddedCentre(box, map.getPadding());
+				// The camera lands where its window fits beside it, clear of the legend and inspect
+				// columns, or beside its window when that's open already.
+				const open = windows.get(key);
+				const land =
+					open && windows.layout !== 'phone'
+						? landBeside(open.rect, box)
+						: landing(box, windows.remembered(key)?.w ?? WIDTH.default, windows.layout);
+				anchor = flyToCamera(ctx, map, cam.at, land);
 			} else {
 				const p = map.project(cam.at);
 				if (p.x >= 0 && p.y >= 0 && p.x <= box.width && p.y <= box.height) anchor = { x: box.left + p.x, y: box.top + p.y };
 			}
 		}
-		return windowsOf(ctx).open(this.#spec(cam, anchor), { focus: o.focus ?? true }) !== null;
+		return windows.open(this.#spec(cam, anchor), { focus: o.focus ?? true }) !== null;
 	}
 
 	/** The camera's window number, or null when it has none open. */
@@ -344,6 +373,7 @@ export class CamerasModule implements LayerModule {
 				});
 			}
 		}
+		this.#badges = new Map(instances.map((i) => [i.id, Number(i.sprite.slice(i.sprite.lastIndexOf('-') + 1))]));
 		ctx.overlay.set(BADGES, instances, { z: 55, priority: PRIORITY.camera });
 	}
 
@@ -413,10 +443,13 @@ export class CamerasModule implements LayerModule {
 				windows.list
 					.filter((w) => cameraIdOf(w.key) !== null)
 					.map((w) => ({ key: w.key, cameraId: cameraIdOf(w.key), number: w.number, status: w.status ? `${w.status.shape} ${w.status.word}` : null })),
-			/** The number badges as drawn in the last frame: camera, number and screen point (CSS px, before the offset). */
+			/**
+			 * The number badges on cameras: camera, the number its sprite shows, and where the last
+			 * frame drew it (CSS px, before the offset; null when it wasn't drawn, e.g. off screen).
+			 */
 			badges: () => {
-				const numbers = new Map(windows.list.map((w) => [w.key, w.number]));
-				return ctx.overlay.positions(BADGES).map((p) => ({ cameraId: cameraIdOf(p.id), number: numbers.get(p.id) ?? null, x: p.x, y: p.y }));
+				const drawn = new Map(ctx.overlay.positions(BADGES).map((p) => [p.id, p]));
+				return [...this.#badges].map(([k, number]) => ({ cameraId: cameraIdOf(k), number, x: drawn.get(k)?.x ?? null, y: drawn.get(k)?.y ?? null }));
 			},
 			/** The live feed: views polled, whether it runs, its interval and request count. */
 			feed: () => ({ watching: feed.watching, running: feed.running, interval: feed.interval, requests: feed.requests }),

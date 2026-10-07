@@ -17,7 +17,7 @@ export const cameraHooks: CameraHooks = $state({ lookThrough: null, photo: null 
 
 /** Why look-through can't be used for this view, or null when it can. */
 export function lookThroughBlocked(o: { calibrated: boolean; sizeChanged: string | null; available: boolean }): string | null {
-	if (!o.calibrated) return 'Not calibrated yet: configure it first';
+	if (!o.calibrated) return 'Look-through needs a calibration: configure this camera first';
 	if (o.sizeChanged) return o.sizeChanged;
 	if (!o.available) return 'Look-through arrives with the 3D cameras';
 	return null;

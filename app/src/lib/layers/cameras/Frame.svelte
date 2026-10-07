@@ -13,6 +13,7 @@
 		url,
 		alt,
 		aspect,
+		empty = null,
 		onshown
 	}: {
 		/** The frame's URL (immutable: a new picture has a new URL); null for none yet. */
@@ -20,6 +21,8 @@
 		alt: string;
 		/** width / height */
 		aspect: number;
+		/** What the box says while there's no picture (default: waiting for one). */
+		empty?: string | null;
 		/** A frame is on screen (its URL). */
 		onshown?: (url: string) => void;
 	} = $props();
@@ -132,11 +135,19 @@
 >
 	<div class="zoom" style:transform="translate({z.x}px, {z.y}px) scale({z.s})">
 		{#each layers as l (l.id)}
-			<img src={l.url} {alt} class="pic" class:enter={layers.length > 1 && l.id === layers.at(-1)?.id} draggable="false" data-frame-url={l.url} />
+			<img
+				src={l.url}
+				{alt}
+				class="pic"
+				class:enter={layers.length > 1 && l.id === layers.at(-1)?.id}
+				aria-hidden={l.id !== layers.at(-1)?.id ? 'true' : undefined}
+				draggable="false"
+				data-frame-url={l.url}
+			/>
 		{/each}
 	</div>
 	{#if !layers.length}
-		<p class="empty">{failed ? 'This picture failed to load' : 'Waiting for a picture…'}</p>
+		<p class="empty">{failed ? 'This picture failed to load' : (empty ?? 'Waiting for a picture…')}</p>
 	{/if}
 	{#if z.s > 1}<span class="scale num" aria-hidden="true">{z.s.toFixed(1)}×</span>{/if}
 </div>
