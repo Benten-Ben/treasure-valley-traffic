@@ -24,12 +24,14 @@ Layout under TVT_ARCHIVE:
     cameras/video/index-<list>.json
 """
 
+import argparse
 import csv
 import json
 import os
 import shutil
 import struct
 import subprocess
+import sys
 import tempfile
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -380,3 +382,22 @@ def write_index(root, cams, name, title):
                   separators=(",", ":"))
     os.replace(tmp, path)
     return total
+
+
+def main(argv=None):
+    """`python3 -m ingest rollup` (registered in ../plugin.json)."""
+    ap = argparse.ArgumentParser(prog="python3 -m ingest rollup",
+                                 description="Roll camera JPEGs into daily videos (the frame stream does this nightly).")
+    ap.add_argument("--day", type=date.fromisoformat, help="local day, YYYY-MM-DD (default: every finished day not yet done)")
+    ap.add_argument("--camera", nargs="+", help="511 image IDs (default: all with frames that day)")
+    ap.add_argument("--force", action="store_true", help="redo existing or failed videos")
+    args = ap.parse_args(argv)
+    root = os.environ.get("TVT_ARCHIVE") or sys.exit("set TVT_ARCHIVE")
+    today = datetime.now(TZ).date()
+    if args.day:
+        cams = args.camera or sorted(os.listdir(os.path.join(root, "cameras", "jpeg")))
+        items = [(cam, args.day) for cam in cams]
+    else:
+        items = [(c, d) for c, d in pending(root, today) if not args.camera or c in args.camera]
+    done, failed = rollup(root, items, force=args.force)
+    print(f"rollup: {done} videos, {failed} failed", flush=True)

@@ -64,6 +64,7 @@ it stays ODbL. Until COMPASS answers, it's also internal only.
 Distances are in UTM 11N metres (EPSG:26911), as in transit_match.py.
 """
 
+import argparse
 import json
 import math
 import os
@@ -1023,3 +1024,24 @@ def run(conn):
         stats, _ = build(conn, f.started_at)
         f.records = stats["intersections"]
     return stats
+
+
+def main(argv=None):
+    """`python3 -m ingest match-intersections` (registered in ../plugin.json)."""
+    ap = argparse.ArgumentParser(prog="python3 -m ingest match-intersections",
+                                 description="Rebuild core.intersection from the signal sources "
+                                             "(the 'intersections' source does this daily).")
+    ap.add_argument("--dry-run", action="store_true", help="build and report, then roll back")
+    args = ap.parse_args(argv)
+    with db.connect() as conn:
+        if args.dry_run:
+            stats, details = build(conn, db.now())
+            report(conn, stats, details)
+            conn.rollback()
+            print("\n(dry run: nothing written)", flush=True)
+        else:
+            db.ensure_source(conn, SOURCE)
+            with db.Fetch(conn, SOURCE["name"]) as f:
+                stats, details = build(conn, f.started_at)
+                f.records = stats["intersections"]
+            report(conn, stats, details)       # after the commit: printing can't undo the build

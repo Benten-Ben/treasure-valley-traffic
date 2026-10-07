@@ -16,6 +16,10 @@ fixes, run every few minutes by the transit stream:
 By hand: python3 -m ingest match-routes [--hours 24]
 """
 
+import argparse
+
+from ingest import db
+
 from .sources import vrt_realtime
 
 NEAR_M = 40
@@ -110,3 +114,14 @@ def run(conn, hours=3):
     stats.update(match(conn, hours))
     conn.commit()
     return stats
+
+
+def main(argv=None):
+    """`python3 -m ingest match-routes` (registered in ../plugin.json)."""
+    ap = argparse.ArgumentParser(prog="python3 -m ingest match-routes",
+                                 description="Put unlabeled bus trips on routes by their path (the transit stream does this).")
+    ap.add_argument("--hours", type=int, default=24, help="how far back to look (default 24)")
+    args = ap.parse_args(argv)
+    with db.connect() as conn:
+        stats = run(conn, args.hours)
+    print("match-routes: " + ", ".join(f"{k} {v}" for k, v in stats.items()), flush=True)

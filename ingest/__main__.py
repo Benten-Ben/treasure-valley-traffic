@@ -1,17 +1,18 @@
-"""python3 -m ingest sources | run NAME... | run all | serve | stream NAME | backfill NAME PATH | match-routes |
-match-intersections | rollup"""
+"""python3 -m ingest sources | run NAME... | run all | serve | stream NAME | backfill NAME PATH | COMMAND ...
+
+COMMAND is a plugin's own subcommand, registered in its plugin.json (e.g.
+match-intersections, rollup, osm-load); `python3 -m ingest -h` lists them.
+"""
 
 import argparse
-import os
 import sys
 import time
 import traceback
-from datetime import date, datetime
-
-from plugins.cameras.ingest import camera_video
 
 from . import db
-from .sources import SOURCES, STREAMS
+from .sources import COMMANDS, SOURCES, STREAMS, command
+
+BUILTINS = ("sources", "run", "serve", "stream", "backfill")
 
 
 def due(conn, name, schedule, retry_after="1 hour"):
@@ -57,7 +58,13 @@ def serve(check_every_s):
         time.sleep(check_every_s)
 
 
-def main():
+def main(argv=None):
+    argv = sys.argv[1:] if argv is None else argv
+    if clash := sorted(set(COMMANDS) & set(BUILTINS)):
+        sys.exit(f"plugin command(s) {', '.join(clash)} clash with the built-in ones")
+    if argv and argv[0] in COMMANDS:
+        sys.exit(command(argv[0])(argv[1:]))
+
     ap = argparse.ArgumentParser(prog="python3 -m ingest", description="Run ingestors (docs/12).")
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("sources", help="list sources")
@@ -71,16 +78,9 @@ def main():
     bf = sub.add_parser("backfill", help="load a streaming source's raw archive into the database")
     bf.add_argument("name", choices=sorted(n for n, m in STREAMS.items() if hasattr(m, "backfill")))
     bf.add_argument("path", help="archive folder, e.g. $TVT_ARCHIVE/vrt-gtfs-rt")
-    mr = sub.add_parser("match-routes", help="put unlabeled bus trips on routes by their path (the transit stream does this)")
-    mr.add_argument("--hours", type=int, default=24, help="how far back to look (default 24)")
-    mi = sub.add_parser("match-intersections",
-                        help="rebuild core.intersection from the signal sources (the 'intersections' source does this daily)")
-    mi.add_argument("--dry-run", action="store_true", help="build and report, then roll back")
-    ru = sub.add_parser("rollup", help="roll camera JPEGs into daily videos (the frame stream does this nightly)")
-    ru.add_argument("--day", type=date.fromisoformat, help="local day, YYYY-MM-DD (default: every finished day not yet done)")
-    ru.add_argument("--camera", nargs="+", help="511 image IDs (default: all with frames that day)")
-    ru.add_argument("--force", action="store_true", help="redo existing or failed videos")
-    args = ap.parse_args()
+    for name, (plugin, entry) in COMMANDS.items():
+        sub.add_parser(name, help=f"{entry['help']} ({plugin.name})", add_help=False)
+    args = ap.parse_args(argv)
 
     if args.cmd == "sources":
         for name, m in SOURCES.items():
@@ -95,38 +95,6 @@ def main():
             STREAMS[args.name].stream(args.every)
         else:
             STREAMS[args.name].stream()
-        return
-    if args.cmd == "match-routes":
-        from plugins.transit.ingest import transit_match
-        with db.connect() as conn:
-            stats = transit_match.run(conn, args.hours)
-        print("match-routes: " + ", ".join(f"{k} {v}" for k, v in stats.items()), flush=True)
-        return
-    if args.cmd == "match-intersections":
-        from plugins.intersections.ingest import intersections
-        with db.connect() as conn:
-            if args.dry_run:
-                stats, details = intersections.build(conn, db.now())
-                intersections.report(conn, stats, details)
-                conn.rollback()
-                print("\n(dry run: nothing written)", flush=True)
-            else:
-                db.ensure_source(conn, intersections.SOURCE)
-                with db.Fetch(conn, intersections.SOURCE["name"]) as f:
-                    stats, details = intersections.build(conn, f.started_at)
-                    f.records = stats["intersections"]
-                intersections.report(conn, stats, details)       # after the commit: printing can't undo the build
-        return
-    if args.cmd == "rollup":
-        root = os.environ.get("TVT_ARCHIVE") or sys.exit("set TVT_ARCHIVE")
-        today = datetime.now(camera_video.TZ).date()
-        if args.day:
-            cams = args.camera or sorted(os.listdir(os.path.join(root, "cameras", "jpeg")))
-            items = [(cam, args.day) for cam in cams]
-        else:
-            items = [(c, d) for c, d in camera_video.pending(root, today) if not args.camera or c in args.camera]
-        done, failed = camera_video.rollup(root, items, force=args.force)
-        print(f"rollup: {done} videos, {failed} failed", flush=True)
         return
     if args.cmd == "backfill":
         with db.connect() as conn:
