@@ -15,7 +15,7 @@ replaces it.
 import csv
 import os
 
-from .. import db
+from ingest import db
 
 FILE_NAME = "511-camera-views-2026-10-05.csv"
 

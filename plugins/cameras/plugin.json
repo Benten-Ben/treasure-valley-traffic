@@ -1,0 +1,23 @@
+{
+  "name": "cameras",
+  "title": "Cameras: camera lists, key-camera frames and daily videos",
+  "depends": [],
+  "visibility": "public",
+  "order": 10,
+  "sources": [
+    {"name": "achd_cameras", "module": "ingest.sources.achd_cameras", "kind": "source",
+     "license": "none stated", "credit": "Ada County Highway District", "republish": "internal"},
+    {"name": "idaho511_views_oneoff", "module": "ingest.sources.idaho511_views", "kind": "source",
+     "license": "none stated", "credit": "Idaho Transportation Department (511 Idaho)", "republish": "internal"},
+    {"name": "idaho511_frames", "module": "ingest.sources.idaho511_frames", "kind": "stream", "order": 25,
+     "license": "none stated; kept private on the server, never published",
+     "credit": "Idaho Transportation Department (511 Idaho) and Ada County Highway District", "republish": "no"}
+  ],
+  "tables": ["core.camera", "core.camera_view", "core.camera_calibration"],
+  "commands": [
+    {"name": "rollup", "module": "ingest.camera_video",
+     "help": "roll camera JPEGs into daily videos (the frame stream does this nightly)"}
+  ],
+  "storage": "The largest plugin, on disk rather than in the database: the 34 key cameras download about 4 GB of JPEGs a day (2 days kept, about 8 GB) and the road-weather views about 2 GB a day (2 days kept), each rolled into one AV1 video per camera per day, kept (docs/11 §11.5).",
+  "ethics": "The road network, not people: no plate or face recognition and no tracking of individuals. Images come only through 511 Idaho's republished copies (/map/Cctv/<id>), never from ACHD's image host or 511's list pages; they stay on the server and are never republished."
+}

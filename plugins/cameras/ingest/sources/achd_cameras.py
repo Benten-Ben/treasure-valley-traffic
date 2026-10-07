@@ -7,7 +7,7 @@ Automated access is allowed (the GIS host has no robots.txt). Quirks:
   left out of the stored record (it would make every fetch a "new version").
 """
 
-from .. import db, http
+from ingest import db, http
 
 URL = ("https://gis.achdidaho.org/server/rest/services/Traffic/Traffic_Cameras/MapServer/26/query"
        "?where=1%3D1&outFields=*&returnGeometry=true&outSR=4326&f=geojson")

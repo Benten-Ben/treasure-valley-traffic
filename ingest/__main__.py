@@ -8,7 +8,9 @@ import time
 import traceback
 from datetime import date, datetime
 
-from . import camera_video, db
+from plugins.cameras.ingest import camera_video
+
+from . import db
 from .sources import SOURCES, STREAMS
 
 

@@ -2,7 +2,7 @@
 
 511 republishes each ACHD camera's snapshot about every 59 s at
 /map/Cctv/<image_id>, the allowed camera route (robots.txt permits it; no
-key needed). Each key camera (ingest/key_cameras.csv) is fetched every 50 s,
+key needed). Each key camera (../key_cameras.csv) is fetched every 50 s,
 a little faster than it changes, so no snapshot is missed. Repeats are
 byte-identical and dropped. Requests are spread evenly over the cycle: for
 34 cameras, about one every 1.5 s.
@@ -16,7 +16,7 @@ cameras.
 
 Frames are saved as JPEGs by local day, with an index.csv per folder, and
 each finished day is rolled up after midnight into one AV1 video per camera
-(ingest/camera_video.py). JPEGs are deleted after KEEP_JPEG_DAYS, once
+(../camera_video.py). JPEGs are deleted after KEEP_JPEG_DAYS, once
 their video exists.
 
 Each cycle also writes a status file, cameras/status/<list name>.json: the
@@ -40,7 +40,8 @@ import time
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 
-from .. import camera_video, http
+from ingest import http
+from .. import camera_video
 
 URL = "https://511.idaho.gov/map/Cctv/{}"
 CAMERAS_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "key_cameras.csv")

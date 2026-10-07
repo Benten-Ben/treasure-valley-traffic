@@ -1,5 +1,5 @@
 """The capture services' status file (docs/14 §14.6, "Live images"): written each
-cycle by ingest/sources/idaho511_frames.py, read by the app (archive.ts).
+cycle by plugins/cameras/ingest/sources/idaho511_frames.py, read by the app (archive.ts).
 
 Offline: a fake 511 and a fake clock, in a temporary archive.
 """
@@ -13,7 +13,7 @@ import unittest
 from collections import namedtuple
 from unittest import mock
 
-from ingest.sources import idaho511_frames
+from plugins.cameras.ingest.sources import idaho511_frames
 
 # A synthetic flat-gray 16x8 JPEG (ffmpeg), not a camera image.
 JPEG = bytes.fromhex(

@@ -1,6 +1,6 @@
 """Offline tests for the key-camera frame stream and the daily videos.
 
-Run: python3 -m unittest discover -s ingest/tests -t .
+Run: python3 -m unittest discover -s plugins -t .
 The encode test needs ffmpeg with libsvtav1 and is skipped without it.
 """
 
@@ -13,8 +13,8 @@ import tempfile
 import unittest
 from datetime import date, datetime, timedelta, timezone
 
-from ingest import camera_video as cv
-from ingest.sources import idaho511_frames as frames
+from plugins.cameras.ingest import camera_video as cv
+from plugins.cameras.ingest.sources import idaho511_frames as frames
 
 UTC = timezone.utc
 
