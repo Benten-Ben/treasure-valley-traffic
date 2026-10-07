@@ -316,9 +316,9 @@ sources, tables and URLs), with every test green, before the next one starts.
    Screenshots and the existing end-to-end specs must match before and after.
 3. **Private plugins.** **Started, Oct 7:**
    - the private repo is on the server (`/srv/tvt/plugins-private`, a git
-     repository); a private GitHub copy (approved) needs the owner to
-     create the repo and give Claude's GitHub app access to it, since this
-     session's GitHub access can't create repositories;
+     repository), with a private GitHub copy the owner created on Oct 7;
+     the laptop pushes to both, and all three were at the same commit on
+     Oct 7;
    - `achd_tables` holds the ACHD table tool and its tests, `parcels` the
      Assessor copy's manifest and terms, and `tools/` the one-off 511 probe
      and camera sampler; the data stays in `/srv/tvt/private/data`, which
@@ -326,12 +326,16 @@ sources, tables and URLs), with every test green, before the next one starts.
    - Compose gets the extra build context when a private plugin first has
      code a service runs (none yet).
 4. **New plugins,** one source at a time with the owner:
-   - `aircraft` (being built Oct 7): adsb.lol's live data (ODbL) every
-     10 s, with the FAA registry for types; it starts once the owner has
-     sent adsb.lol a courtesy note, and moves to the owner's own receiver
-     later;
+   - `aircraft` (started Oct 7, unfinished): adsb.lol's live data (ODbL)
+     every 10 s, with the FAA registry for types; it starts once the owner
+     has sent adsb.lol a courtesy note, and moves to the owner's own
+     receiver later. The cloud session's work is on branch
+     `plugin/aircraft` (GitHub and the server), unreviewed: only the
+     migration and the adsb.lol stream exist, with no manifest, tests, FAA
+     registry source, Compose service or docs, and it has never run;
    - then `lands` (ownership, management, access and restrictions) and
-     `trails`.
+     `trails`; on Oct 7 these and seven more started as chapter 17's Wave A
+     pollers (§15.4).
 
 ## 15.7 Ideas for later plugins
 
