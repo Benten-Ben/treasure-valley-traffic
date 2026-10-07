@@ -9,6 +9,7 @@ assistant alone.
 
 | Date | Decision | Notes |
 |---|---|---|
+| 2026-10-07 | **One local session drives the project** (owner). The cloud pilot's account reached its weekly limit. A Claude Code session on the owner's laptop now drives everything, combining the pilot and helper roles. The project's VM has the owner's standing OK (deploy, restart, clean up, configure); the host and its other guests still need an OK per action. Commits are authored by the owner with Claude as co-author. The cloud session finishes only UI wave D and hands it back on its branch; waves E–H continue locally. The private plugins now also have a private GitHub repository, pushed from the laptop. | [HANDOFF.md](../HANDOFF.md). Backups: "not yet" (owner, Oct 7); still open below. |
 | 2026-10-07 | **Aircraft, the first new plugin** (owner: "this all sounds great" to the proposal). Live positions from adsb.lol, whose data is ODbL ("© adsb.lol contributors"; our archive stays ODbL), one request every 10 s for the valley, after a courtesy note to adsb.lol; types from the FAA registry (public domain). Privacy: aircraft flagged LADD or PIA are kept only as an anonymous type and track (a key that changes daily); owners' names and addresses are never stored; medical-helicopter track ends near pickup sites that aren't hospitals or airports are trimmed in the app. No backfill from adsb.lol's daily world dumps for now. Not used: ADS-B Exchange (paid, no redistribution), OpenSky (written agreement needed), airplanes.live (asks to be contacted), adsb.fi (personal use only). A dual-band receiver (1090 and 978 MHz) is suggested for the owner's own. | Research Oct 7; [ch. 15](15-plugins.md) §15.6. The note is a draft in the private files. |
 | 2026-10-07 | **The plugin set and the refactor** (owner: "those plugins sound good", asked for one more pass, then "you are clear to proceed however you see fit and yes you can create the private repo"). After the pass: core also owns three time shapes (tracks, readings, lifecycles) with their displays, evidence and review, places and search, and named areas; plugins `roads`, `intersections` (signals, beacons, rail crossings), `cameras`, `transit`, `conditions`, `safety`, `flow` (counts, congestion, travel times), `development` (zones, permits, plats), and private `achd-tables` and `parcels`. The refactor goes ingest first, the app after the current UI round, then private plugins, then aircraft (existing source), lands and trails. | [ch. 15](15-plugins.md). The private plugins start on the server; a private GitHub copy needs the owner to create the repo. |
 | 2026-10-07 | **Core and plugins** (owner: "core/plugin line looks right"). Core is the base map, time and playback, the app shell and layer system, the ingest framework, licensing and visibility, and deploy; each subject is a plugin. **Private plugins** hold data we may use but not redistribute, in a private GitHub repo and/or on the server (owner); private changes what we may share, never what we may collect. The owner's direction: refactor what isn't core into plugins, then land ownership and use (maybe trails); aircraft could be the first new plugin, but only from an existing source until the owner's own receiver arrives. | [ch. 15](15-plugins.md); the plugin list and refactor plan there await approval. |
@@ -76,10 +77,16 @@ assistant alone.
 
 - [x] Register for a 511 Idaho developer key (Oct 6: received; ITD is fine
   with our use)
-- [ ] Edit and send the ACHD note
 - [x] Approve the pilot on the tailnet; host inventory; create the server
   VM (Oct 5)
 - [x] Make the repository public on GitHub; `main` is the default branch (Oct 5)
-- [ ] Choose where backups go
+- [ ] Choose where backups go (Oct 7: "not yet"; nothing is backed up
+  today)
+- [x] A private GitHub repository for the private plugins (Oct 7, created
+  from the owner's laptop)
+- [ ] Send the drafts in the private files: ACHD, COMPASS, Ada County,
+  Geofabrik, and adsb.lol (aircraft collection waits for that one). Check
+  each contact address first.
 - [ ] When a cloud session ends, remove its machine from the tailnet
-  (Tailscale admin console → Machines)
+  (Tailscale admin console → Machines), and stop sharing its conversation if
+  it was shared

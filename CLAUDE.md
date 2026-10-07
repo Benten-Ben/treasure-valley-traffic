@@ -26,12 +26,15 @@ our own base map with live and historical data layers.
   decisions in `docs/DECISIONS.md`.
 - Go through data sources one at a time with the owner before committing to
   how each is used.
-- The cloud session is the primary pilot. A local helper session (owner's
-  laptop) does anything needing local files or the home network. The owner
-  relays between them.
-- **Never** change the home server (create, modify or delete VMs,
-  containers, storage or network) without the owner's explicit approval for
-  that specific action.
+- Since Oct 7, one Claude Code session on the owner's laptop drives the
+  project: code, docs, git, deploys and the home server
+  ([HANDOFF.md](HANDOFF.md)). A cloud session is used only for a bounded
+  task the owner starts.
+- **The project's VM** has the owner's standing OK (Oct 7): deploy,
+  restart, clean up and edit its configuration. **Everything else on the
+  home server** needs the owner's explicit approval for that specific
+  action. That means the host, its storage, network and backups, and its
+  other VMs and containers.
 
 ## This repository is public
 
@@ -158,7 +161,25 @@ Front-end rules:
 Python 3.11, standard library only, except `gtfs-realtime-bindings` for
 live bus positions (`requirements.txt`).
 
-## Environment notes (cloud session)
+## Environment notes (local session, the driver)
+
+- The laptop reaches the project server over the home LAN or the tailnet.
+  The host and user names are in the private server notes.
+- **Deploying:** push `main` to the server's repository (`/srv/tvt/repo`,
+  which accepts pushes), then rebuild with Compose on the server
+  ([deploy/](deploy/README.md)). Push to GitHub too. The server has no
+  GitHub access.
+- **The laptop has no Docker.** Heavy work runs on the server:
+  - basemap builds;
+  - Docker images;
+  - test suites that need PostGIS and TimescaleDB.
+  
+  App checks (`npm run check`, `npm test`, `npm run build`) and the Python
+  tests run locally.
+- **Private plugins:** a separate private repository. Its copies are on the
+  server and on GitHub (private), and the laptop pushes to both.
+
+## Environment notes (cloud sessions)
 
 - Outbound traffic goes through a proxy. `achdidaho.org`,
   `overpass-api.de`, `download.geofabrik.de` and `web.archive.org` are
@@ -184,6 +205,7 @@ live bus positions (`requirements.txt`).
 
 - Match the surrounding style. Cite sources inline in docs, and mark
   anything resting on secondary sources with ⚠️.
-- Commit messages: imperative summary plus a short body. Develop on the
-  assigned branch, then fast-forward `main` (the default branch) once the
-  checks pass and the diff has been checked for private details.
+- Commit messages: imperative summary plus a short body. Commits are
+  authored by the owner, with Claude as co-author. Develop on a branch, then
+  fast-forward `main` (the default branch) once the checks pass and the diff
+  has been checked for private details.

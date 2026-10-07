@@ -1,76 +1,76 @@
-# Handoff: two-session workflow
+# Handoff: how Claude sessions work on this project
 
-This project is run by two Claude sessions, with the owner relaying between
-them.
+Since Oct 7, 2026, **one Claude Code session on the owner's laptop drives
+the project**. It combines the two earlier roles: a cloud "pilot" session
+(research, code, git, deploys) and a local "helper" (the home server). The
+change came when the cloud session's account reached its weekly usage
+limit. The cloud session was asked only to finish UI wave D and hand its
+work back.
 
 | Session | Where it runs | Role |
 |---|---|---|
-| **Pilot** | Claude Code in the cloud, on this repo | Primary: research, design, code, docs, git. Joins the owner's tailnet when needed, to deploy to and test on the project server. |
-| **Local helper** | Claude Code on the owner's laptop | Anything that needs the owner's machines or home network, above all the host the project's VM runs on. |
+| **Driver** | Claude Code on the owner's laptop | Everything: research, design, code, docs, git, deploys, and the home server |
+| **Cloud session** (optional) | Claude Code in the cloud | Only for a bounded task the owner starts. It joins the tailnet with a login link the owner approves, hands its work back on a branch, and its machine is removed from the tailnet afterwards |
 
-**How relaying works:**
+## Rules
 
-- The owner copies messages between the sessions. Keep them
-  self-contained: what to run, why, and what to send back.
-- The helper reports **raw command output verbatim**, plus a short summary
-  (template at the end).
-- **Never paste secrets** (passwords, API keys, private keys, tokens) into
-  either session or into the repo. Say where a credential lives instead.
-  Tailscale logins use links the owner opens in a browser, not keys.
-- **This repo is public.** Reports that describe the owner's network or
-  hardware stay out of it. Anything worth keeping goes in the private notes
-  on the server ([CLAUDE.md](CLAUDE.md)).
-
-## Rules for the local helper
-
-1. **Decisions about the host are made by the owner and the helper.** That
-   covers VMs or containers, their size, storage, network and backups. The
-   pilot only recommends.
-2. **Nothing changes on the host without the owner's explicit OK** for that
-   exact action. Inspecting and listing is fine.
-3. Tell the owner which host and user you'll use before connecting.
-4. Don't change router or firewall settings, or existing VMs and
-   containers.
-5. Don't commit or push to this repo. The pilot owns git; send file
-   contents or diffs back through the owner.
-6. Follow the data rules in `CLAUDE.md`. They apply to anything the helper
+1. **The project's VM:** the owner's standing OK (Oct 7) covers deploying,
+   restarting, cleaning up and editing its configuration.
+2. **Everything else on the home server needs the owner's explicit OK for
+   that exact action.** That covers the host (the hypervisor), its storage,
+   network and backups, and its other VMs and containers. Inspecting and
+   listing are fine. Never change router or firewall settings.
+3. **Git:**
+   - Work on a branch.
+   - Run the checks, including `python3 tools/check_public.py`, and read
+     the diff for private details.
+   - Then fast-forward `main` and push it to GitHub and to the server's
+     repository. The server has no GitHub access.
+   - Commits are authored by the owner, with Claude as co-author.
+4. **Private plugins** live in their own private repository. It has a copy
+   on the server and a private one on GitHub, and the laptop pushes to both
+   ([docs/15](docs/15-plugins.md) §15.3).
+5. **Never paste secrets** (passwords, API keys, private keys, tokens) into
+   a session or the repo. Say where a credential lives instead.
+6. **This repo is public.** Host details, addresses and user names go in
+   the private server notes ([CLAUDE.md](CLAUDE.md)).
+7. Follow the data rules in `CLAUDE.md`. They apply to anything a session
    fetches.
 
-## Current state (2026-10-05)
+## Current state (2026-10-07)
 
 - **Research:** chapters 1–8 are done (`README.md`).
-- **Decided:** see `docs/DECISIONS.md`. The parts that matter here:
-  - the platform runs in one VM on the owner's home server, with Docker
-    Compose, reached over Tailscale;
-  - the first real feature is the **camera calibrator**;
-  - the map shows the foundation (terrain, imagery, streets, buildings)
-    plus cameras and transit; other collected data waits for the owner;
-  - transit is the current focus (Oct 5).
-- **Running on the server (Oct 5):**
-  - the database (TimescaleDB + PostGIS), with migrations applied;
-  - ingest: ACHD's camera list, daily, plus the 511 camera views, linked
-    once;
-  - the app, with two lenses: Transit (live buses) and Cameras (nodes,
-    view cones, and the calibrator at `/calibrate/<id>`);
-  - transit recording: VRT's live feeds every 30 s (raw archive plus bus
-    positions) and its schedule daily;
-  - the map tiles: streets, terrain, buildings, aerial imagery, and
-    sharper imagery around the cameras.
-- **The helper's server setup is done.** The steps and the host details are
-  in the private notes on the server.
-- **Still waiting on the owner:**
-  - the 511 developer key;
-  - sending the ACHD note (the draft is in the private files);
-  - schema decisions 4–5 (`docs/12-database-schema.md` §12.9);
-  - where backups go (`docs/DECISIONS.md`).
+- **Decided:** see `docs/DECISIONS.md`.
+- **Running on the server:**
+  - the database (TimescaleDB + PostGIS);
+  - the app and the video library over HTTPS on the tailnet;
+  - the collectors: cameras (34 key cameras, daily videos), road-weather
+    views, the 511 API, ITD work zones and VRT buses;
+  - the data builds: intersections, crossings, lanes, COMPASS and NAIP 2025
+    detail imagery.
 
-## Message template (helper → pilot)
+  The collectors run on the plugin code from refactor step 1.
+- **UI v2** ([docs/14](docs/14-ui-v2.md)):
+  - waves A–C are on `main`, not yet deployed;
+  - wave D (windows, base styles and streets, transit, 3D engine) is being
+    finished by the cloud session and handed back on its branch;
+  - waves E–H follow here.
+- **Plugins** ([docs/15](docs/15-plugins.md)):
+  - step 1 (ingest) is done;
+  - the private plugins have started;
+  - aircraft is in progress and will deploy switched off until the courtesy
+    note to adsb.lol is sent.
+- **Waiting on the owner:** see "Owner actions" in `docs/DECISIONS.md`.
+
+## Handing a task to a cloud session
+
+Keep the message self-contained: what to do, where to push, what to send
+back, and when to stop. Ask for this hand-back:
 
 ```
-## Helper report: <task>
-Commands run (host/user): ...
-Raw output:
-<verbatim>
-Summary / anything unexpected:
-Questions for the pilot or owner:
+## Hand-back: <task>
+Pushed: <branch> at <sha> (where)
+Checks: <real counts>
+Not finished, and why:
+Open threads or promises not in docs/DECISIONS.md:
 ```
