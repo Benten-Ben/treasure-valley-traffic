@@ -1,0 +1,13 @@
+{
+ "_note": "SYNTHETIC: the field names and shapes of the City of Boise's BPR_EColi_Testing layer 0 (Oct 7, 2026), with made-up sites, lab numbers, results and points.",
+ "objectIdFieldName": "OBJECTID",
+ "geometryType": "esriGeometryPoint",
+ "spatialReference": {"wkid": 4326, "latestWkid": 4326},
+ "features": [
+  {"attributes": {"OBJECTID": 11, "LabNumber": "XX00001-01", "SampleDatetime": "2030-07-01", "SampleName": "TESTPOND1A", "SampleDescription": "Example Pond Site 1", "AnalysisDatetime": "2030-07-02", "FinalResultNumeric": 12.3, "Units": "MPN/100 mL", "MostRecent": "Yes"}, "geometry": {"x": -116.2001, "y": 43.6101}},
+  {"attributes": {"OBJECTID": 12, "LabNumber": "XX00001-02", "SampleDatetime": "2030-07-01", "SampleName": "TESTPOND1B", "SampleDescription": "Example Pond Site 2", "AnalysisDatetime": "2030-07-02", "FinalResultNumeric": 456.7, "Units": "MPN/100 mL", "MostRecent": "Yes"}, "geometry": {"x": -116.2002, "y": 43.6102}},
+  {"attributes": {"OBJECTID": 13, "LabNumber": "XX00001-03", "SampleDatetime": 1909094400000, "SampleName": "TESTRIVER1", "SampleDescription": "Example River Site", "AnalysisDatetime": null, "FinalResultNumeric": 1.0, "Units": "MPN/100 mL", "MostRecent": "Yes"}, "geometry": {"x": -116.2003, "y": 43.6103}},
+  {"attributes": {"OBJECTID": 14, "LabNumber": null, "SampleDatetime": "2030-07-01", "SampleName": "TESTPOND2A", "SampleDescription": "Example Pond Without A Lab Number", "AnalysisDatetime": "2030-07-02", "FinalResultNumeric": 5.0, "Units": "MPN/100 mL", "MostRecent": "Yes"}, "geometry": {"x": -116.2004, "y": 43.6104}},
+  {"attributes": {"OBJECTID": 15, "LabNumber": "XX00001-05", "SampleDatetime": "2030-07-01", "SampleName": "TESTFAR1", "SampleDescription": "Example Site Outside The Ring", "AnalysisDatetime": "2030-07-02", "FinalResultNumeric": 7.0, "Units": "MPN/100 mL", "MostRecent": "Yes"}, "geometry": {"x": -114.5, "y": 43.6}}
+ ]
+}
