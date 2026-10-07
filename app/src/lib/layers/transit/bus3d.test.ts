@@ -172,5 +172,14 @@ describe('heading and slope', () => {
 		placeModel(m, frame({ now: 1096, opacity: 0, epoch: 3 }));
 		expect(reads).toBe(8);
 		expect(m.inst).toMatchObject({ mesh: 'bus', shadow: true, color: '#2a78d6', opacity: 0 });
+		// Off screen: it keeps the slope it has.
+		const pitch = m.inst.pitch;
+		placeModel(m, frame({ now: 1112, lat: 43.7, epoch: 4, slope: false }));
+		expect(reads).toBe(8);
+		expect(m.inst.pitch).toBe(pitch);
+		// …unless it never had one.
+		const fresh = busModel('8', null);
+		placeModel(fresh, frame({ slope: false }));
+		expect(reads).toBe(10);
 	});
 });

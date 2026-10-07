@@ -194,6 +194,8 @@ export interface ModelFrame {
 	/** Terrain epoch: bumped when terrain data or settings change (re-read the slope). */
 	epoch: number;
 	ground: GroundAt | null;
+	/** False: keep the slope it has (the bus is off screen, so the terrain reads would be wasted). */
+	slope?: boolean;
 }
 
 /** Move one model to this frame (in place): position, heading, slope, look. */
@@ -207,7 +209,7 @@ export function placeModel(m: BusModel, f: ModelFrame): SceneInstance {
 	inst.scale = f.scale;
 	inst.color = f.color;
 	inst.opacity = f.opacity;
-	if (f.opacity > 0) {
+	if (f.opacity > 0 && (f.slope !== false || !m.slope)) {
 		const reach = SLOPE_REACH_M * f.scale;
 		const h = inst.heading;
 		const s = m.slope;

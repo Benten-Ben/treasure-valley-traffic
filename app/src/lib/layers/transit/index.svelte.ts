@@ -903,12 +903,26 @@ export class TransitModule implements LayerModule {
 		const spot = this.spot;
 		const now = performance.now();
 		const ground = map.getTerrain() ? this.#ground : null;
-		for (const [, rt] of this.#runtime) {
+		// Slopes are read only for buses on screen (the scene culls the rest anyway).
+		const onScreen = this.#onScreen;
+		const all = onScreen.size === 0;
+		for (const [vid, rt] of this.#runtime) {
 			const opacity = rt.shown * lod.fade;
 			if (opacity <= 0) continue;
 			const color = bodyColor({ routeId: rt.routeId, color: rt.color, ghost: rt.ghost, stale: rt.state === 'stale', dimmed: spot !== null && rt.routeId !== spot });
 			list.push(
-				placeModel(rt.model, { lng: rt.pos[0], lat: rt.pos[1], heading: rt.raw ?? rt.heading, color, opacity, scale: lod.scale, now, epoch: this.#terrainEpoch, ground })
+				placeModel(rt.model, {
+					lng: rt.pos[0],
+					lat: rt.pos[1],
+					heading: rt.raw ?? rt.heading,
+					color,
+					opacity,
+					scale: lod.scale,
+					now,
+					epoch: this.#terrainEpoch,
+					ground,
+					slope: all || onScreen.has(vid)
+				})
 			);
 		}
 		return this.#fastest > 0 ? this.#fastest : false;
