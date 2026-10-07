@@ -1,0 +1,15 @@
+{
+  "name": "weather",
+  "title": "Weather: observations for the valley and the regional ring",
+  "depends": [],
+  "visibility": "public",
+  "order": 65,
+  "sources": [
+    {"name": "awc_metar", "module": "ingest.sources.awc_metar", "kind": "source",
+     "license": "US Government work; no license stated (public domain assumed)",
+     "credit": "NOAA National Weather Service, Aviation Weather Center", "republish": "yes"}
+  ],
+  "tables": ["raw.record"],
+  "storage": "No tables of its own yet: readings go to core's raw.record until a core station and readings table lands (ch. 17 Q8). AWC METARs: about 170-250 reports a day from five airports, each a raw.record row of about 0.4 KB of JSON (about 1 KB with indexes): roughly 0.2 MB a day, 70 MB a year. One request every 10 minutes, about 25 KB uncompressed (a few KB gzipped).",
+  "ethics": "Weather at airports, nothing about people. AWC's keyless API is used as its page asks: one small bounding-box request every 10 minutes (the limit is 100 a minute), with our honest User-Agent; robots.txt has no rules (404, Oct 7). api.weather.gov stays off-limits (robots.txt Disallow: /; ch. 17 Q13). AWC states no license; NWS data are US Government works, so public domain is assumed and AWC is credited."
+}
