@@ -58,6 +58,16 @@ class EcoliTest(unittest.TestCase):
         self.assertEqual((stats["samples"], stats["listed"], stats["versions new"], stats["latest round"]),
                          (3, 5, 3, "2030-07-01"))
 
+    def test_an_empty_layer_stores_nothing_but_unreadable_samples_fail_the_fetch(self):
+        with mock.patch.object(arcgis, "fetch_layer", return_value=([], 100, 200, "no_rules")):
+            self.assertEqual(ecoli.run(FakeConn({"insert into ops.fetch": [(1,)]}))["samples"], 0)
+        renamed = [{"attributes": {"Sample_Name": "TESTPOND1A", "OBJECTID": 1}, "geometry": {"x": -116.2, "y": 43.6}}]
+        with mock.patch.object(arcgis, "fetch_layer", return_value=(renamed, 100, 200, "no_rules")), \
+                mock.patch.object(db, "upsert_records") as up:
+            with self.assertRaises(RuntimeError):
+                ecoli.run(FakeConn({"insert into ops.fetch": [(1,)]}))
+        up.assert_not_called()
+
 
 @unittest.skipUnless(DB_URL, "set TVT_TEST_DATABASE_URL to a scratch database")
 class DatabaseTest(unittest.TestCase):

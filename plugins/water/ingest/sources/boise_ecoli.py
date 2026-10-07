@@ -13,6 +13,8 @@ raw.record (complete=False, so a round replaced by the next stays):
 with every field as published except OBJECTID (the layer's row number,
 renumbered when the City reloads it). A date-only field comes as
 'YYYY-MM-DD'; should it ever come as an Esri date, it's turned into one.
+An empty layer (between seasons) stores nothing; a layer whose samples
+can't be read (renamed fields, points outside the ring) fails the fetch.
 
 No license is stated (the City's disclaimer only): used internally with
 credit, not republished, until the City answers a courtesy note
@@ -72,6 +74,8 @@ def run(conn):
     with db.Fetch(conn, SOURCE["name"]) as f:
         features, f.bytes, f.http_status, f.robots = arcgis.fetch_layer(LAYER, SOURCE["name"], max_features=5000)
         parsed = parse(features)
+        if features and not parsed:      # renamed fields or moved points, not an empty round: fail, don't store nothing
+            raise RuntimeError(f"none of the {len(features)} listed samples has a complete key inside the ring")
         f.records = len(parsed)
         new, held = store_readings(conn, SOURCE["name"], [(k, p, g) for k, (p, g) in parsed.items()],
                                    f.id, f.started_at)

@@ -20,10 +20,10 @@
      "credit": "Boise Fire Department and City of Boise (Float the Boise)", "republish": "internal"},
     {"name": "usdm_drought", "module": "ingest.sources.usdm_drought", "kind": "source",
      "license": "free to reproduce with the required credit (NDMC permission page)",
-     "credit": "U.S. Drought Monitor: National Drought Mitigation Center (University of Nebraska-Lincoln), USDA and NOAA; map courtesy of NDMC",
+     "credit": "U.S. Drought Monitor: National Drought Mitigation Center (University of Nebraska-Lincoln), USDA, NOAA and NASA; map courtesy of NDMC",
      "republish": "aggregates"}
   ],
-  "tables": ["raw.record", "evt.event"],
+  "tables": [],
   "storage": "About 1.7 MB a day in raw.record, most of it NWPS readings (37 gauges, mostly 15-minute values: about 3,500 rows a day, roughly 0.6 GB a year); SNOTEL about 100 station-hours a day; E. coli, hazards and drought a few rows a week. Once, at the start: each gauge's first sweep loads its 30 days of history (about 100,000 rows, some 40 MB, over the first day) and the first drought run loads the archive since 2000 (about 14,000 rows). evt.event: a handful of open rows (floods, live river hazards, drought episodes). Downloads: about 4-5 MB a day, mostly NWPS's weekly 30-day series.",
   "ethics": "Rivers, snow and drought, not people. The river-hazard layer's editor user names (Creator, Editor) and its Internal Comments field (which names people) are never stored. The City of Boise layers (E. coli, river hazards) state no license: used internally with credit until the City answers a courtesy note (docs/17 Q17). Hazards and water quality are shown in the agencies' own words; we make no swim, float or safe calls. ArcGIS layers are only queried. The USGS Water Data API and api.weather.gov are not used (their robots.txt disallows us); the Drought Monitor's polygon files sit under a disallowed path and aren't collected."
 }

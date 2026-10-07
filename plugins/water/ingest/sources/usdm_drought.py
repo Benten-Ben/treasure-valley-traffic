@@ -28,8 +28,9 @@ cover all ten counties.
 
 Credit (required by NDMC's permission page): "The U.S. Drought Monitor is
 jointly produced by the National Drought Mitigation Center at the University
-of Nebraska-Lincoln, the United States Department of Agriculture, and the
-National Oceanic and Atmospheric Administration. Map courtesy of NDMC."
+of Nebraska-Lincoln, the United States Department of Agriculture, the
+National Oceanic and Atmospheric Administration and the National Aeronautics
+and Space Administration. Map courtesy of NDMC."
 """
 
 import csv
@@ -61,7 +62,7 @@ SOURCE = {
     "schedule": "12 hours",
     "license": "free to reproduce with the required credit (NDMC permission page)",
     "credit": "U.S. Drought Monitor: National Drought Mitigation Center (University of Nebraska-Lincoln), "
-              "USDA and NOAA; map courtesy of NDMC",
+              "USDA, NOAA and NASA; map courtesy of NDMC",
     "notes": "Categorical county statistics (statisticsType=2), one call per run from four weeks before the "
              "latest map held; the first run reads the archive since 2000. Episodes of 'Dn or worse' per "
              "county in evt.event.",

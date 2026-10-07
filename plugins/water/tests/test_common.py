@@ -79,7 +79,7 @@ class SourcesTest(unittest.TestCase):
             manifest = json.load(f)
         self.assertEqual(manifest["name"], "water")
         self.assertEqual((manifest["visibility"], manifest["depends"], manifest["order"]), ("public", [], 62))
-        self.assertEqual(manifest["tables"], ["raw.record", "evt.event"])
+        self.assertEqual(manifest["tables"], [])        # it writes only core's raw.record and evt.event
         expected = {"nwps_gauges": "30 minutes", "nrcs_snotel": "1 hour", "boise_ecoli": "12 hours",
                     "boise_river_hazards": "1 hour", "usdm_drought": "12 hours"}
         self.assertEqual([e["name"] for e in manifest["sources"]], list(expected))

@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 
 from ingest import db
 
-# The proposed regional ring (docs/17, "Areas"; DECISIONS, "How far the study area reaches"):
+# The regional ring, adopted for the new plugins on Oct 7 (docs/17 Q19; DECISIONS, "How far the study area reaches"):
 # west, south, east, north in degrees. Gauges, snow stations and counties are cut to it.
 RING = (-117.30, 42.90, -115.60, 44.30)
 

@@ -12,8 +12,8 @@ no keys, no UI yet. The owner approved starting these on Oct 7, 2026.
 Everything goes into core's tables: readings into `raw.record` (until a
 core readings table lands, docs/17 Q8) and lifecycles into `evt.event`
 (through `ingest/events.py`). No migrations of its own. Cut to the ring
-(W −117.30, S 42.90, E −115.60, N 44.30), the proposed regional ring the
-catalogs use.
+(W −117.30, S 42.90, E −115.60, N 44.30), the regional ring adopted for
+the new plugins (docs/17 Q19).
 
 | Source | Runs | License | Credit | Republish |
 |---|---|---|---|---|
@@ -21,7 +21,7 @@ catalogs use.
 | `nrcs_snotel` | hourly, 1 call | US government work; public domain assumed ⚠️ | USDA NRCS (SNOTEL) | yes |
 | `boise_ecoli` | every 12 h, 2 small calls | none stated (City disclaimer only) | City of Boise Parks and Recreation | internal: courtesy note due |
 | `boise_river_hazards` | hourly, 2 small calls | none stated | Boise Fire Department and City of Boise (Float the Boise) | internal: courtesy note due |
-| `usdm_drought` | every 12 h, 1 call | free to reproduce with the required credit | NDMC (UNL), USDA and NOAA; map courtesy of NDMC | aggregates, with the credit line |
+| `usdm_drought` | every 12 h, 1 call | free to reproduce with the required credit | NDMC (UNL), USDA, NOAA and NASA; map courtesy of NDMC | aggregates, with the credit line |
 
 Every request goes through `ingest/http.py` (robots.txt checked, our
 User-Agent) with at least 2 s between requests to one host. Each run is
@@ -130,8 +130,9 @@ logged in `ops.fetch`.
   ends in 2020 ⚠️).
 - **Credit line** (required): "The U.S. Drought Monitor is jointly
   produced by the National Drought Mitigation Center at the University of
-  Nebraska-Lincoln, the United States Department of Agriculture, and the
-  National Oceanic and Atmospheric Administration. Map courtesy of NDMC."
+  Nebraska-Lincoln, the United States Department of Agriculture, the
+  National Oceanic and Atmospheric Administration and the National
+  Aeronautics and Space Administration. Map courtesy of NDMC."
 
 ## Not built here
 
