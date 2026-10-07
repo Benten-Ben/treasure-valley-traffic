@@ -1,0 +1,26 @@
+# Worker image: the tools beyond the standard library, for decoding and raster
+# work that collectors don't do (docs/17 §17.8 Q9): lidar (PDAL), rasters
+# (GDAL, rasterio), arrays and image processing (NumPy, SciPy, scikit-image,
+# scikit-learn), GRIB2 (eccodes), HDF5 (h5py) and projections (pyproj).
+#
+# From conda-forge rather than Ubuntu's or Debian's packages, because neither
+# packages PDAL any more (checked Oct 7, 2026: Ubuntu 24.04 and Debian 13).
+# conda-forge builds for baseline x86-64, which matters on the server's CPU
+# (no AVX2); PDAL 2.10 from conda-forge runs there.
+#
+# It's a toolbox, not a service: the code is mounted at run time. Run heavy
+# jobs with a hard memory cap and outside the nightly camera roll-up, e.g.
+#   docker build -f ingest/Dockerfile.worker -t tvt-worker .
+#   docker run --rm --memory 6g --memory-swap 6g --user 1000:1000 \
+#     -v "$PWD":/repo -v /srv/tvt/work:/work -w /repo tvt-worker python basemap/<script>.py ...
+FROM mambaorg/micromamba:2-debian12-slim
+RUN micromamba install -y -n base -c conda-forge \
+      python=3.12 pdal=2.10 python-pdal gdal rasterio numpy scipy \
+      scikit-image scikit-learn pyproj h5py eccodes python-eccodes \
+ && micromamba clean -a -y \
+ # PDAL's HDF and IceBridge readers are built against another libhdf5_cpp than
+ # conda-forge resolves here, so every run warns that they can't load. We read
+ # EPT, LAS and LAZ only: drop the two plugins.
+ && rm -f /opt/conda/lib/libpdal_plugin_reader_hdf.so /opt/conda/lib/libpdal_plugin_reader_icebridge.so
+ENV PATH=/opt/conda/bin:$PATH
+WORKDIR /repo
