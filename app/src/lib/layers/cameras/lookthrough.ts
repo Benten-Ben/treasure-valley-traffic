@@ -65,7 +65,12 @@ import { look } from './look.svelte.js';
  *     ground clamp come back without a jump, then the exaggeration eases back
  *     with the eye kept 10 m above the drawn ground.
  *
- * Esc or Step out flies back and restores the snapshot exactly.
+ * Esc or Step out fades the picture out (200 ms) and restores the snapshot
+ * exactly, with `jumpTo` (a change from §14.6's "flies back", the same
+ * choice Calibrate makes): a flight back passes through zooms in between,
+ * where MapLibre asks again for the overscaled basemap and building tiles it
+ * already had, and the round-trip target (§14.9) allows no tile loaded before
+ * entering to be requested again on the way back.
  */
 export const LOOK_GROUP = 'cameras-look';
 export const FLY_MS = 1200;
@@ -73,6 +78,8 @@ export const PHOTO_OPACITY = 0.85;
 /** The eye must read back within this, metres (step 7). */
 export const READBACK_M = 0.1;
 export const LOOK_LIMITS = { maxPitch: 89, maxZoom: 24 } as const;
+/** Step out's fade of the picture before the view comes back, ms. */
+export const OUT_MS = 200;
 /** Ending in place (step 10). */
 export const END = { pitch: 75, zoom: 22, fov: 36.87, ms: 400, zeroMs: 300, clearM: 10 } as const;
 
@@ -195,8 +202,6 @@ interface Target {
 
 interface Entry {
 	snapshot: ViewSnapshot;
-	/** The map's eye when entering (at the snapshot's exaggeration): where Step out flies back to. */
-	eye: EyePose;
 	keyboard: boolean;
 	/** Calibrated views by distance from the first camera: ← and → walk this. */
 	order: Calibration[];
@@ -291,9 +296,8 @@ export class LookThrough {
 		}
 		map.stop();
 		const keyboard = map.keyboard.isEnabled();
-		const eye = eyeNow(map);
 		const { snapshot } = ctx.modes.enter('look');
-		this.#entry = { snapshot, eye, keyboard, order: this.#orderFrom(cal, cals) };
+		this.#entry = { snapshot, keyboard, order: this.#orderFrom(cal, cals) };
 		look.problem = null;
 		look.phase = 'flying';
 		map.keyboard.disable();
@@ -609,19 +613,21 @@ export class LookThrough {
 
 	// --- leaving -----------------------------------------------------------------------------------
 
-	/** Esc or Step out: fly back to the saved view, then restore it exactly. */
+	/** Esc or Step out: fade the picture out, then restore the saved view exactly (jumpTo: no tile asked for again). */
 	async stepOut(): Promise<void> {
 		const e = this.#entry;
-		const map = this.#map;
 		if (!e || (look.phase !== 'looking' && look.phase !== 'flying')) return;
-		this.#flight++;
+		const id = ++this.#flight;
 		look.phase = 'leaving';
+		// The picture and its frame fade out; then the snapshot comes back with jumpTo, in one step.
+		const t = this.#target;
+		const o0 = t?.photo.opacity ?? 0;
+		await this.#ease(reducedMotion() ? 0 : OUT_MS, id, (k) => {
+			if (t) t.photo.opacity = o0 * (1 - k);
+			look.fade(1 - k);
+			this.#map.triggerRepaint();
+		});
 		this.#hidePicture();
-		const s = e.snapshot;
-		const from = eyeNow(map);
-		const to: EyePose = { ...e.eye, fov: s.fov, roll: s.roll };
-		const exag: [number, number] | undefined = s.exaggeration === null ? undefined : [this.#ctx.exaggeration(), s.exaggeration];
-		await this.#fly(from, to, map.getPadding(), s.padding, exag);
 		this.#finish(false);
 	}
 

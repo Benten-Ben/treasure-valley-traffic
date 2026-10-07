@@ -137,6 +137,7 @@
 	/* Phones: a bottom strip with the slider and Step out (§14.3). */
 	@media (max-width: 599px) {
 		.look {
+			box-sizing: border-box;
 			width: 100%;
 			max-width: none;
 			justify-content: space-between;

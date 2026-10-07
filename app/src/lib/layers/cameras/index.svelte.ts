@@ -73,6 +73,12 @@ const SCENE_FROM_ZOOM = 14.5;
 const modelFade = (zoom: number) => Math.min(1, Math.max(0, (zoom - 14.7) / 0.3));
 /** A second click on the same camera within this is a double-click (MapLibre's own is 500 ms), ms. */
 const DOUBLE_MS = 600;
+/**
+ * When the input happened (the DOM event's own time stamp), not when its
+ * handler runs: while the first click's fly keeps the page busy, the second
+ * click and the double-click are handled late, but they still came quickly.
+ */
+const inputTime = (e: MapMouseEvent) => e.originalEvent?.timeStamp ?? performance.now();
 /** Badge sprites, one per window number (desktop windows are 1–4). */
 const badgeKey = (n: number) => `camera-window-${n}`;
 const EMPTY: FeatureCollection = { type: 'FeatureCollection', features: [] };
@@ -161,7 +167,7 @@ export class CamerasModule implements LayerModule {
 	/** The view each camera window shows (reported by the window). */
 	#shownView = new Map<number, number>();
 	/** The first click of a possible double-click: the camera and the view before its fly. */
-	#lastClick: { id: number; at: number; view: CameraView | null } | null = null;
+	#lastClick: { id: number; at: number; x: number; y: number; view: CameraView | null } | null = null;
 
 	async mount(ctx: AppCtx): Promise<void> {
 		this.#ctx = ctx;
@@ -398,13 +404,16 @@ export class CamerasModule implements LayerModule {
 		if (!ctx || !this.#visible || ctx.modes.current !== 'explore') return;
 		const touch = (e.originalEvent as PointerEvent | undefined)?.pointerType === 'touch';
 		const top = ctx.picker.pickAt(e.point, touch).top;
-		const now = performance.now();
+		const now = inputTime(e);
 		const last = this.#lastClick;
 		const second = last !== null && now - last.at < DOUBLE_MS;
 		if (top?.kind === 'camera' && top.layer === 'cameras') {
 			const id = Number(top.id);
 			// The first click of a possible double-click: remember the view before its fly.
-			if (!second || last.id !== id) this.#lastClick = { id, at: now, view: ctx.view.current() };
+			if (!second || last.id !== id) {
+				const o = e.originalEvent as MouseEvent | undefined;
+				this.#lastClick = { id, at: now, x: o?.clientX ?? NaN, y: o?.clientY ?? NaN, view: ctx.view.current() };
+			}
 			this.open(id, { fly: true });
 		} else if (!second) this.#lastClick = null;
 	};
@@ -415,16 +424,43 @@ export class CamerasModule implements LayerModule {
 		if (!ctx || !map || !this.#visible || ctx.modes.current !== 'explore') return;
 		const top = ctx.picker.pickAt(e.point).top;
 		const last = this.#lastClick;
-		const recent = last !== null && performance.now() - last.at < 2 * DOUBLE_MS ? last : null;
+		const recent = last !== null && inputTime(e) - last.at < DOUBLE_MS ? last : null;
 		// The first click's fly may have moved the camera from under the pointer: it still counts.
 		const id = top?.kind === 'camera' && top.layer === 'cameras' ? Number(top.id) : (recent?.id ?? null);
 		if (id === null) return;
 		// On a camera, MapLibre's double-click zoom is suppressed (§14.6).
 		e.preventDefault();
+		this.#straightIn(id, recent);
+	};
+
+	/**
+	 * The second half of a double-click can land on the camera's window: the
+	 * first click opened it where the camera will be after its fly, which may
+	 * be under the pointer. A double-click anywhere off the map, at the first
+	 * click's place and in time, still goes in.
+	 */
+	#onDocumentDblClick = (e: MouseEvent) => {
+		const ctx = this.#ctx;
+		const map = this.#scope?.map;
+		const last = this.#lastClick;
+		if (!ctx || !map || !last || !this.#visible || ctx.modes.current !== 'explore') return;
+		if (e.target instanceof Node && map.getCanvasContainer().contains(e.target)) return;
+		if (e.timeStamp - last.at >= DOUBLE_MS || Math.hypot(e.clientX - last.x, e.clientY - last.y) > 8) return;
+		e.preventDefault();
+		e.stopPropagation();
+		this.#straightIn(last.id, last);
+	};
+
+	/**
+	 * Straight in (§14.6, the owner's Q2 answer), from the view before the
+	 * clicks' fly: stop it and go back first, so Step out returns there, and
+	 * drop the history entry that fly pushed.
+	 */
+	#straightIn(id: number, recent: { id: number; view: CameraView | null } | null) {
+		const ctx = this.#ctx;
+		const map = this.#scope?.map;
 		this.#lastClick = null;
-		if (!this.#calibrated(id)) return;
-		// Straight in (§14.6, the owner's Q2 answer), from the view before the clicks' fly: stop it and go
-		// back first, so Step out returns there, and drop the history entry that fly pushed.
+		if (!ctx || !map || !this.#calibrated(id)) return;
 		if (recent && recent.id === id && recent.view) {
 			const v = recent.view;
 			map.stop();
@@ -437,7 +473,7 @@ export class CamerasModule implements LayerModule {
 			}
 		}
 		void this.lookThrough(id);
-	};
+	}
 
 	#calibrated(id: number): boolean {
 		return this.calibrations.some((c) => c.cameraId === id);
@@ -563,6 +599,10 @@ export class CamerasModule implements LayerModule {
 			})
 		);
 		scope.on('zoom', () => this.#onZoom());
+		if (typeof document !== 'undefined') {
+			document.addEventListener('dblclick', this.#onDocumentDblClick, true);
+			scope.defer(() => document.removeEventListener('dblclick', this.#onDocumentDblClick, true));
+		}
 		// The 3D badges follow the heads' ground; not while a mode's own flights jump the camera every frame.
 		scope.on('moveend', () => {
 			if (ctx.modes.current === 'explore') this.#syncBadges();
