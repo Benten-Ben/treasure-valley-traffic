@@ -1,0 +1,15 @@
+{
+  "name": "wildlife",
+  "title": "Wildlife: animals on our roads",
+  "depends": [],
+  "visibility": "public",
+  "order": 66,
+  "sources": [
+    {"name": "idfg_roadkill", "module": "ingest.sources.idfg_roadkill", "kind": "source",
+     "license": "none stated (disclaimer only)",
+     "credit": "Idaho Department of Fish and Game", "republish": "aggregates"}
+  ],
+  "tables": [],
+  "storage": "Small: IDFG's roadkill reports in the ring go into core's raw.record, one row per report and per changed version: about 9,300 at the first run (roughly 5-10 MB with indexes), then a few new reports and corrections a day (a few KB). Each daily run reads every report in the ring (about 5 MB before gzip) and moves last_seen on the unchanged ones.",
+  "ethics": "Road network, not people: IDFG's free-text note (it may hold personal details), its undocumented path (it may point to a photo, never fetched) and any field the layer adds later are dropped at ingest; fields are kept by allow-list, and the layer has no reporter identity. No licence is stated, so the reports stay internal or are published only as aggregates, crediting IDFG, and a courtesy note to IDFG is due (docs/17 Q17). Sensitive taxa follow the core sensitivity rules (Q21): no points, cells of 0.2 degrees or coarser. Never query IDFG's Wildlife_Conflicts_public service."
+}
