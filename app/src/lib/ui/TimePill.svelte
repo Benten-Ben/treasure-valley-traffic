@@ -71,7 +71,7 @@
 						{:else}
 							<input type="radio" name="delay" value={d} checked={clock.delay === d} onchange={() => clock.setDelay(d)} />
 						{/if}
-						<span>{delayLabel(d)}{#if d === 60}<small> · buses may pause</small>{/if}</span>
+						<span>{delayLabel(d)}{#if d === 60}<small>{' · buses may pause'}</small>{/if}</span>
 					</label>
 				{/each}
 			</fieldset>

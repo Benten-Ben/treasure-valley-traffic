@@ -150,7 +150,8 @@ test.describe('transit', () => {
 		const shotB = await page.screenshot({ path: screenPath('transit-replay-z10-b.png') });
 		const t1 = await transit<number>(page, 'playhead');
 		expect(t1 - t0, 'the playhead runs in real time').toBeGreaterThan(4);
-		expect(t1 - t0).toBeLessThan(9);
+		// Each SwiftShader screenshot takes a second or two.
+		expect(t1 - t0).toBeLessThan(20);
 		// The replay starts at `at` minus the 90 s delay.
 		expect(t0).toBeGreaterThan(AT_S - 90);
 		expect(t0).toBeLessThan(AT_S - 60);
@@ -171,20 +172,23 @@ test.describe('transit', () => {
 
 	test('running changes make 0 setData on the ribbon source; bus motion none; trails at most one a second', { tag: '@wp8' }, async ({ page, request }) => {
 		test.setTimeout(300_000);
-		// A replay time when the 1-minute and 5-minute delays see different routes running (service starting up).
+		// A replay time X when the 1-minute and 5-minute delays see different routes running (service
+		// starting up), and still the same two sets 30 s later (the replay runs on while the test does).
+		// The spans at 13:00 cover 11:45–13:00, enough to decide for X from 12:00.
+		const runs: Tracks = await (await request.get('/api/transit/tracks?at=2026-10-06T13:00:00Z&window=60')).json();
+		const same = (a: string[], b: string[]) => JSON.stringify(a) === JSON.stringify(b);
 		let at: string | null = null;
 		let sets: [string[], string[]] = [[], []];
-		for (const hhmm of ['11:45', '11:55', '12:05', '12:15', '12:30', '13:00', '14:30']) {
-			const iso = `2026-10-06T${hhmm}:00Z`;
-			const t: Tracks = await (await request.get(`/api/transit/tracks?at=${iso}&window=120`)).json();
-			const T = Date.parse(iso) / 1000;
-			sets = [runningAt(t.routeRuns, T - 60), runningAt(t.routeRuns, T - 300)];
-			if (JSON.stringify(sets[0]) !== JSON.stringify(sets[1])) {
-				at = iso;
-				break;
-			}
+		for (let X = Date.parse('2026-10-06T12:00:00Z') / 1000; X < runs.now - 30; X += 30) {
+			const one = runningAt(runs.routeRuns, X - 60);
+			const five = runningAt(runs.routeRuns, X - 300);
+			if (same(one, five) || !same(one, runningAt(runs.routeRuns, X - 30)) || !same(five, runningAt(runs.routeRuns, X - 270))) continue;
+			at = new Date(X * 1000).toISOString();
+			sets = [one, five];
+			break;
 		}
 		expect(at, 'a replay time when the running set changes').not.toBeNull();
+		console.log(`replay at ${at}: running with a 1-min delay ${sets[0].join(' ')}; with 5 min ${sets[1].join(' ')}`);
 		const net: TransitNetwork = await (await request.get('/api/transit/network')).json();
 		const rid = Object.fromEntries(net.routes.map((r) => [r.id, r.rid]));
 
@@ -341,7 +345,7 @@ test.describe('transit', () => {
 		await page.screenshot({ path: screenPath('transit-bus-card.png') });
 
 		// Follow: the view keeps the bus at its centre; a drag ends it.
-		await card.getByRole('button', { name: 'Follow' }).click();
+		await card.getByRole('button', { name: 'Follow', exact: true }).click();
 		await expect(card.getByRole('button', { name: /Following/ })).toBeVisible();
 		await page.waitForTimeout(3000);
 		const off = await page.evaluate((id) => {
@@ -357,7 +361,7 @@ test.describe('transit', () => {
 		await page.mouse.down();
 		await page.mouse.move(760, 540, { steps: 6 });
 		await page.mouse.up();
-		await expect(card.getByRole('button', { name: 'Follow' })).toBeVisible();
+		await expect(card.getByRole('button', { name: 'Follow', exact: true })).toBeVisible();
 
 		// A route from the legend: its card, and the spotlight (every other route takes its ghost).
 		const legend = page.getByRole('region', { name: 'Transit legend' });
