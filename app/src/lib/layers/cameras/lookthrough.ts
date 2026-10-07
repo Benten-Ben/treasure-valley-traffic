@@ -94,6 +94,18 @@ const reducedMotion = () => typeof matchMedia !== 'undefined' && matchMedia('(pr
  */
 export const SCENE_PHOTO_EDGE = 0.012;
 
+/** Every animation takes at least this many frames, however slow they come, so nothing ever jumps. */
+export const MIN_STEPS = 8;
+
+/**
+ * An animation's progress (0–1) after `elapsed` of `ms`, at its `step`th
+ * frame: by time, but never more than step/MIN_STEPS, so on a slow machine
+ * it takes longer instead of skipping.
+ */
+export function progress(elapsed: number, ms: number, step: number): number {
+	return Math.min(1, elapsed / ms, step / MIN_STEPS);
+}
+
 /** Where a crop of the picture lands in its letterbox. */
 export function shownBox(box: Box, size: ImageSize, crop: Crop): Box {
 	const k = box.height / size.height;
@@ -429,9 +441,10 @@ export class LookThrough {
 		const ms = reducedMotion() ? 0 : FLY_MS;
 		return new Promise((resolve) => {
 			const t0 = performance.now();
+			let frames = 0;
 			const frame = () => {
 				if (this.#destroyed || id !== this.#flight) return resolve(false);
-				const t = ms ? Math.min(1, (performance.now() - t0) / ms) : 1;
+				const t = ms ? progress(performance.now() - t0, ms, ++frames) : 1;
 				const k = easeInOut(t);
 				if (exag) this.#exaggerate(lerp(exag[0], exag[1], k), t === 1);
 				this.#busy = true;
@@ -461,13 +474,18 @@ export class LookThrough {
 		if (t) this.#picture(t);
 	}
 
-	/** Load the target's newest picture (the live frame, else the calibration's reference frame). */
+	/**
+	 * Load the target's newest picture: the live frame; or, once the live feed
+	 * has answered that there's none (blocked, capped, images off…), the
+	 * calibration's reference frame, labelled as such. A frame of another size
+	 * never replaces the picture (it would land in the wrong place).
+	 */
 	#picture(t: Target) {
 		const live = this.#views[t.cal.viewId] ?? this.#feed.views[t.cal.viewId];
-		const f = live?.frame && live.frame.width === t.size.width && live.frame.height === t.size.height ? live.frame : null;
+		const f = live?.frame ?? null;
 		if (f) {
-			if (f.sha !== t.sha && f.sha !== t.loading) void this.#load(t, f.sha, f.url, false);
-		} else if (!t.sha && !t.loading && t.cal.frame) {
+			if (f.width === t.size.width && f.height === t.size.height && f.sha !== t.sha && f.sha !== t.loading) void this.#load(t, f.sha, f.url, false);
+		} else if (live && live.state !== 'waiting' && !t.sha && !t.loading && t.cal.frame) {
 			void this.#load(t, 'ref', `/frames/${t.cal.frame}`, true);
 		}
 	}
@@ -669,9 +687,10 @@ export class LookThrough {
 	#ease(ms: number, id: number, step: (k: number) => void): Promise<void> {
 		return new Promise((resolve) => {
 			const t0 = performance.now();
+			let frames = 0;
 			const frame = () => {
 				if (this.#destroyed || id !== this.#flight) return resolve();
-				const t = ms ? Math.min(1, (performance.now() - t0) / ms) : 1;
+				const t = ms ? progress(performance.now() - t0, ms, ++frames) : 1;
 				step(easeInOut(t));
 				if (t < 1) requestAnimationFrame(frame);
 				else resolve();

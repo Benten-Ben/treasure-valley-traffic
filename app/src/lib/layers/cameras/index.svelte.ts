@@ -563,7 +563,10 @@ export class CamerasModule implements LayerModule {
 			})
 		);
 		scope.on('zoom', () => this.#onZoom());
-		scope.on('moveend', () => this.#syncBadges());
+		// The 3D badges follow the heads' ground; not while a mode's own flights jump the camera every frame.
+		scope.on('moveend', () => {
+			if (ctx.modes.current === 'explore') this.#syncBadges();
+		});
 		// New pictures: the photos in the cones and the picture looked through swap them in.
 		scope.defer(
 			$effect.root(() => {

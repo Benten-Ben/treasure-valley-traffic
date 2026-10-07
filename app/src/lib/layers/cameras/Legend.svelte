@@ -47,9 +47,17 @@
 			</svg>
 			View footprint (calibrated, from z14)
 		</li>
+		<li>
+			<svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true">
+				<path d="M6 18V8" stroke="#8d8a86" stroke-width="2" stroke-linecap="round" />
+				<rect x="3.5" y="4" width="6" height="4" rx="1" fill={CREAM} stroke={INK} stroke-width="1" />
+				<path d="M9.5 6 18 2.5v9Z" fill={TEAL} fill-opacity="0.25" stroke={INK} stroke-width="0.8" stroke-linejoin="round" />
+			</svg>
+			In 3D from z15: pole, head and view cone
+		</li>
 	{/if}
 </ul>
-<p class="hint">Click a camera to fly there and open its live picture.</p>
+<p class="hint">Click a camera to fly there and open its live picture; double-click a calibrated one (or press Enter) to look through it.</p>
 <p class="credit">{CREDIT}</p>
 
 <style>
