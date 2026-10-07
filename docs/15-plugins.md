@@ -274,3 +274,24 @@ Kept here so they aren't lost; none is approved yet.
 - **history:** historic aerials and topo maps on a year slider.
 - **civic:** development near me, hearings, school boundaries, precincts.
 - **home** (private): the owner's own sensors, drives and receiver.
+
+More from the same Oct 6–7 brainstorm, restored from the chat (Oct 7). Some
+of it belongs in existing plugins:
+- **commuter** (`flow`, `conditions`): "when should I leave", from our own
+  travel-time history; incidents and work zones on my route.
+- **cyclist and pedestrian** (`safety`, `roads`): bike lanes and the
+  Greenbelt, bike and pedestrian crashes (COMPASS records the road-user
+  type), sidewalk gaps, scooter-share feeds where they're published ⚠️.
+- **homeowner or land buyer** (private, with `parcels`): ownership, zoning,
+  FEMA floodplains, soils, water rights (Idaho Department of Water
+  Resources), wells, irrigation districts and canal schedules.
+- **farmer:** crop type by field (USDA's Cropland Data Layer), canal water
+  dates, field burning.
+- **wildlife** (`safety`): mule deer winter range and highway crossings,
+  wildlife–vehicle collisions.
+- **from the aerial imagery** (Oct 6), for the next design round:
+  - painted land cover, classifying every pixel (tree canopy, lawn,
+    sagebrush, bare dirt, pavement, roofs, water) so the Valley and Clay
+    styles can draw it;
+  - the year slider (NAIP back to about 2013, see history above);
+  - driveway density along corridors (with `parcels`).
