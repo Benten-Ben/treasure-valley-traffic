@@ -1,0 +1,48 @@
+{
+  "_note": "SYNTHETIC: Esri JSON query answers shaped like the City of Boise's Greenbelt_Closures_View layers 0 (Greenbelt_Construction) and 1 (Greenbelt_Detour) on Oct 7, 2026, with made-up projects, IDs and lines.",
+  "0": {
+    "objectIdFieldName": "OBJECTID",
+    "globalIdFieldName": "",
+    "geometryType": "esriGeometryPolyline",
+    "spatialReference": {"wkid": 4326, "latestWkid": 4326},
+    "features": [
+      {"attributes": {"OBJECTID": 501, "LOCATION": "X", "PROJECT": null,
+                      "WORK_DESCRIPTION": "Sample St closure - example event project", "CONSTRUCTION_SEASON": null,
+                      "CONSTRUCTION_UPDATES": null, "RIVER_MILE": null, "GREENBELT_MILE": null,
+                      "LATITUDE": null, "LONGITUDE": null, "STATUS": "Active", "SHAPE__Length": 120.5},
+       "geometry": {"paths": [[[-116.230001, 43.630001], [-116.229001, 43.630501]]]}},
+      {"attributes": {"OBJECTID": 502, "LOCATION": "X", "PROJECT": "Example Island Path Repair",
+                      "WORK_DESCRIPTION": "Example section replacement", "CONSTRUCTION_SEASON": "Summer",
+                      "CONSTRUCTION_UPDATES": "Sample update text", "RIVER_MILE": "50.1", "GREENBELT_MILE": "3.4",
+                      "LATITUDE": "43.6", "LONGITUDE": "-116.2", "STATUS": "Active", "SHAPE__Length": 880.0},
+       "geometry": {"paths": [[[-116.240001, 43.620001], [-116.235001, 43.622001], [-116.232001, 43.624001]]]}},
+      {"attributes": {"OBJECTID": 503, "LOCATION": "X", "PROJECT": "Finished Sample Project",
+                      "WORK_DESCRIPTION": "Example work that ended", "CONSTRUCTION_SEASON": "Spring",
+                      "CONSTRUCTION_UPDATES": null, "RIVER_MILE": null, "GREENBELT_MILE": null,
+                      "LATITUDE": null, "LONGITUDE": null, "STATUS": "Inactive", "SHAPE__Length": 300.0},
+       "geometry": {"paths": [[[-116.250001, 43.610001], [-116.248001, 43.611001]]]}},
+      {"attributes": {"OBJECTID": 504, "LOCATION": "X", "PROJECT": "Unlabelled Sample Closure",
+                      "WORK_DESCRIPTION": null, "CONSTRUCTION_SEASON": null, "CONSTRUCTION_UPDATES": null,
+                      "RIVER_MILE": null, "GREENBELT_MILE": null, "LATITUDE": null, "LONGITUDE": null,
+                      "STATUS": null, "SHAPE__Length": 90.0},
+       "geometry": {"paths": [[[-116.260001, 43.600001], [-116.259001, 43.600501]]]}}
+    ]
+  },
+  "1": {
+    "objectIdFieldName": "OBJECTID",
+    "globalIdFieldName": "",
+    "geometryType": "esriGeometryPolyline",
+    "spatialReference": {"wkid": 4326, "latestWkid": 4326},
+    "features": [
+      {"attributes": {"OBJECTID": 601, "LOCATION": "X", "STATUS": "Active", "PROJECT": "Example Island Path Repair",
+                      "Project_Status": "Active", "SHAPE__Length": 900.0},
+       "geometry": {"paths": [[[-116.240001, 43.620001], [-116.238001, 43.626001], [-116.232001, 43.624001]]]}},
+      {"attributes": {"OBJECTID": 602, "LOCATION": "X", "STATUS": "Active", "PROJECT": "Finished Sample Project",
+                      "Project_Status": "Inactive", "SHAPE__Length": 310.0},
+       "geometry": {"paths": [[[-116.250001, 43.610001], [-116.249001, 43.613001]]]}},
+      {"attributes": {"OBJECTID": 603, "LOCATION": "X", "STATUS": "Active", "PROJECT": "Misplaced Sample Detour",
+                      "Project_Status": "Active", "SHAPE__Length": 100.0},
+       "geometry": {"paths": [[[-111.900001, 40.760001], [-111.899001, 40.761001]]]}}
+    ]
+  }
+}
