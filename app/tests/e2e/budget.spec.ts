@@ -11,7 +11,8 @@ import { env, expect, mapReady, test } from './fixtures.js';
  *
  * The first test records the numbers and holds today. The others are later
  * packages' targets, marked expected-to-fail until they're met; the package
- * that meets one removes its test.fail line.
+ * that meets one removes its test.fail line. WP5 met the bytes and duplicates
+ * (one DEM source) and split them from the request count, which it didn't.
  */
 async function coldLoad(page: Page, baseURL: string) {
 	const net = await recordNetwork(page, { throttle: { latencyMs: 40, mbps: 25 } });
@@ -46,12 +47,16 @@ test.describe('budget', () => {
 		expect(summary.byKind.basemap?.bytes ?? 0).toBeGreaterThan(0);
 	});
 
-	test('cold first load ≤ 6 MB, ≤ 50 requests, 0 duplicate ranges (WP5)', { tag: ['@wp0', '@wp5'] }, async ({ page, baseURL }) => {
-		test.fail(true, 'WP5 target (§14.9): today two DEM sources fetch 8–13 MB of terrain.');
+	test('cold first load ≤ 6 MB, 0 duplicate ranges (WP5)', { tag: ['@wp0', '@wp5'] }, async ({ page, baseURL }) => {
 		const { summary } = await coldLoad(page, baseURL!);
 		expect(summary.bytes).toBeLessThanOrEqual(6e6);
-		expect(summary.requests).toBeLessThanOrEqual(50);
 		expect(summary.duplicates).toBe(0);
+	});
+
+	test('cold first load ≤ 50 requests (WP5)', { tag: ['@wp0', '@wp5'] }, async ({ page, baseURL }) => {
+		test.fail(true, "WP5 target (§14.9), still missed: about 89 requests, 57 of them the app's own JS, CSS and web fonts (UI v2's chunks); see §14.9's results.");
+		const { summary } = await coldLoad(page, baseURL!);
+		expect(summary.requests).toBeLessThanOrEqual(50);
 	});
 
 	test('data API requests start before the first DEM tile response (WP1)', { tag: ['@wp0', '@wp1'] }, async ({ page, baseURL }) => {

@@ -3,6 +3,7 @@ import type { LayerSpecification, LineLayerSpecification, Map, StyleSpecificatio
 import type * as Flavors from './flavors.js';
 import type { FlavorName, PaintChange } from './flavors.js';
 import { anchorLayer, ANCHORS } from './order.js';
+import { DEFAULT_HILLSHADE, type HillshadeMode } from '#lib/perf/flags.js';
 
 /** Where the basemap build (basemap/) publishes its output. Same origin, no third-party hosts. */
 export const TILES_PATH = '/tiles';
@@ -229,6 +230,69 @@ function imagery(m: BasemapManifest, origin: string, visible: boolean, saturatio
 	return { sources, layers: out };
 }
 
+/** The 3D terrain's DEM source. */
+export const TERRAIN_SOURCE = 'terrain';
+
+/** The second DEM source, which exists only with `?hillshade=capped`. */
+export const HILLSHADE_SOURCE = 'hillshade';
+
+/**
+ * The capped second source's highest zoom: up to it the hillshade is as sharp
+ * as with two full sources (and costs as much); above it, it overzooms these
+ * tiles instead of fetching the terrain's z13–z14 a second time.
+ */
+export const HILLSHADE_CAP_ZOOM = 12;
+
+let hillshade: HillshadeMode = DEFAULT_HILLSHADE;
+
+/**
+ * Where maps built from now on take the hillshade's elevations from (the boot
+ * sets it from `?hillshade=`, before the map exists). See `terrainSources`.
+ */
+export function setHillshadeMode(mode: HillshadeMode): void {
+	hillshade = mode;
+}
+
+export function hillshadeMode(): HillshadeMode {
+	return hillshade;
+}
+
+/**
+ * The DEM sources and the hillshade's source (docs/14 §14.9, fix 1; the
+ * owner's Q7 answer).
+ *
+ * - `terrain` (default): one source. The hillshade reads the tiles the 3D
+ *   surface already loaded, so each DEM tile downloads and decodes once. Those
+ *   are the mesh's tiles, one zoom level below the view's (MapLibre's terrain
+ *   `deltaZoom`), so the shading is a little softer up to z14 and the same
+ *   from z15, where both stop at the file's z14. MapLibre logs a one-time
+ *   warning about the shared source; that's this choice, not a fault.
+ * - `capped`: a second source for the hillshade, as MapLibre recommends, but
+ *   with `maxzoom` capped at `HILLSHADE_CAP_ZOOM`: full-zoom shading up to z12
+ *   (twice the DEM bytes there), overzoomed above it.
+ */
+export function terrainSources(
+	m: BasemapManifest,
+	origin: string,
+	mode: HillshadeMode = hillshade
+): { sources: StyleSpecification['sources']; hillshadeSource: string } {
+	if (!m.terrain) return { sources: {}, hillshadeSource: TERRAIN_SOURCE };
+	const dem = {
+		type: 'raster-dem' as const,
+		url: pmtilesUrl(origin, m.terrain.file),
+		encoding: m.terrain.encoding,
+		tileSize: m.terrain.tileSize,
+		attribution: m.terrain.attribution
+	};
+	if (mode === 'capped') {
+		return {
+			sources: { [TERRAIN_SOURCE]: dem, [HILLSHADE_SOURCE]: { ...dem, maxzoom: HILLSHADE_CAP_ZOOM } },
+			hillshadeSource: HILLSHADE_SOURCE
+		};
+	}
+	return { sources: { [TERRAIN_SOURCE]: dem }, hillshadeSource: TERRAIN_SOURCE };
+}
+
 /** The parts of a MapLibre map the style helpers use (so tests can pass a fake). */
 export type MapLike = Pick<
 	Map,
@@ -311,21 +375,13 @@ export function buildStyle(m: BasemapManifest, origin: string, aerial = false, f
 	const over: LayerSpecification[] = [];
 
 	if (m.terrain) {
-		// One source for the 3D surface, a second for hillshading, as MapLibre recommends.
-		const dem = {
-			type: 'raster-dem' as const,
-			url: pmtilesUrl(origin, m.terrain.file),
-			encoding: m.terrain.encoding,
-			tileSize: m.terrain.tileSize,
-			attribution: m.terrain.attribution
-		};
-		style.sources.terrain = dem;
-		style.sources.hillshade = { ...dem };
-		style.terrain = { source: 'terrain', exaggeration: m.terrain.exaggeration };
+		const t = terrainSources(m, origin);
+		Object.assign(style.sources, t.sources);
+		style.terrain = { source: TERRAIN_SOURCE, exaggeration: m.terrain.exaggeration };
 		middle.push({
 			id: HILLSHADE_LAYER,
 			type: 'hillshade',
-			source: 'hillshade',
+			source: t.hillshadeSource,
 			paint: { ...flavorKit().HILLSHADE_PAINT[flavor] }
 		});
 	}

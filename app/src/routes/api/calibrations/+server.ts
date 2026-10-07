@@ -1,13 +1,19 @@
 import { json } from '@sveltejs/kit';
+import { versionedCacheControl } from '#lib/server/cache-headers.js';
 import { db } from '#lib/server/db.js';
+import { dataMeta } from '#lib/server/versions.js';
 import { footprint, groundHeight, type Pair, type Pose } from '#lib/calibration/solver.js';
 
 /**
  * Every view's current calibration as GeoJSON: the view cone (ground
  * footprint, nearest 250 m) with the pose, frame and ground height the map
  * needs to drape the image.
+ *
+ * Versioned (docs/14 §14.8 "APIs"): immutable when `?v=` is /api/meta's
+ * current calibrations version; else no-cache.
  */
-export async function GET() {
+export async function GET({ url, setHeaders }) {
+	const meta = dataMeta();
 	const rows = await db()`
 		select cal.id, cal.view_id, v.camera_id, c.name,
 		       ST_X(cal.position) as lon, ST_Y(cal.position) as lat, ST_Z(cal.position) as alt,
@@ -17,6 +23,7 @@ export async function GET() {
 		join core.camera_view v on v.id = cal.view_id
 		join core.camera c on c.id = v.camera_id
 		where upper_inf(cal.valid) and c.active`;
+	setHeaders({ 'cache-control': versionedCacheControl(url.searchParams.get('v'), (await meta).versions.calibrations) });
 	return json({
 		type: 'FeatureCollection',
 		features: rows.map((r) => {

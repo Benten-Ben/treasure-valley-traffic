@@ -10,7 +10,9 @@ import { extname, join, resolve, sep } from 'node:path';
  * - `public, max-age=3600` on every file, `no-cache` on manifest.json;
  * - a `.gz` sibling (precompressed glyphs) is served with
  *   `Content-Encoding: gzip` to clients that accept it
- *   (`file_server { precompressed gzip }`), with `Vary: Accept-Encoding`;
+ *   (`file_server { precompressed gzip }`), as Caddy serves a sidecar: the
+ *   sidecar's ETag, the original's Last-Modified, no `Accept-Ranges`; and
+ *   `Vary: Accept-Encoding` on every file (Caddy 2.7 on);
  * - Caddy's strong ETag (`"<mtime ns, base 36><size, base 36>"`), so
  *   pmtiles can check archive versions and Chrome caches byte ranges as it
  *   would in production; Last-Modified; 304 for If-None-Match and
@@ -19,7 +21,8 @@ import { extname, join, resolve, sep } from 'node:path';
  *   http.ServeContent answers them;
  * - a plain 404 for anything missing or outside the folder.
  *
- * When Caddy's tiles config changes (WP5), this changes with it.
+ * WP5's Caddy edits (no-cache manifest, `precompressed gzip`) are mirrored
+ * here; when Caddy's tiles config changes again, this changes with it.
  */
 export const TILES_CACHE_CONTROL = 'public, max-age=3600';
 export const MANIFEST_CACHE_CONTROL = 'no-cache';
@@ -94,23 +97,25 @@ export function tilesHandler(dir: string): Handler {
 		}
 		if (!st.isFile()) return plain(res, 404, 'Not found');
 
-		// Precompressed sibling.
+		// Precompressed sibling: Caddy takes the sidecar's ETag, but keeps the original's modification time.
 		let body = file;
 		const gz = `${file}.gz`;
+		const modified = new Date(Number(st.mtimeMs));
+		modified.setMilliseconds(0);
+		let sidecar = false;
 		if (/\bgzip\b/.test(String(req.headers['accept-encoding'] ?? '')) && existsSync(gz)) {
 			body = gz;
+			sidecar = true;
 			st = statSync(gz, { bigint: true });
 			res.setHeader('Content-Encoding', 'gzip');
 		}
 		const size = Number(st.size);
 		const etag = caddyEtag(st);
-		const modified = new Date(Number(st.mtimeMs));
-		modified.setMilliseconds(0);
 		res.setHeader('Vary', 'Accept-Encoding');
 		res.setHeader('Cache-Control', pathname === '/manifest.json' ? MANIFEST_CACHE_CONTROL : TILES_CACHE_CONTROL);
 		res.setHeader('ETag', etag);
 		res.setHeader('Last-Modified', modified.toUTCString());
-		res.setHeader('Accept-Ranges', 'bytes');
+		if (!sidecar) res.setHeader('Accept-Ranges', 'bytes');
 		res.setHeader('Content-Type', TYPES[extname(file)] ?? 'application/octet-stream');
 
 		const inm = req.headers['if-none-match'];
