@@ -1,0 +1,17 @@
+{
+  "name": "flow",
+  "title": "Flow: counts, congestion and travel times",
+  "depends": ["roads"],
+  "visibility": "public",
+  "order": 70,
+  "sources": [
+    {"name": "compass_counts", "module": "ingest.sources.compass_counts", "kind": "source",
+     "license": "none stated (COMPASS's disclaimer only: no warranty, no liability)", "credit": "COMPASS and COMPASS member agencies", "republish": "yes"},
+    {"name": "compass_congestion", "module": "ingest.sources.compass_congestion", "kind": "source", "order": 90,
+     "license": "none stated; not offered as open data (no hub entry)",
+     "credit": "COMPASS and COMPASS member agencies", "republish": "internal"}
+  ],
+  "tables": ["obs.traffic_count", "obs.congestion_measure", "obs.commute_travel_time"],
+  "storage": "Small and slow: COMPASS's count and congestion layers are re-read monthly, unchanged layers skipped; earlier counts are kept.",
+  "ethics": "COMPASS's congestion measures and commute travel times are only on swidrdc.org, not its open-data hub: internal use until COMPASS answers, never republished before then. Later speeds from buses and volunteers' GPS drives stay aggregate-only."
+}

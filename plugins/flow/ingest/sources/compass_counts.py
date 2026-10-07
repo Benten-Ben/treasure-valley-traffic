@@ -31,8 +31,8 @@ Field notes, checked Oct 6, 2026:
 
 from datetime import date
 
-from .. import compass_layer as cl
-from ..compass_layer import integer, pm_id, text
+from ingest import compass_layer as cl
+from ingest.compass_layer import integer, pm_id, text
 
 SERVICE = "COMPASSData/Traffic_Counts/FeatureServer"
 

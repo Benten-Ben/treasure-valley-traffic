@@ -29,9 +29,9 @@ Field notes, checked Oct 6, 2026:
 
 import re
 
-from .. import db
-from .. import compass_layer as cl
-from ..compass_layer import integer, number, text
+from ingest import db
+from ingest import compass_layer as cl
+from ingest.compass_layer import integer, number, text
 
 SERVICE = "COMPASSData/Traffic_Counts/FeatureServer"
 
