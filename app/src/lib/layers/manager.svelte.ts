@@ -325,8 +325,9 @@ export class LayerManager {
 		this.#apply(id);
 	}
 
+	// Only Calibrate owns layer visibility (§14.3); look-through keeps the data layers drawn.
 	#visible(id: LayerId): boolean {
-		return this.#ctx.modes.current === 'explore' && this.set.has(id);
+		return this.#ctx.modes.current !== 'calibrate' && this.set.has(id);
 	}
 
 	#apply(id: LayerId) {
