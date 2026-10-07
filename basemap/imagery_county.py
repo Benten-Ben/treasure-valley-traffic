@@ -122,6 +122,8 @@ def main():
     ap.add_argument("--work", default="data/imagery")
     ap.add_argument("--workers", type=int, default=os.cpu_count())
     ap.add_argument("--keep-mbtiles", action="store_true")
+    ap.add_argument("--resume", action="store_true",
+                    help="keep the tiles already in --work's mbtiles and render only the rest")
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
     os.makedirs(args.work, exist_ok=True)
@@ -158,7 +160,14 @@ def main():
           f"{args.detail_maxzoom} around points; bounds {bounds}", flush=True)
 
     mb = os.path.join(args.work, "imagery-detail.mbtiles")
-    db = im.new_mbtiles(mb, "imagery-detail", bounds, args.minzoom, args.detail_maxzoom)
+    done = set()
+    if args.resume and os.path.exists(mb):
+        import sqlite3
+        db = sqlite3.connect(mb)
+        done = {(z, x, 2 ** z - 1 - r) for z, x, r in db.execute("select zoom_level, tile_column, tile_row from tiles")}
+        print(f"resume: {len(done)} tiles already built", flush=True)
+    else:
+        db = im.new_mbtiles(mb, "imagery-detail", bounds, args.minzoom, args.detail_maxzoom)
     n_bytes, n_tiles = 0, 0
 
     def store(r):
@@ -171,6 +180,9 @@ def main():
 
     # Render the top zoom in x, y order (neighbors share windows), then the points' deeper zooms
     jobs = sorted(top, key=lambda j: (j[2] // 8, j[3], j[2])) + sorted(deep)
+    if done:
+        jobs = [j for j in jobs if (j[1], j[2], j[3]) not in done]
+        print(f"resume: {len(jobs)} tiles left to try", flush=True)
     t1 = time.time()
     with multiprocessing.Pool(args.workers, initializer=_init, initargs=(windows,)) as pool:
         for done, r in enumerate(pool.imap_unordered(render, jobs, chunksize=16), start=1):
