@@ -1,14 +1,17 @@
 import type { ExpressionSpecification, FilterSpecification } from 'maplibre-gl';
 import type { SlottedLayer } from '#lib/map/order.js';
+import { speedExpression, UNDER_WIDTH, type RampName } from './ramp.js';
 
 /**
  * The Streets layer: every Ada County road from ACHD's centerlines, colored by
- * posted speed (one hue, light to dark as speed rises), widened by road class,
- * with arrows on one-way streets and speed numbers along the bigger roads.
- * Tiles are cut by PostGIS on request (/api/tiles/roads/{z}/{x}/{y}).
+ * posted speed (one hue, light to dark as speed rises; docs/14 §14.5),
+ * widened by road class, with arrows on one-way streets and speed numbers
+ * along the bigger roads. Tiles are cut by PostGIS on request
+ * (/api/tiles/roads/{z}/{x}/{y}).
  *
- * Ported from the Streets lens (lib/map/streets.ts) to the layer registry
- * (WP2); WP4 replaces the ramp with the stepped one of §14.5.
+ * The speed lines come twice on the same source: the blue ramp "alone", and
+ * the pale slate ramp at 70% width "under Transit" (with its own casing).
+ * Transit toggles which pair is visible, so no tile is fetched again.
  */
 
 export interface StreetProps {
@@ -20,21 +23,6 @@ export interface StreetProps {
 	private: boolean | null;
 	elevated: boolean;
 	community: string | null;
-}
-
-/** Posted-speed bins and colors: a validated single-hue ramp on the cream map. */
-export const SPEED_BINS: { label: string; from: number; color: string }[] = [
-	{ label: '20 mph or less', from: 0, color: '#6da7ec' },
-	{ label: '25–30 mph', from: 25, color: '#3987e5' },
-	{ label: '35–40 mph', from: 35, color: '#256abf' },
-	{ label: '45–50 mph', from: 45, color: '#184f95' },
-	{ label: '55 mph and up', from: 55, color: '#0d366b' }
-];
-
-export function speedColor(mph: number | null): string {
-	let color = SPEED_BINS[0].color;
-	for (const b of SPEED_BINS) if ((mph ?? 0) >= b.from) color = b.color;
-	return color;
 }
 
 export function oneWayText(s: Pick<StreetProps, 'one_way'>): string {
@@ -55,10 +43,25 @@ export const L = {
 	selectedHalo: 'streets-selected-halo',
 	selected: 'streets-selected',
 	casing: 'streets-casing',
+	casingUnder: 'streets-casing-under',
 	speed: 'streets-speed',
+	speedUnder: 'streets-speed-under',
 	labels: 'streets-speed-labels',
 	oneway: 'streets-oneway'
 } as const;
+
+/** The two speed lines, each with its casing: "alone" (Transit off) and "under Transit". */
+export const RAMP_LAYERS: Record<RampName, readonly string[]> = {
+	alone: [L.casing, L.speed],
+	under: [L.casingUnder, L.speedUnder]
+};
+
+/** Which of the street layers show, for the layer's visibility and the ramp in use. */
+export function visibleStreetLayers(on: boolean, ramp: RampName): Set<string> {
+	if (!on) return new Set();
+	const other = RAMP_LAYERS[ramp === 'alone' ? 'under' : 'alone'];
+	return new Set(STREET_LAYERS.filter((id) => !other.includes(id)));
+}
 
 /** The filter that picks out the selected road (none: an id no segment has). */
 export function selectedFilter(id: number | null): FilterSpecification {
@@ -77,16 +80,17 @@ const classWidth: ExpressionSpecification = [
 	1
 ] as unknown as ExpressionSpecification;
 
-const width = (extra = 0): ExpressionSpecification => [
+/** Line width by road class and zoom, times `scale`, plus `extra` px (a casing's edge). */
+const width = (extra = 0, scale = 1): ExpressionSpecification => [
 	'interpolate',
 	['linear'],
 	['zoom'],
 	9,
-	['+', ['*', classWidth, 0.35], extra * 0.5],
+	['+', ['*', classWidth, 0.35 * scale], extra * 0.5],
 	14,
-	['+', classWidth, extra],
+	['+', ['*', classWidth, scale], extra],
 	17,
-	['+', ['*', classWidth, 2], extra]
+	['+', ['*', classWidth, 2 * scale], extra]
 ];
 
 /**
@@ -96,12 +100,7 @@ const width = (extra = 0): ExpressionSpecification => [
  */
 export function streetLayers(): SlottedLayer[] {
 	const hidden = { visibility: 'none' as const };
-	const speedStep = [
-		'step',
-		['coalesce', ['get', 'speed'], 0],
-		SPEED_BINS[0].color,
-		...SPEED_BINS.slice(1).flatMap((b) => [b.from, b.color])
-	] as unknown as ExpressionSpecification;
+	const line = { ...hidden, 'line-cap': 'round' as const, 'line-join': 'round' as const };
 	return [
 		// The selected road (§14.3): a 2 px ink edge in a 3 px cream halo, under its speed line.
 		{
@@ -116,17 +115,27 @@ export function streetLayers(): SlottedLayer[] {
 				layout: { ...hidden, 'line-cap': 'round', 'line-join': 'round' },
 				paint: { 'line-color': '#2b2a33', 'line-width': width(4) } }
 		},
+		// The cream casings, alone and under Transit (70% width), under both speed lines.
 		{
 			slot: 'streets',
-			layer: { id: L.casing, type: 'line', source: ROADS_SOURCE, 'source-layer': 'roads',
-				layout: { ...hidden, 'line-cap': 'round', 'line-join': 'round' },
+			layer: { id: L.casing, type: 'line', source: ROADS_SOURCE, 'source-layer': 'roads', layout: { ...line },
 				paint: { 'line-color': '#fffbf4', 'line-width': width(2), 'line-opacity': 0.9 } }
 		},
 		{
 			slot: 'streets',
-			layer: { id: L.speed, type: 'line', source: ROADS_SOURCE, 'source-layer': 'roads',
-				layout: { ...hidden, 'line-cap': 'round', 'line-join': 'round' },
-				paint: { 'line-color': speedStep, 'line-width': width() } }
+			layer: { id: L.casingUnder, type: 'line', source: ROADS_SOURCE, 'source-layer': 'roads', layout: { ...line },
+				paint: { 'line-color': '#fffbf4', 'line-width': width(1.5, UNDER_WIDTH), 'line-opacity': 0.9 } }
+		},
+		// The speed lines: the blue ramp alone, the slate ramp under Transit (§14.5).
+		{
+			slot: 'streets',
+			layer: { id: L.speed, type: 'line', source: ROADS_SOURCE, 'source-layer': 'roads', layout: { ...line },
+				paint: { 'line-color': speedExpression('alone'), 'line-width': width() } }
+		},
+		{
+			slot: 'streets',
+			layer: { id: L.speedUnder, type: 'line', source: ROADS_SOURCE, 'source-layer': 'roads', layout: { ...line },
+				paint: { 'line-color': speedExpression('under'), 'line-width': width(0, UNDER_WIDTH) } }
 		},
 		{
 			slot: 'labels',

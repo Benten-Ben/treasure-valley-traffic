@@ -1,4 +1,5 @@
 import type { MapGeoJSONFeature } from 'maplibre-gl';
+import { untrack } from 'svelte';
 import { MapScope } from '#lib/app/cleanup.js';
 import type { AppCtx } from '#lib/app/context.js';
 import { addSlotted } from '#lib/map/order.js';
@@ -6,20 +7,29 @@ import { PRIORITY, type Interactive, type LayerModule, type LayerStatus, type Se
 import Card from './Card.svelte';
 import def from './def.js';
 import Legend from './Legend.svelte';
-import { chevron, CHEVRON, L, ROADS_SOURCE, selectedFilter, STREET_LAYERS, streetLayers, type StreetProps } from './streets.js';
+import type { RampName } from './ramp.js';
+import { chevron, CHEVRON, L, ROADS_SOURCE, selectedFilter, STREET_LAYERS, streetLayers, visibleStreetLayers, type StreetProps } from './streets.js';
 
 export const SOURCE = 'ACHD road centerlines';
 
-/** The Streets module (docs/14 §14.5 until WP4's ramp): road tiles cut by PostGIS, versioned by /api/meta. */
+/**
+ * The Streets module (docs/14 §14.5): road tiles cut by PostGIS, versioned by
+ * /api/meta, drawn on the stepped speed ramp. While Transit is on, the pale
+ * slate ramp at 70% width replaces the blue one (§14.3 "The color budget"):
+ * the two are separate layers on the same source, so switching only changes
+ * visibility and fetches no tile.
+ */
 export class StreetsModule implements LayerModule {
 	status = $state<LayerStatus>('loading');
 	error = $state<string | null>(null);
 	updatedAt = $state<number | null>(null);
+	/** The ramp drawn now: 'under' while Transit is on. The legend and card follow it. */
+	ramp = $state<RampName>('alone');
 	Legend = Legend;
 	Card = Card;
 	interactive: Interactive[] = [
 		{
-			layerIds: [L.speed],
+			layerIds: [L.speed, L.speedUnder],
 			priority: PRIORITY.street,
 			pick: (f: MapGeoJSONFeature): Selection => {
 				const p = { ...f.properties, id: Number(f.id ?? f.properties?.id) } as StreetProps;
@@ -38,6 +48,7 @@ export class StreetsModule implements LayerModule {
 	#scope: MapScope | null = null;
 	#visible = false;
 	#destroyed = false;
+	#stopEffects: (() => void) | null = null;
 
 	async mount(ctx: AppCtx): Promise<void> {
 		const tiles = await ctx.dataUrl(`${location.origin}/api/tiles/roads/{z}/{x}/{y}`, 'roads');
@@ -59,16 +70,35 @@ export class StreetsModule implements LayerModule {
 			this.status = 'stale';
 			this.error = `Some road tiles failed to load: ${e.error?.message ?? 'unknown error'}`;
 		});
+		// The ramp follows Transit: slate while it's on (whether or not its routes have loaded yet).
+		this.#stopEffects = $effect.root(() => {
+			$effect(() => {
+				const ramp: RampName = ctx.layers?.isOn('transit') ? 'under' : 'alone';
+				untrack(() => {
+					this.ramp = ramp;
+					this.#show();
+				});
+			});
+		});
 		this.status = 'ready';
 		this.updatedAt = Date.now();
-		this.setVisible(this.#visible);
+		this.#show();
 	}
 
 	setVisible(on: boolean): void {
 		this.#visible = on;
+		this.#show();
+	}
+
+	/** Layout visibility only: the layer's on/off and which ramp pair is drawn. */
+	#show(): void {
 		const map = this.#scope?.map;
 		if (!map) return;
-		for (const id of STREET_LAYERS) if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', on ? 'visible' : 'none');
+		const shown = visibleStreetLayers(this.#visible, this.ramp);
+		for (const id of STREET_LAYERS) {
+			const want = shown.has(id) ? 'visible' : 'none';
+			if (map.getLayer(id) && map.getLayoutProperty(id, 'visibility') !== want) map.setLayoutProperty(id, 'visibility', want);
+		}
 	}
 
 	summary(): string | null {
@@ -85,6 +115,8 @@ export class StreetsModule implements LayerModule {
 
 	destroy(): void {
 		this.#destroyed = true;
+		this.#stopEffects?.();
+		this.#stopEffects = null;
 		this.#scope?.dispose();
 		this.#scope = null;
 	}
