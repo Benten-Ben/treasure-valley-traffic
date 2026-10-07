@@ -627,6 +627,14 @@ quantization matrices) closed the gap.
 
 - **Four encodes side by side are about 3x faster** than one encode using
   every core, with byte-identical output, so the roll-up runs four at a time.
+- **Memory limits it before CPU does** (measured Oct 7, one encode's
+  peak): about 0.66 GB at 328×339, 0.9 GB at 800×486 and 2.3 GB at
+  1920×1166, mostly fixed at the start whatever the day's length. Four HD
+  encodes alone take about 9 GB, and on Oct 7 the key-camera and regional
+  roll-ups ran side by side next to a tile build and filled the VM's 16
+  GB. So encodes now start only while their estimates fit a 6 GB budget
+  (`TVT_ROLLUP_MEMORY_MB`), biggest first, and the two services take turns
+  through a lock file. Two HD days now encode at a time instead of four.
 - **Version 1.7 at preset 8 beats 2.3 at preset 6** on speed, size and
   quality at once, so 2.3 is out.
 - **Preset 8 is the lever for scale:** about 3x faster again, for 6% more

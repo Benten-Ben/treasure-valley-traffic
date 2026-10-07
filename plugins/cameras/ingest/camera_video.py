@@ -25,7 +25,9 @@ Layout under TVT_ARCHIVE:
 """
 
 import argparse
+import contextlib
 import csv
+import fcntl
 import json
 import os
 import shutil
@@ -33,8 +35,9 @@ import struct
 import subprocess
 import sys
 import tempfile
+import threading
 from collections import Counter
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -45,7 +48,14 @@ LAST_FRAME_S = 60     # how long a frame stays up before a gap turns gray
 # A keyframe every 60 pictures (about an hour of a key camera's day) so the library can seek
 # quickly; it cost nothing in a test on Oct 6 (1-2% smaller than every 600; docs/11 §11.5).
 CODEC = ["-c:v", "libsvtav1", "-preset", "6", "-crf", "30", "-g", "60"]
-WORKERS = 4            # encodes side by side
+WORKERS = 4            # encodes side by side, at most
+# One encode's peak memory grows with the frame size (measured on the server Oct 7, SVT-AV1 1.7
+# preset 6 on 8 cores): about 0.66 GB at 328x339, 0.9 GB at 800x486 and 2.3 GB at 1920x1166.
+# Two roll-ups of four encodes each, next to a tile build, once filled the server's 16 GB
+# (Oct 7), so encodes start only while their estimates fit this budget, and one roll-up
+# runs at a time (LOCK).
+MEMORY_MB = int(os.environ.get("TVT_ROLLUP_MEMORY_MB", "6000"))
+LOCK = "rollup.lock"   # in TVT_ARCHIVE/cameras, held by whichever roll-up is running
 INDEX = "index.csv"
 INDEX_FIELDS = ["fetched_at", "file", "bytes", "sha256"]
 VIDEO_FIELDS = ["video_s", "kind", "fetched_at", "local_time", "file", "bytes", "sha256"]
@@ -297,23 +307,84 @@ def _encode_one(root, cam, day, force):
     return "done", ", ".join(f"{k} {v}" for k, v in stats.items())
 
 
-def rollup(root, items, force=False, log=print, workers=WORKERS):
-    """Encode each (camera, day), WORKERS at a time: on the server, four encodes
-    side by side run about 3x faster than one using every core, with
-    byte-identical output (docs/11). A failure is recorded beside the video's
-    path and not retried automatically; `python3 -m ingest rollup --day ...
-    --force` retries."""
-    done = failed = 0
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = {pool.submit(_encode_one, root, cam, day, force): (cam, day) for cam, day in items}
-        for future in as_completed(futures):
-            cam, day = futures[future]
-            outcome, message = future.result()
-            done += outcome == "done"
-            failed += outcome == "failed"
-            if message:
-                log(f"camera video {cam} {day}: {message}")
-    return done, failed
+def memory_mb(width, height):
+    """One encode's peak memory in MB, estimated from its frame size (fitted to the measurements above)."""
+    return round(600 + 760 * width * height / 1e6)
+
+
+def estimate_mb(root, cam, day):
+    """The memory one camera-day's encode should need, from its first frame's size. A remux,
+    or a day whose frames can't be read, counts as the smallest encode."""
+    src = jpeg_dir(root, cam, day)
+    try:
+        first = read_index(os.path.join(src, INDEX))[0]["file"]
+        return memory_mb(*jpeg_size(os.path.join(src, first)))
+    except (OSError, IndexError, KeyError, ValueError):
+        return memory_mb(0, 0)
+
+
+class Budget:
+    """Memory and slots shared by the encodes running side by side. take() waits until an
+    encode's estimate fits; one bigger than the whole budget runs alone."""
+
+    def __init__(self, memory_mb, slots):
+        self.total = self.free = memory_mb
+        self.slots = slots
+        self.cond = threading.Condition()
+
+    def take(self, mb):
+        with self.cond:
+            self.cond.wait_for(lambda: self.slots > 0 and (mb <= self.free or self.free == self.total))
+            self.free -= mb
+            self.slots -= 1
+
+    def give(self, mb):
+        with self.cond:
+            self.free += mb
+            self.slots += 1
+            self.cond.notify_all()
+
+
+@contextlib.contextmanager
+def one_at_a_time(root, log=print):
+    """Hold TVT_ARCHIVE/cameras/rollup.lock while rolling up. The key-camera and regional
+    services (and a roll-up by hand) share the server's memory, so a second roll-up waits for
+    the first. The lock goes with the process, so a crash can't leave it stuck."""
+    path = os.path.join(root, "cameras", LOCK)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "a") as f:
+        try:
+            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            log("another roll-up is running; waiting for it to finish")
+            fcntl.flock(f, fcntl.LOCK_EX)
+        yield
+
+
+def rollup(root, items, force=False, log=print, workers=WORKERS, memory=MEMORY_MB):
+    """Encode each (camera, day): up to `workers` at a time, while their estimated memory fits
+    `memory` MB, biggest first so the long HD encodes don't finish last. On the server, four
+    encodes side by side run about 3x faster than one using every core, with byte-identical
+    output (docs/11). One roll-up runs at a time. A failure is recorded beside the video's
+    path and not retried automatically; `python3 -m ingest rollup --day ... --force` retries."""
+    sized = sorted(((estimate_mb(root, cam, day), cam, day) for cam, day in items), key=lambda t: -t[0])
+    budget = Budget(memory, workers)
+
+    def finished(future, mb, cam, day):
+        budget.give(mb)
+        outcome, message = future.result()
+        if message:
+            log(f"camera video {cam} {day}: {message}")
+
+    futures = []
+    with one_at_a_time(root, log), ThreadPoolExecutor(max_workers=workers) as pool:
+        for mb, cam, day in sized:
+            budget.take(mb)
+            future = pool.submit(_encode_one, root, cam, day, force)
+            future.add_done_callback(lambda f, mb=mb, cam=cam, day=day: finished(f, mb, cam, day))
+            futures.append(future)
+    outcomes = Counter(f.result()[0] for f in futures)
+    return outcomes["done"], outcomes["failed"]
 
 
 def prune(root, today, keep_days, cams=None):

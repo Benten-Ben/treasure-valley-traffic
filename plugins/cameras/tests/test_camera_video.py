@@ -10,7 +10,10 @@ import shutil
 import struct
 import subprocess
 import tempfile
+import threading
+import time
 import unittest
+from unittest import mock
 from datetime import date, datetime, timedelta, timezone
 
 from plugins.cameras.ingest import camera_video as cv
@@ -230,6 +233,68 @@ class EncodeTest(unittest.TestCase):
         size = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "stream=width,height", "-of", "csv=p=0",
                                cv.video_path(root, "349", date(2026, 10, 5))], capture_output=True, text=True).stdout.strip()
         self.assertEqual(size, "328,338")
+
+
+class RollupTest(unittest.TestCase):
+    """The roll-up's memory budget and its one-at-a-time lock (fake encodes)."""
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.root)
+        self.day = date(2026, 10, 5)
+        start = datetime(2026, 10, 5, 18, 0, tzinfo=UTC)
+        for cam, size in [("hd1", (1920, 1166)), ("hd2", (1920, 1166)), ("a", (800, 486)), ("b", (800, 486)),
+                          ("c", (328, 339))]:
+            frames.save(self.root, cam, fake_jpeg(*size), start, "x")
+
+    def test_estimates_follow_frame_size(self):
+        self.assertEqual(cv.estimate_mb(self.root, "hd1", self.day), 2301)
+        self.assertEqual(cv.estimate_mb(self.root, "a", self.day), 895)
+        self.assertEqual(cv.estimate_mb(self.root, "nothing", self.day), cv.memory_mb(0, 0))
+
+    def run_rollup(self, memory, workers=4):
+        """Run a roll-up whose encodes only record what ran side by side."""
+        lock, running, peaks, order = threading.Lock(), {}, [], []
+
+        def fake(root, cam, day, force):
+            with lock:
+                running[cam] = cv.estimate_mb(root, cam, day)
+                order.append(cam)
+                peaks.append((len(running), sum(running.values())))
+            time.sleep(0.05)
+            with lock:
+                del running[cam]
+            return "done", None
+
+        with mock.patch.object(cv, "_encode_one", fake):
+            result = cv.rollup(self.root, [(c, self.day) for c in ["c", "a", "hd1", "b", "hd2"]],
+                               log=lambda m: None, workers=workers, memory=memory)
+        return result, peaks, order
+
+    def test_encodes_fit_the_budget_biggest_first(self):
+        result, peaks, order = self.run_rollup(memory=5000)
+        self.assertEqual(result, (5, 0))
+        self.assertEqual(order[:2], ["hd1", "hd2"])
+        self.assertLessEqual(max(mb for _, mb in peaks), 5000)
+        self.assertLessEqual(max(n for n, _ in peaks), 4)
+
+    def test_an_encode_bigger_than_the_budget_runs_alone(self):
+        result, peaks, _ = self.run_rollup(memory=1000)
+        self.assertEqual(result, (5, 0))
+        self.assertEqual(max(n for n, _ in peaks), 1)
+
+    def test_a_second_rollup_waits_for_the_first(self):
+        said, ran = [], threading.Event()
+        with mock.patch.object(cv, "_encode_one", lambda *a: (ran.set(), ("done", None))[1]):
+            with cv.one_at_a_time(self.root):
+                other = threading.Thread(target=cv.rollup, args=(self.root, [("a", self.day)]),
+                                         kwargs={"log": said.append})
+                other.start()
+                time.sleep(0.2)
+                self.assertFalse(ran.is_set())
+            other.join(5)
+        self.assertTrue(ran.is_set())
+        self.assertIn("another roll-up is running; waiting for it to finish", said)
 
 
 if __name__ == "__main__":
