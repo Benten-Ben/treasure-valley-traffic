@@ -163,7 +163,7 @@ export const BUILDINGS_PAINT: Record<FlavorName, { color: string; opacity: numbe
 };
 
 /**
- * 3D buildings drawn at an estimated height (no height in the data:
+ * 3D buildings drawn at an estimated height (no height in the data, or 0 m:
  * `#lib/map/buildings`): a slightly lighter tone than the measured ones,
  * ΔE 3.3–3.4 (OKLab ×100) in both flavors, so the map still tells measured
  * from guessed. In Valley that's as far as white allows. The opacity is the

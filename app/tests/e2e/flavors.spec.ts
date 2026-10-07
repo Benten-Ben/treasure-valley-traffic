@@ -23,11 +23,11 @@ const paint = (page: Page, layer: string, prop: string) => page.evaluate(([l, p]
 const vis = (page: Page, id: string) => page.evaluate((id) => (globalThis as any).__tvt.map.getLayoutProperty(id, 'visibility') ?? 'visible', id);
 /** The 3D buildings' opacity, measured and estimated (always the same). */
 const buildingOpacities = (page: Page) => Promise.all(['buildings-3d', 'buildings-3d-estimated'].map((l) => paint(page, l, 'fill-extrusion-opacity')));
-/** Whether each 3D building layer draws something in view, and only its own kind (with a height, or without). */
+/** Whether each 3D building layer draws something in view, and only its own kind (a height above 0 m, or not). */
 const drawnBuildings = (page: Page) =>
 	page.evaluate(() => {
 		const map = (globalThis as any).__tvt.map;
-		const kinds = (id: string) => map.queryRenderedFeatures({ layers: [id] }).map((f: any) => f.properties.height !== undefined);
+		const kinds = (id: string) => map.queryRenderedFeatures({ layers: [id] }).map((f: any) => Number(f.properties.height ?? 0) > 0);
 		const measured: boolean[] = kinds('buildings-3d');
 		const estimated: boolean[] = kinds('buildings-3d-estimated');
 		return { measured: measured.length > 0 && measured.every(Boolean), estimated: estimated.length > 0 && !estimated.some(Boolean) };

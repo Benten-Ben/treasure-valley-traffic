@@ -313,9 +313,9 @@ becomes a jump, and nothing bounces.
   - Missing data says "not measured yet" or "not built yet"; it's never
     filled in with a guess.
   - An estimate that is drawn looks like one. A building with no height in
-    the data stands at an estimated height (its floors × 3.2 m, else 4 m) in
-    a lighter tone, so it's never mistaken for a measured one (owner, Oct 7;
-    [ch. 14 §14.5](14-ui-v2.md#145-streets-and-the-base-look)).
+    the data (or 0 m) stands at an estimated height (its floors × 3.2 m,
+    else 4 m) in a lighter tone, so it's never mistaken for a measured one
+    (owner, Oct 7; [ch. 14 §14.5](14-ui-v2.md#145-streets-and-the-base-look)).
   - No made-up grades.
 - **Play without gamification.** No points, achievements or streaks. The
   game influence is about legibility and enjoyment, not engagement tricks.

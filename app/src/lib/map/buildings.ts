@@ -10,14 +10,19 @@ import type { ExpressionSpecification, FilterSpecification } from 'maplibre-gl';
  * like missing blocks; about 12% of the rest are under 3 m, too low to read as
  * buildings. Only the drawing changes:
  *
- * - a building without a `height` stands `num_floors` × FLOOR_HEIGHT_M tall
- *   when it has floors, else DEFAULT_HEIGHT_M, and is drawn in a lighter tone
- *   in a layer of its own (`ESTIMATED_BUILDINGS_PAINT` in `#lib/map/flavors`),
- *   so the map still tells measured from guessed (ch. 13 §13.8: missing data
- *   is never silently filled in);
+ * - a building without a usable `height` (none, 0 m or less, or not a
+ *   number) stands `num_floors` × FLOOR_HEIGHT_M tall when it has floors,
+ *   else DEFAULT_HEIGHT_M, and is drawn in a lighter tone in a layer of its
+ *   own (`ESTIMATED_BUILDINGS_PAINT` in `#lib/map/flavors`), so the map still
+ *   tells measured from guessed (ch. 13 §13.8: missing data is never silently
+ *   filled in);
  * - every building is drawn at least MIN_HEIGHT_M tall;
  * - `min_height` (a part that starts above the ground) is the base, never
  *   above the drawn top.
+ *
+ * Every value goes through `to-number` with 0 as the fallback, so a missing,
+ * null or non-numeric value reads as 0: no feature falls out of both layers,
+ * and none is drawn flat because an expression failed.
  *
  * Roof shapes and lidar-checked heights are to follow (the nDSM surface tiles,
  * docs/17 §17.8).
@@ -32,19 +37,22 @@ export const DEFAULT_HEIGHT_M = 4;
 /** The lowest any building is drawn, in metres, measured or not. */
 export const MIN_HEIGHT_M = 3;
 
-/** The buildings with a measured height (the `buildings-3d` layer). */
-export const MEASURED_FILTER: FilterSpecification = ['has', 'height'];
+/** A property as a number: 0 when it's missing, null or not a number. */
+const num = (key: string): ExpressionSpecification => ['to-number', ['get', key], 0];
 
-/** The buildings drawn at an estimated height, in the lighter tone: no `height` in the data (the `buildings-3d-estimated` layer). */
-export const ESTIMATED_FILTER: FilterSpecification = ['!', ['has', 'height']];
+/** The buildings with a measured height, above 0 m (the `buildings-3d` layer). */
+export const MEASURED_FILTER: FilterSpecification = ['>', num('height'), 0];
 
-/** The height before the floor: measured, else from the floors, else the default. */
+/** The buildings drawn at an estimated height, in the lighter tone: everything else (the `buildings-3d-estimated` layer). */
+export const ESTIMATED_FILTER: FilterSpecification = ['!', MEASURED_FILTER];
+
+/** The height before the floor: measured, else from the floors (above 0), else the default. */
 const HEIGHT: ExpressionSpecification = [
 	'case',
-	['has', 'height'],
-	['get', 'height'],
-	['has', 'num_floors'],
-	['*', ['get', 'num_floors'], FLOOR_HEIGHT_M],
+	['>', num('height'), 0],
+	num('height'),
+	['>', num('num_floors'), 0],
+	['*', num('num_floors'), FLOOR_HEIGHT_M],
 	DEFAULT_HEIGHT_M
 ];
 
@@ -52,4 +60,4 @@ const HEIGHT: ExpressionSpecification = [
 export const BUILDING_HEIGHT: ExpressionSpecification = ['max', MIN_HEIGHT_M, HEIGHT];
 
 /** `fill-extrusion-base`: `min_height` where the data has it (else the ground), never above the drawn top. */
-export const BUILDING_BASE: ExpressionSpecification = ['min', ['coalesce', ['get', 'min_height'], 0], BUILDING_HEIGHT];
+export const BUILDING_BASE: ExpressionSpecification = ['min', num('min_height'), BUILDING_HEIGHT];

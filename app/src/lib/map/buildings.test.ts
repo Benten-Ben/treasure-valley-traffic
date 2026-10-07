@@ -21,7 +21,7 @@ const manifest: BasemapManifest = {
 };
 
 /** A building's properties as the tiles carry them (basemap/buildings.py; a missing value is absent). */
-type Props = { height?: number; num_floors?: number; min_height?: number };
+type Props = { height?: unknown; num_floors?: unknown; min_height?: unknown };
 
 const PAINT_SPEC = (latest as unknown as Record<string, Record<string, Parameters<typeof createPropertyExpression>[2]>>)['paint_fill-extrusion'];
 
@@ -38,13 +38,20 @@ const matches = (filter: FilterSpecification, props: Props) => featureFilter(fil
 const CASES: { why: string; props: Props; height: number; base: number; estimated: boolean }[] = [
 	{ why: 'a measured height, as it is', props: { height: 12.5 }, height: 12.5, base: 0, estimated: false },
 	{ why: 'a measured height under 3 m: the minimum', props: { height: 2.1 }, height: 3, base: 0, estimated: false },
-	{ why: 'a measured 0 m: the minimum, still measured', props: { height: 0 }, height: 3, base: 0, estimated: false },
 	{ why: 'a measured height wins over floors', props: { height: 9, num_floors: 5 }, height: 9, base: 0, estimated: false },
 	{ why: 'no height and no floors: 4 m', props: {}, height: 4, base: 0, estimated: true },
 	{ why: 'no height, 2 floors: 2 × 3.2 m', props: { num_floors: 2 }, height: 6.4, base: 0, estimated: true },
 	{ why: 'no height, 17 floors: 17 × 3.2 m', props: { num_floors: 17 }, height: 54.4, base: 0, estimated: true },
 	{ why: 'no height, 1 floor: 3.2 m, above the minimum', props: { num_floors: 1 }, height: 3.2, base: 0, estimated: true },
-	{ why: 'no height, 0 floors: the minimum', props: { num_floors: 0 }, height: 3, base: 0, estimated: true },
+	{ why: 'no height, 0 floors: as if no floors', props: { num_floors: 0 }, height: 4, base: 0, estimated: true },
+	{ why: 'a height of 0 m is no measurement: estimated', props: { height: 0 }, height: 4, base: 0, estimated: true },
+	{ why: 'a height of 0 m with floors: from the floors', props: { height: 0, num_floors: 3 }, height: 9.6, base: 0, estimated: true },
+	{ why: 'a negative height: estimated', props: { height: -2 }, height: 4, base: 0, estimated: true },
+	{ why: 'a height that is not a number: estimated', props: { height: 'tall' }, height: 4, base: 0, estimated: true },
+	{ why: 'a number written as text is read as one', props: { height: '12' }, height: 12, base: 0, estimated: false },
+	{ why: 'a null height (GeoJSON can carry one): estimated', props: { height: null }, height: 4, base: 0, estimated: true },
+	{ why: 'floors that are not a number: the default', props: { num_floors: 'two' }, height: 4, base: 0, estimated: true },
+	{ why: 'a min_height that is not a number: from the ground', props: { height: 8, min_height: 'x' }, height: 8, base: 0, estimated: false },
 	{ why: 'min_height is the base', props: { height: 5, min_height: 3 }, height: 5, base: 3, estimated: false },
 	{ why: 'a raised part under 3 m keeps its base and gets the minimum top', props: { height: 2.5, min_height: 2.2 }, height: 3, base: 2.2, estimated: false },
 	{ why: 'the base never goes above the drawn top', props: { height: 4, min_height: 6 }, height: 4, base: 4, estimated: false }
@@ -66,9 +73,9 @@ describe('the building height floor (owner, Oct 7)', () => {
 	}
 
 	it('every building is drawn at least 3 m tall', () => {
-		for (const height of [-1, 0, 0.5, 2.99, 3, 3.01])
-			expect(evaluate('fill-extrusion-height', BUILDING_HEIGHT, { height })).toBe(Math.max(MIN_HEIGHT_M, height));
-		for (const num_floors of [0, 0.5, 1]) expect(evaluate('fill-extrusion-height', BUILDING_HEIGHT, { num_floors })).toBeGreaterThanOrEqual(MIN_HEIGHT_M);
+		for (const height of [0.5, 2.99, 3, 3.01]) expect(evaluate('fill-extrusion-height', BUILDING_HEIGHT, { height })).toBe(Math.max(MIN_HEIGHT_M, height));
+		for (const height of [-1, 0, null, '', 'x']) expect(evaluate('fill-extrusion-height', BUILDING_HEIGHT, { height })).toBe(DEFAULT_HEIGHT_M);
+		for (const num_floors of [-1, 0, 0.5, 1, 'x']) expect(evaluate('fill-extrusion-height', BUILDING_HEIGHT, { num_floors })).toBeGreaterThanOrEqual(MIN_HEIGHT_M);
 	});
 });
 
