@@ -33,6 +33,10 @@ import {
 } from './network.js';
 import { busAt, Feed, positionAt, runningAt, sameSet, smoothAngle, trail, type BusAt, type BusState } from './playback.js';
 import { ageText, ARROW, arrowImage, CREAM, CREDIT, fallbackBusLayers, FALLBACK_LAYERS, INK, UNKNOWN_COLOR } from './transit.js';
+import type { Scene, SceneInstance } from '#lib/scene/index.js';
+import { bodyColor, busModel, BUS_LENGTH_M, lodAt, modelFade, modelZoom, placeModel, plateAltitude, type BusModel, type GroundAt, type Lod } from './bus3d.js';
+import { loadPlateFont, plateKey, plateOffset, plateSize, plateSprite, type PlateLook } from './plates.js';
+import { StopPosts, STOP_NAMES, stopNameLayer } from './stops3d.js';
 
 /**
  * The Transit layer (docs/14 §14.4; WP8): side-by-side route ribbons from
@@ -56,13 +60,30 @@ import { ageText, ARROW, arrowImage, CREAM, CREDIT, fallbackBusLayers, FALLBACK_
  *   second).
  * - Space (pause / play) and L (back to live) are registered while the
  *   layer is loaded.
+ * - **3D buses and stops** (WP10, §14.4 "Buses and stops"): from about
+ *   z15 a bus is a model in the 3D scene (lazy: asked for once the map is
+ *   zoomed in near there), crossfading with its disc over 0.3 zoom, with its
+ *   number plate above it in the overlay; from z16 a stop is a sign post
+ *   with a flag per route. Positions are worked out once per rendered frame
+ *   for both layers. If the scene can't start, buses stay discs and stops
+ *   capsules at every zoom.
  */
 
 const BUS_GROUP = 'transit-buses';
 const HEADING_GROUP = 'transit-heading';
 const RING_GROUP = 'transit-selected';
+const PLATE_GROUP = 'transit-plates';
 const HEADING = 'transit-heading';
 const RING = 'transit-ring';
+/** The scene's groups for bus models and stop posts. */
+export const BUS3D_GROUP = 'transit-buses-3d';
+export const STOPS3D_GROUP = 'transit-stops-3d';
+/** Ask for the 3D scene once the map is zoomed in this far (models start about half a zoom later). */
+const SCENE_FROM_ZOOM = 14.5;
+/** Refresh which stop posts the scene gets at most this often while the map moves (ms). */
+const NEAR_MS = 400;
+/** Spotlight: other routes' discs and plates at this opacity. */
+const DIM = 0.3;
 /** Polls every 10 s while visible (§14.4 "Playback"). */
 export const POLL_MS = 10_000;
 /** The first poll's window beyond the delay (s), and the cap (s). */
@@ -144,6 +165,19 @@ interface BusRuntime {
 	solid: string;
 	hollow: string;
 	routeId: string | null;
+	// This frame's playback (worked out once per rendered frame, for the overlay and the scene).
+	state: BusState;
+	/** The playback's own opacity (a gap's fade-jump), 0 when hidden. */
+	shown: number;
+	/** The path heading this frame (unsmoothed), or null. */
+	raw: number | null;
+	speed: number;
+	// WP10: the plate over the model, and the model.
+	plate: OverlayInstance;
+	plates: Record<`${PlateLook}${'' | ':sel'}`, string>;
+	model: BusModel;
+	color: string | null;
+	ghost: string | null;
 }
 
 export class TransitModule implements LayerModule {
@@ -201,20 +235,7 @@ export class TransitModule implements LayerModule {
 		{
 			layerIds: [L.stops],
 			priority: PRIORITY.stop,
-			pick: (f: MapGeoJSONFeature) => {
-				const s = this.network?.stops[Number(f.properties?.sid) - 1];
-				if (!s) return null;
-				return {
-					kind: 'stop',
-					id: s.id,
-					layer: 'transit',
-					title: s.name ?? 'Stop',
-					fact: `${s.routes.length} route${s.routes.length === 1 ? '' : 's'} stop here`,
-					source: CREDIT,
-					at: [s.lon, s.lat],
-					data: s
-				};
-			}
+			pick: (f: MapGeoJSONFeature) => this.stopSelection(Number(f.properties?.sid) - 1)
 		},
 		{
 			// The fallback bus layer, only when the overlay can't start.
@@ -246,9 +267,43 @@ export class TransitModule implements LayerModule {
 	#at: BusAt = busAt();
 	#byId = new globalThis.Map<string, NetworkRoute>();
 	#byRid = new globalThis.Map<number, NetworkRoute>();
+	// WP10: plates, models and posts.
+	#plateList: OverlayInstance[] = [];
+	/** The scene: asked for once zoomed in near z15 (none: not yet; failed: buses stay discs). */
+	#scene: Scene | null = null;
+	#sceneState: 'none' | 'loading' | 'ready' | 'failed' = 'none';
+	#modelList: SceneInstance[] = [];
+	#posts = new StopPosts();
+	#postsOn = false;
+	#modelsOn = false;
+	#nearAt = -Infinity;
+	/** Positions were worked out for the frame being drawn (reset on each `render`). */
+	#advanced = false;
+	#lod: Lod = lodAt(10, 43.6, 0, false);
+	/** Fastest on-screen bus this frame (m/s). */
+	#fastest = 0;
+	/** Bumped when terrain data or settings change: the models' slopes are read again. */
+	#terrainEpoch = 0;
+	#ground: GroundAt | null = null;
 
 	route(id: string | null | undefined): NetworkRoute | undefined {
 		return id ? this.#byId.get(id) : undefined;
+	}
+
+	/** What a click on stop `i` (network order) selects: the capsule's and the post's alike. */
+	stopSelection(i: number): Selection | null {
+		const s = this.network?.stops[i];
+		if (!s) return null;
+		return {
+			kind: 'stop',
+			id: s.id,
+			layer: 'transit',
+			title: s.name ?? 'Stop',
+			fact: `${s.routes.length} route${s.routes.length === 1 ? '' : 's'} stop here`,
+			source: CREDIT,
+			at: [s.lon, s.lat],
+			data: s
+		};
 	}
 
 	/** Buses per route at the playhead (shown, not stale; '?' for buses with no route). */
@@ -329,7 +384,7 @@ export class TransitModule implements LayerModule {
 		const before = (map as unknown as { _missingStyleImageResolver?: MissingStyleImageResolver | null })._missingStyleImageResolver ?? null;
 		map.setMissingStyleImageResolver((id) => (this.#drawImage(map, id) ? undefined : before?.(id)));
 		scope.defer(() => map.setMissingStyleImageResolver(before));
-		addSlotted(map, networkLayers(), def.order, (l, before) => scope.addLayer(l, before));
+		addSlotted(map, [...networkLayers(), stopNameLayer(SOURCES.stops)], def.order, (l, before) => scope.addLayer(l, before));
 		this.#useOverlay = ctx.overlay.ok;
 		if (this.#useOverlay) {
 			const o = ctx.overlay;
@@ -338,9 +393,23 @@ export class TransitModule implements LayerModule {
 			o.set(HEADING_GROUP, [], { z: 9 });
 			o.set(BUS_GROUP, [], { z: 10, priority: PRIORITY.bus });
 			o.set(RING_GROUP, [], { z: 11 });
+			o.set(PLATE_GROUP, [], { z: 12, priority: PRIORITY.bus });
 			scope.defer(() => {
-				for (const g of [HEADING_GROUP, BUS_GROUP, RING_GROUP]) o.remove(g);
+				for (const g of [HEADING_GROUP, BUS_GROUP, RING_GROUP, PLATE_GROUP]) o.remove(g);
 			});
+			loadPlateFont();
+			// WP10: positions are worked out once per frame for the scene and the overlay; zooming decides
+			// what's drawn; terrain changes make the models read their slopes again.
+			scope.on('render', () => void (this.#advanced = false));
+			scope.on('zoom', () => this.#onZoom());
+			scope.on('move', () => this.#onMove(false));
+			scope.on('moveend', () => this.#onMove(true));
+			scope.on('terrain', () => this.#bumpTerrain());
+			scope.on('sourcedata', (e: { sourceId?: string }) => {
+				if (e.sourceId && e.sourceId === map.getTerrain()?.source) this.#bumpTerrain();
+			});
+			this.#bumpTerrain();
+			scope.defer(() => this.#dropScene());
 		} else {
 			scope.addSource(SOURCES.buses, { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
 			scope.addImage(ARROW, arrowImage(), { pixelRatio: 2 });
@@ -378,13 +447,17 @@ export class TransitModule implements LayerModule {
 		if (!map) return;
 		const vis = (v: boolean) => (v ? 'visible' : 'none');
 		for (const id of NETWORK_LAYERS) if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', vis(on && (id !== L.trails || this.trails.value)));
+		if (map.getLayer(STOP_NAMES)) map.setLayoutProperty(STOP_NAMES, 'visibility', vis(on));
 		if (!this.#useOverlay) for (const id of FALLBACK_LAYERS) if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', vis(on));
 		if (on) {
 			this.poller.start();
 			this.#build();
 			this.#second();
-			if (this.#useOverlay) this.#kick();
-			else this.#startFallback();
+			if (this.#useOverlay) {
+				this.#onZoom();
+				this.#onMove(true);
+				this.#kick();
+			} else this.#startFallback();
 		} else {
 			this.poller.stop();
 			clearInterval(this.#fallbackTimer);
@@ -395,7 +468,10 @@ export class TransitModule implements LayerModule {
 				o.set(BUS_GROUP, []);
 				o.set(HEADING_GROUP, []);
 				o.set(RING_GROUP, []);
+				o.set(PLATE_GROUP, []);
 			}
+			this.#showModels(false);
+			this.#showPosts(false);
 			this.#idle = true;
 			if (this.follow?.current?.kind === 'bus') this.follow.stop();
 		}
@@ -587,6 +663,11 @@ export class TransitModule implements LayerModule {
 		// The shields were built with nothing running (at mount).
 		if (was || running.size) (map.getSource(SOURCES.shields) as GeoJSONSource | undefined)?.setData(shieldFeatures(net, running));
 		this.#shownRunning = running;
+		// The posts' flags: route color while running, ghost when not (instance data, no setData).
+		if (this.#sceneState === 'ready') {
+			this.#posts.setRunning(running, this.#byId);
+			if (this.#postsOn) map.triggerRepaint();
+		}
 	}
 
 	/** The trails' line source, at most once a second (§14.4: the one exception to "once per poll"). */
@@ -629,21 +710,58 @@ export class TransitModule implements LayerModule {
 			const hollow = discKey(b, true);
 			if (!o.hasSprite(solid)) o.sprite(discSprite({ key: solid, text: b.text, color: b.color, textColor: b.textColor, halo: b.halo }));
 			if (!o.hasSprite(hollow)) o.sprite(discSprite({ key: hollow, text: b.text, color: b.color, textColor: b.textColor, hollow: true, halo: false }));
+			const plates = this.#plateSprites(b);
 			const old = this.#runtime.get(vid);
 			const pos: [number, number] = old?.pos ?? [0, 0];
-			const bus: OverlayInstance = { id: vid, lng: pos[0], lat: pos[1], sprite: solid, opacity: 0, pick: this.busSelection(vid), radius: 14 };
+			const pick = this.busSelection(vid);
+			const bus: OverlayInstance = { id: vid, lng: pos[0], lat: pos[1], sprite: solid, opacity: 0, pick, radius: 14 };
 			const head: OverlayInstance = { id: vid, lng: pos[0], lat: pos[1], sprite: HEADING, rotate: old?.heading ?? 0, rotateWithMap: true, opacity: 0 };
-			runtime.set(vid, { bus, head, heading: old?.heading ?? null, turnedAt: old?.turnedAt ?? performance.now(), pos, solid, hollow, routeId: v?.routeId ?? null });
+			const plate: OverlayInstance = { id: vid, lng: pos[0], lat: pos[1], sprite: plates.solid, opacity: 0, pick, radius: plateSize(b.text).width / 2 - 4 };
+			const r = this.route(v?.routeId);
+			runtime.set(vid, {
+				bus,
+				head,
+				heading: old?.heading ?? null,
+				turnedAt: old?.turnedAt ?? performance.now(),
+				pos,
+				solid,
+				hollow,
+				routeId: v?.routeId ?? null,
+				state: old?.state ?? 'hidden',
+				shown: old?.shown ?? 0,
+				raw: old?.raw ?? null,
+				speed: old?.speed ?? 0,
+				plate,
+				plates,
+				model: busModel(vid, pick, old?.model),
+				color: r?.color ?? v?.color ?? null,
+				ghost: r?.ghost ?? null
+			});
 			buses.push(bus);
 			heads.push(head);
 		}
 		this.#runtime = runtime;
 		this.#busList = buses;
 		this.#headList = heads;
+		this.#plateList = [];
 		o.set(BUS_GROUP, buses);
 		o.set(HEADING_GROUP, heads);
+		o.set(PLATE_GROUP, this.#plateList);
 		this.#updateRing();
 		this.#kick();
+	}
+
+	/** A bus's plate sprites (solid and hollow, plain and selected), registered once per badge. */
+	#plateSprites(b: Badge): BusRuntime['plates'] {
+		const o = this.#ctx!.overlay;
+		const out = {} as BusRuntime['plates'];
+		for (const look of ['solid', 'hollow'] as const)
+			for (const sel of [false, true]) {
+				const key = plateKey(b, look, sel);
+				if (!o.hasSprite(key)) o.sprite(plateSprite({ key, text: b.text, color: b.color, textColor: b.textColor, halo: b.halo, look, selected: sel }));
+				out[`${look}${sel ? ':sel' : ''}`] = key;
+			}
+		return out;
 	}
 
 	/** Ask for frames again (the frame function then decides how many). */
@@ -654,49 +772,221 @@ export class TransitModule implements LayerModule {
 	}
 
 	/**
-	 * Per rendered frame: every bus at the playhead (no setData, no Svelte
-	 * state). Returns the fastest on-screen speed (m/s), so the loop gives
-	 * about half a pixel per frame, or false when nothing on screen moves.
+	 * Once per rendered frame, for the scene's update and the overlay's
+	 * (whichever runs first; reset on `render`): every bus at the playhead,
+	 * the frame's level of detail and the fastest on-screen speed. No
+	 * setData, no Svelte state. False when there's nothing to draw.
 	 */
-	#frame = (): number | false => {
+	#advance(): boolean {
+		if (this.#advanced) return true;
 		const clock = this.clock;
 		const map = this.#scope?.map;
 		if (!clock || !map || !this.#visible) return false;
+		this.#advanced = true;
 		const T = clock.playhead();
 		const now = performance.now();
+		const zoom = map.getZoom();
+		const centre = map.getCenter();
+		this.#lod = lodAt(zoom, centre.lat, map.getPitch(), this.#modelsOn);
 		const b = map.getBounds();
 		const [w, s, e, n] = [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()];
-		const spot = this.spot;
 		const at = this.#at;
 		let fastest = 0;
 		for (const [vid, rt] of this.#runtime) {
 			const track = this.feed.tracks.get(vid);
-			if (!track) continue;
+			if (!track) {
+				rt.state = 'hidden';
+				rt.shown = 0;
+				continue;
+			}
 			positionAt(track, T, at);
-			const dim = spot !== null && rt.routeId !== spot ? 0.3 : 1;
 			const shown = at.state !== 'hidden';
 			rt.pos[0] = at.lon;
 			rt.pos[1] = at.lat;
-			rt.bus.lng = rt.head.lng = at.lon;
-			rt.bus.lat = rt.head.lat = at.lat;
-			rt.bus.sprite = at.state === 'stale' ? rt.hollow : rt.solid;
-			rt.bus.opacity = shown ? at.opacity * dim : 0;
+			rt.state = at.state;
+			rt.shown = shown ? at.opacity : 0;
+			rt.raw = at.heading;
+			rt.speed = at.speed;
 			rt.heading = smoothAngle(rt.heading, at.heading, now - rt.turnedAt);
 			rt.turnedAt = now;
-			rt.head.rotate = rt.heading ?? 0;
-			rt.head.opacity = shown && rt.heading !== null ? (at.state === 'stale' ? 0.35 : 1) * at.opacity * dim : 0;
 			if (at.speed > 0 && shown && at.lon >= w && at.lon <= e && at.lat >= s && at.lat <= n) fastest = Math.max(fastest, at.speed);
+		}
+		this.#fastest = fastest;
+		this.#idle = fastest === 0;
+		return true;
+	}
+
+	/**
+	 * The overlay's update, per rendered frame: discs and heading arrows
+	 * (fading out as models fade in), the selection ring, and the plates over
+	 * the models. Returns the fastest on-screen speed (m/s), so the loop gives
+	 * about half a pixel per frame, or false when nothing on screen moves.
+	 */
+	#frame = (): number | false => {
+		if (!this.#advance()) return false;
+		const lod = this.#lod;
+		const spot = this.spot;
+		const heads = this.#headList;
+		const plates = this.#plateList;
+		heads.length = 0;
+		plates.length = 0;
+		const offset = plateOffset(lod.clearance);
+		for (const [vid, rt] of this.#runtime) {
+			const dim = spot !== null && rt.routeId !== spot ? DIM : 1;
+			const stale = rt.state === 'stale';
+			rt.bus.lng = rt.head.lng = rt.pos[0];
+			rt.bus.lat = rt.head.lat = rt.pos[1];
+			rt.bus.sprite = stale ? rt.hollow : rt.solid;
+			rt.bus.opacity = rt.shown * dim * lod.disc;
+			if (lod.disc > 0) {
+				rt.head.rotate = rt.heading ?? 0;
+				rt.head.opacity = rt.shown && rt.heading !== null ? (stale ? 0.35 : 1) * rt.shown * dim * lod.disc : 0;
+				heads.push(rt.head);
+			}
+			if (lod.fade > 0 && rt.shown > 0) {
+				const sel = vid === this.#selectedBus;
+				const p = rt.plate;
+				p.lng = rt.pos[0];
+				p.lat = rt.pos[1];
+				p.sprite = rt.plates[`${stale ? 'hollow' : 'solid'}${sel ? ':sel' : ''}`];
+				p.opacity = rt.shown * dim * lod.fade;
+				p.altitude = plateAltitude(lod, sel);
+				p.offset = offset;
+				plates.push(p);
+			}
 		}
 		for (const r of this.#ring) {
 			const rt = this.#runtime.get(r.id);
 			if (!rt) continue;
 			r.lng = rt.pos[0];
 			r.lat = rt.pos[1];
-			r.opacity = (rt.bus.opacity ?? 0) > 0 ? 1 : 0;
+			r.opacity = (rt.bus.opacity ?? 0) > 0 ? lod.disc : 0;
 		}
-		this.#idle = fastest === 0;
-		return fastest > 0 ? fastest : false;
+		return this.#fastest > 0 ? this.#fastest : false;
 	};
+
+	/**
+	 * The scene's update for the bus models, per rendered frame: the shown
+	 * buses' models (in place), on the drawn ground, turned to their path and
+	 * pitched with its slope. Returns the fastest on-screen speed, like the
+	 * overlay's (both ask the loop for the same rate).
+	 */
+	#frame3d = (_now: number, list: SceneInstance[]): number | false => {
+		list.length = 0;
+		if (!this.#advance()) return false;
+		const lod = this.#lod;
+		if (lod.fade <= 0) return false;
+		const map = this.#scope!.map;
+		const spot = this.spot;
+		const now = performance.now();
+		const ground = map.getTerrain() ? this.#ground : null;
+		for (const [, rt] of this.#runtime) {
+			const opacity = rt.shown * lod.fade;
+			if (opacity <= 0) continue;
+			const color = bodyColor({ routeId: rt.routeId, color: rt.color, ghost: rt.ghost, stale: rt.state === 'stale', dimmed: spot !== null && rt.routeId !== spot });
+			list.push(
+				placeModel(rt.model, { lng: rt.pos[0], lat: rt.pos[1], heading: rt.raw ?? rt.heading, color, opacity, scale: lod.scale, now, epoch: this.#terrainEpoch, ground })
+			);
+		}
+		return this.#fastest > 0 ? this.#fastest : false;
+	};
+
+	// --- the 3D scene (WP10) ----------------------------------------------------------------------------
+
+	#bumpTerrain() {
+		this.#terrainEpoch++;
+		const map = this.#scope?.map;
+		this.#ground = map ? (p) => map.queryTerrainElevation(p) : null;
+	}
+
+	/** Zooming: ask for the scene near z15, and show models and posts by zoom. */
+	#onZoom() {
+		const map = this.#scope?.map;
+		if (!map || !this.#visible || !this.#useOverlay) return;
+		const zoom = map.getZoom();
+		if (this.#sceneState === 'none' && zoom >= SCENE_FROM_ZOOM) this.#wantScene();
+		if (this.#sceneState !== 'ready') return;
+		const lat = map.getCenter().lat;
+		this.#showModels(modelFade(zoom, lat) > 0);
+		const posts = this.#posts.setZoom(zoom, lat);
+		if (posts && !this.#postsOn) this.#posts.setNear(map.getBounds());
+		this.#showPosts(posts);
+	}
+
+	/** Moving: refresh which stop posts the scene gets (now and then while moving, and at the end). */
+	#onMove(end: boolean) {
+		const map = this.#scope?.map;
+		if (!map || !this.#postsOn) return;
+		const now = performance.now();
+		if (!end && now - this.#nearAt < NEAR_MS) return;
+		this.#nearAt = now;
+		this.#posts.setNear(map.getBounds());
+		if (end) map.triggerRepaint();
+	}
+
+	#showModels(on: boolean) {
+		const scene = this.#scene;
+		const want = on && this.#visible && this.#sceneState === 'ready';
+		if (!scene || want === this.#modelsOn) return;
+		this.#modelsOn = want;
+		scene.show(BUS3D_GROUP, want);
+		if (want) this.#kick();
+	}
+
+	#showPosts(on: boolean) {
+		const scene = this.#scene;
+		const want = on && this.#visible && this.#sceneState === 'ready';
+		if (!scene || want === this.#postsOn) return;
+		this.#postsOn = want;
+		scene.show(STOPS3D_GROUP, want);
+	}
+
+	/** Load the scene (never before the map's first idle: app.scene() waits for it). */
+	#wantScene() {
+		const ctx = this.#ctx;
+		if (!ctx || this.#sceneState !== 'none') return;
+		this.#sceneState = 'loading';
+		ctx.scene().then(
+			(scene) => this.#sceneReady(scene),
+			(e) => {
+				if (this.#destroyed) return;
+				// Buses simply stay discs, and stops capsules, at every zoom.
+				this.#sceneState = 'failed';
+				console.warn(`Transit: 3D buses and stops are off: ${e instanceof Error ? e.message : e}`);
+			}
+		);
+	}
+
+	#sceneReady(scene: Scene) {
+		const map = this.#scope?.map;
+		const net = this.network;
+		if (this.#destroyed || !map || !net) return;
+		if (!scene.ok) {
+			this.#sceneState = 'failed';
+			return;
+		}
+		this.#scene = scene;
+		this.#sceneState = 'ready';
+		this.#posts.build(net.stops, (i) => this.stopSelection(i));
+		this.#posts.setRunning(this.running, this.#byId);
+		scene.set(BUS3D_GROUP, this.#modelList, { priority: PRIORITY.bus });
+		scene.set(STOPS3D_GROUP, this.#posts.near, { priority: PRIORITY.stop });
+		scene.show(BUS3D_GROUP, false);
+		scene.show(STOPS3D_GROUP, false);
+		scene.update(BUS3D_GROUP, this.#frame3d);
+		this.#onZoom();
+	}
+
+	/** Take our groups out of the scene (the layer is going away). */
+	#dropScene() {
+		const scene = this.#scene;
+		this.#scene = null;
+		if (this.#sceneState === 'ready') this.#sceneState = 'none';
+		this.#modelsOn = this.#postsOn = false;
+		if (!scene) return;
+		scene.remove(BUS3D_GROUP);
+		scene.remove(STOPS3D_GROUP);
+	}
 
 	// --- the fallback symbol layer ----------------------------------------------------------------------
 
@@ -783,14 +1073,69 @@ export class TransitModule implements LayerModule {
 					state: self.buses[id]?.state ?? null,
 					opacity: rt.bus.opacity,
 					x: drawn.get(id)?.x ?? null,
-					y: drawn.get(id)?.y ?? null
+					y: drawn.get(id)?.y ?? null,
+					// WP10: speed (m/s) and the path heading this frame, the model's look, the plate's opacity.
+					speed: rt.speed,
+					kind: self.buses[id]?.kind ?? null,
+					raw: rt.raw,
+					model: self.#modelsOn && self.#modelList.includes(rt.model.inst) ? (rt.model.inst.opacity ?? 0) : 0,
+					heading3d: rt.model.heading,
+					pitch3d: rt.model.inst.pitch ?? 0,
+					color3d: rt.model.inst.color ?? null,
+					plate: self.#plateList.includes(rt.plate) ? (rt.plate.opacity ?? 0) : 0,
+					plateSprite: rt.plate.sprite,
+					disc: rt.bus.sprite
 				}));
 			},
 			running: () => [...self.running].sort(),
 			playhead: () => self.clock?.playhead() ?? null,
 			/** Whether the buses are asking the render loop for frames. */
 			animating: () => self.#visible && self.#useOverlay && !self.#idle,
-			overlay: () => self.#useOverlay
+			overlay: () => self.#useOverlay,
+			// WP10 ------------------------------------------------------------------------------------
+			/** The 3D scene: none (not asked for yet), loading, ready or failed. */
+			scene: () => self.#sceneState,
+			/** This frame's level of detail. */
+			lod: () => ({ ...self.#lod, modelZoom: modelZoom(self.#scope?.map.getCenter().lat ?? 43.6), models: self.#modelsOn, posts: self.#postsOn }),
+			/** The scene's own numbers (draw calls, instances, JS ms per frame and its p95), or null. */
+			sceneStats: () => self.#scene?.stats() ?? null,
+			/** Where each pickable 3D thing was drawn last frame. */
+			placed: () => self.#scene?.placed() ?? [],
+			/** Where each plate was drawn last frame (its anchor, CSS px) and its sprite. */
+			plates: () => {
+				const at = new globalThis.Map(self.#ctx?.overlay.positions(PLATE_GROUP).map((p) => [p.id, p]) ?? []);
+				return self.#plateList.map((p) => ({
+					id: p.id,
+					sprite: p.sprite,
+					opacity: p.opacity ?? 0,
+					offset: p.offset ?? [0, 0],
+					altitude: p.altitude ?? 0,
+					x: at.get(p.id)?.x ?? null,
+					y: at.get(p.id)?.y ?? null
+				}));
+			},
+			/** The stop posts handed to the scene now: how many, their scale and fade. */
+			posts: () => ({ shown: self.#postsOn, near: self.#posts.near.length, all: self.#posts.all.length, scale: self.#posts.near[0]?.scale ?? null, opacity: self.#posts.near[0]?.opacity ?? null }),
+			/**
+			 * Each model's length on screen (px), measured on the GPU: the scene's
+			 * probe projects the model's nose and tail (±6.1 m along it) with the
+			 * mesh shader's own placement. Pause playback first, so nothing moves
+			 * between the two probes.
+			 */
+			async modelLengths() {
+				const scene = self.#scene;
+				if (!scene) return [];
+				const half = BUS_LENGTH_M / 2;
+				const nose = await scene.probe('bus', [0, half, 0]);
+				const tail = await scene.probe('bus', [0, -half, 0]);
+				const back = new globalThis.Map(tail.map((r) => [r.id, r]));
+				return nose
+					.filter((r) => back.has(r.id))
+					.map((r) => {
+						const t = back.get(r.id)!;
+						return { id: r.id, length: Math.hypot(r.x - t.x, r.y - t.y), x: (r.x + t.x) / 2, y: (r.y + t.y) / 2 };
+					});
+			}
 		});
 		Object.defineProperty(globalThis, '__tvtTransit', { value: handle, configurable: true, enumerable: false, writable: false });
 		this.#debug = handle;
