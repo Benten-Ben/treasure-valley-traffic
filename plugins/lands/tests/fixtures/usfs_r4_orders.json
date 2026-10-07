@@ -1,0 +1,1145 @@
+{
+ "_note": "Trimmed real sample of the USFS Intermountain Region's R04_Forest_Orders_PUBLIC_VIEW layer 0 (US federal work, public domain), fetched Oct 7, 2026: 4 of the 7 polygons in the ring (3 orders), attributes as published, every ring thinned to at most 16 vertices; the layer metadata cut to what the source reads.",
+ "layer": {
+  "name": "ForestOrder",
+  "type": "Feature Layer",
+  "geometryType": "esriGeometryPolygon",
+  "objectIdField": "objectid",
+  "globalIdField": "GlobalID",
+  "maxRecordCount": 2000,
+  "capabilities": "Query",
+  "isView": true,
+  "editingInfo": {
+   "lastEditDate": 1791008460862,
+   "schemaLastEditDate": 1779403139812,
+   "dataLastEditDate": 1791008460862
+  },
+  "fields": [
+   {
+    "name": "objectid",
+    "type": "esriFieldTypeOID"
+   },
+   {
+    "name": "forestname",
+    "type": "esriFieldTypeString"
+   },
+   {
+    "name": "unitid",
+    "type": "esriFieldTypeString"
+   },
+   {
+    "name": "ordername",
+    "type": "esriFieldTypeString"
+   },
+   {
+    "name": "ordernum",
+    "type": "esriFieldTypeString"
+   },
+   {
+    "name": "ordertype",
+    "type": "esriFieldTypeString"
+   },
+   {
+    "name": "description",
+    "type": "esriFieldTypeString"
+   },
+   {
+    "name": "exemption",
+    "type": "esriFieldTypeString"
+   },
+   {
+    "name": "cfr",
+    "type": "esriFieldTypeString"
+   },
+   {
+    "name": "temporaltype",
+    "type": "esriFieldTypeString"
+   },
+   {
+    "name": "signeddate",
+    "type": "esriFieldTypeDate"
+   },
+   {
+    "name": "startdate",
+    "type": "esriFieldTypeDate"
+   },
+   {
+    "name": "enddate",
+    "type": "esriFieldTypeDate"
+   },
+   {
+    "name": "rescinddate",
+    "type": "esriFieldTypeDate"
+   },
+   {
+    "name": "approvaltype",
+    "type": "esriFieldTypeString"
+   },
+   {
+    "name": "hyperlink",
+    "type": "esriFieldTypeString"
+   },
+   {
+    "name": "acres",
+    "type": "esriFieldTypeInteger"
+   },
+   {
+    "name": "rev_date",
+    "type": "esriFieldTypeDate"
+   },
+   {
+    "name": "data_source",
+    "type": "esriFieldTypeString"
+   },
+   {
+    "name": "accuracy",
+    "type": "esriFieldTypeDouble"
+   },
+   {
+    "name": "forest_order",
+    "type": "esriFieldTypeString"
+   },
+   {
+    "name": "crc",
+    "type": "esriFieldTypeString"
+   },
+   {
+    "name": "pub_date",
+    "type": "esriFieldTypeDate"
+   },
+   {
+    "name": "forest",
+    "type": "esriFieldTypeString"
+   },
+   {
+    "name": "statement",
+    "type": "esriFieldTypeString"
+   },
+   {
+    "name": "Shape__Area",
+    "type": "esriFieldTypeDouble"
+   },
+   {
+    "name": "Shape__Length",
+    "type": "esriFieldTypeDouble"
+   }
+  ]
+ },
+ "objectIdFieldName": "objectid",
+ "features": [
+  {
+   "attributes": {
+    "objectid": 26867,
+    "forestname": "Boise National Forest",
+    "unitid": "0402",
+    "ordername": "Designated Camping Order",
+    "ordernum": "0402-05-101",
+    "ordertype": "Recreation Restriction",
+    "description": "The purpose of this Order is to protect undeveloped campsites from overuse and to let \r\nhighly impacted areas to recover. ",
+    "exemption": "See closure order",
+    "cfr": "See closure order",
+    "temporaltype": "Temporary",
+    "signeddate": 1749556800000,
+    "startdate": 1749729600000,
+    "enddate": 1907496000000,
+    "rescinddate": null,
+    "approvaltype": "Forest Supervisor",
+    "hyperlink": "https://www.fs.usda.gov/r04/boise/alerts/lowman-ranger-district-dispersed-camping-area-closure",
+    "acres": 9120,
+    "rev_date": 1749686400000,
+    "data_source": "20 - Digitized Other",
+    "accuracy": null,
+    "forest_order": "Restriction/Prohibition Order",
+    "crc": "EC9AF54E",
+    "pub_date": 1765220010000,
+    "forest": "BOF",
+    "statement": "This Temporary Recreation Restriction became effective on 06/12/2025 and will remain in effect until 06/12/2030.",
+    "Shape__Area": 36908530.784137726,
+    "Shape__Length": 116081.86731572186
+   },
+   "geometry": {
+    "rings": [
+     [
+      [
+       -115.218912,
+       44.176156
+      ],
+      [
+       -115.195683,
+       44.168481
+      ],
+      [
+       -115.179265,
+       44.160559
+      ],
+      [
+       -115.198659,
+       44.161441
+      ],
+      [
+       -115.223846,
+       44.16901
+      ],
+      [
+       -115.253738,
+       44.166664
+      ],
+      [
+       -115.287278,
+       44.152091
+      ],
+      [
+       -115.310784,
+       44.132961
+      ],
+      [
+       -115.346882,
+       44.119496
+      ],
+      [
+       -115.407825,
+       44.114166
+      ],
+      [
+       -115.38066,
+       44.122877
+      ],
+      [
+       -115.330068,
+       44.136004
+      ],
+      [
+       -115.303862,
+       44.151369
+      ],
+      [
+       -115.274169,
+       44.169641
+      ],
+      [
+       -115.240412,
+       44.175508
+      ],
+      [
+       -115.218912,
+       44.176156
+      ]
+     ],
+     [
+      [
+       -115.418754,
+       44.120615
+      ],
+      [
+       -115.420707,
+       44.120595
+      ],
+      [
+       -115.420464,
+       44.120657
+      ],
+      [
+       -115.418752,
+       44.121128
+      ],
+      [
+       -115.418754,
+       44.120615
+      ]
+     ],
+     [
+      [
+       -115.584083,
+       44.138316
+      ],
+      [
+       -115.575248,
+       44.130826
+      ],
+      [
+       -115.577841,
+       44.12372
+      ],
+      [
+       -115.580405,
+       44.113603
+      ],
+      [
+       -115.590006,
+       44.108108
+      ],
+      [
+       -115.595586,
+       44.102928
+      ],
+      [
+       -115.599661,
+       44.096101
+      ],
+      [
+       -115.605317,
+       44.089154
+      ],
+      [
+       -115.61596,
+       44.09209
+      ],
+      [
+       -115.610791,
+       44.097465
+      ],
+      [
+       -115.608939,
+       44.104398
+      ],
+      [
+       -115.600298,
+       44.110875
+      ],
+      [
+       -115.594023,
+       44.11722
+      ],
+      [
+       -115.58948,
+       44.12301
+      ],
+      [
+       -115.585557,
+       44.13053
+      ],
+      [
+       -115.584083,
+       44.138316
+      ]
+     ],
+     [
+      [
+       -115.433982,
+       44.116925
+      ],
+      [
+       -115.460526,
+       44.095609
+      ],
+      [
+       -115.487078,
+       44.081407
+      ],
+      [
+       -115.516856,
+       44.066822
+      ],
+      [
+       -115.533391,
+       44.068159
+      ],
+      [
+       -115.552462,
+       44.069012
+      ],
+      [
+       -115.569629,
+       44.06776
+      ],
+      [
+       -115.587825,
+       44.068764
+      ],
+      [
+       -115.612314,
+       44.079588
+      ],
+      [
+       -115.583689,
+       44.076055
+      ],
+      [
+       -115.566781,
+       44.077063
+      ],
+      [
+       -115.547637,
+       44.076475
+      ],
+      [
+       -115.524183,
+       44.075067
+      ],
+      [
+       -115.494778,
+       44.089135
+      ],
+      [
+       -115.465433,
+       44.104458
+      ],
+      [
+       -115.433982,
+       44.116925
+      ]
+     ],
+     [
+      [
+       -115.530481,
+       44.071631
+      ],
+      [
+       -115.535457,
+       44.071195
+      ],
+      [
+       -115.537313,
+       44.070817
+      ],
+      [
+       -115.535837,
+       44.069739
+      ],
+      [
+       -115.535009,
+       44.069675
+      ],
+      [
+       -115.532153,
+       44.069923
+      ],
+      [
+       -115.528668,
+       44.070788
+      ],
+      [
+       -115.525477,
+       44.069918
+      ],
+      [
+       -115.52468,
+       44.069487
+      ],
+      [
+       -115.525209,
+       44.070557
+      ],
+      [
+       -115.528676,
+       44.071913
+      ],
+      [
+       -115.530481,
+       44.071631
+      ]
+     ],
+     [
+      [
+       -115.55047,
+       44.074563
+      ],
+      [
+       -115.555746,
+       44.077432
+      ],
+      [
+       -115.561397,
+       44.076948
+      ],
+      [
+       -115.558776,
+       44.074905
+      ],
+      [
+       -115.557189,
+       44.074586
+      ],
+      [
+       -115.554439,
+       44.074961
+      ],
+      [
+       -115.553866,
+       44.075052
+      ],
+      [
+       -115.553054,
+       44.074785
+      ],
+      [
+       -115.552188,
+       44.07408
+      ],
+      [
+       -115.551828,
+       44.072933
+      ],
+      [
+       -115.548735,
+       44.071501
+      ],
+      [
+       -115.547387,
+       44.072602
+      ],
+      [
+       -115.547882,
+       44.074474
+      ],
+      [
+       -115.55047,
+       44.074563
+      ]
+     ],
+     [
+      [
+       -115.493322,
+       44.079201
+      ],
+      [
+       -115.490363,
+       44.078827
+      ],
+      [
+       -115.491291,
+       44.080669
+      ],
+      [
+       -115.491921,
+       44.083115
+      ],
+      [
+       -115.492361,
+       44.084341
+      ],
+      [
+       -115.49254,
+       44.084805
+      ],
+      [
+       -115.489959,
+       44.085488
+      ],
+      [
+       -115.486267,
+       44.087078
+      ],
+      [
+       -115.483767,
+       44.087855
+      ],
+      [
+       -115.48948,
+       44.08784
+      ],
+      [
+       -115.4935,
+       44.086125
+      ],
+      [
+       -115.496248,
+       44.083753
+      ],
+      [
+       -115.493436,
+       44.079378
+      ],
+      [
+       -115.493322,
+       44.079201
+      ]
+     ]
+    ]
+   }
+  },
+  {
+   "attributes": {
+    "objectid": 26924,
+    "forestname": "Boise National Forest",
+    "unitid": "0402",
+    "ordername": "Grimes Creek Closure",
+    "ordernum": "0402-03-134",
+    "ordertype": "Safety Closure",
+    "description": "The purpose of this Order is to protect public safety and natural resources.",
+    "exemption": "See closure order",
+    "cfr": "See closure order",
+    "temporaltype": "Temporary",
+    "signeddate": 1774440000000,
+    "startdate": 1774526400000,
+    "enddate": 1806062400000,
+    "rescinddate": null,
+    "approvaltype": "Forest Supervisor",
+    "hyperlink": "https://www.fs.usda.gov/sites/nfs/files/r04/boise/publication/alerts/20260326%20Grimes%20Creek%20ORDER.pdf",
+    "acres": 213,
+    "rev_date": null,
+    "data_source": "20 - Digitized Other",
+    "accuracy": null,
+    "forest_order": "Closure Order",
+    "crc": "378D6758",
+    "pub_date": 1774890707000,
+    "forest": "BOF",
+    "statement": "This Temporary Safety Closure became effective on 03/26/2026 and will remain in effect until 03/26/2027.",
+    "Shape__Area": 860081.7180023193,
+    "Shape__Length": 10135.41059182298
+   },
+   "geometry": {
+    "rings": [
+     [
+      [
+       -115.979373,
+       43.766316
+      ],
+      [
+       -115.973966,
+       43.755648
+      ],
+      [
+       -115.969049,
+       43.749257
+      ],
+      [
+       -115.966304,
+       43.746541
+      ],
+      [
+       -115.963397,
+       43.743066
+      ],
+      [
+       -115.959841,
+       43.742083
+      ],
+      [
+       -115.96456,
+       43.7413
+      ],
+      [
+       -115.966628,
+       43.743841
+      ],
+      [
+       -115.969724,
+       43.746137
+      ],
+      [
+       -115.971384,
+       43.748743
+      ],
+      [
+       -115.97477,
+       43.751198
+      ],
+      [
+       -115.983801,
+       43.751195
+      ],
+      [
+       -115.986335,
+       43.749568
+      ],
+      [
+       -115.986171,
+       43.753507
+      ],
+      [
+       -115.977019,
+       43.756296
+      ],
+      [
+       -115.979373,
+       43.766316
+      ]
+     ]
+    ]
+   }
+  },
+  {
+   "attributes": {
+    "objectid": 27155,
+    "forestname": "Boise National Forest",
+    "unitid": "0402",
+    "ordername": "Deer Point Area, Road, and Trail Closure",
+    "ordernum": "0402-01-122",
+    "ordertype": "Safety Closure",
+    "description": "The purpose of this order is to protect public safety during timber harvest operations.",
+    "exemption": "See closure order",
+    "cfr": "See closure order",
+    "temporaltype": "Temporary",
+    "signeddate": 1786622400000,
+    "startdate": 1786968000000,
+    "enddate": 1796040000000,
+    "rescinddate": null,
+    "approvaltype": "Forest Supervisor",
+    "hyperlink": "https://www.fs.usda.gov/r04/boise/alerts/deer-point-road-trail-and-area-closure-aug-17-nov-30-2026",
+    "acres": 361,
+    "rev_date": null,
+    "data_source": "20 - Digitized Other",
+    "accuracy": null,
+    "forest_order": "Closure Order",
+    "crc": "D99AE52E",
+    "pub_date": 1786929509000,
+    "forest": "BOF",
+    "statement": "This Temporary Safety Closure became effective on 08/17/2026 and will remain in effect until 11/30/2026.",
+    "Shape__Area": 1462172.3722801208,
+    "Shape__Length": 6528.811152089198
+   },
+   "geometry": {
+    "rings": [
+     [
+      [
+       -116.1345,
+       43.745055
+      ],
+      [
+       -116.141556,
+       43.745685
+      ],
+      [
+       -116.141803,
+       43.746562
+      ],
+      [
+       -116.142435,
+       43.747024
+      ],
+      [
+       -116.144268,
+       43.747752
+      ],
+      [
+       -116.145715,
+       43.748022
+      ],
+      [
+       -116.14749,
+       43.748262
+      ],
+      [
+       -116.149051,
+       43.747802
+      ],
+      [
+       -116.150138,
+       43.747249
+      ],
+      [
+       -116.151653,
+       43.748895
+      ],
+      [
+       -116.147762,
+       43.751636
+      ],
+      [
+       -116.143483,
+       43.753276
+      ],
+      [
+       -116.137837,
+       43.758636
+      ],
+      [
+       -116.134546,
+       43.754857
+      ],
+      [
+       -116.130255,
+       43.753105
+      ],
+      [
+       -116.1345,
+       43.745055
+      ]
+     ]
+    ]
+   }
+  },
+  {
+   "attributes": {
+    "objectid": 27156,
+    "forestname": "Boise National Forest",
+    "unitid": "0402",
+    "ordername": "Deer Point Area, Road, and Trail Closure",
+    "ordernum": "0402-01-122",
+    "ordertype": "Safety Closure",
+    "description": "The purpose of this order is to protect public safety during timber harvest operations.",
+    "exemption": "See closure order",
+    "cfr": "See closure order",
+    "temporaltype": "Temporary",
+    "signeddate": 1786622400000,
+    "startdate": 1786968000000,
+    "enddate": 1796040000000,
+    "rescinddate": null,
+    "approvaltype": "Forest Supervisor",
+    "hyperlink": "https://www.fs.usda.gov/r04/boise/alerts/deer-point-road-trail-and-area-closure-aug-17-nov-30-2026",
+    "acres": 201,
+    "rev_date": null,
+    "data_source": "20 - Digitized Other",
+    "accuracy": null,
+    "forest_order": "Closure Order",
+    "crc": "40955823",
+    "pub_date": 1786929509000,
+    "forest": "BOF",
+    "statement": "This Temporary Safety Closure became effective on 08/17/2026 and will remain in effect until 11/30/2026.",
+    "Shape__Area": 811712.4609336853,
+    "Shape__Length": 24432.593725911636
+   },
+   "geometry": {
+    "rings": [
+     [
+      [
+       -116.139653,
+       43.745242
+      ],
+      [
+       -116.140782,
+       43.745149
+      ],
+      [
+       -116.140763,
+       43.74545
+      ],
+      [
+       -116.140553,
+       43.745512
+      ],
+      [
+       -116.140469,
+       43.745531
+      ],
+      [
+       -116.140367,
+       43.745543
+      ],
+      [
+       -116.140274,
+       43.745552
+      ],
+      [
+       -116.140171,
+       43.745549
+      ],
+      [
+       -116.140102,
+       43.745541
+      ],
+      [
+       -116.139996,
+       43.745517
+      ],
+      [
+       -116.139951,
+       43.745501
+      ],
+      [
+       -116.139881,
+       43.745469
+      ],
+      [
+       -116.139818,
+       43.745431
+      ],
+      [
+       -116.139768,
+       43.745389
+      ],
+      [
+       -116.139692,
+       43.745307
+      ],
+      [
+       -116.139653,
+       43.745242
+      ]
+     ],
+     [
+      [
+       -116.124546,
+       43.759675
+      ],
+      [
+       -116.127542,
+       43.755651
+      ],
+      [
+       -116.127801,
+       43.751423
+      ],
+      [
+       -116.134277,
+       43.749341
+      ],
+      [
+       -116.138795,
+       43.748014
+      ],
+      [
+       -116.14733,
+       43.748726
+      ],
+      [
+       -116.144771,
+       43.747563
+      ],
+      [
+       -116.15006,
+       43.744731
+      ],
+      [
+       -116.146601,
+       43.750123
+      ],
+      [
+       -116.136461,
+       43.74666
+      ],
+      [
+       -116.147571,
+       43.751265
+      ],
+      [
+       -116.155246,
+       43.749322
+      ],
+      [
+       -116.14393,
+       43.753471
+      ],
+      [
+       -116.139991,
+       43.757585
+      ],
+      [
+       -116.132236,
+       43.758391
+      ],
+      [
+       -116.124546,
+       43.759675
+      ]
+     ],
+     [
+      [
+       -116.132716,
+       43.757633
+      ],
+      [
+       -116.132749,
+       43.757606
+      ],
+      [
+       -116.1327,
+       43.757612
+      ],
+      [
+       -116.132689,
+       43.757639
+      ],
+      [
+       -116.132682,
+       43.757653
+      ],
+      [
+       -116.132662,
+       43.757686
+      ],
+      [
+       -116.132683,
+       43.757663
+      ],
+      [
+       -116.132699,
+       43.757647
+      ],
+      [
+       -116.132716,
+       43.757633
+      ]
+     ],
+     [
+      [
+       -116.154527,
+       43.749495
+      ],
+      [
+       -116.15441,
+       43.749486
+      ],
+      [
+       -116.154215,
+       43.749513
+      ],
+      [
+       -116.154052,
+       43.749513
+      ],
+      [
+       -116.15396,
+       43.749503
+      ],
+      [
+       -116.154084,
+       43.749568
+      ],
+      [
+       -116.154152,
+       43.749635
+      ],
+      [
+       -116.154198,
+       43.749656
+      ],
+      [
+       -116.154317,
+       43.749621
+      ],
+      [
+       -116.154436,
+       43.749607
+      ],
+      [
+       -116.154594,
+       43.749601
+      ],
+      [
+       -116.154546,
+       43.749534
+      ],
+      [
+       -116.154527,
+       43.749495
+      ]
+     ],
+     [
+      [
+       -116.135694,
+       43.751764
+      ],
+      [
+       -116.136334,
+       43.752333
+      ],
+      [
+       -116.137786,
+       43.753151
+      ],
+      [
+       -116.13933,
+       43.7536
+      ],
+      [
+       -116.140824,
+       43.754781
+      ],
+      [
+       -116.141022,
+       43.753359
+      ],
+      [
+       -116.139764,
+       43.752073
+      ],
+      [
+       -116.137623,
+       43.750726
+      ],
+      [
+       -116.136373,
+       43.749367
+      ],
+      [
+       -116.135556,
+       43.747806
+      ],
+      [
+       -116.13535,
+       43.748626
+      ],
+      [
+       -116.135863,
+       43.749696
+      ],
+      [
+       -116.135508,
+       43.750756
+      ],
+      [
+       -116.134657,
+       43.750147
+      ],
+      [
+       -116.134775,
+       43.751496
+      ],
+      [
+       -116.135694,
+       43.751764
+      ]
+     ],
+     [
+      [
+       -116.12643,
+       43.758673
+      ],
+      [
+       -116.129554,
+       43.758428
+      ],
+      [
+       -116.132517,
+       43.75708
+      ],
+      [
+       -116.132984,
+       43.758434
+      ],
+      [
+       -116.1347,
+       43.757334
+      ],
+      [
+       -116.137221,
+       43.756846
+      ],
+      [
+       -116.139063,
+       43.755437
+      ],
+      [
+       -116.13778,
+       43.753948
+      ],
+      [
+       -116.134268,
+       43.752328
+      ],
+      [
+       -116.130653,
+       43.751739
+      ],
+      [
+       -116.128194,
+       43.751973
+      ],
+      [
+       -116.124807,
+       43.753563
+      ],
+      [
+       -116.127843,
+       43.754605
+      ],
+      [
+       -116.129452,
+       43.756331
+      ],
+      [
+       -116.126771,
+       43.758147
+      ],
+      [
+       -116.12643,
+       43.758673
+      ]
+     ]
+    ]
+   }
+  }
+ ]
+}
