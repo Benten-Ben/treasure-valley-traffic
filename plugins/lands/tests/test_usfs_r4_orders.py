@@ -69,18 +69,24 @@ class FakeFetch:
         return False
 
 
+UNION = {"type": "MultiPolygon", "coordinates": [[[[0, 0], [1, 0], [1, 1], [0, 0]]]]}   # the stubbed PostGIS union
+
+
 def run_offline(module, fx, last_read=None, drop_note=None):
     """module's run against a fixture, with the database calls stubbed. Returns
-    (stats, requested URLs, upsert_records mock, events.upsert mock)."""
+    (stats, requested URLs, upsert_records mock, events.upsert mock); run_offline.union is
+    the stubbed union's mock."""
     calls = []
     with mock.patch.object(http, "get", answer(fx, calls)), \
             mock.patch.object(db, "ensure_source"), mock.patch.object(db, "Fetch", FakeFetch), \
             mock.patch.object(closures, "last_read", return_value=last_read), \
             mock.patch.object(closures, "check_drop", return_value=drop_note), \
+            mock.patch.object(closures, "union", return_value=UNION) as union, \
             mock.patch.object(db, "upsert_records", return_value=(1, 2, 0)) as up, \
             mock.patch.object(events, "upsert", return_value={"new": 1, "changed": 0, "unchanged": 0, "gone": 0}) as ev:
         stats = closures.run_layer(None, module.SOURCE, module.LAYER, required=module.REQUIRED, key=module.key,
                                    event=module.event, sleep=lambda s: None)
+    run_offline.union = union
     return stats, calls, up, ev
 
 
@@ -184,6 +190,9 @@ class RunTest(unittest.TestCase):
                          ["0402-01-122", "0402-03-134", "0402-05-101"])
         self.assertEqual((FakeFetch.last.records, stats["features"], stats["records"]), (3, 4, 3))
         self.assertGreater(FakeFetch.last.bytes, 0)
+        # Each order's polygons are stored as their union (Deer Point has two).
+        self.assertEqual(sorted(len(c.args[1]) for c in run_offline.union.call_args_list), [1, 1, 2])
+        self.assertEqual({r[2]["type"] for r in records}, {"MultiPolygon"})
 
     def test_an_unedited_layer_is_not_read_again(self):
         last = datetime(2026, 10, 7, 12, tzinfo=UTC)          # after the fixture's last edit (Oct 3)
@@ -239,9 +248,12 @@ class DatabaseTest(unittest.TestCase):
         kinds = dict(c.execute("select source_id, kind from evt.event where source = %s", (name,)).fetchall())
         self.assertEqual(kinds, {"0402-01-122": "closure", "0402-03-134": "closure", "0402-05-101": "restriction"})
         shapes = c.execute("""select bool_and(GeometryType(geom) in ('POLYGON', 'MULTIPOLYGON')),
-                                     bool_and(lower(declared) is not null and upper(declared) is not null)
+                                     bool_and(lower(declared) is not null and upper(declared) is not null),
+                                     bool_and(ST_IsValid(geom))
                               from evt.event where source = %s""", (name,)).fetchone()
-        self.assertEqual(shapes, (True, True))
+        self.assertEqual(shapes, (True, True, True))
+        self.assertTrue(c.execute("select bool_and(ST_IsValid(geom)) from raw.record where source = %s",
+                                  (name,)).fetchone()[0])
         # An hour later, unchanged: nothing new.
         t1 = t0 + timedelta(hours=1)
         stats = closures.store(c, name, self.fetch(t1, records=3), t1, self.groups, r4.event)
@@ -255,6 +267,19 @@ class DatabaseTest(unittest.TestCase):
                            where source = %s and source_id = '0402-03-134'""", (name,)).fetchone()
         self.assertEqual(row, (False, t2))
         self.assertEqual(closures.last_read(c, name), t2)
+
+    def test_overlapping_polygons_become_their_union(self):
+        parts = [g for _, g in self.groups["0402-01-122"]]                # Deer Point's two polygons overlap
+        merged = closures.union(self.conn, parts)
+        self.assertEqual(merged["type"], "MultiPolygon")
+        valid, area, total = self.conn.execute(
+            """select ST_IsValid(u), ST_Area(u), (select sum(ST_Area(ST_MakeValid(ST_GeomFromGeoJSON(g))))
+                                                 from unnest(%s::text[]) g)
+               from (select ST_GeomFromGeoJSON(%s) u) s""",
+            ([json.dumps(g) for g in parts], json.dumps(merged))).fetchone()
+        self.assertTrue(valid)
+        self.assertLess(area, total)                                      # the overlap counts once
+        self.assertEqual(closures.union(self.conn, parts), merged)        # the same answer every poll
 
     def test_a_big_drop_is_taken_only_when_seen_twice(self):
         c, name = self.conn, self.SOURCE["name"]

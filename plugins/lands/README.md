@@ -19,8 +19,8 @@ and IDPR closures from the hiker and camper section's "first thing to build"
 | Source | Runs | License | Credit | Republish |
 |---|---|---|---|---|
 | `usfs_r4_orders` | hourly check; full read after an edit, at least daily | public domain (US federal work); USFS: not legal documents | USDA Forest Service, Intermountain Region | yes |
-| `idpr_route_closures` | hourly check; full read after an edit, at least daily | IDPR terms: non-commercial use, attribution required | IDPR (trails.idaho.gov), with the agencies it represents | aggregates (owner to decide) |
-| `idpr_area_restrictions` | hourly check; full read after an edit, at least daily | IDPR terms: non-commercial use, attribution required | IDPR (trails.idaho.gov), with the agencies it represents | aggregates (owner to decide) |
+| `idpr_route_closures` | hourly check; full read after an edit, at least daily | IDPR terms: non-commercial use, attribution required | IDPR (trails.idaho.gov), with the agencies it represents | aggregates (Q17) |
+| `idpr_area_restrictions` | hourly check; full read after an edit, at least daily | IDPR terms: non-commercial use, attribution required | IDPR (trails.idaho.gov), with the agencies it represents | aggregates (Q17) |
 
 **Tables:** none of its own, and no migrations. Each order or closure is a
 record in core's `raw.record`, versioned when it changes, and a row in
@@ -32,10 +32,11 @@ core's `evt.event` (migration 0009). Both use the same `source_id`, and
 All three sources share [ingest/closures.py](ingest/closures.py):
 
 - **The ring:** W −117.30, S 42.90, E −115.60, N 44.30. This is the
-  regional ring the lands and trails catalogs use (proposed in
-  [DECISIONS](../../docs/DECISIONS.md)). The layer is queried with that
-  envelope through the shared ArcGIS reader, query only. Features that touch
-  the ring come back whole: Lowman's camping order reaches east of it.
+  regional ring the lands and trails catalogs use, adopted for lands on
+  Oct 7 ([docs/17 Q19](../../docs/17-sources-for-new-plugins.md#178-decisions-on-the-open-questions-oct-7)).
+  The layer is queried with that envelope through the shared ArcGIS reader,
+  query only. Features that touch the ring come back whole: Lowman's camping
+  order reaches east of it.
 - **The edit gate:** each run reads the layer's metadata first, one small
   request. It reads the ring in full only when `editingInfo.dataLastEditDate`
   is newer than about our last full read, or when that read is a day old.
@@ -49,7 +50,10 @@ All three sources share [ingest/closures.py](ingest/closures.py):
 - **Polygons:** Esri lists every ring of a multipart polygon in one array.
   Each one is split into outer rings with their own holes (a MultiPolygon).
   Both layers have parts like that: the Claremont Fire closure has 3 outer
-  rings and 4 holes.
+  rings and 4 holes. A record's polygons are then stored as their union,
+  made valid in PostGIS, because an order's polygons can overlap: Deer
+  Point's two (361 and 201 acres) cover 451 acres together, and a
+  MultiPolygon with overlapping parts is invalid.
 - **Dates:** the agencies publish days without times. USFS writes them at
   12:00 UTC; IDPR writes text such as "8/13/2026", "12/31/2026 unless
   rescinded" or "Indefinite". They're read as local days (America/Boise),
@@ -127,10 +131,11 @@ file redirects to an HTML page, and parksandrecreation.idaho.gov allows
 everything. **Terms:** "Not for commercial use and may not be used in 3rd
 party apps without source attribution". IDPR also calls other agencies'
 content "representative": authoritative only at its source, so prefer
-`usfs_r4_orders` where both have an order. **Republish:** aggregates, until
-the owner decides whether to show the closures with credit. A courtesy note
-to IDPR (maps@idpr.idaho.gov) is due
-([docs/17 Q17](../../docs/17-sources-for-new-plugins.md#178-open-questions)).
+`usfs_r4_orders` where both have an order. **Republish:** aggregates. A
+state agency's data with no licence stays internal or is published only as
+aggregates, and republishing the data itself waits for a licence or IDPR's
+yes ([docs/17 Q17](../../docs/17-sources-for-new-plugins.md#178-decisions-on-the-open-questions-oct-7)).
+A courtesy note to IDPR (maps@idpr.idaho.gov) is due.
 
 ## Not built here
 

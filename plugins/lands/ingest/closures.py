@@ -13,11 +13,13 @@ ArcGIS reader (ingest/arcgis.py), query only, and keeps:
 - evt.event: one cleaned row per record (same source_id), with `declared`
   from the order's dates and `observed` from our polls (ingest/events.py).
 
-**The ring.** The proposed regional ring, as the lands and trails catalogs
-use it (W -117.30, S 42.90, E -115.60, N 44.30; docs/DECISIONS.md).
-The layer is queried with that envelope; anything that comes back from
-outside it (the reader's by-ID fallback) is dropped here, and a feature
-whose geometry can't be read is kept and counted.
+**The ring.** The regional ring, adopted for lands on Oct 7 (docs/17 Q19;
+docs/DECISIONS.md), as the lands and trails catalogs use it (W -117.30,
+S 42.90, E -115.60, N 44.30). The layer is queried with that envelope;
+anything that comes back from outside it (the reader's by-ID fallback) is
+dropped here, and a feature whose geometry can't be read is kept and
+counted. A record's polygons are stored as their union, made valid in
+PostGIS, since an order's polygons can overlap.
 
 **Reading only when the layer changed.** Each run first reads the layer's
 metadata (one small request) and compares its `editingInfo.dataLastEditDate`
@@ -206,6 +208,20 @@ def combine(geoms):
             return {"type": multi, "coordinates": [c for g in geoms
                                                    for c in (g["coordinates"] if g["type"] == multi else [g["coordinates"]])]}
     return {"type": "GeometryCollection", "geometries": geoms}
+
+
+def union(conn, geoms):
+    """One valid MultiPolygon for a record's polygons: their union, from PostGIS (each part
+    made valid first, outer rings counter-clockwise). An order's polygons can overlap, and a
+    MultiPolygon of overlapping parts is invalid: on Oct 7, Deer Point's two polygons (361 and
+    201 acres) cover 451 acres together, and Crooked Fire's two 11,017 acres. A valid single
+    polygon keeps its shape. None if nothing is left."""
+    row = conn.execute("""select ST_AsGeoJSON(ST_Multi(ST_ForcePolygonCCW(ST_CollectionExtract(
+                                     ST_Union(ST_MakeValid(ST_GeomFromGeoJSON(g)) order by i), 3))))
+                          from unnest(%s::text[]) with ordinality as t(g, i)""",
+                       ([json.dumps(g) for g in geoms],)).fetchone()
+    out = json.loads(row[0]) if row and row[0] else None
+    return out if out and out.get("coordinates") else None
 
 
 def bbox(geom):
@@ -405,11 +421,15 @@ def check_drop(conn, source, fetch_id, n):
 
 def store(conn, source, fetch_id, seen_at, groups, event):
     """Write one full snapshot: record versions (complete) and events. event(source_id, payload,
-    geometry) builds the evt.event row."""
+    geometry) builds the evt.event row. A record's polygons are stored as their union."""
     records, rows = [], []
     for sid, parts in groups.items():
         payload = merge(parts)
-        geom = combine([g for _, g in parts])
+        geoms = [g for _, g in parts if g]
+        if geoms and all(g["type"] in ("Polygon", "MultiPolygon") for g in geoms):
+            geom = union(conn, geoms) or combine(geoms)
+        else:
+            geom = combine(geoms)
         records.append((sid, payload, geom))
         rows.append(event(sid, payload, geom))
     new, unchanged, removed = db.upsert_records(conn, source, records, fetch_id, seen_at, complete=True)

@@ -15,9 +15,10 @@ order numbers in the text are listed to link with usfs_r4_orders later.
 Links are kept, never fetched.
 
 IDPR's terms: not for commercial use, and no use in third-party apps
-without attribution. Not republished raw (manifest: aggregates) until the
-owner decides; a courtesy note to IDPR is due (docs/17 Q17). Read through
-plugins/lands/ingest/closures.py (edit gate, ring cut, snapshot guard).
+without attribution. Not republished raw (manifest: aggregates) until IDPR
+gives a licence or a yes; a courtesy note to IDPR is due (docs/17 Q17).
+Read through plugins/lands/ingest/closures.py (edit gate, ring cut,
+snapshot guard).
 """
 
 from ingest import arcgis
