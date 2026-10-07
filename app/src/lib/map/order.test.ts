@@ -4,7 +4,7 @@ import { cameraLayers } from '#lib/layers/cameras/cameras.js';
 import { streetLayers } from '#lib/layers/streets/streets.js';
 import { fallbackBusLayers, transitLayers } from '#lib/layers/transit/transit.js';
 import { ANCHORS, drapedRuns, insertSlotted, ordered, rttStacks, type SlottedLayer } from './order.js';
-import { addAerial, basemapReady, BUILDINGS_LAYER, buildStyle, type BasemapManifest } from './style.js';
+import { addAerial, basemapReady, BUILDINGS_LAYERS, buildStyle, type BasemapManifest } from './style.js';
 
 beforeAll(() => basemapReady);
 
@@ -98,7 +98,7 @@ describe('rttStacks', () => {
 							if (Object.values(ALL_LAYERS).flat().includes(l.id)) o.visible = shown.has(l.id);
 							if (l.id === 'base-wash') o.visible = on.length > 0;
 							if (l.id === 'aerial' || l.id === 'aerial-detail') o.visible = aerial;
-							if (l.id === BUILDINGS_LAYER) o.visible = buildings;
+							if (BUILDINGS_LAYERS.includes(l.id)) o.visible = buildings;
 							return o;
 						});
 						for (const zoom of [8, 10, 12, 14, 15.5, 17, 19]) {

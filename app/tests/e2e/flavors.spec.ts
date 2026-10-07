@@ -21,6 +21,17 @@ const info = (page: Page): Promise<Info> => page.evaluate(() => (globalThis as a
 const toolbar = (page: Page) => page.getByRole('toolbar', { name: 'Map layers' });
 const paint = (page: Page, layer: string, prop: string) => page.evaluate(([l, p]) => (globalThis as any).__tvt.map.getPaintProperty(l, p), [layer, prop]);
 const vis = (page: Page, id: string) => page.evaluate((id) => (globalThis as any).__tvt.map.getLayoutProperty(id, 'visibility') ?? 'visible', id);
+/** The 3D buildings' opacity, measured and estimated (always the same). */
+const buildingOpacities = (page: Page) => Promise.all(['buildings-3d', 'buildings-3d-estimated'].map((l) => paint(page, l, 'fill-extrusion-opacity')));
+/** Whether each 3D building layer draws something in view, and only its own kind (with a height, or without). */
+const drawnBuildings = (page: Page) =>
+	page.evaluate(() => {
+		const map = (globalThis as any).__tvt.map;
+		const kinds = (id: string) => map.queryRenderedFeatures({ layers: [id] }).map((f: any) => f.properties.height !== undefined);
+		const measured: boolean[] = kinds('buildings-3d');
+		const estimated: boolean[] = kinds('buildings-3d-estimated');
+		return { measured: measured.length > 0 && measured.every(Boolean), estimated: estimated.length > 0 && !estimated.some(Boolean) };
+	});
 const view = (page: Page) =>
 	page.evaluate(() => {
 		const m = (globalThis as any).__tvt.map;
@@ -336,26 +347,31 @@ test.describe('flavors', () => {
 		await expect(pop.getByText('Now Map: no data layer is on')).toBeVisible();
 		expect(await paint(page, 'buildings-3d', 'fill-extrusion-color')).toBe('#f8f4ec');
 		expect(await paint(page, 'buildings-3d', 'fill-extrusion-opacity')).toBe(0.9);
+		// Buildings without a height stand at an estimate, a lighter tone (the height floor, Oct 7).
+		expect(await paint(page, 'buildings-3d-estimated', 'fill-extrusion-color')).toBe('#ffffff');
+		expect(await buildingOpacities(page)).toEqual([0.9, 0.9]);
+		expect(await drawnBuildings(page), 'downtown has both measured and estimated buildings in view').toEqual({ measured: true, estimated: true });
 		await pop.getByRole('radio', { name: 'Clay' }).check();
 		expect((await info(page)).flavor).toBe('clay');
 		await expect(pop.getByText('Clay, whatever is on')).toBeVisible();
 		await expect(pop.getByText('Clay leaves out addresses, places of interest and minor street names')).toBeVisible();
 		expect(await paint(page, 'buildings-3d', 'fill-extrusion-color')).toBe('#efe9df');
-		expect(await paint(page, 'buildings-3d', 'fill-extrusion-opacity')).toBe(0.55);
+		expect(await paint(page, 'buildings-3d-estimated', 'fill-extrusion-color')).toBe('#f7f4ef');
+		expect(await buildingOpacities(page)).toEqual([0.55, 0.55]);
 		await mapReady(page);
 		await page.screenshot({ path: screenPath('wp4-base-popover-clay.png') });
 		// Aerial in Clay: the photo muted, buildings see-through.
 		await pop.getByRole('switch', { name: /Aerial photos/ }).check();
 		await expect(pop.getByText('NAIP, muted in Clay')).toBeVisible();
 		expect(await paint(page, 'aerial', 'raster-saturation')).toBe(-0.7);
-		expect(await paint(page, 'buildings-3d', 'fill-extrusion-opacity')).toBe(0.3);
+		expect(await buildingOpacities(page)).toEqual([0.3, 0.3]);
 		await mapReady(page);
 		await page.screenshot({ path: screenPath('wp4-aerial-clay.png') });
 		await pop.getByRole('radio', { name: 'Map' }).check();
 		expect(await paint(page, 'aerial', 'raster-saturation')).toBe(0);
-		expect(await paint(page, 'buildings-3d', 'fill-extrusion-opacity')).toBe(0.3);
+		expect(await buildingOpacities(page)).toEqual([0.3, 0.3]);
 		await pop.getByRole('switch', { name: /Aerial photos/ }).uncheck();
-		expect(await paint(page, 'buildings-3d', 'fill-extrusion-opacity')).toBe(0.9);
+		expect(await buildingOpacities(page)).toEqual([0.9, 0.9]);
 		await pop.getByRole('radio', { name: 'Auto' }).check();
 		await expect(pop.getByText('Now Map: no data layer is on')).toBeVisible();
 		await page.keyboard.press('Escape');

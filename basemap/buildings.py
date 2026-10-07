@@ -5,8 +5,10 @@ Overture's building footprints combine OpenStreetMap, Microsoft and other
 sources; about 83% in the valley carry a height in meters. This reads the
 release's GeoParquet files in place on Overture's public S3 bucket (no
 download of the whole theme), keeps footprints in the valley, and tiles them
-with tippecanoe. Buildings without a known height keep height = null; the
-app draws those flat rather than guessing.
+with tippecanoe. Buildings without a known height keep height = null: the
+tiles carry only what the data says. The app draws those at an estimate
+(num_floors x 3.2 m, else 4 m) in a lighter tone, and every building at
+least 3 m tall (app/src/lib/map/buildings.ts; owner, Oct 7).
 
 License: ODbL. Credit "Overture Maps Foundation, OpenStreetMap contributors".
 

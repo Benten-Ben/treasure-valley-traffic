@@ -5,7 +5,9 @@ import {
 	addAerial,
 	aerialAfter,
 	basemapReady,
+	BUILDINGS_ESTIMATED_LAYER,
 	BUILDINGS_LAYER,
+	BUILDINGS_LAYERS,
 	buildingOpacity,
 	buildStyle,
 	firstBasemapLabel,
@@ -76,7 +78,7 @@ describe('style', () => {
 		const ids = on.layers.map((l) => l.id);
 		expect(ids.indexOf('aerial')).toBe(ids.indexOf('hillshade') + 1);
 		expect(ids.indexOf('aerial-detail')).toBe(ids.indexOf('aerial') + 1);
-		expect(on.layers.find((l) => l.id === BUILDINGS_LAYER)?.paint).toMatchObject({ 'fill-extrusion-opacity': buildingOpacity(true) });
+		for (const id of BUILDINGS_LAYERS) expect(on.layers.find((l) => l.id === id)?.paint, id).toMatchObject({ 'fill-extrusion-opacity': buildingOpacity(true) });
 	});
 
 	it('uses self-hosted URLs only', () => {
@@ -112,10 +114,10 @@ describe('style', () => {
 		const map = fakeMap(style.layers, { ...style.sources });
 		expect(setAerial(map, manifest, 'http://x', true)).toBe(true);
 		for (const id of IMAGERY_LAYERS) expect(map.getLayer(id)?.layout).toMatchObject({ visibility: 'visible' });
-		expect(map.getLayer(BUILDINGS_LAYER)?.paint).toMatchObject({ 'fill-extrusion-opacity': buildingOpacity(true) });
+		for (const id of BUILDINGS_LAYERS) expect(map.getLayer(id)?.paint, id).toMatchObject({ 'fill-extrusion-opacity': buildingOpacity(true) });
 		expect(setAerial(map, manifest, 'http://x', false)).toBe(false);
 		for (const id of IMAGERY_LAYERS) expect(map.getLayer(id)?.layout).toMatchObject({ visibility: 'none' });
-		expect(map.getLayer(BUILDINGS_LAYER)?.paint).toMatchObject({ 'fill-extrusion-opacity': buildingOpacity(false) });
+		for (const id of BUILDINGS_LAYERS) expect(map.getLayer(id)?.paint, id).toMatchObject({ 'fill-extrusion-opacity': buildingOpacity(false) });
 	});
 
 	it('without imagery, Aerial stays off', () => {
@@ -155,7 +157,8 @@ describe('style', () => {
 			expect(ids.indexOf('aerial')).toBeLessThan(ids.indexOf(ANCHORS.streets));
 			if (m.buildings) {
 				expect(ids.indexOf(BUILDINGS_LAYER)).toBeGreaterThan(ids.indexOf(ANCHORS.routes));
-				expect(ids.indexOf(BUILDINGS_LAYER)).toBeLessThan(ids.indexOf(ANCHORS.scene));
+				expect(ids.indexOf(BUILDINGS_ESTIMATED_LAYER)).toBe(ids.indexOf(BUILDINGS_LAYER) + 1);
+				expect(ids.indexOf(BUILDINGS_ESTIMATED_LAYER)).toBeLessThan(ids.indexOf(ANCHORS.scene));
 			}
 			const firstSymbol = style.layers.findIndex((l) => l.type === 'symbol');
 			expect(firstSymbol).toBeGreaterThan(ids.indexOf(ANCHORS.points));

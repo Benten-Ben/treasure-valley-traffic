@@ -2,6 +2,7 @@ import type * as Protomaps from '@protomaps/basemaps';
 import type { LayerSpecification, LineLayerSpecification, Map, StyleSpecification } from 'maplibre-gl';
 import type * as Flavors from './flavors.js';
 import type { FlavorName, PaintChange } from './flavors.js';
+import { BUILDING_BASE, BUILDING_HEIGHT, ESTIMATED_FILTER, MEASURED_FILTER } from './buildings.js';
 import { anchorLayer, ANCHORS } from './order.js';
 import { DEFAULT_HILLSHADE, type HillshadeMode } from '#lib/perf/flags.js';
 
@@ -11,8 +12,17 @@ export const TILES_PATH = '/tiles';
 /** Layer ids of the aerial imagery, toggled together by the Map/Aerial switch (added on first use). */
 export const IMAGERY_LAYERS = ['aerial', 'aerial-detail'];
 
-/** Layer id of the 3D buildings. */
+/** Layer id of the 3D buildings with a measured height. */
 export const BUILDINGS_LAYER = 'buildings-3d';
+
+/** Layer id of the 3D buildings drawn at an estimated height, in a lighter tone (`#lib/map/buildings`). */
+export const BUILDINGS_ESTIMATED_LAYER = 'buildings-3d-estimated';
+
+/**
+ * Both 3D building layers, measured then estimated. The Buildings switch,
+ * Aerial's opacity and the flavors treat them as one.
+ */
+export const BUILDINGS_LAYERS: readonly string[] = [BUILDINGS_LAYER, BUILDINGS_ESTIMATED_LAYER];
 
 /** Layer id of the hillshade. */
 export const HILLSHADE_LAYER = 'hillshade';
@@ -325,7 +335,8 @@ export function addAerial(map: MapLike, m: BasemapManifest, origin: string): boo
 export function setAerial(map: MapLike, m: BasemapManifest, origin: string, on: boolean): boolean {
 	if (on && !addAerial(map, m, origin)) return false;
 	for (const id of IMAGERY_LAYERS) if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', on ? 'visible' : 'none');
-	if (map.getLayer(BUILDINGS_LAYER)) map.setPaintProperty(BUILDINGS_LAYER, 'fill-extrusion-opacity', buildingOpacity(on, flavorKit().appliedFlavor(map)));
+	const opacity = buildingOpacity(on, flavorKit().appliedFlavor(map));
+	for (const id of BUILDINGS_LAYERS) if (map.getLayer(id)) map.setPaintProperty(id, 'fill-extrusion-opacity', opacity);
 	return on;
 }
 
@@ -398,20 +409,32 @@ export function buildStyle(m: BasemapManifest, origin: string, aerial = false, f
 			url: pmtilesUrl(origin, m.buildings.file),
 			attribution: m.buildings.attribution
 		};
-		over.push({
-			id: BUILDINGS_LAYER,
-			type: 'fill-extrusion',
-			source: 'buildings',
-			'source-layer': m.buildings.sourceLayer,
-			minzoom: m.buildings.minzoom,
-			paint: {
-				// Buildings without a known height stay flat rather than getting a guessed one.
-				'fill-extrusion-height': ['coalesce', ['get', 'height'], 0],
-				'fill-extrusion-color': flavorKit().BUILDINGS_PAINT[flavor].color,
-				'fill-extrusion-vertical-gradient': true,
-				'fill-extrusion-opacity': buildingOpacity(aerial && Boolean(m.imagery), flavor)
-			}
-		});
+		// Measured heights, then estimated ones in a lighter tone (#lib/map/buildings: no height in the
+		// data stands at an estimate, and every building at least 3 m). Two layers rather than one
+		// data-driven color: a constant color crossfades between flavors, while a data-driven one
+		// would snap at the end of the fade and lay the building tiles out again.
+		const kit = flavorKit();
+		const opacity = buildingOpacity(aerial && Boolean(m.imagery), flavor);
+		for (const [id, filter, color] of [
+			[BUILDINGS_LAYER, MEASURED_FILTER, kit.BUILDINGS_PAINT[flavor].color],
+			[BUILDINGS_ESTIMATED_LAYER, ESTIMATED_FILTER, kit.ESTIMATED_BUILDINGS_PAINT[flavor].color]
+		] as const) {
+			over.push({
+				id,
+				type: 'fill-extrusion',
+				source: 'buildings',
+				'source-layer': m.buildings.sourceLayer,
+				minzoom: m.buildings.minzoom,
+				filter,
+				paint: {
+					'fill-extrusion-height': BUILDING_HEIGHT,
+					'fill-extrusion-base': BUILDING_BASE,
+					'fill-extrusion-color': color,
+					'fill-extrusion-vertical-gradient': true,
+					'fill-extrusion-opacity': opacity
+				}
+			});
+		}
 	}
 
 	// The slot anchors (docs/14 §14.8 "Layer order", #lib/map/order.ts): modules
