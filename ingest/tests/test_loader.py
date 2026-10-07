@@ -23,9 +23,9 @@ from ingest.__main__ import BUILTINS, main
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 PLUGINS_DIR = os.path.join(REPO, "plugins")
 
-SOURCES_BEFORE = ["achd_cameras", "idaho511_views_oneoff", "vrt_gtfs", "achd_roads", "itd_hpms", "achd_msm",
-                  "compass_centerline", "fra_crossings", "achd_signal_points", "compass_signals",
-                  "compass_regional_signals", "intersections",
+SOURCES_BEFORE = ["achd_cameras", "idaho511_views_oneoff", "idaho511_rwis_sites_oneoff",  # the last: WP16, Oct 7
+                  "vrt_gtfs", "achd_roads", "itd_hpms", "achd_msm", "compass_centerline", "fra_crossings",
+                  "achd_signal_points", "compass_signals", "compass_regional_signals", "intersections",
                   # ch. 17 Wave A (Oct 7): hazards (order 60) runs before safety's crashes, the rest after
                   "idl_fire_restrictions", "nifc_wfigs_incidents", "nifc_wfigs_perimeters", "nasa_firms", "nws_wwa",
                   "usgs_quakes", "compass_crashes", "noaa_hms_smoke", "nwps_gauges", "nrcs_snotel", "boise_ecoli",
@@ -42,7 +42,8 @@ WHERE = {  # source: plugin (docs/15 §15.4)
     "usfs_r4_orders": "lands", "idpr_route_closures": "lands", "idpr_area_restrictions": "lands",
     "awc_metar": "weather", "idfg_roadkill": "wildlife", "agrimet_et": "farm", "swpc_ovation": "sky",
     "swpc_kp_1m": "sky",
-    "achd_cameras": "cameras", "idaho511_views_oneoff": "cameras", "idaho511_frames": "cameras",
+    "achd_cameras": "cameras", "idaho511_views_oneoff": "cameras", "idaho511_rwis_sites_oneoff": "cameras",
+    "idaho511_frames": "cameras",
     "vrt_gtfs": "transit", "vrt_realtime": "transit",
     "achd_roads": "roads", "itd_hpms": "roads", "achd_msm": "roads", "compass_centerline": "roads",
     "fra_crossings": "intersections", "achd_signal_points": "intersections", "compass_signals": "intersections",

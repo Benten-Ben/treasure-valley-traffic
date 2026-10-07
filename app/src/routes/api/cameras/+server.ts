@@ -1,5 +1,6 @@
 import { json } from '@sveltejs/kit';
 import { versionedCacheControl } from '#lib/server/cache-headers.js';
+import { hasCameraProvider } from '#lib/server/camera-provider.js';
 import { db } from '#lib/server/db.js';
 import { dataMeta } from '#lib/server/versions.js';
 
@@ -14,13 +15,16 @@ import { dataMeta } from '#lib/server/versions.js';
  */
 export async function GET({ url, setHeaders }) {
 	const meta = dataMeta();
-	const rows = await db()`
+	const sql = db();
+	// ACHD's cameras only: road-weather stations share the table (WP16, #lib/server/camera-provider).
+	const achd = await hasCameraProvider(sql);
+	const rows = await sql`
 		select c.id, c.name, c.achd_cam_id, ST_X(c.pole_geom) as lon, ST_Y(c.pole_geom) as lat,
 		       count(distinct v.id)::int as views, count(distinct cal.view_id)::int as calibrated_views
 		from core.camera c
 		left join core.camera_view v on v.camera_id = c.id
 		left join core.camera_calibration cal on cal.view_id = v.id and upper_inf(cal.valid)
-		where c.active and c.pole_geom is not null
+		where c.active and c.pole_geom is not null ${achd ? sql`and c.provider = 'ACHD'` : sql``}
 		group by c.id
 		order by c.id`;
 	setHeaders({ 'cache-control': versionedCacheControl(url.searchParams.get('v'), (await meta).versions.cameras) });

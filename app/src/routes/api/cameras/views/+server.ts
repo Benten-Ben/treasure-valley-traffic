@@ -1,3 +1,4 @@
+import { hasCameraProvider } from '#lib/server/camera-provider.js';
 import { db } from '#lib/server/db.js';
 import { jsonWithEtag } from '#lib/server/json-etag.js';
 
@@ -12,11 +13,14 @@ import { jsonWithEtag } from '#lib/server/json-etag.js';
  * `CameraViewRow` in #lib/layers/cameras/detail.ts.
  */
 export async function GET({ request }) {
-	const rows = await db()`
+	const sql = db();
+	// ACHD's cameras only: road-weather stations share the table (WP16, #lib/server/camera-provider).
+	const achd = await hasCameraProvider(sql);
+	const rows = await sql`
 		select v.id, v.camera_id, v.image_id, v.sort_order, v.direction
 		from core.camera_view v
 		join core.camera c on c.id = v.camera_id
-		where c.active
+		where c.active ${achd ? sql`and c.provider = 'ACHD'` : sql``}
 		order by v.camera_id, v.sort_order, v.id`;
 	return jsonWithEtag(
 		{

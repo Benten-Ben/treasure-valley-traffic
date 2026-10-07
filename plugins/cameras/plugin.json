@@ -9,6 +9,8 @@
      "license": "none stated", "credit": "Ada County Highway District", "republish": "internal"},
     {"name": "idaho511_views_oneoff", "module": "ingest.sources.idaho511_views", "kind": "source",
      "license": "none stated", "credit": "Idaho Transportation Department (511 Idaho)", "republish": "internal"},
+    {"name": "idaho511_rwis_sites_oneoff", "module": "ingest.sources.idaho511_rwis_sites", "kind": "source",
+     "license": "none stated", "credit": "Idaho Transportation Department (511 Idaho)", "republish": "internal"},
     {"name": "idaho511_frames", "module": "ingest.sources.idaho511_frames", "kind": "stream", "order": 25,
      "license": "none stated; kept private on the server, never published",
      "credit": "Idaho Transportation Department (511 Idaho) and Ada County Highway District", "republish": "no"}

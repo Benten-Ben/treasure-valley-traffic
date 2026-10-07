@@ -271,9 +271,11 @@ export class CamerasModule implements LayerModule {
 	async #setRecorded(viewsP: Promise<{ views: CameraViewRow[] } | null>, statusP: Promise<CamerasStatus | null>) {
 		const [views, status] = await Promise.all([viewsP, statusP]);
 		if (this.#destroyed) return;
-		this.recording = status && status.enabled ? Object.keys(status.recorded ?? {}).length : status ? 0 : null;
-		if (!views || !status) return;
-		const cameraOf = new Map(views.views.map((v) => [v.id, v.cameraId]));
+		const cameraOf = views ? new Map(views.views.map((v) => [v.id, v.cameraId])) : null;
+		// The road-weather views are recorded too (WP16), but they aren't this layer's: count the views it shows.
+		const recordedViews = Object.keys(status?.recorded ?? {}).filter((v) => !cameraOf || cameraOf.has(Number(v)));
+		this.recording = status && status.enabled ? recordedViews.length : status ? 0 : null;
+		if (!cameraOf || !status) return;
 		const rec = new Set<number>();
 		for (const viewId of Object.keys(status.recorded ?? {})) {
 			const cam = cameraOf.get(Number(viewId));

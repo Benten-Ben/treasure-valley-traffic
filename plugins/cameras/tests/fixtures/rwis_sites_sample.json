@@ -1,0 +1,70 @@
+{
+  "_note": "SYNTHETIC test fixture for idaho511_rwis_sites (WP16): made-up station names, ids and positions in the shape of 511 Idaho's camera list. Nothing here is copied from 511's list.",
+  "draw": 1,
+  "recordsTotal": 6,
+  "recordsFiltered": 6,
+  "data": [
+    {
+      "id": 880001,
+      "source": "RWIS",
+      "roadway": "I-84",
+      "direction": "Unknown",
+      "location": "Example Grade (synthetic)",
+      "latLng": {"geography": {"coordinateSystemId": 4326, "wellKnownText": "POINT (-116.2400 43.5600)"}},
+      "images": [
+        {"id": 990011, "sortOrder": 0, "description": "Looking East", "disabled": false, "blocked": false},
+        {"id": 990012, "sortOrder": 1, "description": "Looking West", "disabled": false, "blocked": false},
+        {"id": 990013, "sortOrder": 2, "description": "Pavement", "disabled": false, "blocked": false},
+        {"id": 990014, "sortOrder": 3, "description": "", "disabled": true, "blocked": false}
+      ]
+    },
+    {
+      "id": 880002,
+      "source": "RWIS",
+      "roadway": "SH-55",
+      "direction": "Unknown",
+      "location": "Test Summit (synthetic)",
+      "latLng": {"geography": {"coordinateSystemId": 4326, "wellKnownText": "POINT (-116.4300 43.6900)"}},
+      "images": [
+        {"id": 990022, "sortOrder": 1},
+        {"id": 990021, "sortOrder": 0}
+      ]
+    },
+    {
+      "id": 880003,
+      "source": "ODOT",
+      "roadway": "US-20",
+      "direction": "Unknown",
+      "location": "Sample Bridge OR (synthetic)",
+      "latLng": {"geography": {"coordinateSystemId": 4326, "wellKnownText": "POINT (-117.0400 43.5500)"}},
+      "images": [
+        {"id": 990031, "sortOrder": 0, "description": "Northbound"},
+        {"id": 990032, "sortOrder": 1, "description": "Southbound", "blocked": true}
+      ]
+    },
+    {
+      "id": 880004,
+      "source": "ODOT",
+      "roadway": "OR-99",
+      "location": "Faraway Pass OR (synthetic, outside the ring)",
+      "latLng": {"geography": {"coordinateSystemId": 4326, "wellKnownText": "POINT (-122.9000 45.4000)"}},
+      "images": [{"id": 990041, "sortOrder": 0}]
+    },
+    {
+      "id": 880005,
+      "source": "ACHD",
+      "roadway": "Example Ave",
+      "location": "Example Ave & Sample St (synthetic, a traffic camera)",
+      "latLng": {"geography": {"coordinateSystemId": 4326, "wellKnownText": "POINT (-116.3000 43.6100)"}},
+      "images": [{"id": 990051, "sortOrder": 0}]
+    },
+    {
+      "id": 880006,
+      "source": "RWIS",
+      "roadway": "US-95",
+      "location": "No Pictures Flat (synthetic, no images)",
+      "latLng": {"geography": {"coordinateSystemId": 4326, "wellKnownText": "POINT (-116.9000 44.2000)"}},
+      "images": []
+    }
+  ]
+}
