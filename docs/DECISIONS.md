@@ -123,6 +123,7 @@ own to-dos are under Owner actions below.
   river-hazard layers), IDPR (route closures and area restrictions) and
   IDFG (roadkill, together with the IFWIS questions in ch. 17). Until each
   answers, its data stays internal or aggregate.
-- [ ] When a cloud session ends, remove its machine from the tailnet
+- [x] When a cloud session ends, remove its machine from the tailnet
   (Tailscale admin console → Machines), and stop sharing its conversation if
-  it was shared
+  it was shared (Oct 7: the pilot's machine removed and its
+  conversation unshared; do the same for any future cloud session)
