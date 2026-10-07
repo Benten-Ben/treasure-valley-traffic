@@ -76,6 +76,11 @@
 		if (v === null) return;
 		return feed.watch([v]);
 	});
+	// The photo in the cone (WP13) hangs this window's view.
+	$effect(() => {
+		const v = view?.id ?? null;
+		cameraHooks.photo?.view?.(id, v);
+	});
 
 	// The UI's 1 Hz clock: ages and the ring move once a second, never per frame.
 	let now = $state(Date.now());
@@ -132,6 +137,7 @@
 		clearInterval(tick);
 		unsubscribe();
 		module()?.highlight(id, false);
+		cameraHooks.photo?.view?.(id, null);
 	});
 
 	const reasonId = `cam-${uid}-why`;

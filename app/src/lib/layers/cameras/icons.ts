@@ -31,3 +31,24 @@ export const PHOTO_3D: IconData = {
 };
 
 export const CAMERA_ICONS: readonly IconData[] = [LOOK, CALIBRATE, FLY_TO, PHOTO_3D];
+
+/** Look-through's banner (WP13): the previous and next camera, and Step out. */
+export const PREV: IconData = {
+	name: 'CaretLeft',
+	tone: 'M160,48V208L80,128Z',
+	line: 'M163.06,40.61a8,8,0,0,0-8.72,1.73l-80,80a8,8,0,0,0,0,11.32l80,80A8,8,0,0,0,168,208V48A8,8,0,0,0,163.06,40.61ZM152,188.69,91.31,128,152,67.31Z'
+};
+
+export const NEXT: IconData = {
+	name: 'CaretRight',
+	tone: 'M176,128,96,208V48Z',
+	line: 'M181.66,122.34l-80-80A8,8,0,0,0,88,48V208a8,8,0,0,0,13.66,5.66l80-80A8,8,0,0,0,181.66,122.34ZM104,188.69V67.31L164.69,128Z'
+};
+
+export const STEP_OUT: IconData = {
+	name: 'SignOut',
+	tone: 'M224,56V200a16,16,0,0,1-16,16H48V40H208A16,16,0,0,1,224,56Z',
+	line: 'M120,216a8,8,0,0,1-8,8H48a8,8,0,0,1-8-8V40a8,8,0,0,1,8-8h64a8,8,0,0,1,0,16H56V208h56A8,8,0,0,1,120,216Zm109.66-93.66-40-40a8,8,0,0,0-11.32,11.32L204.69,120H112a8,8,0,0,0,0,16h92.69l-26.35,26.34a8,8,0,0,0,11.32,11.32l40-40A8,8,0,0,0,229.66,122.34Z'
+};
+
+export const LOOK_ICONS: readonly IconData[] = [PREV, NEXT, STEP_OUT];

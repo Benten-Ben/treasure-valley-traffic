@@ -48,7 +48,7 @@ export const MIN_PAIRS = 4;
 /** Prior: the camera sits within ~25 m of its pole (one pixel of cost per 25 m). */
 const POLE_PRIOR_PX_PER_M = 1 / 25;
 
-type Vec = [number, number, number];
+export type Vec = [number, number, number];
 const dot = (a: Vec, b: Vec) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 const cross = (a: Vec, b: Vec): Vec => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
 
@@ -62,8 +62,12 @@ export function fromLocal(origin: [number, number], v: Vec): LngLatZ {
 	return [lon0 + v[0] / (R * D2R * Math.cos(lat0 * D2R)), lat0 + v[1] / (R * D2R), v[2]];
 }
 
-/** Camera axes in east/north/up: right, down (image y), forward. */
-function axes(heading: number, tilt: number, roll: number): [Vec, Vec, Vec] {
+/**
+ * Camera axes in east/north/up: right, down (image y), forward. The one
+ * camera model (docs/14 §14.6): the solver, the 3D head, the view cone, the
+ * footprint and look-through all use these, so they can't disagree.
+ */
+export function axes(heading: number, tilt: number, roll: number): [Vec, Vec, Vec] {
 	const h = heading * D2R, t = tilt * D2R, r = roll * D2R;
 	const fwd: Vec = [Math.sin(h) * Math.cos(t), Math.cos(h) * Math.cos(t), -Math.sin(t)];
 	const right0: Vec = [Math.cos(h), -Math.sin(h), 0];
@@ -71,6 +75,17 @@ function axes(heading: number, tilt: number, roll: number): [Vec, Vec, Vec] {
 	const right: Vec = [0, 1, 2].map((i) => right0[i] * Math.cos(r) + down0[i] * Math.sin(r)) as Vec;
 	const down: Vec = [0, 1, 2].map((i) => -right0[i] * Math.sin(r) + down0[i] * Math.cos(r)) as Vec;
 	return [right, down, fwd];
+}
+
+/**
+ * Height of the burned-in 511 timestamp bar at the bottom of a frame, px
+ * (docs/14 §14.6, "Fixes carried into the new calibrator"): `H − round(W·9/16)`
+ * when that's between 20 px and 10% of H (a 16:9 picture with the bar under
+ * it), else `round(0.073·H)`. 768×466 → 34; the HD 1920×1166 frames → 86.
+ */
+export function barPx(width: number, height: number): number {
+	const b = height - Math.round((width * 9) / 16);
+	return b >= 20 && b <= 0.1 * height ? b : Math.round(0.073 * height);
 }
 
 /** params: [east, north, up, heading, tilt, roll, vfov] in the local frame. */
