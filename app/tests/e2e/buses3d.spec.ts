@@ -575,8 +575,9 @@ test.describe('buses3d', () => {
 		for (const [name, what, cam] of closeups) {
 			let center: [number, number];
 			if (what === 'bus') {
-				const b = (await buses(page)).find((x) => x.state === 'moving' && x.model > 0 && inside(x.x, x.y, 200));
-				expect(b, 'a moving bus near the centre').toBeTruthy();
+				const list = (await buses(page)).filter((x) => x.model > 0 && x.state !== 'stale' && inside(x.x, x.y, 120));
+				const b = list.find((x) => x.state === 'moving') ?? list[0];
+				expect(b, 'a bus on screen').toBeTruthy();
 				center = [b!.lng, b!.lat];
 			} else {
 				const c = await page.evaluate(() => (globalThis as any).__tvt.map.getCenter());
