@@ -111,6 +111,12 @@
 		helpOpen = next;
 	}
 
+	/** The skip link: focus the toolbar's (or the tab bar's) current button. */
+	function skipToLayers() {
+		const bar = document.querySelector<HTMLElement>('.chrome [role="toolbar"][aria-label="Map layers"], .chrome nav[aria-label="Map layers"]');
+		bar?.querySelector<HTMLElement>('[tabindex="0"]')?.focus();
+	}
+
 	// The app context never changes for the life of the layout.
 	const ctx = untrack(() => app);
 	const unkeys = registerDefaultKeys(ctx, { help: () => toggleHelp() });
@@ -149,6 +155,8 @@
 
 <div class="chrome" class:phone class:tablet>
 	{#if exploring}
+		<!-- The toolbar comes last in the reading order (it's at the bottom); this gets there in one Tab. -->
+		<button class="skip pill" onclick={skipToLayers}>Skip to layers</button>
 		<TopBar {app} {phone} onhelp={() => toggleHelp()} />
 		{#if !phone}
 			<aside class="left" aria-label="Legends">
@@ -195,6 +203,30 @@
 	}
 	.chrome > :global(*) {
 		pointer-events: auto;
+	}
+	/* Out of sight until it has keyboard focus. */
+	.skip {
+		position: absolute;
+		top: 12px;
+		left: 16px;
+		z-index: 60;
+		min-height: 44px;
+	}
+	.skip:not(:focus) {
+		width: 1px;
+		height: 1px;
+		min-height: 0;
+		padding: 0;
+		border: 0;
+		overflow: hidden;
+		clip-path: inset(50%);
+		white-space: nowrap;
+	}
+	.skip:focus-visible {
+		outline: none;
+		box-shadow:
+			0 0 0 2px var(--ink),
+			0 0 0 5px var(--accent);
 	}
 	.left {
 		position: absolute;
