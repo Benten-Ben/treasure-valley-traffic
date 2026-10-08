@@ -230,6 +230,11 @@
 		transform: translateY(2px);
 		box-shadow: 0 1px 0 rgb(60 45 20 / 0.16);
 	}
+	.pair .btn:active:not(:disabled) {
+		transform: none;
+		box-shadow: none;
+		background: #f6efe2;
+	}
 	.btn:disabled {
 		cursor: default;
 		color: var(--ink-soft);
@@ -244,30 +249,30 @@
 			0 0 0 5px var(--accent);
 		z-index: 1;
 	}
+	/* Two buttons joined into one 40 px column, each a full 40 × 40 target (the outer edges are the
+	   buttons' own borders, so the pair is as wide as the round buttons). */
 	.pair {
 		display: flex;
 		flex-direction: column;
-		border: 2px solid var(--panel-edge);
 		border-radius: 20px;
-		background: var(--panel);
 		box-shadow: 0 3px 0 rgb(60 45 20 / 0.16);
 	}
 	.pair .btn {
-		width: 36px;
-		height: 40px;
-		border: 0;
-		border-radius: 18px;
-		background: none;
 		box-shadow: none;
 	}
-	.pair .btn + .btn {
-		border-top: 2px solid var(--panel-edge);
-		border-radius: 0 0 18px 18px;
-	}
 	.pair .btn:first-child {
-		border-radius: 18px 18px 0 0;
+		border-bottom-width: 1px;
+		border-radius: 20px 20px 0 0;
 	}
-	.pair .btn:hover:not(:disabled),
+	.pair .btn + .btn {
+		border-top-width: 1px;
+		border-radius: 0 0 20px 20px;
+	}
+	.pair .btn:focus-visible {
+		box-shadow:
+			0 0 0 2px var(--ink),
+			0 0 0 5px var(--accent);
+	}
 	.btn:hover:not(:disabled) {
 		background: #f6efe2;
 	}
