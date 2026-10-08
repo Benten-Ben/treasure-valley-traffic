@@ -104,22 +104,31 @@ export type SeededStation = { id: number; name: string; hollow: boolean; views: 
 
 /**
  * Wait until the app serves the seeded stations as seeded: all three, with the
+ * views the database has now (the app keeps /api/roadweather's answer for
+ * 10 s, so right after a clean and a new seed, e.g. when Playwright restarts
+ * a worker after a failure, it can still answer with the removed views), the
  * seeded capture status (the archive keeps its list of capture services for
  * 15 s, so right after another spec had Road weather on, the stations can come
  * back before the server reads the new status), and every view's picture
  * through /api/cameras/live (which keeps its view list for a minute).
  */
-export async function waitForSeeded(request: APIRequestContext, timeoutMs = 150_000): Promise<SeededStation[]> {
+export async function waitForSeeded(request: APIRequestContext, timeoutMs = 150_000, env = harnessEnv()): Promise<SeededStation[]> {
 	const names: string[] = Object.values(STATIONS).map((s) => s.name);
+	const want = (await seededViewIds(env)).join(',');
 	const until = Date.now() + timeoutMs;
 	const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
 	let stations: SeededStation[] = [];
 	for (;;) {
 		const rw = await (await request.get('/api/roadweather')).json();
 		stations = (rw.stations as SeededStation[]).filter((s) => names.includes(s.name));
+		const served = stations
+			.flatMap((s) => s.views.map((v) => v.id))
+			.sort((a, b) => a - b)
+			.join(',');
 		const seen = stations.flatMap((s) => s.views).filter((v) => v.imageId !== null);
-		if (stations.length === 3 && seen.length > 0 && seen.every((v) => v.capturing)) break;
-		if (Date.now() > until) throw new Error(`the app serves ${stations.length} of the 3 seeded stations, or not their capture status yet`);
+		if (stations.length === 3 && served === want && seen.length > 0 && seen.every((v) => v.capturing)) break;
+		if (Date.now() > until)
+			throw new Error(`the app serves ${stations.length} of the 3 seeded stations (views ${served}; the database has ${want}), or not their capture status yet`);
 		await pause(1000);
 	}
 	const ids = stations.flatMap((s) => s.views.map((v) => v.id));
@@ -129,6 +138,18 @@ export async function waitForSeeded(request: APIRequestContext, timeoutMs = 150_
 		if (n === ids.length) return stations;
 		if (Date.now() > until) throw new Error(`/api/cameras/live serves ${n} of the ${ids.length} seeded views`);
 		await pause(2000);
+	}
+}
+
+/** The seeded views' ids in the database now (a new seed after a clean gives new ones). */
+async function seededViewIds(env = harnessEnv()): Promise<number[]> {
+	const postgres = (await import('postgres')).default;
+	const sql = postgres(env.DATABASE_URL, { max: 1, onnotice: () => {} });
+	try {
+		const rows = await sql`select id from core.camera_view where source = ${SOURCE} and status is distinct from 'Removed' order by id`;
+		return rows.map((r) => Number(r.id));
+	} finally {
+		await sql.end();
 	}
 }
 
