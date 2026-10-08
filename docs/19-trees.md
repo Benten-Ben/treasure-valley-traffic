@@ -199,3 +199,106 @@ rebuilt when its catalogue changes (monthly) or new lidar arrives.
 The North End box on the preview site first, with θ set from the street
 tree scores, then the other test areas. Trees across the whole valley wait
 for lidar height products beyond the test areas ([DEFERRED](DEFERRED.md)).
+
+## 19.8 Shrubs
+
+Shrubs become plants too: each one a position, height, width and look,
+drawn as low-poly shrubs beside the trees. The owner settled the approach
+on Oct 8 ("no classification by place ... figure out what combination of
+settings gives the best tradeoff across our tests") and left the rest to
+the lead ("I'm fine with you thinking through and settling all of this
+however you see fit"). The experiments ran on the ten land-cover test
+areas' central 500 m on the project's server.
+
+**What counts.** Woody plants 0.3–2.4 m tall; from 2.4 m up a plant belongs
+to the trees (§19.3). One rule everywhere: a 0.5 m lidar cell in that band
+that isn't a building is a shrub when the summer photo's near-infrared
+calls it green (each area's own NDVI cut) **or** the lidar calls it a plant
+(at least 3 returns above the ground, with a scatter of 0.25 or more). In
+the 1 m ring around buildings only green cells count, since the rest there
+are roof slivers. This was the best of 132 settings (lowest band
+0.3 or 0.5 m; near-infrared, lidar or either; the lidar cut-offs; a 1 m
+vote) on three checks at once: agreement with RCMAP's 2023 shrub cover
+per 30 m pixel, shrubs on building edges, and green cells kept.
+
+**Cleaning.** The first images showed four kinds of false shrub, each
+dropped by a rule that doesn't depend on where the shrub is:
+
+- **A crown's skirt:** a clump whose top leans on a tree (a cell 2.4 m or
+  taller within 1 m of its top stands higher than it). These are the low
+  edges of tree crowns.
+- **A gap in a crown:** a clump whose surrounding ring is mostly tree.
+- **A speck:** one cell, or two under 0.6 m. In Dry Creek's grass the lidar
+  is striped with them.
+- **A crop:** a 25 m block where at least 15% of the cells are in the shrub
+  band, at least 90% of those are green, their heights are even (spread
+  under 0.35 m) and nothing but roofs stands over 1.5 m. Neighbouring
+  blocks just as green and low join it, and so does green, low ground
+  connected to it up to 30 m out. In the ten areas this caught 69 of the
+  72 blocks of the NY Canal crop field and nothing anywhere else. Shrubland
+  is never all green in July, and almost always has something taller
+  nearby.
+
+**Checked against RCMAP** (USGS's rangeland cover maps, 2023, 30 m; shrub
+and tree cover per pixel). Where the land is open, our shrubs plus
+everything woody above 2.4 m match RCMAP's shrub plus tree cover. In the
+mountains RCMAP calls much more of it shrub than we do, but the total is
+the same:
+
+| Area | RCMAP shrub + tree | Ours: shrub + woody ≥ 2.4 m |
+|---|---|---|
+| Dry Creek foothills | 12.1 + 3.8 = 15.8% | 8.9 + 6.6 = 15.5% |
+| Bogus Basin | 20.2 + 8.7 = 28.9% | 3.5 + 25.3 = 28.8% |
+| Silver City | 31.2 + 18.1 = 49.2% | 1.7 + 39.1 = 40.7% |
+| Barber Pool | 8.8 + 6.6 = 15.4% | 2.5 + 19.5 = 22.0% |
+| Initial Point desert | 1.5% | 0.2% |
+| Owyhee front | 0.7% | 0.2% |
+
+So the mountain difference is where the line between shrub and tree falls
+(mountain mahogany and bitterbrush 2.4–6 m tall are trees to us), not
+plants we miss. A rule that counted wide, low woody plants up to 6 m as
+shrubs closed only a tenth of that gap and added shrubs to valley yards.
+Barber Pool's riverside trees are real trees that RCMAP undercounts. So
+RCMAP stays a check: no top-up from it, and no second shrub line.
+
+**Shrubs from clumps.** The width a shrub has for its height comes from
+277 isolated, compact, single-topped clumps: **bush** width 1.48·H^0.25 m
+(225 shrubs) and **sage** width 1.28·H^0.15 m (52), spread ±0.17 in log
+width. The slopes are shallow partly because the 0.5 m cells make shrubs
+under about 1 m across look wider than they are. In each clump the peaks
+are taken tallest first, and a lower peak closer than half the two
+shrubs' model widths is dropped (the owner's spacing rule for trees). A
+watershed from the kept peaks splits the clump, and a piece much bigger
+than a model shrub of its height is split again (k-means) into
+model-sized shrubs. Each shrub's height is its piece's top, its width the
+piece's equal-area width held within twice the spread, and its look the
+piece's majority: **bush** when near-infrared calls it green (yard
+plantings, hedges, riparian thickets), **sage** when it isn't (sagebrush,
+bitterbrush, rabbitbrush). A hedge becomes a row of bushes.
+
+| Test area (500 m) | Shrubs per hectare | Bush share | Median height |
+|---|---|---|---|
+| Dry Creek foothills | 575 | 46% | 1.1 m |
+| Barber Pool | 291 | 65% | 1.3 m |
+| Bogus Basin | 228 | 91% | 0.8 m |
+| Silver City | 127 | 50% | 1.6 m |
+| North End, Downtown, South Meridian | 42–45 | 69–88% | 1.3–1.7 m |
+| Initial Point desert, Owyhee front | 15–17 | 22–82% | 0.6–1.2 m |
+| NY Canal farmland | 7 | 46% | 0.8 m |
+
+The domes these shrubs make cover 66–87% of the cleaned shrub cells, with
+a mean height error of 0.2–0.6 m there. Low desert shrubs under about
+0.4 m mostly don't reach the band in this lidar, so the desert areas look
+emptier than their photos.
+
+**Looks.** Two low-poly models in the trees' style, with the same flat
+shading and soft shadow: **bush**, a leafy mound of two lumpy lobes sunk a
+little into the ground (160 triangles), and **sage**, a low twiggy mound of
+six faceted clumps over three short stems, grey-green (144 triangles).
+Like trees, each shrub gets its own heading, lump pattern and a small
+colour nudge.
+
+**Not built yet:** a `trees.shrub` table and the build step (in the trees
+plugin, from the same lidar products), and the shrubs on the map. Fences
+and walls, the straight, thin raised lines the same lidar shows, come
+next as their own layer.
