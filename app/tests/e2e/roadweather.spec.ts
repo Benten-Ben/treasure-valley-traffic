@@ -9,7 +9,8 @@ import { cleanRoadWeather, seedRoadWeather, STATIONS } from './roadweather-seed.
  * road-weather freshness thresholds; a station whose views are all
  * placeholders ("no live feed") is drawn hollow. Also: the Cameras layer
  * doesn't list the stations, key 9 toggles the layer, and on a phone a
- * station opens as a sheet tab.
+ * station opens as a sheet tab. A station clicked under the inspect card
+ * pans into the free middle first.
  *
  * The spec sets up its own stations (roadweather-seed.ts: the real loader on
  * the plugin's synthetic list, test-pattern frames at chosen ages, a running
@@ -92,6 +93,13 @@ const pictureSrc = (win: Locator) => win.locator('img[data-frame-url]').last().g
 
 const escapeRe = (t: string) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
+/** The legend and inspect columns on a desktop (windows.svelte.ts, §14.3): the free middle is between them. */
+const LEFT_COLUMN = 312;
+const RIGHT_COLUMN = 392;
+
+type Box = { x: number; y: number; width: number; height: number } | null;
+const inside = (b: Box, x: number, y: number) => !!b && x >= b.x && x <= b.x + b.width && y >= b.y && y <= b.y + b.height;
+
 test.describe('road weather', () => {
 	test('toggling Road weather draws the seeded stations, hollow where every view has no live feed', { tag: '@wp16' }, async ({ page, request, consoleErrors, offsite }) => {
 		test.setTimeout(300_000);
@@ -166,9 +174,22 @@ test.describe('road weather', () => {
 		await openMap(page, 'weather');
 		const on = await seededDrawn(page);
 
-		await clickStation(page, on[STATIONS.grade.name]);
+		// At this view Example Grade sits right of the free middle, where the inspect card goes: the click pans it clear.
+		const before = on[STATIONS.grade.name];
+		expect(before.x!).toBeGreaterThan(1280 - RIGHT_COLUMN);
+		await clickStation(page, before);
 		const win = page.getByRole('dialog', { name: STATIONS.grade.name });
 		await expect(win).toBeVisible();
+		const card = page.getByRole('region', { name: 'Selected station' });
+		await expect(card.getByRole('heading', { name: STATIONS.grade.name })).toBeVisible();
+		await mapReady(page);
+		const canvas = (await page.locator('canvas.maplibregl-canvas').boundingBox())!;
+		const landed = (await seededDrawn(page))[STATIONS.grade.name];
+		const at = { x: canvas.x + landed.x!, y: canvas.y + landed.y! };
+		expect(at.x, 'the station in the free middle').toBeGreaterThan(LEFT_COLUMN);
+		expect(at.x, 'the station in the free middle').toBeLessThan(1280 - RIGHT_COLUMN);
+		expect(inside(await card.boundingBox(), at.x, at.y), 'the inspect card leaves the station in view').toBe(false);
+		expect(inside(await win.boundingBox(), at.x, at.y), 'its window leaves the station in view').toBe(false);
 		const tabs = win.getByRole('tab');
 		await expect(tabs).toHaveCount(4);
 		await expect(tabs.locator('.label')).toHaveText([...STATIONS.grade.labels]);
@@ -211,8 +232,12 @@ test.describe('road weather', () => {
 		await win.getByRole('button', { name: `Close ${STATIONS.grade.name}` }).click();
 		await expect(win).toHaveCount(0);
 
-		// The hollow station: every view without a live feed, and the window says so.
-		await clickStation(page, on[STATIONS.summit.name]);
+		// The hollow station: every view without a live feed, and the window says so. (Back to the first
+		// view, where it's in the free middle, so the click doesn't move the map.)
+		await page.evaluate(() => (globalThis as any).__tvt.map.jumpTo({ center: [-116.62, 43.64], zoom: 9 }));
+		await mapReady(page);
+		const summit = (await seededDrawn(page))[STATIONS.summit.name];
+		await clickStation(page, summit);
 		const hollow = page.getByRole('dialog', { name: STATIONS.summit.name });
 		await expect(hollow).toBeVisible();
 		await expect(hollow.getByRole('tab')).toHaveCount(2);
