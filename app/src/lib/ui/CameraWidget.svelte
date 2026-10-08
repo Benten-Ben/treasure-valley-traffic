@@ -4,7 +4,7 @@
 	import type { AppCtx } from '#lib/app/context.js';
 	import { historyOf } from '#lib/state/history.svelte.js';
 	import Icon from './Icon.svelte';
-	import { HOME as HOME_VIEW, reducedMotion } from './keymap.js';
+	import { HOME as HOME_VIEW, overviewCamera, reducedMotion } from './keymap.js';
 	import { slots } from './slots.svelte.js';
 	import { tooltip } from './tooltip.svelte.js';
 	import { HOME, OVERVIEW, ZOOM_IN, ZOOM_OUT } from './window-icons.js';
@@ -111,16 +111,8 @@
 	}
 
 	function overview() {
-		const b = ctx.manifest?.bounds;
-		if (!map || !b) return;
-		const cam = map.cameraForBounds(
-			[
-				[b[0], b[1]],
-				[b[2], b[3]]
-			],
-			{ padding: 40, bearing: 0, pitch: 0 }
-		);
-		if (cam) history.fly({ ...cam, bearing: 0, pitch: 0, duration: 1200 });
+		const cam = map && overviewCamera(map, ctx.manifest?.bounds);
+		if (cam) history.fly({ ...cam, duration: 1200 });
 	}
 
 	/** The tooltip goes to the left of the column, never over the widget's other buttons. */
