@@ -89,3 +89,27 @@ class ModelFilesTest(unittest.TestCase):
             self.assertIn("n", cm["shape"][k])
         utd = json.load(open(os.path.join(model, "utd_boise.json")))
         self.assertIn("BDL", utd["by_type"]); self.assertIn("CEL", utd["by_type"])
+
+    def test_one_model_everywhere_with_three_types(self):
+        # owner, Oct 8: no classification by place; every tree tries broadleaf, conifer and narrow
+        import build
+        model = os.path.join(os.path.dirname(HERE), "model")
+        m = build.model_for(json.load(open(os.path.join(model, "crown_model.json"))))
+        self.assertEqual(m.types, ["broadleaf", "conifer", "narrow"])
+        for t in m.types:
+            self.assertIn(t, m.widths); self.assertIn(t, m.shapes)
+        self.assertFalse(hasattr(build, "MOUNTAIN"))
+
+    def test_a_pointed_crown_comes_out_conifer(self):
+        # a lone tree 15 m tall with a mountain conifer's narrow, pointed crown is placed as a conifer
+        import build
+        from place import Placer
+        cm = json.load(open(os.path.join(os.path.dirname(HERE), "model", "crown_model.json")))
+        m = build.model_for(cm)
+        R = m.radius_cells(15.0, "conifer")
+        s = dome((80, 80), 40, 40, 15.0, R, a=0.952, n=2.089)
+        pl = Placer(s, np.ones(s.shape, bool), m, theta=0.2, lam=20.0)
+        pl.run_greedy()
+        types = [t["type"] for t in pl.alive()]
+        self.assertEqual(len(types), 1)
+        self.assertIn(types[0], ("conifer", "narrow"))

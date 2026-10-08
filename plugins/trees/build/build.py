@@ -27,25 +27,26 @@ from place import Model, Placer, PX  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 MODEL_DIR = os.path.join(os.path.dirname(HERE), "model")
-MOUNTAIN = {"h", "i", "j"}             # the land-cover areas in the mountains (Bogus Basin, the Owyhees)
 CONIFER_GENERA = {"abies", "calocedrus", "cedrus", "chamaecyparis", "cryptomeria", "cupressus", "juniperus", "larix",
                   "metasequoia", "picea", "pinus", "pseudotsuga", "sequoia", "sequoiadendron", "taxodium", "taxus",
                   "thuja", "tsuga"}
 TRUNK_H_CELLS, TRUNK_REACH_CELLS = 3, 5   # crown top within 1.5 m of the trunk point; centre within 2.5 m
 
 
-def model_for(area, cm):
+def model_for(cm):
+    """One rule everywhere (owner, Oct 8: no classification by place): every tree tries the three types, each with its
+    own width-for-height curve from the lone trees, and keeps the one that explains its crown best. Broadleaf takes the
+    valley broadleaf curve (which includes the small trees), conifer the mountain conifers' (pointed, narrow crowns),
+    narrow the valley conifers' and columnar trees'. Conifers and narrow trees share the narrow top shape."""
     W, Sh = cm["width"], cm["shape"]
     crowded = cm["crowded_shape_a"]
+    narrow_shapes = [(Sh["narrow"]["a"], Sh["narrow"]["n"]), (crowded["narrow"], Sh["narrow"]["n"])]
     shapes = {"broadleaf": [(Sh["broadleaf"]["a"], Sh["broadleaf"]["n"]), (crowded["broadleaf"], Sh["broadleaf"]["n"])],
-              "narrow": [(Sh["narrow"]["a"], Sh["narrow"]["n"]), (crowded["narrow"], Sh["narrow"]["n"])]}
-    if area in MOUNTAIN:
-        widths = {"narrow": (W["mountain conifer"]["a"], W["mountain conifer"]["b"]),
-                  "broadleaf": (W["mountain broadleaf"]["a"], W["mountain broadleaf"]["b"])}
-        return Model(widths, shapes, W["mountain conifer"]["sd_log"], ["narrow", "broadleaf"])
+              "conifer": narrow_shapes, "narrow": narrow_shapes}
     widths = {"broadleaf": (W["valley broadleaf + small"]["a"], W["valley broadleaf + small"]["b"]),
+              "conifer": (W["mountain conifer"]["a"], W["mountain conifer"]["b"]),
               "narrow": (W["valley conifer"]["a"], W["valley conifer"]["b"])}
-    return Model(widths, shapes, W["valley broadleaf + small"]["sd_log"], ["broadleaf", "narrow"])
+    return Model(widths, shapes, W["valley broadleaf + small"]["sd_log"], ["broadleaf", "conifer", "narrow"])
 
 
 def utd_size(utd, genus, dbh_in, conifer):
@@ -106,7 +107,7 @@ def main(argv=None):
         h, bld, bad, dtm = h[sl], bld[sl], bad[sl], dtm[sl]
     s = ndimage.gaussian_filter(np.where(bld, 0, h), 1.0)
     valid = ~bld & ~bad
-    model = model_for(a.area, cm)
+    model = model_for(cm)
     # seeds within 1 m of a building must be 6 m or taller: shorter ones there are mostly roof slivers
     near_bld = ndimage.binary_dilation(bld, iterations=2) & ~bld
     pl = Placer(s, valid, model, theta=a.theta, lam=a.lam, avoid=near_bld)
@@ -141,7 +142,7 @@ def main(argv=None):
         under = exp_h is not None and an["H"] > max(1.8 * exp_h, exp_h + 6)     # the crown above is another tree's
         an["under"] = under
         if an["H"] >= pl.tree_h and not under and valid[min(max(y, 0), h.shape[0] - 1), min(max(x, 0), h.shape[1] - 1)]:
-            types = ["narrow"] if an["conifer"] else ["broadleaf", "narrow"]
+            types = ["conifer", "narrow"] if an["conifer"] else ["broadleaf", "narrow"]
             g, t = pl.best_near(y, x, an["H"], types, TRUNK_REACH_CELLS, overlap=False)
             if t is not None:
                 t["fixed"] = True; t["kind"] = "catalogued"; t["anchor"] = an; t["gain"] = g
@@ -167,7 +168,6 @@ def main(argv=None):
     pl.run_greedy(log=lambda m: print(m, flush=True))
     pl.repair(sweeps=a.sweeps, log=lambda m: print(m, flush=True))
     # 3. write
-    mountain = a.area in MOUNTAIN
     n_placed = 0
     for t in pl.alive():
         x_m, y_m, lon, lat = to_ll(t["y"], t["x"])
@@ -186,7 +186,7 @@ def main(argv=None):
                                    "trunk_to_crown_m": round(off, 2)}})
         else:
             tid = f"{a.area}-{int(round(x_m))}-{int(round(y_m))}"
-            typ = t["type"] if t["type"] == "broadleaf" else ("conifer" if mountain else "narrow")
+            typ = t["type"]
             z = math.log(t["R"] / model.radius_cells(t["H"], t["type"])) / model.sd
             out_trees.append({"id": tid, "kind": "placed", "type": typ, **common, "catalogue": None, "catalogue_id": None,
                               "fit": {"width_vs_typical_sd": round(z, 2), "crowded": t["a"] < 0.6 if t["type"] == "broadleaf" else t["a"] < 0.8}})
