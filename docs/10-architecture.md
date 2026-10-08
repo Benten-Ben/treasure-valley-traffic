@@ -34,7 +34,7 @@ will be designed and built step by step with the project owner's sign-off.
 | Layer | Choice | Status |
 |---|---|---|
 | Front-end framework | **SvelteKit** (TypeScript) | ✅ owner's preference |
-| Map rendering | **MapLibre GL JS** (2.5D: tilt, terrain, 3D building extrusions) + **deck.gl** overlay for heavy layers (bus trails, crash hexbins, time animation) | ✅ v1 is 2.5D |
+| Map rendering | **MapLibre GL JS** (2.5D: tilt, terrain, 3D building extrusions), with **our own small WebGL2 scene engine** (a MapLibre custom layer, about 30–40 KB, loaded on demand) for the 3D buses, stops and cameras, and an always-loaded 2D overlay for far-zoom buses and badges ([ch. 14 §14.8](14-ui-v2.md#the-3d-engine-instead-of-deckgl)). deck.gl, the Oct 5 pick, crashes on MapLibre 6 and would add about 340 KB; it waits for heavy analysis layers (crash hexbins, an all-day trips replay) once it supports MapLibre 6 | ✅ v1 is 2.5D; ✅ the scene engine instead of deck.gl, three.js as the fallback (owner, Oct 6, ch. 14 Q1) |
 | True 3D (later, optional) | CesiumJS for LiDAR point clouds / 3D Tiles | ✅ not in v1 |
 | Basemap | Self-hosted **Protomaps PMTiles** extract (OpenStreetMap), built by `basemap/build.sh` | ✅ scaffolded; build waits on network access |
 | Terrain | Terrain-RGB tiles built from **USGS 3DEP 1 m DEM** | ❓ recommended |
@@ -58,7 +58,7 @@ went the way it did. The owner's answers are in
 | Question | Options weighed | Chosen | Why |
 |---|---|---|---|
 | Where it runs | The owner's laptop; a home server or mini PC; a small rented server (about $5–20 a month) | The owner's home server, one VM | Live feeds (buses every 30 s, cameras) need something always on. The map on its own could be hosted as a static site, but the live layers can't. The owner picked the home server: "more in that machine's resource capacity than this laptop". VM vs. container: see §10.4. |
-| Map rendering | **MapLibre** (2D/2.5D: tilted views, terrain, extruded buildings) + deck.gl; or **CesiumJS** (true 3D globe, point clouds) | MapLibre, 2.5D first | MapLibre covers terrain, 3D buildings, bus trails and time animation. Cesium is worth adding only if we want LiDAR point clouds, and 3D-first would also mean storing 160 GB+ of raw point clouds (§10.4). |
+| Map rendering | **MapLibre** (2D/2.5D: tilted views, terrain, extruded buildings) + deck.gl; or **CesiumJS** (true 3D globe, point clouds) | MapLibre, 2.5D first | MapLibre covers terrain, 3D buildings, bus trails and time animation. Cesium is worth adding only if we want LiDAR point clouds, and 3D-first would also mean storing 160 GB+ of raw point clouds (§10.4). (deck.gl was later replaced by our own scene engine for the 3D objects: see the table above.) |
 | Basemap hosting | A self-hosted single map file (Protomaps) or a commercial tile service | Self-hosted | No keys, no limits, fully ours |
 | Database | **PostgreSQL + PostGIS (+ TimescaleDB)**; or serverless **DuckDB + data files** | PostGIS as the core; DuckDB only as a side tool | DuckDB is simpler (no server) and great for analysis, but weaker for live layers and many joins, which is what this platform mostly does. It stays for heavy one-off work such as Overture extracts. |
 | App front end | React + TypeScript; Svelte/SvelteKit; plain JavaScript | SvelteKit | The pilot recommended React + TypeScript for having the largest map-app ecosystem; the owner prefers Svelte/SvelteKit. |
@@ -80,7 +80,7 @@ went the way it did. The owner's answers are in
    (per intersection, tiles (live)      notebooks, reports)
    per corridor)        │
           │             ▼
-          └────► SvelteKit app + MapLibre/deck.gl
+          └────► SvelteKit app + MapLibre (+ our WebGL scene layer)
                  base: PMTiles (OSM) + terrain (3DEP) + NAIP + buildings
 ```
 

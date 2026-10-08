@@ -5,8 +5,11 @@ layer**: a way to confirm or challenge what volumes, transit GPS, crashes
 and timing data suggest (for example, "this approach spills back at
 5:15 pm").
 
-Status: design agreed in principle with the owner. The code isn't built
-yet; the prototype only reads the camera list.
+Status (Oct 7, 2026): capture runs on the server (the 34 key cameras every
+50 s and the road-weather views every 10 minutes, rolled into daily videos,
+§11.5); cameras are calibrated on the map, and the app shows their live
+pictures in floating windows, in 3D view cones and by looking through them
+(§11.8). Measurement (§11.7) isn't built yet.
 
 **Owner direction (Oct 5):**
 
@@ -93,7 +96,8 @@ ends, crosswalk corners, pole bases. Solving from those points gives:
 
 That drives the map's view cones and turns queues into meters. It starts
 by hand (a few minutes per view) and can be partly automated later. The
-workbench UI is in [chapter 13](13-visual-design.md#133-a-walk-through-the-screen).
+workbench UI is in [chapter 13](13-visual-design.md#133-a-walk-through-the-screen);
+as built, it's Calibrate mode on the shared map (§11.8).
 
 **Feasibility:**
 
@@ -813,3 +817,67 @@ storage, not the API throttle. We use a single API key, never several
 - **AV1 roll-ups:** about 15 CPU-minutes per hour for all cameras, from
   the benchmark above.
 - **GPU:** optional. It mainly helps fine-tuning.
+
+## 11.8 Cameras in the app (UI v2, Oct 2026)
+
+UI v2 ([ch. 14 §14.6](14-ui-v2.md#146-cameras)) changed how cameras and
+their pictures reach the map. The owner approved each part on Oct 6
+(ch. 14 Q2, Q5, Q6).
+
+**Live pictures come from the archive, or from 511 on demand.**
+
+| Camera | Where the app gets its picture | How fresh |
+|---|---|---|
+| The 34 recorded key cameras | the capture archive's newest frame (§11.5), read from today's `index.csv` only when that file changes | every 50 s; the app never fetches these from 511 |
+| Road-weather views | the capture archive's newest frame | every 10 minutes |
+| Every other camera | fetched by the server from 511's allowed image route (`/map/Cctv/<id>`), **only while someone has it open**, looks through it or calibrates it | at most once per 55 s per image |
+
+The on-demand fetcher keeps to §11.7's "gently": only image IDs in
+`core.camera_view`; concurrent viewers share one fetch; at most 2 requests
+upstream at a time and 12 distinct images per 10 minutes; refreshing stops
+3 minutes after the last viewer leaves. It checks 511's robots.txt with a
+port of `ingest/http.py`'s lenient parser (a 5xx or network error means
+"blocked" for now), sends the ingestors' User-Agent, and keeps pictures in
+memory only (the newest 64). Nothing is written to disk unless a picture is
+chosen for calibration.
+
+- **The switch:** `CAMERA_IMAGES_ENABLED` turns all of this on. It's off by
+  default in code; the deploy turns it on with
+  [`deploy/compose.live-images.yml`](../deploy/compose.live-images.yml),
+  which also mounts the archive's `cameras/jpeg` and `cameras/status`
+  folders into the app read-only. The capture services write a small
+  status file each cycle, so the app knows what's recorded and whether
+  capture is alive.
+- **Tests never reach 511:** `TVT_FRAME_SOURCE=fixture` serves seeded
+  frames, and every test frame is rendered from our own map.
+- **Age is "seen" time:** when our server first got that picture. The time
+  in the picture's bar is ACHD's own clock; until it's read automatically
+  (§11.2), the app says "seen", never "taken". Fresh is 3 minutes or less
+  for the key and on-demand cameras (30 for road-weather views), late up to
+  10 (60), stale after that, each with a shape and a word.
+
+**The main map's ground drape is gone.** A calibrated camera's open window
+now hangs its picture in the camera's 3D view cone from z15 ("the photo in
+the cone"), and *Look through* puts the map's own camera exactly at the
+camera's solved pose, with terrain at true scale, so the picture lines up
+with the 3D map (on the four seeded test cameras, 0.3–0.44 px on average
+and at most 0.73 px, at roll 0 and ±5°). The ground drape survives
+only inside calibration, as a check.
+
+**The calibrator moved onto the map.** Calibrate (or Configure, for a
+camera not yet calibrated) opens Calibrate mode on the same map at
+`/calibrate/<camera>?view=<view>`: the frame in a panel on the left, the map
+straight down at zoom 19 with Aerial on, terrain at true scale, and the
+camera's pole and cone. Leaving restores the view exactly.
+
+- **"Use this frame" saves the exact frame shown:** the app names the
+  picture on screen (an on-demand frame's hash, or an archive frame's
+  image, day and stamp), and the server copies exactly those bytes into the
+  frames folder. If they're gone, it answers 410 and the panel asks to pick
+  the current frame again.
+- **The first frame** is the newest one: from the archive when it holds a
+  frame seen within 2 minutes, otherwise from the on-demand fetcher.
+- **The bar's height** is computed per frame, so the HD I-84 frames
+  (1920×1166) no longer drape about 50 px of the bar onto the ground.
+- **The old page** stays at `/v1/calibrate/<camera>` until the owner has
+  saved a calibration with the new one; then it can go.

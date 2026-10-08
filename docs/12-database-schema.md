@@ -239,6 +239,14 @@ create table core.camera_zone (            -- drawn on the map, in world coordin
 Zones live in world coordinates. Each frame's calibration projects them
 into the image, so a slightly moved camera keeps its zones.
 
+Since Oct 6, `core.camera.provider` (`ACHD`, `ITD RWIS` or `ODOT`; the
+cameras plugin's migration `cameras/0001`, the number 0008 that ch. 14
+reserved) lets ITD's road-weather stations and Oregon DOT's cameras live
+beside ACHD's traffic cameras: one `core.camera` per station and one
+`core.camera_view` per direction, labeled in `direction`. The Cameras layer
+shows `ACHD` only; the Road weather layer shows the rest
+([ch. 14 §14.6](14-ui-v2.md#road-weather)).
+
 **Counts, network, transit:**
 
 - **`core.count_station`:** ACHD and ITD count locations.
@@ -252,6 +260,20 @@ into the image, so a slightly moved camera keeps its zones.
   is an open question ([decision 5](#129-decisions-for-the-owner)).
 - **`core.transit_route`, `core.transit_stop`, `core.transit_shape`:**
   from VRT's GTFS, versioned by feed date.
+  - **`core.transit_route.color_pinned`** (migration 0006, owner OK Oct 6,
+    [ch. 14](14-ui-v2.md) Q4): locks a route's color, so the palette
+    assignment never changes it.
+- **`core.transit_ribbon`** (migration 0006, built Oct 6): routes that
+  share a street, for drawing them side by side
+  ([ch. 14 §14.4](14-ui-v2.md#side-by-side-ribbons)). One row per atomic
+  piece of shared centreline (`segment_id`, `geom`), with the routes on it
+  left to right looking along `geom` (`routes text[]`; dormant routes take
+  no slot), `length_m`, a `hub` flag (within 300 m of a stop served by 6 or
+  more routes) and the `build` hash. `ingest/transit_ribbons.py` builds it
+  from VRT's own shapes, and VRT's daily GTFS run rebuilds it only when the
+  shapes, the dormant set or the parameters change, inside a savepoint, so a
+  failed build keeps the previous ribbons. Until a first build exists,
+  `/api/transit/network` serves plain route shapes.
 
 **Intersections** are built, not fetched: `python3 -m ingest match-intersections`
 (and the daily `intersections` source) makes one `core.intersection` per
@@ -541,6 +563,7 @@ where HPMS or the Master Street Map had already decided.
 | Table | One row per | Key columns | Chunk | Compress after | Rows per year (est.) |
 |---|---|---|---|---|---|
 | `obs.vehicle_position` | Bus GPS ping | `ts`, `vehicle_id`, `trip_id`, `route_id`, `geom`, `bearing`, `speed` | 1 day | 7 days | ~30 M |
+| `obs.vehicle_progress` (built Oct 6, migration 0007; owner OK, [ch. 14](14-ui-v2.md) Q4) | Where a bus fix lies along its route, for playback ([ch. 14 §14.4](14-ui-v2.md#playback)) | `vehicle_id`, `ts` (the fix's key), `shape_id`, `m` and `off_m` (metres along and off the shape), `route_id` and `route_source` (feed, trip, matched or path), `step` to the next fix (along, still, straight or gap) and `step_speed_ms`, `method`, `seen_at` (about its arrival), `backfill` | 1 day | 7 days | ~33 M (about 90k a day) |
 | `obs.weather` | Station report | `ts`, `station`, `visibility_m`, `temp_c`, `wind_ms`, `precip_mm`, `present_weather` | 30 days | 30 days | small |
 | `obs.weather_reading` (built Oct 6, migration 0010) | ITD road-weather station reading (511 API) | `station_id`, `ts`, air, surface and dew-point °F, humidity, wind, precipitation, visibility, surface status and friction, `status` | 7 days | 14 days | ~4.4 M (127 stations, every 15 min; measured Oct 6) |
 | `obs.camera_frame` | Kept frame | `taken_at` (from the 511 bar), `fetched_at`, `view_id`, `archive_file`, `frame_index`, `quality` flags, `scene_hash` | 1 day | 7 days | ~110 M (all cameras) |
