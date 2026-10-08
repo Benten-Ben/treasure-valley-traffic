@@ -1,4 +1,5 @@
 <script lang="ts">
+	import type { Map as MapLibre } from 'maplibre-gl';
 	import { onDestroy, untrack, type Component } from 'svelte';
 	import type { AppCtx } from '#lib/app/context.js';
 	import PanelBoundary from '#lib/components/PanelBoundary.svelte';
@@ -8,6 +9,7 @@
 	import { registerDefaultKeys } from './keymap.js';
 	import LegendStack from './LegendStack.svelte';
 	import LoadingCard from './LoadingCard.svelte';
+	import { applyPadding, chromePadding, type Padding } from './padding.js';
 	import Sheet from './Sheet.svelte';
 	import { slots } from './slots.svelte.js';
 	import TabBar from './TabBar.svelte';
@@ -59,6 +61,45 @@
 	const exploring = $derived(app.modes.current === 'explore');
 	const banner = $derived(slots.banner(app.modes.current));
 
+	// The map's padding follows the open columns (§14.3 "Regions"), in Explore only: the modes set
+	// their own and put this one back from their snapshot. A change waits for a flight to land.
+	let vw = $state(typeof innerWidth === 'number' ? innerWidth : 1280);
+	let vh = $state(typeof innerHeight === 'number' ? innerHeight : 800);
+	const padding = $derived(
+		chromePadding({
+			layout: phone ? 'phone' : tablet ? 'tablet' : 'desktop',
+			width: vw,
+			height: vh,
+			inspect: !phone && app.selection.current !== null
+		})
+	);
+	let padWanted: { map: MapLibre; padding: Padding } | null = null;
+	let padWaiting: MapLibre | null = null;
+	function padNow() {
+		padWaiting = null;
+		const w = padWanted;
+		if (!w || ctx.map !== w.map || ctx.modes.current !== 'explore') return;
+		if (w.map.isMoving()) return padSoon();
+		padWanted = null;
+		applyPadding(w.map, w.padding);
+	}
+	function padSoon() {
+		const map = padWanted?.map;
+		if (!map || padWaiting === map) return;
+		padWaiting = map;
+		map.once('moveend', padNow);
+	}
+	$effect(() => {
+		const map = app.map;
+		const p = padding;
+		if (!map || !exploring) return;
+		untrack(() => {
+			padWanted = { map, padding: p };
+			if (map.isMoving()) padSoon();
+			else padNow();
+		});
+	});
+
 	let helpOpen = $state(false);
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	let Help = $state<Component<any> | null>(null);
@@ -99,10 +140,12 @@
 		stopEsc();
 		unhover();
 		tooltip.hide();
+		padWaiting?.off('moveend', padNow);
+		padWanted = null;
 	});
 </script>
 
-<svelte:window onkeydown={(e) => handleKey(e, app.modes.current)} />
+<svelte:window onkeydown={(e) => handleKey(e, app.modes.current)} bind:innerWidth={vw} bind:innerHeight={vh} />
 
 <div class="chrome" class:phone class:tablet>
 	{#if exploring}
