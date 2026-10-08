@@ -8,6 +8,7 @@ import {
 	FADE_S,
 	Feed,
 	HIDE_S,
+	HOLD_M,
 	metres,
 	positionAt,
 	runningAt,
@@ -131,6 +132,128 @@ describe('positionAt', () => {
 			positionAt(t, T, at);
 			expect(at.lon).toBe(fresh.lon);
 		}
+	});
+});
+
+/** Metres north of the street (the raw fixes sit a few metres off the shape, as real GPS does). */
+const dy = (m: number) => m / 110_574;
+const north = (lat: number) => (lat - LAT) * 110_574;
+
+/** A fix `off` metres north of x metres east, as a step of `kind` from t0 to t1. */
+const off = (vid: string, t0: number, x: number, offM: number, t1: number | null = null, kind: TrackStep[3] = null): TrackStep => {
+	const f = fix(vid, t0, x, t1, kind);
+	f[5] = LAT + dy(offM);
+	return f;
+};
+
+/** The largest move (m) between consecutive frames from t0 to t1, `fps` frames a second. */
+function biggestJump(t: Track, t0: number, t1: number, fps = 60): { m: number; at: number } {
+	const at = busAt();
+	let last: [number, number] | null = null;
+	let worst = { m: 0, at: t0 };
+	for (let T = t0; T <= t1; T += 1 / fps) {
+		positionAt(t, T, at);
+		if (at.state === 'hidden') continue;
+		if (last) {
+			const m = metres(last[0], last[1], at.lon, at.lat);
+			if (m > worst.m) worst = { m, at: T };
+		}
+		last = [at.lon, at.lat];
+	}
+	return worst;
+}
+
+describe('step boundaries (no jumps)', () => {
+	// Along the shape at 10 m/s, a stop with GPS jitter 6–9 m off the street, away along the shape, a
+	// straight step off it, a stop, the newest fix: what the verifier replayed on Oct 7 (jumps of 6–37 m).
+	const steps = (vid = 'j'): TrackStep[] => [
+		along(vid, 1000, 1010, 0, 100),
+		off(vid, 1010, 100, 8, 1040, 'still'),
+		off(vid, 1040, 104, -6, 1070, 'still'),
+		off(vid, 1070, 98, 9, 1080, 'still'),
+		along(vid, 1080, 1090, 102, 202),
+		off(vid, 1090, 202, 7, 1100, 'straight'),
+		off(vid, 1100, 300, 25, 1130, 'still'),
+		off(vid, 1130, 303, 30)
+	];
+
+	it('replayed frame by frame, a bus never moves further in a frame than its speed allows', () => {
+		const t = track(...steps());
+		// 10 m/s at 60 fps is 0.17 m a frame; the straight step is about 10 m/s too.
+		const worst = biggestJump(t, 1000, 1200);
+		expect(worst.m, `worst jump at ${worst.at.toFixed(2)} s`).toBeLessThan(0.5);
+	});
+
+	it('a stop after an along step holds where the along step ended, on the shape, not at the raw fix', () => {
+		const t = track(...steps());
+		const before = positionAt(t, 1010 - 1e-6);
+		const at = positionAt(t, 1010);
+		expect(metres(before.lon, before.lat, at.lon, at.lat)).toBeLessThan(0.01);
+		expect(north(at.lat)).toBeCloseTo(0, 3);
+		expect(at.state).toBe('still');
+		// The next two stills (jitter 6 m south, then 9 m north) hold there too.
+		for (const T of [1039.99, 1040, 1055, 1070, 1079.99]) {
+			const p = positionAt(t, T);
+			expect(east(p.lon), `east at ${T}`).toBeCloseTo(100, 3);
+			expect(north(p.lat), `north at ${T}`).toBeCloseTo(0, 3);
+		}
+	});
+
+	it('an along step after a stop starts where the bus stood and eases onto its path', () => {
+		const t = track(...steps());
+		const start = positionAt(t, 1080);
+		expect(east(start.lon)).toBeCloseTo(100, 3); // where it held, not the path's 102
+		const mid = positionAt(t, 1085);
+		expect(east(mid.lon)).toBeCloseTo(152 - 2 * 0.5, 3); // the 2 m offset half eased out
+		const end = positionAt(t, 1090 - 1e-6);
+		expect(east(end.lon)).toBeCloseTo(202, 2);
+		expect(north(end.lat)).toBeCloseTo(0, 2);
+	});
+
+	it('a straight step starts where the along step ended and runs to the next fix', () => {
+		const t = track(...steps());
+		const s = positionAt(t, 1090);
+		expect(east(s.lon)).toBeCloseTo(202, 3);
+		expect(north(s.lat)).toBeCloseTo(0, 3); // the along end, not the raw fix 7 m north
+		const e = positionAt(t, 1100 - 1e-6);
+		expect(east(e.lon)).toBeCloseTo(300, 2);
+		expect(north(e.lat)).toBeCloseTo(25, 2);
+	});
+
+	it('the newest fix waits where the step before it ended', () => {
+		const t = track(...steps());
+		const w = positionAt(t, 1150);
+		expect(w.state).toBe('waiting');
+		expect(east(w.lon)).toBeCloseTo(300, 3);
+		expect(north(w.lat)).toBeCloseTo(25, 3);
+	});
+
+	it(`a stop that has crept more than ${HOLD_M} m from where it held glides to its fix instead`, () => {
+		const t = track(along('g', 1000, 1010, 0, 100), off('g', 1010, 100, 0, 1040, 'still'), off('g', 1040, 111, 0, 1070, 'still'), off('g', 1070, 122, 0, 1100, 'still'), off('g', 1100, 133, 0, 1130, 'still'), fix('g', 1130, 144));
+		expect(biggestJump(t, 1000, 1140).m).toBeLessThan(0.5);
+		// Held at 100 while within HOLD_M of each fix (111, 122), then glides to 133 over its step.
+		expect(east(positionAt(t, 1070).lon)).toBeCloseTo(100, 3);
+		const glide = positionAt(t, 1115);
+		expect(east(glide.lon)).toBeCloseTo(116.5, 3);
+		expect(glide.state).toBe('still');
+		expect(glide.speed).toBeGreaterThan(0); // the loop keeps drawing it
+		expect(east(positionAt(t, 1130).lon)).toBeCloseTo(133, 3);
+	});
+
+	it('pruning the steps before a stop keeps the bus where it held', () => {
+		const f = new Feed();
+		f.merge({ now: 2000, vehicles: {}, steps: steps('p'), routeRuns: {}, lastFix: 1130 });
+		const t0 = f.tracks.get('p')!;
+		const held = positionAt(t0, 1075);
+		f.prune(1070 + 361); // drops the along step and the first two stills
+		const t1 = f.tracks.get('p')!;
+		expect(t1.steps[0].t0).toBe(1070);
+		const still = positionAt(t1, 1075);
+		expect(metres(held.lon, held.lat, still.lon, still.lat)).toBeLessThan(0.01);
+		// A later poll's merge keeps it too.
+		f.merge({ now: 2010, vehicles: {}, steps: [off('p', 1130, 303, 30, 1140, 'still'), off('p', 1140, 305, 28)], routeRuns: {}, lastFix: 1140 });
+		const again = positionAt(f.tracks.get('p')!, 1075);
+		expect(metres(held.lon, held.lat, again.lon, again.lat)).toBeLessThan(0.01);
 	});
 });
 

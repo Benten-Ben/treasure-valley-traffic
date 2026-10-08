@@ -15,6 +15,15 @@ import type { StepKind, TrackStep, TrackVehicle, Tracks } from '#lib/contracts/t
  * | gap | held at the fix, then a 300 ms fade-jump to the next |
  * | newest fix reached | waits there, never extrapolated: "waiting for GPS" under 120 s, hollow (stale) up to 15 min, then hidden |
  *
+ * **No jumps at step boundaries.** An along step runs on the route's shape
+ * (the fix projected onto it), while a still or straight step starts at the
+ * raw GPS fix, a few metres off it; and a bus waiting at a stop reports a
+ * slightly different fix every time. So each step starts where the previous
+ * one ended (`chain`): a still step holds where the bus already is (up to
+ * HOLD_M from its own fix, beyond which it glides there over the step), a
+ * straight step or a gap starts there too, and an along step starts there
+ * and eases onto its path, the offset shrinking to nothing at its end.
+ *
  * The feed merges every poll's steps by (vehicle, t0), so a bus's newest fix
  * (t1 = null) is replaced once the next fix arrives, and prunes steps that
  * ended more than 6 minutes before T. Per frame, `positionAt` does the math
@@ -40,6 +49,8 @@ export const RUN_WINDOW_S = 900;
 export const TRAIL_S = 300;
 /** A bus faster than this is a GPS jump, not a bus (m/s); the loop's rate never needs more. */
 export const MAX_SPEED = 30;
+/** A still step holds where the bus already is while that's within this of its own fix (m); beyond, it glides there. */
+export const HOLD_M = 30;
 
 const M_PER_DEG_LAT = 110_574;
 const M_PER_DEG_LON_EQ = 111_320;
@@ -63,6 +74,14 @@ export interface PStep {
 	cum: Float64Array | null;
 	/** Path length, metres (0 without a path). */
 	len: number;
+	/** Where the step starts as drawn: where the previous one ended (`chain`), else the fix. */
+	slon: number;
+	slat: number;
+	/** along only: the start's offset from the path's first point, eased out along the step. */
+	dlon: number;
+	dlat: number;
+	/** still only: glide from the start to the fix over the step (the start is more than HOLD_M away). */
+	glide: boolean;
 }
 
 /** One bus's steps in time order, plus a lookup hint (the step found last). */
@@ -99,18 +118,54 @@ export function prepareStep(s: TrackStep): PStep {
 			cum[i / 2] = len;
 		}
 	}
-	return { t0, t1, kind, lon, lat, bearing, speed, path: cum ? path : null, cum, len };
+	return { t0, t1, kind, lon, lat, bearing, speed, path: cum ? path : null, cum, len, slon: lon, slat: lat, dlon: 0, dlat: 0, glide: false };
 }
 
-/** Steps grouped per bus, in time order. */
-export function buildTracks(steps: Iterable<TrackStep>): Map<string, Track> {
+/** The key of a bus's step (its vehicle and t0), as the feed merges them. */
+export const stepKey = (vid: string, t0: number) => `${vid}\u0000${t0}`;
+
+/** Where a step ends as drawn, given the step after it (which starts at its own fix). */
+function endOf(s: PStep, next: PStep): [number, number] {
+	if (s.kind === 'along' && s.path) return [s.path[s.path.length - 2], s.path[s.path.length - 1]];
+	// A straight step runs to the next fix, and a gap jumps there.
+	if (s.kind === 'straight' || s.kind === 'gap') return [next.lon, next.lat];
+	// Still (or an along step with no path, drawn still): where it held, or the fix it glided to.
+	return s.glide ? [s.lon, s.lat] : [s.slon, s.slat];
+}
+
+/**
+ * Start each of a bus's steps where the previous one ended (time order;
+ * see "No jumps at step boundaries" above). A step with no step just
+ * before it (its first, or after one was pruned) starts where `known` says
+ * it did last time, else at its fix.
+ */
+export function chain(vid: string, steps: PStep[], known?: ReadonlyMap<string, readonly [number, number]>): void {
+	for (let i = 0; i < steps.length; i++) {
+		const s = steps[i];
+		const prev = i > 0 ? steps[i - 1] : null;
+		let start: readonly [number, number] = [s.lon, s.lat];
+		if (prev && prev.t1 !== null && prev.t1 === s.t0) start = endOf(prev, s);
+		else start = known?.get(stepKey(vid, s.t0)) ?? start;
+		s.slon = start[0];
+		s.slat = start[1];
+		s.dlon = s.path ? s.slon - s.path[0] : 0;
+		s.dlat = s.path ? s.slat - s.path[1] : 0;
+		s.glide = s.kind !== 'along' && s.kind !== 'straight' && s.kind !== 'gap' && s.t1 !== null && metres(s.slon, s.slat, s.lon, s.lat) > HOLD_M;
+	}
+}
+
+/** Steps grouped per bus, in time order, each starting where the one before it ended. */
+export function buildTracks(steps: Iterable<TrackStep>, known?: ReadonlyMap<string, readonly [number, number]>): Map<string, Track> {
 	const by = new Map<string, Track>();
 	for (const s of steps) {
 		let t = by.get(s[0]);
 		if (!t) by.set(s[0], (t = { vid: s[0], steps: [], hint: 0 }));
 		t.steps.push(prepareStep(s));
 	}
-	for (const t of by.values()) t.steps.sort((a, b) => a.t0 - b.t0);
+	for (const t of by.values()) {
+		t.steps.sort((a, b) => a.t0 - b.t0);
+		chain(t.vid, t.steps, known);
+	}
 	return by;
 }
 
@@ -163,10 +218,18 @@ export class Feed {
 		if (changed) this.#rebuild();
 	}
 
+	/** Where each step started as drawn, so pruning the steps before one doesn't move it. */
+	#starts = new Map<string, readonly [number, number]>();
+
 	#rebuild() {
 		const hints = new Map([...this.tracks].map(([vid, t]) => [vid, t.hint]));
-		this.tracks = buildTracks(this.steps.values());
-		for (const [vid, t] of this.tracks) t.hint = Math.min(hints.get(vid) ?? 0, t.steps.length - 1);
+		this.tracks = buildTracks(this.steps.values(), this.#starts);
+		const starts = new Map<string, readonly [number, number]>();
+		for (const [vid, t] of this.tracks) {
+			t.hint = Math.min(hints.get(vid) ?? 0, t.steps.length - 1);
+			for (const s of t.steps) starts.set(stepKey(vid, s.t0), [s.slon, s.slat]);
+		}
+		this.#starts = starts;
 		const vehicles: Record<string, TrackVehicle> = {};
 		for (const vid of this.tracks.keys()) if (this.vehicles[vid]) vehicles[vid] = this.vehicles[vid];
 		this.vehicles = vehicles;
@@ -211,14 +274,17 @@ export function stepIndex(track: Track, T: number): number {
 	return i;
 }
 
-/** A point `d` metres along a prepared path, into out.lon/out.lat. */
+/**
+ * A point `d` metres along a prepared path, into out.lon/out.lat, plus the
+ * step's start offset eased out along it (all of it at 0 m, none at the end).
+ */
 function along(step: PStep, d: number, out: { lon: number; lat: number }): void {
 	const path = step.path!;
 	const cum = step.cum!;
 	const n = cum.length;
 	if (d <= 0) {
-		out.lon = path[0];
-		out.lat = path[1];
+		out.lon = step.slon;
+		out.lat = step.slat;
 		return;
 	}
 	if (d >= step.len) {
@@ -235,8 +301,9 @@ function along(step: PStep, d: number, out: { lon: number; lat: number }): void 
 	}
 	const span = cum[hi] - cum[lo];
 	const f = span > 0 ? (d - cum[lo]) / span : 0;
-	out.lon = path[2 * lo] + (path[2 * hi] - path[2 * lo]) * f;
-	out.lat = path[2 * lo + 1] + (path[2 * hi + 1] - path[2 * lo + 1]) * f;
+	const ease = 1 - d / step.len;
+	out.lon = path[2 * lo] + (path[2 * hi] - path[2 * lo]) * f + step.dlon * ease;
+	out.lat = path[2 * lo + 1] + (path[2 * hi + 1] - path[2 * lo + 1]) * f + step.dlat * ease;
 }
 
 const p0 = { lon: 0, lat: 0 };
@@ -284,15 +351,17 @@ export function positionAt(track: Track, T: number, out: BusAt = busAt()): BusAt
 	const s = track.steps[i];
 	const next = i + 1 < track.steps.length && track.steps[i + 1].t0 === s.t1 ? track.steps[i + 1] : null;
 	const first = i === 0;
-	// The newest fix: wait there.
-	if (s.t1 === null) return waitAt(out, s.lon, s.lat, T - s.t0, s.t0, first ? s.bearing : null);
-	// The step is over but the next fix hasn't arrived: wait at its end when known, else at the fix.
+	// The newest fix: wait there (where the step before it ended).
+	if (s.t1 === null) return waitAt(out, s.slon, s.slat, T - s.t0, s.t0, first ? s.bearing : null);
+	// The step is over but the next fix hasn't arrived: wait at its end when known, else where it started.
 	if (T >= s.t1) {
 		if (s.kind === 'along' && s.path) {
 			const n = s.path.length;
 			return waitAt(out, s.path[n - 2], s.path[n - 1], T - s.t1, s.t1, null);
 		}
-		return waitAt(out, s.lon, s.lat, T - s.t0, s.t0, s.kind === 'still' ? s.bearing : null);
+		return s.glide
+			? waitAt(out, s.lon, s.lat, T - s.t0, s.t0, s.bearing)
+			: waitAt(out, s.slon, s.slat, T - s.t0, s.t0, s.kind === 'still' ? s.bearing : null);
 	}
 	const dt = s.t1 - s.t0;
 	const f = dt > 0 ? (T - s.t0) / dt : 1;
@@ -313,10 +382,10 @@ export function positionAt(track: Track, T: number, out: BusAt = busAt()): BusAt
 		}
 		case 'straight': {
 			if (!next) break;
-			out.lon = s.lon + (next.lon - s.lon) * f;
-			out.lat = s.lat + (next.lat - s.lat) * f;
-			const chord = metres(s.lon, s.lat, next.lon, next.lat);
-			out.heading = chord >= 1 ? bearingTo(s.lon, s.lat, next.lon, next.lat) : null;
+			out.lon = s.slon + (next.slon - s.slon) * f;
+			out.lat = s.slat + (next.slat - s.slat) * f;
+			const chord = metres(s.slon, s.slat, next.slon, next.slat);
+			out.heading = chord >= 1 ? bearingTo(s.slon, s.slat, next.slon, next.slat) : null;
 			const v = s.speed ?? (dt > 0 ? chord / dt : 0);
 			out.speed = Math.min(v, MAX_SPEED);
 			out.stepSpeed = v;
@@ -332,22 +401,29 @@ export function positionAt(track: Track, T: number, out: BusAt = busAt()): BusAt
 			if (next && T >= fadeFrom) {
 				const g = (T - fadeFrom) / FADE_S;
 				const there = g >= 0.5;
-				out.lon = there ? next.lon : s.lon;
-				out.lat = there ? next.lat : s.lat;
+				out.lon = there ? next.slon : s.slon;
+				out.lat = there ? next.slat : s.slat;
 				out.opacity = Math.abs(1 - 2 * g);
 			} else {
-				out.lon = s.lon;
-				out.lat = s.lat;
+				out.lon = s.slon;
+				out.lat = s.slat;
 			}
 			return out;
 		}
 		default:
 			break;
 	}
-	// still (or a step that can't be drawn): at the fix.
-	out.lon = s.lon;
-	out.lat = s.lat;
+	// still (or a step that can't be drawn): where the bus already is, or gliding to its fix.
 	out.speed = 0;
+	if (s.glide) {
+		out.lon = s.slon + (s.lon - s.slon) * f;
+		out.lat = s.slat + (s.lat - s.slat) * f;
+		// Slow, but the loop needs to know it moves.
+		out.speed = dt > 0 ? Math.min(metres(s.slon, s.slat, s.lon, s.lat) / dt, MAX_SPEED) : 0;
+	} else {
+		out.lon = s.slon;
+		out.lat = s.slat;
+	}
 	out.stepSpeed = 0;
 	out.heading = s.kind === 'still' || first ? s.bearing : null;
 	out.state = 'still';
@@ -425,7 +501,7 @@ export function trail(track: Track, T: number, now: BusAt, windowS = TRAIL_S): n
 			}
 			along(s, b * s.len, tmp);
 			push(tmp.lon, tmp.lat);
-		} else push(s.lon, s.lat);
+		} else push(s.slon, s.slat);
 	}
 	if (now.state !== 'hidden' && now.state !== 'gap') push(now.lon, now.lat);
 	if (line.length >= 4) lines.push(line);
