@@ -10,7 +10,7 @@ import { BUILDINGS_LAYERS } from '#lib/map/style.js';
 import type { Scene } from '#lib/scene/index.js';
 import type { Selection } from '../../types.js';
 import { INK, TEAL } from '../cameras.js';
-import { trueHeight, type DraftPair } from './draft.js';
+import { fitAim, trueHeight, type DraftPair } from './draft.js';
 
 /**
  * The map side of Calibrate mode (docs/14 §14.6, "Calibrating on the map";
@@ -22,9 +22,10 @@ import { trueHeight, type DraftPair } from './draft.js';
  *   crosshair. The layer manager hides Transit, Streets and the other
  *   cameras; this camera's pole and live cone stay, drawn here.
  * - **Aiming** jumps (no flight, so no tiles load for the zooms in between)
- *   to pitch 0, bearing = the solved heading (north when there's none), zoom
- *   19, centred on the worked footprint or the pole, with the panel's width as
- *   the map's left padding.
+ *   to pitch 0, bearing = the solved heading (north when there's none), with
+ *   the panel's width as the map's left padding, zoomed to fit the pole and
+ *   every pair's ground point in the rest of the map (`fitAim`): z19 at most,
+ *   z16 at least, so a wide or freeway camera's pairs are all on screen.
  * - **Clicks** belong to the calibrator: each gives a ground point, its
  *   height read from the drawn terrain and divided by the exaggeration in
  *   force *now* (true scale here, but a height picked at 1.3 agrees).
@@ -47,7 +48,6 @@ export const GROUP_3D = 'calibrate-3d';
 export const CALIBRATE_LAYERS = [DRAPE, CONE_FILL, CONE_LINE, MOVE_LINE] as const;
 /** Buildings while calibrating (§14.6): faint, so the ground points under them can be seen. */
 export const BUILDINGS_OPACITY = 0.25;
-export const CALIBRATE_ZOOM = 19;
 /** A solved camera further than this from ACHD's point gets a line to it (§14.6, "Moved camera"). */
 export const MOVED_M = 3;
 
@@ -56,6 +56,8 @@ const EMPTY: FeatureCollection = { type: 'FeatureCollection', features: [] };
 export interface Aim {
 	center: [number, number];
 	bearing: number;
+	/** What should be on screen: the pole and the pairs' ground points. */
+	points?: [number, number][];
 }
 
 export interface Solved {
@@ -187,12 +189,14 @@ export class CalibrateMap {
 				map.setPaintProperty(id, 'fill-extrusion-opacity', BUILDINGS_OPACITY);
 	}
 
-	/** Jump (never fly) to the camera's working view. */
+	/** Jump (never fly) to the camera's working view, zoomed to fit the pole and its pairs beside the panel. */
 	aim(aim: Aim, padding: PaddingOptions): void {
 		const map = this.#map;
 		if (!map || !this.#scope) return;
 		map.stop();
-		map.jumpTo({ center: aim.center, zoom: CALIBRATE_ZOOM, pitch: 0, bearing: aim.bearing, padding });
+		const c = map.getContainer();
+		const fit = fitAim(aim, { width: c.clientWidth, height: c.clientHeight, padding });
+		map.jumpTo({ center: fit.center, zoom: fit.zoom, pitch: 0, bearing: aim.bearing, padding });
 	}
 
 	setPadding(padding: PaddingOptions): void {

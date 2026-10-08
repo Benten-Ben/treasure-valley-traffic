@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
 	aimAt,
+	AIM_ZOOM,
 	clearDraft,
 	compass,
 	complete,
 	draftKey,
+	fitAim,
 	frameChoice,
 	isDraft,
 	moveGround,
@@ -96,11 +98,61 @@ describe('pairs', () => {
 describe('aiming', () => {
 	it('centres the pole and the finished pairs, facing the heading; the pole facing north without one', () => {
 		const pole: [number, number] = [-116.3, 43.6];
-		expect(aimAt(pole, [], null)).toEqual({ center: pole, bearing: 0 });
+		expect(aimAt(pole, [], null)).toEqual({ center: pole, bearing: 0, points: [pole] });
 		const a = aimAt(pole, [{ pixel: [1, 1], ground: [-116.298, 43.602, 800] }, { ground: [-116.2, 43.7, 800] }], 35);
 		expect(a.bearing).toBe(35);
 		expect(a.center[0]).toBeCloseTo(-116.299, 9);
 		expect(a.center[1]).toBeCloseTo(43.601, 9);
+		// Everything with a ground point is to be on screen, the pending pair's too.
+		expect(a.points).toEqual([pole, [-116.298, 43.602], [-116.2, 43.7]]);
+	});
+
+	/** Where a point lands on a W×H canvas at pitch 0 (MapLibre's projection, 512 px tiles), relative to the top left. */
+	const D2R = Math.PI / 180;
+	const mx = (lng: number) => (lng + 180) / 360;
+	const my = (lat: number) => (1 - Math.log(Math.tan(Math.PI / 4 + (lat * D2R) / 2)) / Math.PI) / 2;
+	function screen(p: readonly [number, number], fit: { center: [number, number]; zoom: number }, bearing: number, W: number, H: number, padLeft: number) {
+		const k = 512 * 2 ** fit.zoom;
+		const e = (mx(p[0]) - mx(fit.center[0])) * k;
+		const n = (my(fit.center[1]) - my(p[1])) * k;
+		const b = bearing * D2R;
+		const sx = e * Math.cos(b) - n * Math.sin(b);
+		const sy = e * Math.sin(b) + n * Math.cos(b);
+		// The centre sits in the middle of the padded area.
+		return { x: padLeft + (W - padLeft) / 2 + sx, y: H / 2 - sy };
+	}
+	/** A point `m` metres from `from` toward compass `deg`. */
+	const toward = (from: [number, number], deg: number, m: number): [number, number] => [
+		from[0] + (m * Math.sin(deg * D2R)) / (111_320 * Math.cos(from[1] * D2R)),
+		from[1] + (m * Math.cos(deg * D2R)) / 111_320
+	];
+
+	it('fits the pole and the pairs beside the panel: z19 at most, z16 at least', () => {
+		const pole: [number, number] = [-116.37459, 43.59325];
+		const W = 1280;
+		const H = 800;
+		const padding = { top: 0, right: 0, bottom: 0, left: 580 };
+		// A freeway camera looking east, its pairs up to 300 m out and 60 m to either side.
+		for (const heading of [92, 0, 215]) {
+			const points = [pole, toward(pole, heading, 300), toward(pole, heading + 12, 280), toward(pole, heading - 12, 260), toward(pole, heading, 40)];
+			const fit = fitAim({ center: pole, bearing: heading, points }, { width: W, height: H, padding });
+			expect(fit.zoom, `heading ${heading}`).toBeLessThan(AIM_ZOOM.max);
+			expect(fit.zoom, `heading ${heading}`).toBeGreaterThanOrEqual(AIM_ZOOM.min);
+			for (const p of points) {
+				const s = screen(p, fit, heading, W, H, padding.left);
+				expect(s.x, `heading ${heading}: x`).toBeGreaterThanOrEqual(padding.left + 47.9);
+				expect(s.x, `heading ${heading}: x`).toBeLessThanOrEqual(W - 47.9);
+				expect(s.y, `heading ${heading}: y`).toBeGreaterThanOrEqual(47.9);
+				expect(s.y, `heading ${heading}: y`).toBeLessThanOrEqual(H - 47.9);
+			}
+		}
+		// A close camera's pairs fit at z19 (never closer).
+		const near = [pole, toward(pole, 10, 20), toward(pole, 350, 18)];
+		expect(fitAim({ center: pole, bearing: 0, points: near }, { width: W, height: H, padding }).zoom).toBe(AIM_ZOOM.max);
+		// The pole alone: on it, at z19.
+		expect(fitAim({ center: pole, bearing: 0, points: [pole] }, { width: W, height: H, padding })).toEqual({ center: pole, zoom: AIM_ZOOM.max });
+		// Pairs 3 km apart don't zoom out past z16.
+		expect(fitAim({ center: pole, bearing: 0, points: [pole, toward(pole, 0, 3000)] }, { width: W, height: H, padding }).zoom).toBe(AIM_ZOOM.min);
 	});
 });
 

@@ -12,6 +12,9 @@ import { expect, mapReady, screenPath, seeds, test, type Seed } from './fixtures
  * - entering and leaving restore the view, layers, base and windows, and
  *   the return leg asks for no tile the map had before and no manifest
  *   (Back and Esc);
+ * - a wide camera (pairs about 105 m out) opens zoomed out from 19, not past
+ *   16, with the pole and every pair on screen beside the panel (the fix
+ *   round, Oct 8: at a fixed z19 a freeway camera's pairs were all off screen);
  * - "Use this frame" keeps exactly the bytes shown in the Live inset, for an
  *   archive frame and an on-demand one;
  * - a reload mid-calibration resumes the draft; Ctrl+Z, Delete and Cancel's
@@ -177,7 +180,7 @@ test.describe('calibrate', () => {
 			await win.getByRole('link', { name: 'Recalibrate' }).click();
 			await inCalibrate(page);
 			const inside = await everything(page);
-			// Pitch 0, bearing = the solved heading, zoom 19; terrain at true scale; Aerial on, buildings faint;
+			// Pitch 0, bearing = the solved heading, zoom 19 (the key camera's pairs fit there); terrain at true scale; Aerial on, buildings faint;
 			// Transit, Streets and the other cameras hidden; windows stepped aside; the panel's width as padding.
 			expect(inside.zoom).toBeCloseTo(19, 6);
 			expect(inside.pitch).toBeCloseTo(0, 6);
@@ -217,6 +220,37 @@ test.describe('calibrate', () => {
 		await net.detach();
 		expect(offsite).toEqual([]);
 		expect(consoleErrors.filter((e) => !/could not be decoded|^map error Error$/.test(e))).toEqual([]);
+	});
+
+	test('a wide camera opens with the pole and every pair on screen beside the panel, zoomed out from 19 but not past 16', { tag: '@wp14' }, async ({ page, offsite }) => {
+		test.setTimeout(300_000);
+		// The low-tilt seed's pairs run about 105 m out along its heading: at z19 most of them were off screen.
+		const s = seed('low-tilt');
+		await openCalibrator(page, s);
+		expect((await calib(page)).map.markers.length).toBe(s.pairs.length);
+		const view = await page.evaluate(() => {
+			const m = (globalThis as any).__tvt.map;
+			const r = m.getContainer().getBoundingClientRect();
+			const marks = [...document.querySelectorAll('.calib-pair, .calib-pole')].map((el) => {
+				const b = el.getBoundingClientRect();
+				return { x: b.x + b.width / 2, y: b.y + b.height / 2 };
+			});
+			return { zoom: m.getZoom(), pitch: m.getPitch(), padding: m.getPadding(), rect: { left: r.left, top: r.top, right: r.right, bottom: r.bottom }, marks };
+		});
+		const line = `calibrate low-tilt: zoom ${view.zoom.toFixed(2)}, ${view.marks.length} markers, left padding ${view.padding.left}`;
+		test.info().annotations.push({ type: 'fit', description: line });
+		expect(view.zoom, line).toBeLessThan(19);
+		expect(view.zoom, line).toBeGreaterThanOrEqual(16);
+		expect(view.pitch).toBeCloseTo(0, 6);
+		expect(view.marks.length, 'the pole and every pair').toBe(s.pairs.length + 1);
+		for (const m of view.marks) {
+			expect(m.x, line).toBeGreaterThanOrEqual(view.rect.left + view.padding.left);
+			expect(m.x, line).toBeLessThanOrEqual(view.rect.right);
+			expect(m.y, line).toBeGreaterThanOrEqual(view.rect.top);
+			expect(m.y, line).toBeLessThanOrEqual(view.rect.bottom);
+		}
+		await page.screenshot({ path: screenPath('fix-calibrate-fit-low-tilt.png') });
+		expect(offsite).toEqual([]);
 	});
 
 	test('"Use this frame" keeps exactly the bytes on screen, from the archive and from the on-demand fetcher', { tag: '@wp14' }, async ({ page, request, offsite }) => {

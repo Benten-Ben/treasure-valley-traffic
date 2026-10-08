@@ -185,14 +185,80 @@ export function rescalePairs(pairs: readonly DraftPair[], from: ImageSize, to: I
 /**
  * Where Calibrate mode looks (§14.6, "Entering"): over the worked part of the
  * footprint (the pole and the finished pairs' ground points), facing the
- * solved heading; the pole, facing north, when there's no pose yet. The
- * whole footprint runs 250 m out, more than z19 shows.
+ * solved heading; the pole, facing north, when there's no pose yet. `points`
+ * are everything the map should show: the pole and every pair's ground point
+ * (`fitAim` zooms to them).
  */
-export function aimAt(pole: [number, number], pairs: readonly DraftPair[], heading: number | null): { center: [number, number]; bearing: number } {
+export function aimAt(pole: [number, number], pairs: readonly DraftPair[], heading: number | null): { center: [number, number]; bearing: number; points: [number, number][] } {
 	const pts: [number, number][] = [pole, ...complete(pairs).map((p) => [p.ground[0], p.ground[1]] as [number, number])];
 	const xs = pts.map((p) => p[0]);
 	const ys = pts.map((p) => p[1]);
-	return { center: [(Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...ys) + Math.max(...ys)) / 2], bearing: heading ?? 0 };
+	const points: [number, number][] = [pole, ...pairs.flatMap((p) => (p.ground ? [[p.ground[0], p.ground[1]] as [number, number]] : []))];
+	return { center: [(Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...ys) + Math.max(...ys)) / 2], bearing: heading ?? 0, points };
+}
+
+/** Calibrate mode's zooms: 19 at most (§14.6), and no further out than 16, where a pole and its pairs still read. */
+export const AIM_ZOOM = { max: 19, min: 16 } as const;
+/** Room kept between the points and the edges of the map's free area, px (a pair's marker is about 26 px). */
+export const AIM_MARGIN = 48;
+
+const D2R = Math.PI / 180;
+const mx = (lng: number) => (lng + 180) / 360;
+const my = (lat: number) => (1 - Math.log(Math.tan(Math.PI / 4 + (lat * D2R) / 2)) / Math.PI) / 2;
+const lngOf = (x: number) => x * 360 - 180;
+const latOf = (y: number) => (2 * Math.atan(Math.exp(Math.PI * (1 - 2 * y))) - Math.PI / 2) / D2R;
+
+/**
+ * The centre and zoom that fit `points` (pitch 0, turned to `bearing`) into
+ * the map's free area: the canvas less `padding` (the docked panel) and
+ * `margin` on every side. At most `max` (one point, or points close
+ * together, stay at z19) and at least `min`: a wide or freeway camera, whose
+ * pairs run 100–300 m out, opens with all of them on screen.
+ */
+export function fitAim(
+	aim: { center: [number, number]; bearing: number; points?: readonly (readonly [number, number])[] },
+	view: { width: number; height: number; padding?: { top?: number; right?: number; bottom?: number; left?: number } },
+	o: { margin?: number; min?: number; max?: number } = {}
+): { center: [number, number]; zoom: number } {
+	const max = o.max ?? AIM_ZOOM.max;
+	const min = o.min ?? AIM_ZOOM.min;
+	const margin = o.margin ?? AIM_MARGIN;
+	const pts = aim.points ?? [];
+	if (pts.length < 2) return { center: aim.center, zoom: max };
+	const b = aim.bearing * D2R;
+	const cos = Math.cos(b);
+	const sin = Math.sin(b);
+	const x0 = mx(pts[0][0]);
+	const y0 = my(pts[0][1]);
+	// Screen right and up for each point, in Mercator units from the first (north is −y).
+	let left = Infinity;
+	let right = -Infinity;
+	let low = Infinity;
+	let high = -Infinity;
+	for (const [lng, lat] of pts) {
+		const e = mx(lng) - x0;
+		const n = y0 - my(lat);
+		const sx = e * cos - n * sin;
+		const sy = e * sin + n * cos;
+		left = Math.min(left, sx);
+		right = Math.max(right, sx);
+		low = Math.min(low, sy);
+		high = Math.max(high, sy);
+	}
+	const pad = view.padding ?? {};
+	const w = Math.max(1, view.width - (pad.left ?? 0) - (pad.right ?? 0) - 2 * margin);
+	const h = Math.max(1, view.height - (pad.top ?? 0) - (pad.bottom ?? 0) - 2 * margin);
+	const spanX = right - left;
+	const spanY = high - low;
+	// World pixels per Mercator unit that fit both spans; 512 px tiles.
+	const scale = Math.min(spanX > 0 ? w / spanX : Infinity, spanY > 0 ? h / spanY : Infinity);
+	const zoom = Number.isFinite(scale) ? Math.min(max, Math.max(min, Math.log2(scale / 512))) : max;
+	// The middle of the points, back from screen axes to Mercator.
+	const cx = (left + right) / 2;
+	const cy = (low + high) / 2;
+	const e = cx * cos + cy * sin;
+	const n = -cx * sin + cy * cos;
+	return { center: [lngOf(x0 + e), latOf(y0 - n)], zoom };
 }
 
 // --- frames --------------------------------------------------------------------------
