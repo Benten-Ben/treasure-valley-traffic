@@ -397,7 +397,7 @@ test.describe('calibrate', () => {
 		await page.screenshot({ path: screenPath('wp14-check-alignment.png') });
 
 		await page.keyboard.press('Escape');
-		await expect.poll(() => mode(page)).toBe('calibrate');
+		await expect.poll(() => mode(page), { timeout: 120_000 }).toBe('calibrate');
 		await mapReady(page);
 		await expect(page.getByRole('region', { name: `Calibrate ${key.name}` })).toBeVisible();
 		expect((await calib(page)).map.hidden).toBe(false);
@@ -459,8 +459,9 @@ test.describe('calibrate', () => {
 			const looked = await page.evaluate(() => (globalThis as any).__tvtLook.inspect());
 			// (The table keeps angles as real: about 6 significant digits.)
 			for (const k of ['heading', 'tilt', 'roll', 'vfov'] as const) expect(looked.pose[k], k).toBeCloseTo(pose[k], 3);
-			await page.keyboard.press('Escape');
-			await expect.poll(() => mode(page)).toBe('explore');
+			// Step out (resolves once back; SwiftShader can take a while over the 3D cameras).
+			await page.evaluate(() => (globalThis as any).__tvtLook.stepOut());
+			await expect.poll(() => mode(page), { timeout: 120_000 }).toBe('explore');
 		} finally {
 			// Put the seeded calibration back as it was, so other specs (and the next run) see the seeds.
 			if (saved) await sql`delete from core.camera_calibration where id = ${saved}`;

@@ -135,14 +135,14 @@ export class CalibrateMap {
 		app.setExaggeration(1);
 		const s = (this.#scope = new MapScope(map));
 
-		// Buildings faint, back as they were on leaving.
+		// Buildings faint, back as they were on leaving (the snapshot's Aerial then sets its own opacity).
 		if (map.getLayer(BUILDINGS_LAYER)) {
 			const before = map.getPaintProperty(BUILDINGS_LAYER, 'fill-extrusion-opacity');
-			map.setPaintProperty(BUILDINGS_LAYER, 'fill-extrusion-opacity', BUILDINGS_OPACITY);
 			s.defer(() => {
 				if (map.getLayer(BUILDINGS_LAYER)) map.setPaintProperty(BUILDINGS_LAYER, 'fill-extrusion-opacity', before);
 			});
 		}
+		this.#faintBuildings();
 
 		// The live cone's footprint and the moved line, with the camera footprints (draped, one run).
 		const at = beforeSlot(map, 'footprints', 99);
@@ -174,6 +174,13 @@ export class CalibrateMap {
 		this.#syncSolved();
 		void this.#load3d();
 		return true;
+	}
+
+	/** Buildings at 0.25 (Aerial's own 0.3 comes back whenever a snapshot restores Aerial, e.g. after Check alignment). */
+	#faintBuildings() {
+		const map = this.#map;
+		if (map?.getLayer(BUILDINGS_LAYER) && map.getPaintProperty(BUILDINGS_LAYER, 'fill-extrusion-opacity') !== BUILDINGS_OPACITY)
+			map.setPaintProperty(BUILDINGS_LAYER, 'fill-extrusion-opacity', BUILDINGS_OPACITY);
 	}
 
 	/** Jump (never fly) to the camera's working view. */
@@ -391,7 +398,10 @@ export class CalibrateMap {
 		map.getCanvas().style.cursor = hidden ? '' : 'crosshair';
 		this.#push3d();
 		if (hidden) this.#showDrape(false);
-		else this.setDrape(this.#drape);
+		else {
+			this.#faintBuildings();
+			this.setDrape(this.#drape);
+		}
 	}
 
 	// --- leaving ---------------------------------------------------------------------------------

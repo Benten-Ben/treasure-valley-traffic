@@ -665,7 +665,7 @@
 			<section class="frame-pane" aria-label="Reference frame">
 				{#if frame}
 					<p class="caption">
-						<b>Reference frame</b> (frozen: the pairs are clicked on it){#if keptAt} · kept {keptAt}{/if}
+						<b>Reference frame</b> <span>(frozen: the pairs are clicked on it)</span>{#if keptAt}<span>· kept {keptAt}</span>{/if}
 						<span class="num">{frame.width}×{frame.height}</span>
 					</p>
 					<ReferenceFrame
@@ -765,6 +765,7 @@
 	/* Docked left at 45%; the map's left padding follows it. */
 	.calibrator {
 		position: absolute;
+		container: calibrator / inline-size;
 		scrollbar-width: thin;
 		top: 10px;
 		left: 10px;
@@ -909,7 +910,8 @@
 		grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
 		gap: 14px;
 	}
-	@media (max-width: 1180px) {
+	/* Pairs and solve side by side only when the panel is wide enough (it's 45% of the screen). */
+	@container calibrator (max-width: 700px) {
 		.work {
 			grid-template-columns: minmax(0, 1fr);
 		}
@@ -943,7 +945,8 @@
 	}
 	.pairs li {
 		display: grid;
-		grid-template-columns: 26px 78px 62px 1fr 26px;
+		grid-template-columns: 26px 84px 68px 1fr 26px;
+		white-space: nowrap;
 		align-items: center;
 		gap: 6px;
 		font-size: 13px;
