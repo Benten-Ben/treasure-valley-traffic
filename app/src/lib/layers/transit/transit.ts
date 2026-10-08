@@ -1,27 +1,14 @@
-import type { ExpressionSpecification } from 'maplibre-gl';
 import type { Feature, LineString } from 'geojson';
 import type { SlottedLayer } from '#lib/map/order.js';
 
 /**
- * The Transit layer's pure parts (docs/13 §13.5, ported from the Transit lens
- * to the layer registry by WP2): Valley Regional Transit's routes in our
- * route colors, stops, and live buses that glide to each new position with
- * fading trails. Color never carries identity alone: every bus wears its
- * route number, and route numbers repeat along the lines.
- *
- * Positions arrive 35–50 s old (the feed refreshes every ~30 s), so a bus is
- * drawn where it last reported, never extrapolated, and a bus that goes quiet
- * for two minutes turns hollow. WP8 replaces this with the ribbons and the
- * delayed playback of §14.4.
+ * Small shared parts of the Transit layer (docs/14 §14.4): the credit and
+ * colors, age and stop wording, and the fallback bus layers, which draw buses
+ * as a symbol layer only when the overlay can't start (§14.8). The routes,
+ * stops and playback are in network.ts and playback.ts (WP8), which replaced
+ * the Transit lens's own route layers and gliding buses. The trail and glide
+ * helpers below are what's left of that lens, kept with their tests.
  */
-
-export interface TransitRoute {
-	route_id: string;
-	short_name: string;
-	long_name: string | null;
-	color: string;
-	text_color: string;
-}
 
 export interface Vehicle {
 	vehicleId: string;
@@ -54,26 +41,17 @@ export const INK = '#2b2a33';
 export const CREAM = '#fffbf4';
 export const STALE_AFTER_S = 120;
 export const TRAIL_S = 300;
-export const GLIDE_MS = 2500;
-export const POLL_MS = 15_000;
 export const CREDIT = 'Valley Regional Transit (CC BY 3.0)';
 
-export const L = {
-	casing: 'transit-routes-casing',
-	routes: 'transit-routes',
-	labels: 'transit-route-labels',
-	stops: 'transit-stops',
-	trails: 'transit-trails'
-} as const;
 /** The fallback bus layers, used only when the overlay can't start. */
 export const FALLBACK = {
 	heading: 'transit-bus-heading',
 	buses: 'transit-buses',
 	numbers: 'transit-bus-numbers'
 } as const;
-export const TRANSIT_LAYERS: string[] = Object.values(L);
 export const FALLBACK_LAYERS: string[] = Object.values(FALLBACK);
-export const SOURCES = { shapes: 'transit-shapes', stops: 'transit-stops', trails: 'transit-trails', buses: 'transit-buses' } as const;
+/** The fallback bus layers' source (the same id as network.ts's SOURCES.buses). */
+export const SOURCES = { buses: 'transit-buses' } as const;
 export const ARROW = 'transit-arrow';
 
 export const isStale = (v: Pick<Vehicle, 'ts'>, now: number) => now - v.ts > STALE_AFTER_S;
@@ -128,44 +106,6 @@ export function metres(a: [number, number], b: [number, number]): number {
 	return Math.hypot(dx, dy);
 }
 
-/** Routes with at least one live (not stale) bus, and how many each has. */
-export function liveByRoute(vehicles: readonly Vehicle[], now: number): Record<string, number> {
-	const out: Record<string, number> = {};
-	for (const v of vehicles) {
-		if (isStale(v, now)) continue;
-		const k = v.routeId ?? '?';
-		out[k] = (out[k] ?? 0) + 1;
-	}
-	return out;
-}
-
-const zoomWidth = (base: number): ExpressionSpecification => ['interpolate', ['linear'], ['zoom'], 10, base * 0.6, 13, base, 16, base * 1.8];
-
-/**
- * The layers, each with its slot (docs/14 §14.8 "Layer order"): route lines
- * and trails in `routes` (draped), stops in `points`, route numbers in
- * `labels`. All start hidden. Buses are drawn by the overlay.
- */
-export function transitLayers(): SlottedLayer[] {
-	const hidden = { visibility: 'none' as const };
-	return [
-		{ slot: 'routes', layer: { id: L.casing, type: 'line', source: SOURCES.shapes,
-			layout: { ...hidden, 'line-cap': 'round', 'line-join': 'round' },
-			paint: { 'line-color': INK, 'line-opacity': 0.55, 'line-width': zoomWidth(5.5) } } },
-		{ slot: 'routes', layer: { id: L.routes, type: 'line', source: SOURCES.shapes,
-			layout: { ...hidden, 'line-cap': 'round', 'line-join': 'round' },
-			paint: { 'line-color': ['get', 'color'], 'line-width': zoomWidth(3.5) } } },
-		{ slot: 'routes', layer: { id: L.trails, type: 'line', source: SOURCES.trails, layout: { ...hidden, 'line-cap': 'round' },
-			paint: { 'line-color': ['get', 'color'], 'line-opacity': ['get', 'opacity'], 'line-width': zoomWidth(4) } } },
-		{ slot: 'points', layer: { id: L.stops, type: 'circle', source: SOURCES.stops, minzoom: 14.5, layout: hidden,
-			paint: { 'circle-radius': ['interpolate', ['linear'], ['zoom'], 14.5, 2.5, 18, 5], 'circle-color': CREAM,
-				'circle-stroke-color': INK, 'circle-stroke-width': 1.2 } } },
-		{ slot: 'labels', layer: { id: L.labels, type: 'symbol', source: SOURCES.shapes, minzoom: 12,
-			layout: { ...hidden, 'symbol-placement': 'line', 'symbol-spacing': 320, 'text-field': ['get', 'shortName'],
-				'text-font': ['Noto Sans Medium'], 'text-size': 11, 'text-rotation-alignment': 'viewport' },
-			paint: { 'text-color': INK, 'text-halo-color': CREAM, 'text-halo-width': 2 } } }
-	];
-}
 
 /** The fallback bus layers (circle and number), only when the overlay can't start; on top of the labels. */
 export function fallbackBusLayers(): SlottedLayer[] {
