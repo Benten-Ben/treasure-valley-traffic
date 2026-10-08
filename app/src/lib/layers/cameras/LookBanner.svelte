@@ -130,7 +130,12 @@
 		color: var(--ink);
 		white-space: nowrap;
 	}
+	/* A row of its own under the controls, as wide as they are (it adds nothing to the card's width), so
+	   Step out stays beside ← and →. */
 	.problem {
+		order: 1;
+		flex-basis: 100%;
+		contain: inline-size;
 		font-size: 12px;
 		color: var(--ink);
 	}
