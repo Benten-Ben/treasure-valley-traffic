@@ -14,7 +14,7 @@ import { take } from '../prefetch.js';
 import { PRIORITY, type Badge, type Chip, type Interactive, type LayerModule, type LayerStatus, type Selection } from '../types.js';
 import Card from './Card.svelte';
 import def from './def.js';
-import { followFor, type FollowLike } from './follow.svelte.js';
+import { followOf, type Follow } from '#lib/state/follow.svelte.js';
 import { capsuleImage, pillImage, shieldImage } from './images.js';
 import Legend from './Legend.svelte';
 import {
@@ -197,8 +197,8 @@ export class TransitModule implements LayerModule {
 	/** A tracks poll has come back (or failed) at least once. Until then the chips say "—", not "No buses
 	 * reporting": with Transit off nothing is polled, and nothing is known about the buses (WP15's review). */
 	polled = $state(false);
-	/** The follow API (WP3's, or the stand-in), once loaded. */
-	follow = $state.raw<FollowLike | null>(null);
+	/** The app's follow (WP3's `followOf`), once mounted. */
+	follow = $state.raw<Follow | null>(null);
 	/** Trails on or off (per viewer). */
 	readonly trails = new Persisted<boolean>('transit-trails', false, isBool);
 	clock: Clock | null = null;
@@ -420,9 +420,7 @@ export class TransitModule implements LayerModule {
 		}
 		// Hover widens a route 2 px.
 		scope.defer(ctx.picker.onHover((h) => this.#hover(h?.selection ?? null)));
-		void followFor(ctx).then((f) => {
-			if (!this.#destroyed) this.follow = f;
-		});
+		this.follow = followOf(ctx);
 		this.#stopTick = $effect.root(() => {
 			$effect(() => {
 				void clock.tick;
