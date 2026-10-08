@@ -189,3 +189,102 @@ The live `app` stays pinned to the image tagged `tvt-app:live`, so a rebuild
 can't ship the unfinished UI. Both apps share the database, frames and tiles.
 The override's header has the commands to switch it on, update it and retire
 it at a checkpoint.
+
+## Deploying UI v2 (runbook)
+
+The steps for putting UI v2 ([docs/14](../docs/14-ui-v2.md)) live, from
+§14.11 "After deploy". The lead runs them, only with the owner's OK for that
+deploy. Every gate question was answered on Oct 6 (§14.14), so nothing is
+held back: migrations 0006 and 0007 are in `db/migrations/` (Q4), live
+images are on (Q5), and the hillshade comes from the terrain source (Q7,
+the default in the app). Run Compose from `deploy/` without `-f`
+([Updating](#updating)).
+
+0. **Pick the window.** Never between 00:00 and 04:00 local: the daily AV1
+   roll-up runs in `cameras` and `regional` from 00:05, its encodes take 2–3
+   hours, and restarting a capture service mid-roll-up kills it. Before
+   step 3, also check that neither is still rolling up: their status files
+   say so once the new capture code runs
+   (`grep -l '"rolling_up":true' $ARCHIVE_DIR/cameras/status/*.json` finds
+   none), and until then their logs show a "roll-up finished" (or
+   "stopped") line after the last start
+   (`docker compose logs --since 6h cameras regional | grep roll-up`).
+   Heavy one-off jobs on the VM (the terrain re-encode below) run outside
+   that window too, with a memory cap: an uncapped build stalled the VM on
+   Oct 7 ([DECISIONS](../docs/DECISIONS.md)).
+1. **Back up the database** (and check the free space first, `df -h`):
+   `docker compose exec -T db pg_dump -U tvt -Fc tvt > ~/tvt-before-ui-v2-$(date +%F).dump`.
+   Nothing else backs the calibrations up yet.
+2. **Migrations.** Push `main` to the server's repository, then
+   `docker compose up -d --build ingest`. The ingest service applies
+   `db/migrations/` (0006 `core.transit_ribbon` and `color_pinned`, 0007
+   `obs.vehicle_progress`) and the plugins' migrations (the camera
+   `provider` column, `cameras/0001`) on start, before the app needs them.
+   Check: `docker compose logs ingest | grep -i migrat`.
+3. **The web server, the app and the services that changed.**
+   - Glyphs precompressed, so Caddy serves them gzipped (about −90 KB on a
+     first view): `basemap/build.sh --precompress-glyphs` on the tiles
+     folder (seconds). The Caddyfile already sends `manifest.json` with
+     `no-cache` and serves the `.gz` files.
+   - Live images: add `compose.live-images.yml` to `COMPOSE_FILE` in
+     `deploy/.env`. Start the capture services before the app, so they
+     create `cameras/status` (a folder Docker creates for a bind mount
+     belongs to root, and the capture services can't write in it).
+   - Retire the preview, since `main` becomes the live app: take
+     `compose.preview.yml` out of `COMPOSE_FILE` and
+     `docker compose rm -sf app-next`. Its header has the details.
+   - Then `docker compose up -d --build cameras regional transit` (capture
+     status files, and the online matcher after each stored batch of bus
+     positions), and `docker compose up -d --build app web`.
+
+   Until step 4 finishes, `/api/transit/network` serves each route's plain
+   shapes (`n = 1`, `bundled: false`), so Transit isn't blank. It stays that
+   way if the ribbon build fails.
+4. **Route colors and ribbons.** First the dry run, for the owner:
+   `docker compose exec ingest python3 -m ingest transit-ribbons --dry-run`
+   prints every color change (old → new). The default mode is the owner's
+   Q3 answer, the one-time rebalance. On the local copy of the server's data
+   (Oct 7) it changed 7 routes (8, 16, 21, 28, 29, 42 and R1) with 0
+   clashes, 255 segments, at most 11 routes on one street, in under 3 s.
+   Then build: `docker compose exec ingest python3 -m ingest run vrt_gtfs`
+   (the daily run, which also rebuilds the ribbons), or
+   `python3 -m ingest transit-ribbons` alone.
+5. **Backfill playback:**
+   `docker compose exec ingest python3 -m ingest transit-progress --hours 24`.
+   It takes the matcher's advisory lock, so the transit stream skips
+   matching meanwhile and catches up afterwards; positions keep being
+   recorded throughout.
+6. **Check:**
+   - `curl` (with the `Origin` header, [above](#checking-the-app-by-hand))
+     `/api/meta`, `/api/cameras/live?views=<a few view ids>` and
+     `/api/transit/tracks`;
+   - from the laptop, the smoke specs against the tailnet HTTPS address:
+     `cd app && TVT_E2E_URL=https://<tailnet name> npx playwright test tests/e2e/boot.spec.ts`
+     (every request same-origin, no console errors, at both screen sizes);
+   - S1, S2 and S6 for real on the owner's laptop:
+     `node scripts/perf.mjs --real --channel chrome --url https://<tailnet name> --scenarios S1,S2,S6`;
+   - once a full weekday hour has been recorded with the online matcher, the
+     hour-long playback checks on the server's data
+     (`python3 -m ingest transit-progress --from <hour start> --to <hour end> --report`):
+     90% or more of labeled-bus steps along or still, no along step over
+     30 m/s and no backward motion over 20 m, which the report prints; and
+     under 2% of bus-seconds waiting at the 90 s delay, from `seen_at` with
+     backfilled rows left out, which no tool computes yet (a query to write
+     then; [DEFERRED](../docs/DEFERRED.md)).
+7. **The owner saves one calibration** with the new calibrator (Calibrate
+   in a camera's window). Then `/v1/calibrate/[id]` and `lib/v1/` can go.
+
+**Terrain as WebP** (WP17, owner OK Oct 6; optional, any later day): the
+re-encoded terrain is about 45% smaller, so the first load drops by about
+another 1 MB ([basemap/](../basemap/README.md#switching-terrain-to-webp)).
+Run `basemap/terrain_reencode.py` where GDAL's Python bindings and the
+`pmtiles` CLI are installed, put the new `terrain-webp-<date>.pmtiles` and
+the manifest copy in the tiles folder, keep the old manifest, and move the
+copy into place. The app picks it up on the next load (`manifest.json` is
+`no-cache`); restoring the old manifest goes back.
+
+**Rolling back:** the previous image is still tagged (`tvt-app:live`, if the
+preview was on). Put `compose.preview.yml` back in `COMPOSE_FILE` and
+`docker compose up -d app` to serve it again. The new tables are additive
+(the old app ignores them), and the route colors can be set back from the
+dry run's list.
