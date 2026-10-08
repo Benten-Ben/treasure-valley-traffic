@@ -12,14 +12,20 @@ fixes, run every few minutes by the transit stream:
    only if that share is at least MIN_SHARE and leads the runner-up by
    MIN_MARGIN; ambiguous trips (routes sharing most of their streets) stay
    unlabeled. Matches go to obs.trip_route_match, not into the fixes.
+3. **Redo playback:** buses whose fixes were placed along their routes
+   (transit_progress) before their trip was matched, re-matched to another
+   route or re-resolved have those rows redone on the new route
+   (transit_progress.redo_rerouted), so they don't cut across blocks.
 
 By hand: python3 -m ingest match-routes [--hours 24]
 """
 
 import argparse
+from datetime import timedelta
 
 from ingest import db
 
+from . import transit_progress
 from .sources import vrt_realtime
 
 NEAR_M = 40
@@ -109,10 +115,13 @@ def match(conn, hours):
     return {"trips": len(trips), "matched": matched}
 
 
-def run(conn, hours=3):
+def run(conn, hours=3, budget_s=transit_progress.BUDGET_S):
+    """Re-resolve, match, and redo the playback rows the new routes change. The stream
+    calls it every few minutes; budget_s bounds the redo (None: no bound, by hand)."""
     stats = {"re-resolved fixes": reresolve(conn, hours)}
     stats.update(match(conn, hours))
     conn.commit()
+    stats.update(transit_progress.redo_rerouted(conn, db.now() - timedelta(hours=hours), budget_s=budget_s))
     return stats
 
 
@@ -123,5 +132,5 @@ def main(argv=None):
     ap.add_argument("--hours", type=int, default=24, help="how far back to look (default 24)")
     args = ap.parse_args(argv)
     with db.connect() as conn:
-        stats = run(conn, args.hours)
+        stats = run(conn, args.hours, budget_s=None)
     print("match-routes: " + ", ".join(f"{k} {v}" for k, v in stats.items()), flush=True)

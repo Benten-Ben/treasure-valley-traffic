@@ -568,6 +568,75 @@ def after_batch(conn, fresh=None, budget_s=BUDGET_S, hours=ONLINE_HOURS):
             pass
 
 
+# Vehicles with rows placed on a route their fix no longer has: the trip was matched (or matched again,
+# to another route) by trip_route_match, or re-resolved, after the rows were made. The first such row
+# each. The match is looked up as _PENDING does; a fix with no route from any source is never stale.
+_REROUTED = """
+select g.vehicle_id, min(g.ts)
+from obs.vehicle_progress g
+join obs.vehicle_position p on p.vehicle_id = g.vehicle_id and p.ts = g.ts
+left join lateral (
+  select x.route_id from obs.trip_route_match x
+  where p.route_id is null and x.trip_id = p.trip_id
+    and x.service_date between (p.ts at time zone 'America/Boise')::date - 1 and (p.ts at time zone 'America/Boise')::date
+  order by x.service_date desc limit 1) m on true
+where g.ts >= %(start)s and coalesce(p.route_id, m.route_id) is not null
+  and g.route_id is distinct from coalesce(p.route_id, m.route_id)
+group by g.vehicle_id
+order by g.vehicle_id
+"""
+
+# The step into a vehicle's first redone fix was worked out from that fix's old placement.
+_CLEAR_STEP_IN = """
+update obs.vehicle_progress set step = null, step_speed_ms = null
+where vehicle_id = %(vid)s and ts = (select max(ts) from obs.vehicle_progress
+                                     where vehicle_id = %(vid)s and ts < %(since)s and method <> 'late')
+"""
+
+
+def redo_rerouted(conn, start, budget_s=None):
+    """Redo the playback rows of buses whose route changed after they were placed.
+
+    A trip's route match can arrive, or change, once its bus has driven a while
+    (trip_route_match is redone every few minutes on the trip so far). Rows made
+    before then sit on the old route's shapes, so the bus cuts across blocks in
+    straight steps. For each such vehicle this deletes its rows from the first
+    one with the old route, clears the step into them, and matches those fixes
+    again (process), now with the new route. budget_s bounds the matching;
+    fixes it doesn't reach are pending, and the stream's matcher catches up.
+
+    Takes the matcher lock; if it's held (a backfill), does nothing now: the
+    rows are still on the old route, so a later call finds them again.
+    """
+    started = time.monotonic()
+    if not conn.execute("select pg_try_advisory_lock(%s)", (LOCK_KEY,)).fetchone()[0]:
+        conn.rollback()
+        return {"redo skipped (locked)": 1}
+    try:
+        rerouted = conn.execute(_REROUTED, {"start": start}).fetchall()
+        stats = {"rerouted buses": len(rerouted)}
+        if rerouted:
+            dropped = 0
+            for vid, since in rerouted:
+                conn.execute(_CLEAR_STEP_IN, {"vid": vid, "since": since})
+                dropped += conn.execute("delete from obs.vehicle_progress where vehicle_id = %s and ts >= %s",
+                                        (vid, since)).rowcount
+            deadline = started + budget_s if budget_s is not None else None
+            redone = process(conn, min(since for _, since in rerouted), deadline=deadline, backfill=True)
+            stats.update({"rows redone": redone.get("rows", 0), "rows dropped": dropped})
+        conn.commit()
+        return stats
+    except BaseException:
+        conn.rollback()
+        raise
+    finally:
+        try:
+            conn.execute("select pg_advisory_unlock(%s)", (LOCK_KEY,))
+            conn.commit()
+        except Exception:
+            pass
+
+
 def backfill(conn, start, end=None, log=print, commit_every=5000):
     """Match every pending fix in [start, end], waiting for the stream's matcher
     to finish first; the stream skips matching until this is done. Rows are
