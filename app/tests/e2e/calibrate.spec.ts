@@ -150,7 +150,7 @@ test.describe('calibrate', () => {
 		test.setTimeout(600_000);
 		const key = seed('key');
 		const net = await recordNetwork(page, { bodies: false });
-		// Every layer on, tilted and turned, near the key camera; its window open.
+		// Streets, Transit and Cameras on, tilted and turned, near the key camera; its window open.
 		await page.goto(`/#map=16.4/${key.pose.lat.toFixed(5)}/${key.pose.lon.toFixed(5)}/-25/45&layers=streets,transit,cameras`);
 		await mapReady(page);
 		await page.waitForFunction(() => (globalThis as any).__tvtCameras);
