@@ -352,6 +352,8 @@ class RealDataTest(unittest.TestCase):
 
     def test_run_stores_skips_and_keeps_the_previous_build_on_failure(self):
         conn = self.conn
+        # A clone may already hold a build (the server's, or a dev run's): start from none. Rolled back.
+        conn.execute("delete from core.transit_ribbon")
         dry = tr.run(conn, force=True, dry_run=True, log=lambda *_: None)
         self.assertEqual(dry["ribbons"], "dry run")
         self.assertEqual(conn.execute("select count(*) from core.transit_ribbon").fetchone()[0], 0)
