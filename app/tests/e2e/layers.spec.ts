@@ -11,7 +11,9 @@ import { expect, mapReady, screenPath, test } from './fixtures.js';
  * the picker gives a bus over a road the bus card and lists every route where
  * several share a street; one base flavor (WP4: Valley or Clay, no wash layer),
  * whatever is on; labels under the buses;
- * a loaded toggle makes no request; loading and error states show; the
+ * a loaded toggle makes no request (road tiles included, which MapLibre's
+ * worker fetches, so they're counted from Playwright's request events, not
+ * the page's DevTools session); loading and error states show; the
  * overlay draws 1,000 sprites where map.project says, picks them and moves
  * them without setData; Space on a focused button only presses it.
  */
@@ -39,6 +41,24 @@ const TITLE: Record<string, string> = { streets: 'Streets', transit: 'Transit', 
 async function allLoaded(page: Page) {
 	await expect.poll(async () => Object.values((await info(page)).status).every((s) => s === 'ready' || s === 'stale'), { timeout: 60_000 }).toBe(true);
 }
+
+/**
+ * Road tiles requested from now on. MapLibre's worker fetches them, so the
+ * page's DevTools session (recordNetwork) never sees them; Playwright's
+ * request events do (as perf.mjs S3 counts them).
+ */
+function countRoadTiles(page: Page) {
+	const urls: string[] = [];
+	const on = (r: { url(): string }) => {
+		if (/\/api\/tiles\/roads\//.test(r.url())) urls.push(r.url());
+	};
+	page.on('request', on);
+	return { urls, stop: () => page.off('request', on) };
+}
+
+/** Rendered features of Streets' blue speed line (the ramp drawn while Transit is off). */
+const streetsDrawn = (page: Page) =>
+	page.evaluate(() => (globalThis as any).__tvt.map.queryRenderedFeatures({ layers: ['streets-speed'] }).length as number);
 
 /** Draped runs (MapLibre's render-to-texture stacks) in the live style, as rttStacks counts them. */
 const liveRuns = (page: Page) =>
@@ -346,6 +366,7 @@ test.describe('layers', () => {
 		});
 		await (await page.waitForRequest((r) => isTracks(r.url()), { timeout: 30_000 })).response();
 		const net = await recordNetwork(page, { bodies: false });
+		const roads = countRoadTiles(page);
 		const mark = net.mark();
 		const polls = tracksAt.length;
 		await layerButton(page, 'Transit').click();
@@ -362,7 +383,9 @@ test.describe('layers', () => {
 		}
 		const during = net.since(mark).map((x: { url: string }) => x.url);
 		await net.detach();
+		roads.stop();
 		expect(during.filter((url: string) => !isTracks(url)), 'requests while toggling loaded layers').toEqual([]);
+		expect(roads.urls, 'road tiles while toggling loaded layers').toEqual([]);
 		// Under a loaded SwiftShader a toggle with its map settling can outlast the interval. A tracks
 		// poll a full interval (POLL_MS, 10 s) after the one before is Transit's regular poll, not the
 		// toggle's; one sooner than that, or once Transit is off, is a request the toggle made.
@@ -371,6 +394,59 @@ test.describe('layers', () => {
 			.slice(polls)
 			.filter((p) => p.gap < 10_000 - 500 || p.t > transitOff + 1000);
 		expect(early, 'tracks polls the toggles brought forward').toEqual([]);
+	});
+
+	test('Streets off and on again fetches no road tile at any pause; moving while it is off fetches none', { tag: '@wp2' }, async ({ page, consoleErrors }) => {
+		test.setTimeout(180_000);
+		await page.goto('/#map=14/43.615/-116.2023/0/45&layers=streets');
+		await mapReady(page);
+		expect(await streetsDrawn(page), 'drawn at first').toBeGreaterThan(0);
+		const vis = (id: string) => page.evaluate((id) => (globalThis as any).__tvt.map.getLayoutProperty(id, 'visibility') ?? 'visible', id);
+		const button = layerButton(page, 'Streets');
+		const roads = countRoadTiles(page);
+		// Pauses either side of MapLibre's symbol fade (300 ms), which used to decide whether the tiles survived.
+		const drawnMs: number[] = [];
+		for (const pause of [0, 500, 2000]) {
+			await button.click();
+			await expect(button).toHaveAttribute('aria-pressed', 'false');
+			expect(await vis('streets-speed'), 'hidden').toBe('none');
+			expect(await vis('streets-keep'), 'the keeper holds the tiles while the view stays put').toBe('visible');
+			await page.waitForTimeout(pause);
+			// How soon the roads draw again: the first frame with speed lines in it, from the click.
+			await page.evaluate(() => {
+				const map = (globalThis as any).__tvt.map;
+				const g = globalThis as any;
+				g.__streetsDrawnMs = null;
+				const t0 = performance.now();
+				const check = () => {
+					if (!map.queryRenderedFeatures({ layers: ['streets-speed'] }).length) return;
+					g.__streetsDrawnMs = Math.round(performance.now() - t0);
+					map.off('render', check);
+				};
+				map.on('render', check);
+			});
+			await button.click();
+			await mapReady(page);
+			expect(await streetsDrawn(page), `drawn again after a ${pause} ms pause`).toBeGreaterThan(0);
+			drawnMs.push(await page.evaluate(() => (globalThis as any).__streetsDrawnMs));
+		}
+		expect(roads.urls, 'road tiles fetched again by the toggles').toEqual([]);
+		test.info().annotations.push({ type: 'streets drawn again (ms after the click, SwiftShader)', description: drawnMs.join(', ') });
+
+		// Off, then a move: the keeper lets go, and the new view fetches no road tile while Streets is off.
+		await button.click();
+		await expect(button).toHaveAttribute('aria-pressed', 'false');
+		await page.evaluate(() => (globalThis as any).__tvt.map.jumpTo({ center: [-116.3915, 43.6187] }));
+		await mapReady(page);
+		expect(await vis('streets-keep'), 'released once the map moved').toBe('none');
+		expect(roads.urls, 'road tiles while Streets is off and the map moves').toEqual([]);
+		// On again in the new view: its tiles load (it had none), and the roads draw.
+		await button.click();
+		await mapReady(page);
+		expect(roads.urls.length, 'the new view fetches its own tiles').toBeGreaterThan(0);
+		expect(await streetsDrawn(page)).toBeGreaterThan(0);
+		roads.stop();
+		expect(consoleErrors).toEqual([]);
 	});
 
 	test('a slow routes request shows the ring and "Loading routes…"; a 500 shows ▲ and Retry', { tag: '@wp2' }, async ({ page }) => {

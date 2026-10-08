@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import type { LayerSpecification } from 'maplibre-gl';
 import { cameraLayers } from '#lib/layers/cameras/cameras.js';
-import { streetLayers } from '#lib/layers/streets/streets.js';
+import { KEEPER, streetLayers } from '#lib/layers/streets/streets.js';
 import { roadWeatherLayers } from '#lib/layers/roadweather/layers.js';
 import { networkLayers, SOURCES as TRANSIT_SOURCES } from '#lib/layers/transit/network.js';
 import { stopNameLayer } from '#lib/layers/transit/stops3d.js';
@@ -104,6 +104,8 @@ describe('rttStacks', () => {
 						const list = layers.map((l) => {
 							const o = ordered(l);
 							if (Object.values(ALL_LAYERS).flat().includes(l.id)) o.visible = shown.has(l.id);
+							// Streets' keeper can stay visible after Streets is off (until the map moves): count it as always on.
+							if (l.id === KEEPER) o.visible = true;
 							if (l.id === 'base-wash') o.visible = on.length > 0;
 							if (l.id === 'aerial' || l.id === 'aerial-detail') o.visible = aerial;
 							if (BUILDINGS_LAYERS.includes(l.id)) o.visible = buildings;

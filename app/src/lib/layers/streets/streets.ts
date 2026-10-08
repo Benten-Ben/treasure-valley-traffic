@@ -73,6 +73,19 @@ export const STREET_LAYERS: string[] = Object.values(L);
 export const ROADS_SOURCE = 'roads';
 export const CHEVRON = 'oneway-chevron';
 
+/**
+ * The keeper: a line layer on the roads source that matches no feature and
+ * draws nothing. MapLibre drops a source's tiles once none of its layers is
+ * visible (and every visibility change reloads the source, clearing its
+ * cache of unused tiles), so hiding all of Streets threw its road tiles away
+ * and showing it again fetched them all (docs/14 §14.9, "Toggling an already
+ * loaded layer: 0 requests"). While the keeper is visible the source stays in
+ * use: a toggle only re-parses the tiles it holds, in the worker, with no
+ * request. The module shows the keeper with Streets and lets it go when the
+ * map moves while Streets is off, so a hidden Streets never fetches a tile.
+ */
+export const KEEPER = 'streets-keep';
+
 const classWidth: ExpressionSpecification = [
 	'match',
 	['get', 'class'],
@@ -94,14 +107,20 @@ const width = (extra = 0, scale = 1): ExpressionSpecification => [
 ];
 
 /**
- * The layers, each with its slot (docs/14 §14.8 "Layer order"): the lines in
- * `streets` (draped with the base), the chevrons and speed numbers in
- * `labels`. All start hidden.
+ * The layers, each with its slot (docs/14 §14.8 "Layer order"): the keeper
+ * and the lines in `streets` (draped with the base), the chevrons and speed
+ * numbers in `labels`. All start hidden.
  */
 export function streetLayers(): SlottedLayer[] {
 	const hidden = { visibility: 'none' as const };
 	const line = { ...hidden, 'line-cap': 'round' as const, 'line-join': 'round' as const };
 	return [
+		// The keeper (see KEEPER): no feature passes its filter, and it would draw nothing if one did.
+		{
+			slot: 'streets',
+			layer: { id: KEEPER, type: 'line', source: ROADS_SOURCE, 'source-layer': 'roads', filter: false,
+				layout: { ...hidden }, paint: { 'line-opacity': 0 } }
+		},
 		// The selected road (§14.3): a 2 px ink edge in a 3 px cream halo, under its speed line.
 		{
 			slot: 'streets',

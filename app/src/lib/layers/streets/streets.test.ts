@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { RAMP_ALONE, RAMP_UNDER, speedColor } from './ramp.js';
-import { L, oneWayText, RAMP_LAYERS, selectedFilter, STREET_LAYERS, streetLayers, visibleStreetLayers } from './streets.js';
+import { KEEPER, L, oneWayText, RAMP_LAYERS, selectedFilter, STREET_LAYERS, streetLayers, visibleStreetLayers } from './streets.js';
 
 describe('streets', () => {
 	it('colors posted speeds on the stepped ramp, light to dark', () => {
@@ -46,5 +46,13 @@ describe('streets', () => {
 		// Everything else (selection outline, chevrons, speed numbers) shows with either ramp.
 		for (const id of STREET_LAYERS.filter((x) => ![...RAMP_LAYERS.alone, ...RAMP_LAYERS.under].includes(x)))
 			expect([alone.has(id), under.has(id)], id).toEqual([true, true]);
+	});
+
+	it('has a keeper on the roads source that matches nothing and draws nothing', () => {
+		const keeper = streetLayers().find((l) => l.layer.id === KEEPER)!.layer as { type: string; source: string; filter: unknown; paint: Record<string, unknown> };
+		expect(keeper).toMatchObject({ type: 'line', source: 'roads', filter: false, paint: { 'line-opacity': 0 } });
+		// The module shows it apart from the layer's own on/off (it holds the tiles while Streets is hidden).
+		expect(STREET_LAYERS).not.toContain(KEEPER);
+		expect(visibleStreetLayers(true, 'alone').has(KEEPER)).toBe(false);
 	});
 });
