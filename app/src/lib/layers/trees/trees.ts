@@ -134,9 +134,11 @@ export const DISCS_ZOOM = 13;
 export const LIMIT_3D = 4000;
 export const LIMIT_DISCS = 8000;
 /**
- * At most this many trees go to the scene: the tallest in view. Measured on
- * the owner's laptop (see the report and the layer's legend): it holds a
- * smooth frame up to about this many with the other layers.
+ * At most this many trees go to the scene: the tallest in view (the legend
+ * says so when it applies). Measured on the owner's laptop (M1 GPU, Oct 8;
+ * docs/19 §19.6): 4,000 in the scene (about 2,550 drawn) held 60 fps while
+ * rotating, at about 3 ms of the scene's JS a frame (4 ms with Transit,
+ * Cameras and Streets on too).
  */
 export const SCENE_CAP = 4000;
 
@@ -164,8 +166,6 @@ export const treeGreen = (id: string, type: TreeType): string => {
 export const TYPE_NAME: Record<TreeType, string> = { broadleaf: 'Broadleaf tree', conifer: 'Conifer', narrow: 'Narrow tree' };
 export const KIND_WORD: Record<TreeKind, string> = { catalogued: 'Catalogued', placed: 'Placed', estimated: 'Estimated' };
 
-export const CREDIT = 'Trees from USGS 3DEP lidar (2023) · City of Boise tree inventory · US Forest Service Urban Tree Database';
-
 /** What a click on the tree selects (the card fetches the rest). */
 export function treeSelection(t: TreeRow): Selection {
 	return {
@@ -174,7 +174,10 @@ export function treeSelection(t: TreeRow): Selection {
 		layer: 'trees',
 		title: TYPE_NAME[t.type],
 		fact: `${fmtM(t.h)} tall · ${KIND_WORD[t.kind].toLowerCase()}`,
-		source: CREDIT,
+		// The tooltip's source: the lidar, and the inventory and Urban Tree Database where they apply.
+		source: credits(t.kind, t.kind === 'placed' ? null : 'boise')
+			.map((c) => c.replace(' (McPherson, van Doorn & Peper 2016)', ''))
+			.join(' · '),
 		at: [t.lng, t.lat],
 		data: t
 	};

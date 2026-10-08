@@ -81,6 +81,10 @@ describe('a tree as a 3D model (docs/19 §19.6)', () => {
 		expect(i.pick).toMatchObject({ kind: 'tree', id: 'c-1-2', layer: 'trees', title: 'Broadleaf tree', at: [-116.2, 43.62] });
 		expect(i.pick?.data).toBe(t);
 		expect(treeSelection(T({ type: 'conifer', h: 9.24, kind: 'estimated' })).fact).toBe('9.2 m tall · estimated');
+		// The tooltip credits what the kind rests on.
+		expect(treeSelection(T({ kind: 'placed' })).source).toBe('USGS 3DEP lidar (2023)');
+		expect(treeSelection(T({ kind: 'catalogued' })).source).toBe('USGS 3DEP lidar (2023) · City of Boise tree inventory');
+		expect(treeSelection(T({ kind: 'estimated' })).source).toBe('USGS 3DEP lidar (2023) · City of Boise tree inventory · US Forest Service Urban Tree Database');
 		// Trees rank under streets (crowns line them) and over the plain sprites.
 		expect(PRIORITY.tree).toBeLessThan(PRIORITY.street);
 		expect(PRIORITY.tree).toBeGreaterThan(PRIORITY.sprite);

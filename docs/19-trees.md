@@ -162,6 +162,15 @@ rebuilt when its catalogue changes (monthly) or new lidar arrives.
 - **Picking:** trees rank just under streets, so a click on a road under a
   crown still opens the road. A model's hit radius is its crown, not its
   bounding sphere (the scene engine's opt-in `pickRadius`).
+- **Measured (Oct 8, owner's laptop, headless Chromium on the M1 GPU):**
+  15,000 synthetic trees around the North End box, viewed at z16 with
+  pitch 50 while rotating. With 1,000, 2,000, 3,000 and 4,000 trees handed
+  to the scene (613 to 2,552 drawn), frames held 16.7 ms (60 fps), and the
+  scene's JS took a median 0.9, 1.5, 2.3 and 3.1 ms a frame. With Transit,
+  Cameras and Streets on as well, 4,000 trees still held 16.7 ms, at 4.0 ms
+  of scene JS. So the cap is the API's close-up limit: the tallest 4,000
+  trees in view, and the legend says so when it applies. Under SwiftShader
+  (the test browser) a frame takes hundreds of ms at any count.
 
 ## 19.7 The pilot: North End
 

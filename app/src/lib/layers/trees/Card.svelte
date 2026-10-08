@@ -188,13 +188,14 @@
 	}
 	.log li {
 		display: grid;
-		grid-template-columns: 86px 1fr;
-		gap: 6px;
+		grid-template-columns: max-content 1fr;
+		gap: 8px;
 	}
 	.log li + li {
 		margin-top: 3px;
 	}
 	.when {
 		color: var(--ink-soft);
+		white-space: nowrap;
 	}
 </style>
