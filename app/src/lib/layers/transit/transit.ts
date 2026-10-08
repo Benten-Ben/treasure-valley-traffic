@@ -107,6 +107,22 @@ export function metres(a: [number, number], b: [number, number]): number {
 }
 
 
+/** A bus's number as riders know it: its vehicle ID (the feed pads a few with a space). Not the
+ * feed's vehicle label, which VRT fills with the run ("07:42:00-4") or "NIS". */
+export const busNumber = (vid: string): string => vid.trim() || vid;
+
+/**
+ * A headsign as the card says it: "toward Main Street Station". VRT's own
+ * headsigns already start "Toward" or "Towards" (said once, as "toward"),
+ * and some are just "Inbound" or "Outbound" (said as they are).
+ */
+export function towardText(headsign: string): string {
+	const h = headsign.trim().replace(/\s+/g, ' ');
+	if (/^(in|out)bound$/i.test(h)) return h[0].toUpperCase() + h.slice(1).toLowerCase();
+	const place = h.replace(/^towards?\b\s*/i, '');
+	return place ? `toward ${place}` : h;
+}
+
 /** The fallback bus layers (circle and number), only when the overlay can't start; on top of the labels. */
 export function fallbackBusLayers(): SlottedLayer[] {
 	const hidden = { visibility: 'none' as const };

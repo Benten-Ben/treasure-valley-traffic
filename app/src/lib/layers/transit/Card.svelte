@@ -3,15 +3,15 @@
 	import { clockText, minSec } from '#lib/state/clock.svelte.js';
 	import Badge from '#lib/ui/Badge.svelte';
 	import type { CardProps } from '../types.js';
-	import { busBadge, routeBadge, towardText, type TransitModule } from './index.svelte.js';
+	import { busBadge, routeBadge, type TransitModule } from './index.svelte.js';
 	import { speedText } from './playback.js';
-	import { CREDIT } from './transit.js';
+	import { busNumber, CREDIT, towardText } from './transit.js';
 
 	/**
 	 * The bus, route, stop and hub cards (docs/14 §14.4, "Cards"). They read
 	 * the module's once-a-second state, never per frame.
 	 *
-	 * - Bus: route badge and name, bus number, headsign, the current step's
+	 * - Bus: route badge and name, bus number (its vehicle ID), headsign, the current step's
 	 *   speed ("18 mph" or "stopped"), the last fix time and its age at the
 	 *   playhead, how the position and route are known, the credit, Follow.
 	 * - Route: name, running buses, Spotlight.
@@ -59,7 +59,7 @@
 	{#if v}
 		<h2><Badge badge={busBadge(v)} big />{busRoute?.longName ?? (v.routeId ? `Route ${v.shortName ?? v.routeId}` : 'Route not reported')}</h2>
 		<p class="meta">
-			Bus <span class="num">{v.label ?? vid}</span>{#if v.headsign} · {towardText(v.headsign)}{/if}
+			Bus <span class="num">{busNumber(vid!)}</span>{#if v.headsign} · {towardText(v.headsign)}{/if}
 		</p>
 		{#if b && (b.state === 'moving' || b.state === 'still')}
 			<p class="meta"><strong>{b.state === 'moving' ? (speedText(b.stepSpeed) ?? 'moving') : 'stopped'}</strong></p>

@@ -32,7 +32,7 @@ import {
 	stopFeatures
 } from './network.js';
 import { busAt, Feed, positionAt, runningAt, sameSet, smoothAngle, trail, type BusAt, type BusState } from './playback.js';
-import { ageText, ARROW, arrowImage, CREAM, CREDIT, fallbackBusLayers, FALLBACK_LAYERS, INK, UNKNOWN_COLOR } from './transit.js';
+import { ageText, ARROW, arrowImage, busNumber, CREAM, CREDIT, fallbackBusLayers, FALLBACK_LAYERS, INK, towardText, UNKNOWN_COLOR } from './transit.js';
 import type { Scene, SceneInstance } from '#lib/scene/index.js';
 import { bodyColor, busModel, BUS_LENGTH_M, lodAt, metresPerPx, modelFade, modelZoom, placeModel, plateAltitude, type BusModel, type GroundAt, type Lod } from './bus3d.js';
 import { loadPlateFont, PLATE_BODY_H, PLATE_PAD, plateBodyWidth, plateKey, plateOffset, plateSize, plateSprite, type PlateLook } from './plates.js';
@@ -125,9 +125,6 @@ function headingSprite(): SpriteDef {
 		}
 	};
 }
-
-/** "toward Towne Square Mall" (some headsigns already say "Toward"). */
-export const towardText = (headsign: string) => (/^toward\b/i.test(headsign) ? headsign.replace(/^toward/i, 'toward') : `toward ${headsign}`);
 
 /** A bus's plate (unknown routes: gray with "?", with a halo). */
 export function busBadge(v: TrackVehicle | undefined): Badge {
@@ -343,7 +340,7 @@ export class TransitModule implements LayerModule {
 			kind: 'bus',
 			id: vid,
 			layer: 'transit',
-			title: `${name} · bus ${v?.label ?? vid}`,
+			title: `${name} · bus ${busNumber(vid)}`,
 			fact: v?.headsign ? towardText(v.headsign) : 'between reported positions',
 			source: CREDIT,
 			badge: busBadge(v),
@@ -530,8 +527,7 @@ export class TransitModule implements LayerModule {
 		const f = this.follow;
 		if (!f) return;
 		if (f.is('bus', vid)) return f.stop();
-		const v = this.feed.vehicles[vid];
-		f.start({ kind: 'bus', id: vid, label: `bus ${v?.label ?? vid}`, position: () => this.position(vid) });
+		f.start({ kind: 'bus', id: vid, label: `bus ${busNumber(vid)}`, position: () => this.position(vid) });
 	}
 
 	/** Where a bus is drawn now (lon, lat), or null when it isn't. */

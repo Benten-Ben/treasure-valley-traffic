@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ageText, ease, isStale, lerp, stopText, trailSegments, TRAIL_S, UNKNOWN_COLOR, type Vehicle } from './transit.js';
+import { ageText, busNumber, ease, isStale, lerp, stopText, towardText, trailSegments, TRAIL_S, UNKNOWN_COLOR, type Vehicle } from './transit.js';
 
 const bus = (over: Partial<Vehicle> = {}): Vehicle => ({
 	vehicleId: '706',
@@ -82,5 +82,47 @@ describe('motion', () => {
 		expect(ease(0.5)).toBeCloseTo(0.5);
 		expect(ease(0.1)).toBeLessThan(0.1);
 		expect(lerp([0, 0], [10, 20], 0.25)).toEqual([2.5, 5]);
+	});
+});
+
+describe('the bus card', () => {
+	it('numbers a bus by its vehicle ID, never the feed label (the run)', () => {
+		// Oct 7: vehicle 3505 reported the label "05:41:00-4", 708 "NIS"; a few IDs carry a trailing space.
+		expect(busNumber('3505')).toBe('3505');
+		expect(busNumber('722 ')).toBe('722');
+		expect(busNumber('N701 ')).toBe('N701');
+	});
+
+	it('says every headsign VRT uses once, as "toward …" or as it is', () => {
+		// Every headsign in the Oct 7 schedule (core.transit_trip), with its number of trips.
+		const real: [string, string][] = [
+			['Towards Main Street Station', 'toward Main Street Station'], // 1,581
+			['Toward Towne Square Mall', 'toward Towne Square Mall'], // 1,235
+			['Toward Boise Airport', 'toward Boise Airport'],
+			['Toward Gary & State', 'toward Gary & State'],
+			['Inbound', 'Inbound'], // 333
+			['Toward 36th & Shasta', 'toward 36th & Shasta'],
+			['Toward Parkhill & Bogus Basin', 'toward Parkhill & Bogus Basin'],
+			['Outbound', 'Outbound'], // 130
+			['Toward Pro Tech & Salt Creek', 'toward Pro Tech & Salt Creek'],
+			['Toward Millspur Way', 'toward Millspur Way'],
+			['Toward Happy Day Transit Center', 'toward Happy Day Transit Center'],
+			['Toward Records & Village', 'toward Records & Village'],
+			['Toward University & Joyce', 'toward University & Joyce'],
+			['Toward Wayfinder & Vanguard', 'toward Wayfinder & Vanguard'],
+			['Toward Discovery & Chinden', 'toward Discovery & Chinden'],
+			['Toward The College of Western Idaho', 'toward The College of Western Idaho'],
+			['Toward River Valley & Records', 'toward River Valley & Records'],
+			['Toward Blaine & 24th', 'toward Blaine & 24th'],
+			['Toward State & Ellens Ferry', 'toward State & Ellens Ferry']
+		];
+		for (const [headsign, said] of real) expect(towardText(headsign)).toBe(said);
+	});
+
+	it('adds "toward" to a bare place, and keeps words that only start like it', () => {
+		expect(towardText('Towne Square Mall')).toBe('toward Towne Square Mall');
+		expect(towardText('  TOWARDS  Main Street Station ')).toBe('toward Main Street Station');
+		expect(towardText('inbound')).toBe('Inbound');
+		expect(towardText('Inbound Express')).toBe('toward Inbound Express');
 	});
 });

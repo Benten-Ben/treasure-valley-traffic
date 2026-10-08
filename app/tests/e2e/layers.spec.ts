@@ -188,8 +188,9 @@ test.describe('layers', () => {
 				json: {
 					contract: 1,
 					now,
-					vehicles: { 'test-bus': { label: '2213', routeId: '9', routeSource: 'feed', shortName: '9', color: '#2a78d6', textColor: '#ffffff', halo: true, headsign: null } },
-					steps: [['test-bus', now - 100, null, null, lng, lat, 90, null, null]],
+					// The bus number is the vehicle ID; VRT's vehicle label is the run, never shown as the number.
+					vehicles: { '2213': { label: '07:42:00-4', routeId: '9', routeSource: 'feed', shortName: '9', color: '#2a78d6', textColor: '#ffffff', halo: true, headsign: null } },
+					steps: [['2213', now - 100, null, null, lng, lat, 90, null, null]],
 					routeRuns: { '9': [[now - 100, now - 100]] },
 					lastFix: now - 100
 				}
@@ -206,11 +207,13 @@ test.describe('layers', () => {
 		// Hover first: the tooltip names the bus (not the road), with its source.
 		await page.mouse.move(pt.x, pt.y);
 		await expect(page.getByRole('tooltip')).toContainText('bus 2213');
+		await expect(page.getByRole('tooltip')).not.toContainText('07:42');
 		await expect(page.getByRole('tooltip')).toContainText('Valley Regional Transit');
 		await page.mouse.click(pt.x, pt.y);
 		await expect(page.getByRole('region', { name: 'Selected bus' })).toBeVisible();
 		await expect(page.getByRole('region', { name: 'Selected road' })).toHaveCount(0);
-		expect((await info(page)).selection).toMatchObject({ kind: 'bus', id: 'test-bus' });
+		expect((await info(page)).selection).toMatchObject({ kind: 'bus', id: '2213' });
+		await expect(page.getByRole('region', { name: 'Selected bus' })).toContainText('Bus 2213');
 		await page.screenshot({ path: screenPath('layers-bus-over-road.png') });
 		// The same spot without the bus is the road, outlined while selected.
 		await page.keyboard.press('4');
