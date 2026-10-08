@@ -29,10 +29,10 @@ historical data layers.
 | # | Chapter | What it covers |
 |---|---|---|
 | 9 | [Base-map data](docs/09-base-map-data.md) | Open terrain and LiDAR, streets and lanes, buildings with heights, imagery, parcels, and the license for each |
-| 10 | [Platform architecture](docs/10-architecture.md) | Proposed stack (SvelteKit, MapLibre + deck.gl, PostGIS/TimescaleDB, Python ingestion) and the home-server plan |
+| 10 | [Platform architecture](docs/10-architecture.md) | The stack (SvelteKit, MapLibre with our own small WebGL layer for 3D, PostGIS/TimescaleDB, Python ingestion) and the home-server plan |
 | 11 | [Cameras as a validation layer](docs/11-camera-validation-layer.md) | Camera sources, the 511 image route, API limits, image freshness, the collect-everything processing pipeline, storage and video archiving (measured) |
 | 12 | [Database schema v1 (draft)](docs/12-database-schema.md) | PostGIS + TimescaleDB layout: sources and fetches, raw record versions, our own intersection and camera IDs, time series, event lifecycles; decisions for review |
-| 13 | [Visual design](docs/13-visual-design.md) | The app as a friendly, game-inspired command center: lenses, the Valley Feed, time replay, camera wall, type and color |
+| 13 | [Visual design](docs/13-visual-design.md) | The app as a friendly, game-inspired command center: layers that combine, the color budget, type, color and icons, and what's next (the Valley Feed, time replay, the camera wall) |
 | 14 | [UI v2: one map, every layer](docs/14-ui-v2.md) | The rebuilt map interface: one persistent map, layers, live images, playback, 3D buses and cameras, windows |
 | 15 | [Core and plugins](docs/15-plugins.md) | What every subject needs (base map, time and playback, layers, ingest framework) versus plugins per subject (roads, intersections, cameras, transit, conditions, safety, flow, development; later aircraft, lands, trails), private plugins, and the refactor plan |
 | 16 | [Ideas by persona](docs/16-ideas-and-personas.md) | Where the platform could go and who for: aviation, hiking and lands, fire and weather (including weather in 3D), commuters, cyclists, civic, homeowners, gardeners, farmers, the sky, history, wildlife; what the aerial imagery could do; which shared core pieces unlock them |
@@ -43,6 +43,9 @@ historical data layers.
 - [`docs/DECISIONS.md`](docs/DECISIONS.md): decisions made with the owner,
   plus pending questions.
 - [`docs/SOURCES.md`](docs/SOURCES.md): every data source we've considered, what's in use, and what's left.
+- [`docs/DEFERRED.md`](docs/DEFERRED.md): map and site work designed or noted
+  but left for a later round (lanes, full replay, the camera wall, the
+  Valley Feed, search), with checkboxes.
 - [`HANDOFF.md`](HANDOFF.md): how the cloud and local Claude sessions work
   together.
 - [`CLAUDE.md`](CLAUDE.md): rules for any Claude session in this repo.
@@ -50,9 +53,22 @@ historical data layers.
 **Platform code (foundation, being built step by step):**
 
 - [`app/`](app/README.md): SvelteKit + MapLibre map of the valley, on
-  self-hosted tiles only. Two lenses so far: **Transit** (Valley Regional
-  Transit's live buses in route colors) and **Cameras** (with the camera
-  calibrator).
+  self-hosted tiles only ([ch. 14](docs/14-ui-v2.md), UI v2). One map that
+  stays put, with **layers that combine**, switched from a bottom toolbar:
+  - **Streets:** posted speeds in 11 shades of one blue, width by road
+    class, one-way chevrons;
+  - **Transit:** Valley Regional Transit's routes in our own palette, side
+    by side where they share a street, faded when not running; buses
+    replayed along their GPS paths about 90 s behind live, as discs far out
+    and 3D buses close in, with 3D stop posts;
+  - **Cameras:** live pictures in floating windows, 3D poles and view cones
+    with the picture in the cone, looking through a calibrated camera, and
+    calibrating a camera on the same map;
+  - **Road weather:** ITD's road-weather station cameras, a tab per
+    direction.
+
+  A Base button picks the look (Valley or Clay), aerial photos, buildings,
+  terrain and labels.
 - [`basemap/`](basemap/README.md): builds our own map layers: an
   OpenStreetMap extract, fonts and icons, 3DEP terrain, Overture buildings
   and NAIP aerial imagery.
@@ -270,5 +286,6 @@ own terms:
   from it that we publish stay ODbL.
 - Overture buildings: ODbL.
 - USGS 3DEP elevation and USDA NAIP imagery: public domain.
+- Valley Regional Transit's schedule and live bus positions: CC BY 3.0.
 
 Data from ACHD, ITD and other agencies is credited where it's used.

@@ -194,7 +194,8 @@ export class CamerasModule implements LayerModule {
 		const scope = (this.#scope = new MapScope(map));
 		scope.addImage(NOTCH_IMAGE, notchImage(2), { pixelRatio: 2 });
 		scope.addImage(CHECK_IMAGE, checkImage(2), { pixelRatio: 2 });
-		scope.addSource(SOURCE, { type: 'geojson', data });
+		// The attribution card credits the cameras while their layer is drawn (docs/14 §14.11).
+		scope.addSource(SOURCE, { type: 'geojson', data, attribution: CREDIT });
 		scope.addSource(CONES, { type: 'geojson', data: EMPTY });
 		scope.addSource(MOVES, { type: 'geojson', data: EMPTY });
 		addSlotted(map, cameraLayers(), def.order, (l, before) => scope.addLayer(l, before));

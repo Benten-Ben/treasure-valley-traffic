@@ -52,15 +52,18 @@ work back.
   The collectors run on the plugin code from refactor step 1.
 - **UI v2** ([docs/14](docs/14-ui-v2.md)):
   - waves A–C are on `main`, not yet deployed;
-  - wave D (windows, base styles and streets, transit, 3D engine) is being
-    finished by the cloud session and handed back on its branch;
-  - waves E–H follow here.
+  - wave D came back from the cloud session on its branch, and waves E–H
+    were built here on the integration branch (WP15 last: docs, the
+    screenshot matrix and the owner's review page);
+  - deploying follows the runbook in [deploy/](deploy/README.md#deploying-ui-v2-runbook);
+    what's left for the next round is in [docs/DEFERRED.md](docs/DEFERRED.md).
 - **Plugins** ([docs/15](docs/15-plugins.md)):
   - step 1 (ingest) is done;
   - the private plugins have started;
   - aircraft is in progress and will deploy switched off until the courtesy
     note to adsb.lol is sent.
 - **Waiting on the owner:** see "Owner actions" in `docs/DECISIONS.md`.
+- **Data sources still to go through:** `docs/SOURCES.md`.
 
 ## Handing a task to a cloud session
 

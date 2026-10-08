@@ -62,7 +62,7 @@ Tick an item when it's built, with the date, or strike it if we drop it.
 | [ ] | 3D road decks (bridges and overpasses with height) | Polish | Road levels (in ACHD's data) |
 | [ ] | deck.gl for heavy analysis layers (crash hexbins and similar) | deck.gl doesn't run on MapLibre 6 yet | A deck.gl release that supports MapLibre 6 |
 | [ ] | Buses offset into their actual lane | After lanes | Lanes |
-| [ ] | An hour-long playback check on a recorded weekday hour | Runs after deploy, on the server's data | Deploy |
+| [ ] | An hour-long playback check on a recorded weekday hour (the deploy runbook's step 6: `transit-progress --report` gives the step shares, speeds and backward motion) | Runs after deploy, on the server's data | Deploy; and a query for the share of bus-seconds spent waiting at the 90 s delay (from `seen_at`, backfilled rows left out), which no tool computes yet |
 | [ ] | Load the road-weather stations (WP16) from the 511 API's camera list and `core.weather_station` instead of the one-off private list, and show their readings on the layer | The API collector arrived while UI v2 was being built (Oct 6) | UI v2 finished |
 | [ ] | Lanes for Canyon County: a `segment_lanes` keyed on COMPASS pieces or OpenStreetMap ways, since Canyon has no ACHD segments | Was waiting for the first OpenStreetMap load | OSM extract on the server: **met Oct 7** (first hand load: 13,917 ways, 10,614 with lanes), so this can be built |
 | [ ] | Link COMPASS's high-injury junctions to `core.intersection` (nearest within 40 m; they carry no `int_id`) | Both are built now; small | — |

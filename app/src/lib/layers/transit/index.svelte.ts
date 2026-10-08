@@ -197,6 +197,9 @@ export class TransitModule implements LayerModule {
 	/** The spotlit route: every other one takes its ghost color. */
 	spot = $state<string | null>(null);
 	pollError = $state<string | null>(null);
+	/** A tracks poll has come back (or failed) at least once. Until then the chips say "—", not "No buses
+	 * reporting": with Transit off nothing is polled, and nothing is known about the buses (WP15's review). */
+	polled = $state(false);
 	/** The follow API (WP3's, or the stand-in), once loaded. */
 	follow = $state.raw<FollowLike | null>(null);
 	/** Trails on or off (per viewer). */
@@ -541,6 +544,7 @@ export class TransitModule implements LayerModule {
 
 	chips(): Chip[] {
 		if (this.status !== 'ready' && this.status !== 'stale') return [];
+		if (!this.polled) return [{ id: 'buses', text: '— buses', title: `${CREDIT} · loaded while Transit is on` }];
 		const clock = this.clock;
 		const now = clock ? clock.serverNow(clock.tick) : Date.now() / 1000;
 		const shown = Object.values(this.buses).filter((b) => isShown(b.state)).length;
@@ -600,6 +604,7 @@ export class TransitModule implements LayerModule {
 			this.vehicles = this.feed.vehicles;
 			this.lastFix = body.lastFix;
 			this.pollError = null;
+			this.polled = true;
 			if (this.status === 'stale' && this.#useOverlay) this.status = 'ready';
 			this.updatedAt = Date.now();
 			clock.feed = { lastFix: body.lastFix, ok: true, at: Date.now() };
@@ -608,6 +613,7 @@ export class TransitModule implements LayerModule {
 		} catch (err) {
 			if (signal.aborted) return;
 			this.pollError = `Live buses unavailable: ${err instanceof Error ? err.message : err}`;
+			this.polled = true;
 			this.status = 'stale';
 			clock.feed = { lastFix: this.lastFix, ok: false, at: Date.now() };
 			throw err;

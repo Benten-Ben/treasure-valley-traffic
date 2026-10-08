@@ -63,7 +63,8 @@ let databaseChecked: string | null | undefined;
 export const test = base.extend<{ dataCheck: void; offsite: string[]; consoleErrors: string[] }>({
 	dataCheck: [
 		async ({ request }, use, testInfo) => {
-			const missing = missingData();
+			// Against a deployed server (TVT_E2E_URL, playwright.config.ts), only its database is checked.
+			const missing = process.env.TVT_E2E_URL ? [] : missingData();
 			if (databaseChecked === undefined) {
 				const meta = await request.get('/api/meta').then((r) => r.json()).catch(() => null);
 				databaseChecked = meta?.database === 'ok' ? null : `the database clone isn't answering (/api/meta: ${meta?.database ?? 'no answer'})`;

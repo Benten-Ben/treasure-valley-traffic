@@ -2,7 +2,10 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import type { LayerSpecification } from 'maplibre-gl';
 import { cameraLayers } from '#lib/layers/cameras/cameras.js';
 import { streetLayers } from '#lib/layers/streets/streets.js';
-import { fallbackBusLayers, transitLayers } from '#lib/layers/transit/transit.js';
+import { roadWeatherLayers } from '#lib/layers/roadweather/layers.js';
+import { networkLayers, SOURCES as TRANSIT_SOURCES } from '#lib/layers/transit/network.js';
+import { stopNameLayer } from '#lib/layers/transit/stops3d.js';
+import { fallbackBusLayers } from '#lib/layers/transit/transit.js';
 import { ANCHORS, drapedRuns, insertSlotted, ordered, rttStacks, type SlottedLayer } from './order.js';
 import { addAerial, basemapReady, BUILDINGS_LAYERS, buildStyle, type BasemapManifest } from './style.js';
 
@@ -25,10 +28,14 @@ const wash: SlottedLayer = { slot: 'base', layer: { id: 'base-wash', type: 'fill
 /** A stand-in for the overlay custom layer (not draped). */
 const overlay = { id: 'overlay', type: 'custom' } as unknown as LayerSpecification;
 
+/** Transit's layers as its module adds them (the ribbons, stops, hubs, shields and trails, and stop names). */
+const transitLayers = () => [...networkLayers(), stopNameLayer(TRANSIT_SOURCES.stops)];
+
 const ALL_LAYERS: Record<string, string[]> = {
 	streets: streetLayers().map((s) => s.layer.id),
 	transit: transitLayers().map((s) => s.layer.id),
-	cameras: cameraLayers().map((s) => s.layer.id)
+	cameras: cameraLayers().map((s) => s.layer.id),
+	weather: roadWeatherLayers().map((s) => s.layer.id)
 };
 
 /** The style with every module's layers inserted the way they are at run time, in a given load order. */
@@ -38,10 +45,11 @@ function assembled(loadOrder: string[], o: { aerial: boolean }): LayerSpecificat
 	const mods: Record<string, SlottedLayer[]> = {
 		streets: streetLayers(),
 		transit: [...transitLayers(), ...fallbackBusLayers()],
-		cameras: cameraLayers()
+		cameras: cameraLayers(),
+		weather: roadWeatherLayers()
 	};
-	// Each module's rank is its def's order (streets 10, transit 20, cameras 30).
-	const rank: Record<string, number> = { streets: 10, transit: 20, cameras: 30 };
+	// Each module's rank is its def's order (streets 10, transit 20, cameras 30, road weather 40).
+	const rank: Record<string, number> = { streets: 10, transit: 20, cameras: 30, weather: 40 };
 	const ranks = {};
 	layers = insertSlotted(layers, [wash], 0, ranks);
 	for (const id of loadOrder) layers = insertSlotted(layers, mods[id], rank[id], ranks);
@@ -88,7 +96,7 @@ describe('rttStacks', () => {
 	it('is at most 1 for every combination of layers, Aerial and load order, at every zoom', () => {
 		const ids = Object.keys(ALL_LAYERS);
 		for (const aerial of [false, true]) {
-			for (const order of [ids, [...ids].reverse(), ['transit', 'streets', 'cameras']]) {
+			for (const order of [ids, [...ids].reverse(), ['transit', 'weather', 'streets', 'cameras']]) {
 				const layers = assembled(order, { aerial });
 				for (const on of subsets(ids)) {
 					for (const buildings of [true, false]) {
@@ -112,8 +120,8 @@ describe('rttStacks', () => {
 	});
 
 	it('puts each module’s layers in its slot whatever loads first', () => {
-		const a = assembled(['streets', 'transit', 'cameras'], { aerial: false }).map((l) => l.id);
-		const b = assembled(['cameras', 'transit', 'streets'], { aerial: false }).map((l) => l.id);
+		const a = assembled(['streets', 'transit', 'cameras', 'weather'], { aerial: false }).map((l) => l.id);
+		const b = assembled(['weather', 'cameras', 'transit', 'streets'], { aerial: false }).map((l) => l.id);
 		expect(a).toEqual(b);
 		const at = (id: string) => a.indexOf(id);
 		expect(at('streets-speed')).toBeLessThan(at(ANCHORS.streets));
@@ -123,7 +131,7 @@ describe('rttStacks', () => {
 		expect(at('cameras-calibrated')).toBeGreaterThan(at(ANCHORS.scene));
 		expect(at('cameras-calibrated')).toBeLessThan(at(ANCHORS.points));
 		// Labels below the buses: every symbol layer sits under the overlay and the fallback bus layers.
-		const lastSymbol = a.findLastIndex((id) => id === 'streets-speed-labels' || id === 'transit-route-labels' || id === 'places_locality');
+		const lastSymbol = a.findLastIndex((id) => id === 'streets-speed-labels' || id === 'transit-shields' || id === 'places_locality');
 		expect(lastSymbol).toBeLessThan(at('transit-buses'));
 		expect(at('transit-buses')).toBeLessThan(at('overlay'));
 	});

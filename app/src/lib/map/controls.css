@@ -33,8 +33,12 @@ main .maplibregl-ctrl.maplibregl-ctrl-scale {
 /* --- attribution: a round (i) that opens into a card --------------------------------- */
 main .maplibregl-ctrl.maplibregl-ctrl-attrib {
 	box-sizing: border-box;
-	/* Open, it stays clear of the toolbar in the bottom centre (it wraps instead). */
-	max-width: max(160px, calc(50vw - 240px));
+	/* Open, it stays clear of the toolbar in the bottom centre (it wraps instead): half the
+	   screen, less half the toolbar (Base and four layers, about 190 px), a gap and the
+	   corner's 16 px margin. Measured with the padding (border-box), which the open compact
+	   card also uses below; with content-box its 52 px of padding pushed it under the
+	   toolbar (WP15's review). */
+	max-width: max(160px, calc(50vw - 230px));
 	padding: 6px 12px;
 	border: 2px solid var(--panel-edge);
 	border-radius: 16px;
@@ -51,6 +55,7 @@ main .maplibregl-ctrl.maplibregl-ctrl-attrib.maplibregl-compact {
 	border-radius: 18px;
 }
 main .maplibregl-ctrl.maplibregl-ctrl-attrib.maplibregl-compact-show {
+	box-sizing: border-box;
 	padding: 6px 40px 6px 12px;
 }
 main .maplibregl-ctrl-bottom-left > .maplibregl-ctrl-attrib.maplibregl-compact-show,
@@ -132,6 +137,9 @@ main > div.views.card {
 	main .maplibregl-ctrl.maplibregl-ctrl-attrib.maplibregl-compact-show {
 		box-sizing: border-box;
 		width: auto;
+		/* Open, the card grows with its credits; the closed (i)'s 44 px height left every line after
+		   the second on the bare map (WP15's review). */
+		height: auto;
 		/* Clear of the Map / Aerial switch at the top right. */
 		max-width: calc(100vw - 176px);
 		padding-left: 52px;

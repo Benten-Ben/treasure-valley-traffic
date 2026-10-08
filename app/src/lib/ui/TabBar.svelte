@@ -173,7 +173,9 @@
 		display: none;
 	}
 	.tab {
-		flex: 1 0 64px;
+		/* At least 64 px, and as wide as its label: "Road weather" overflowed a 64 px share and its
+		   cream text ran off the pressed tab (WP15's review). Past the screen's width the bar scrolls. */
+		flex: 1 0 auto;
 		display: flex;
 		flex-direction: column;
 		align-items: center;

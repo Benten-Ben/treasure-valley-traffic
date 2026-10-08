@@ -52,8 +52,8 @@
 	<div class="side">
 		<p class="head">
 			<span class="shape" style:color={status.color} aria-hidden="true">{status.shape}</span>
-			<b>Live</b>
-			<span class="word">{status.word}</span>
+			<b>Live picture</b>
+			<span class="word">· {status.word}</span>
 		</p>
 		<p class="seen num" title={SEEN_NOTE}>{footText(live, age)}</p>
 		{#if live && live.state !== 'ok' && live.state !== 'waiting'}<p class="why">{status.detail}</p>{/if}

@@ -6,7 +6,9 @@ full descriptions, access rules and licenses are in
 [chapter 8](08-data-inventory.md) (data inventory) and
 [chapter 9](09-base-map-data.md) (base-map data); decisions are in
 [DECISIONS.md](DECISIONS.md). We go through sources one at a time with the
-owner before committing to how each is used.
+owner before committing to how each is used. Map layers designed for these
+sources but left for a later round (intersections, crashes, lanes, growth)
+are tracked in [DEFERRED.md](DEFERRED.md).
 
 Last updated Oct 7, 2026.
 
@@ -15,12 +17,12 @@ Last updated Oct 7, 2026.
 | Source | What we do with it | Since |
 |---|---|---|
 | ACHD camera inventory | 228 cameras in `core.camera`, refreshed daily (`achd_cameras`) | Oct 5 |
-| 511 Idaho camera images | 34 key cameras fetched every 50 s into daily AV1 videos (`cameras` service); calibrations in the app | Oct 5 |
+| 511 Idaho camera images | 34 key cameras fetched every 50 s into daily AV1 videos (`cameras` service); calibrations in the app; live pictures in the app's camera windows (UI v2: the recorded cameras from our archive, others fetched only while open, [ch. 11 §11.8](11-camera-validation-layer.md#118-cameras-in-the-app-ui-v2-oct-2026)) | Oct 5 |
 | ITD road-weather (RWIS) camera views | All 385 views at 130 stations statewide, plus 4 Oregon DOT views near Ontario and Weiser, every 10 min into daily videos (`regional` service) | Oct 5–6 |
 | 511 Idaho camera list | One-off copies (Oct 5), kept privately; replaced on Oct 6 by the API's camera list (hourly), which rebuilds the road-weather capture list | Oct 5 |
 | 511 Idaho API | All 11 endpoints (`idaho511` service, at most 8 calls a minute): events, advisories and truck restrictions (`evt.event`), message signs (`evt.sign_message`), road-weather readings from 127 stations (`obs.weather_reading`), winter road conditions, the camera list and the rest versioned; not republished | Oct 6 |
 | Valley Regional Transit GTFS and GTFS-realtime | Routes, stops, shapes daily; bus positions every 30 s, archived raw; unlabeled trips matched to routes by path | Oct 5 |
-| ACHD road centerlines | 38,727 Ada County segments with posted speed, class, one-way, level; the Streets lens | Oct 5 |
+| ACHD road centerlines | 38,727 Ada County segments with posted speed, class, one-way, level; the Streets layer | Oct 5 |
 | ACHD counts and turning-movement tables | One-time private copy (owner-approved, Oct 5); not loaded into the database yet | Oct 5 |
 | Ada County Assessor parcels, condos and parcel characteristics | One private copy on the server (owner OK, Oct 6): year built, dwelling units, commercial floor area. "Do not re-distribute": aggregates only, never committed or tiled; the county is asked whether its CC0 label applies | Oct 6 |
 | Census commute flows (LEHD LODES8) | One-off analysis, `tools/lehd_flows.py`: who commutes between Ada, Canyon and the counties around them (results in ch. 8) | Oct 6 |
