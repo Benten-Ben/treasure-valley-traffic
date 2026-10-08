@@ -16,7 +16,9 @@ import { toasts } from './toasts.svelte.js';
  *   rect, pinned and z-index;
  * - `remembered(key)`, `toasts()`, `history()`;
  * - `followTest()`: follow a made-up target drifting east at about 30 m/s
- *   from the centre; `following()` names what's followed (or null).
+ *   from the centre; `following()` names what's followed (or null);
+ * - `select(title)` and `deselect()`: a made-up selection (owner
+ *   'window-test'), so the inspect card opens and closes with no layer.
  *
  * Its code loads only with `?window-test`.
  */
@@ -62,7 +64,9 @@ export function startWindowTest(app: AppCtx, windows: WindowManager): () => void
 			const position = (): [number, number] => [c.lng + 0.0004 * ((performance.now() - t0) / 1000), c.lat];
 			return followOf(app).start({ kind: 'test', id: 'drift', label: 'the test target', position });
 		},
-		following: () => followOf(app).current?.label ?? null
+		following: () => followOf(app).current?.label ?? null,
+		select: (title: string) => app.selection.select({ kind: 'sprite', id: `test:${title}`, layer: 'window-test', title, fact: 'A test selection' }),
+		deselect: () => app.selection.clear()
 	});
 	Object.defineProperty(globalThis, '__tvtWindows', { value: handle, configurable: true });
 	return () => {

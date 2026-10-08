@@ -13,7 +13,10 @@ import { expect, mapReady, screenPath, test } from './fixtures.js';
  * whatever is on; labels under the buses;
  * a loaded toggle makes no request; loading and error states show; the
  * overlay draws 1,000 sprites where map.project says, picks them and moves
- * them without setData; Space on a focused button only presses it.
+ * them without setData; Space on a focused button only presses it. The
+ * chrome's honesty and reach: the stat chips show that more are cut off, a
+ * skip link reaches the toolbar in one Tab, the time pill doesn't say LIVE
+ * before the bus feed answers, and routes not running keep readable badges.
  */
 
 type Info = {
@@ -564,5 +567,94 @@ test.describe('layers', () => {
 		await tabs.getByRole('button', { name: 'Streets' }).click();
 		expect(await enabled(page)).toEqual(['cameras', 'streets', 'transit']);
 		await page.screenshot({ path: screenPath('layers-phone.png') });
+		// The Base popover's segments: the selected fill covers the whole 44 px target.
+		await tabs.getByRole('button', { name: 'Base' }).click();
+		const pop = page.getByRole('dialog', { name: 'Base map' });
+		await expect(pop).toBeVisible();
+		for (const name of ['Auto', 'Full']) {
+			const radio = pop.getByRole('radio', { name });
+			await expect(radio).toBeChecked();
+			const [label, fill] = await radio.evaluate((el) => [el.closest('label')!.getBoundingClientRect().height, (el.nextElementSibling as HTMLElement).getBoundingClientRect().height]);
+			expect(label).toBeGreaterThanOrEqual(44);
+			expect(fill, `${name}: the selected fill`).toBeGreaterThanOrEqual(label - 1);
+		}
+		await page.screenshot({ path: screenPath('layers-phone-base.png') });
+	});
+	test('cut-off stat chips say so; Skip to layers; no LIVE before the bus feed; readable ghost badges', { tag: '@wp2' }, async ({ page, consoleErrors }) => {
+		test.setTimeout(300_000);
+		await page.setViewportSize({ width: 800, height: 1024 });
+		// Hold the first tracks poll: the pill must not claim LIVE meanwhile.
+		let release!: () => void;
+		const gate = new Promise<void>((r) => (release = r));
+		await page.route('**/api/transit/tracks**', async (route) => {
+			await gate;
+			await route.continue();
+		});
+		await page.goto('/#map=12/43.61/-116.25/0/0&layers=transit,cameras');
+		const pill = page.locator('.pill-button');
+		await expect(pill).toHaveText('NO GPS YET', { timeout: 120_000 });
+		await expect(pill).not.toHaveClass(/\blive\b/);
+		await page.screenshot({ path: screenPath('layers-pill-waiting.png'), clip: { x: 300, y: 0, width: 500, height: 70 } });
+		release();
+		await expect(pill).not.toHaveText('NO GPS YET', { timeout: 60_000 });
+		await expect(pill).toHaveText(/^LIVE/);
+		await page.unroute('**/api/transit/tracks**');
+		await mapReady(page);
+
+		// Skip to layers: a few Tabs from the top of the page (nothing clicked yet), then straight into the toolbar.
+		let found = false;
+		for (let k = 0; k < 12 && !found; k++) {
+			await page.keyboard.press('Tab');
+			found = await page.evaluate(() => document.activeElement?.textContent?.trim() === 'Skip to layers');
+		}
+		expect(found, 'the skip link is among the first Tab stops').toBe(true);
+		await expect(page.getByRole('button', { name: 'Skip to layers' })).toBeVisible();
+		await page.keyboard.press('Enter');
+		expect(await page.evaluate(() => Boolean(document.activeElement?.closest('[role="toolbar"][aria-label="Map layers"]')))).toBe(true);
+
+		// The chips: those that don't fit are counted on a "+n" chip, which scrolls them into view.
+		const row = page.getByRole('list', { name: 'Stats' });
+		await expect(row.getByRole('listitem')).not.toHaveCount(0);
+		await expect.poll(() => row.getByRole('listitem').count(), { timeout: 60_000 }).toBeGreaterThanOrEqual(3);
+		const cut = () =>
+			row.evaluate((ul) => {
+				const box = ul.getBoundingClientRect();
+				return [...ul.children].filter((li) => {
+					const r = li.getBoundingClientRect();
+					return r.left < box.left - 1 || r.right > box.left + ul.clientWidth + 1;
+				}).length;
+			});
+		await expect.poll(cut, { timeout: 10_000 }).toBeGreaterThan(0);
+		const n = await cut();
+		const more = page.getByRole('button', { name: new RegExp(`^${n} more stats?: show them$`) });
+		await expect(more).toBeVisible();
+		await expect(more).toHaveText(`+${n}`);
+		await page.screenshot({ path: screenPath('layers-chips-cut.png'), clip: { x: 0, y: 0, width: 800, height: 80 } });
+		await more.click();
+		await expect
+			.poll(() => row.evaluate((ul) => ul.scrollLeft + ul.clientWidth >= ul.scrollWidth - 1), { timeout: 10_000 })
+			.toBe(true);
+		await expect(page.getByRole('button', { name: 'Back to the first stats' })).toBeVisible();
+		// The no-buses chip is short: "No buses since …" (with the day for an older fix), never the old long form.
+		const texts = await row.getByRole('listitem').allInnerTexts();
+		for (const t of texts) expect(t).not.toMatch(/reporting|last fix/);
+
+		// Routes not running: ghost badges, numerals at full contrast (no faded badge).
+		const legendRow = page.getByRole('region', { name: 'Transit legend' }).getByRole('button').first();
+		if ((await legendRow.getAttribute('aria-expanded')) !== 'true') await legendRow.click();
+		const ghosts = page.locator('.badge.ghost');
+		await expect.poll(() => ghosts.count(), { timeout: 30_000 }).toBeGreaterThan(0);
+		const looks = await ghosts.evaluateAll((els) =>
+			els.map((el) => {
+				let o = 1;
+				for (let e: Element | null = el; e; e = e.parentElement) o *= Number(getComputedStyle(e).opacity);
+				return { opacity: o, color: getComputedStyle(el).color };
+			})
+		);
+		for (const l of looks) {
+			expect(l.opacity).toBe(1);
+			expect(l.color).toBe('rgb(43, 42, 51)');
+		}
+		expect(consoleErrors).toEqual([]);
 	});
 });
