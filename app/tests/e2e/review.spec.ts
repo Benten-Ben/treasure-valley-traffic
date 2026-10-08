@@ -221,6 +221,7 @@ test.describe('review', () => {
 			const holder = size === PHONE ? page.getByRole('region', { name: 'Details' }) : page.getByRole('dialog', { name: STATIONS.grade.name });
 			await expect(holder.locator('img[data-frame-url]').last()).toBeVisible({ timeout: 60_000 });
 			if (size !== PHONE) await expect(page.getByRole('region', { name: 'Selected station' })).toContainText('views live');
+			await page.waitForFunction(() => !(globalThis as any).__tvt.map.isMoving());
 			await mapReady(page);
 			await shot(10, size, `A road-weather station's window and inspect card, z10, Streets and Road weather: ${STATIONS.grade.name}`, [rwNote]);
 		}

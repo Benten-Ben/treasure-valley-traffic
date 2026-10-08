@@ -22,6 +22,8 @@ type Drawn = { id: number; name: string; provider: string; hollow: boolean; view
 
 /** Every seeded station on screen, clear of the legend column and the toolbar. */
 const VIEW = '#map=9/43.64/-116.62/0/0';
+/** The same zoom further west: Example Grade sits under the inspect column, where the card opens (about x 1000). */
+const UNDER_CARD = '#map=9/43.64/-116.82/0/0';
 const NAMES: string[] = Object.values(STATIONS).map((s) => s.name);
 
 const toolbar = (page: Page) => page.getByRole('toolbar', { name: 'Map layers' });
@@ -46,8 +48,8 @@ test.afterAll(async () => {
 	if (seeded) await cleanRoadWeather();
 });
 
-async function openMap(page: Page, layers: string) {
-	await page.goto(`/${VIEW}&layers=${layers}`);
+async function openMap(page: Page, layers: string, view = VIEW) {
+	await page.goto(`/${view}&layers=${layers}`);
 	await mapReady(page);
 }
 
@@ -147,17 +149,22 @@ test.describe('road weather', () => {
 		page.on('request', (r) => {
 			if (r.url().includes('/api/cameras/live')) live.push(r.url());
 		});
-		await openMap(page, 'weather');
+		await openMap(page, 'weather', UNDER_CARD);
 		const on = await seededDrawn(page);
 
-		// At this view Example Grade sits right of the free middle, where the inspect card goes: the click pans it clear.
+		// At this view Example Grade sits under the inspect column, where the card opens: the click pans it clear.
+		// The map already spans its bounds from side to side here, so a pan alone can't move it: it zooms in just enough.
 		const before = on[STATIONS.grade.name];
 		expect(before.x!).toBeGreaterThan(1280 - RIGHT_COLUMN);
+		const zoom = () => page.evaluate(() => (globalThis as any).__tvt.map.getZoom() as number);
+		const zoomBefore = await zoom();
 		await clickStation(page, before);
 		const win = page.getByRole('dialog', { name: STATIONS.grade.name });
 		await expect(win).toBeVisible();
 		const card = page.getByRole('region', { name: 'Selected station' });
 		await expect(card.getByRole('heading', { name: STATIONS.grade.name })).toBeVisible();
+		// The pan runs 450 ms: read where it ends.
+		await page.waitForFunction(() => !(globalThis as any).__tvt.map.isMoving());
 		await mapReady(page);
 		const canvas = (await page.locator('canvas.maplibregl-canvas').boundingBox())!;
 		const landed = (await seededDrawn(page))[STATIONS.grade.name];
@@ -166,6 +173,8 @@ test.describe('road weather', () => {
 		expect(at.x, 'the station in the free middle').toBeLessThan(1280 - RIGHT_COLUMN);
 		expect(inside(await card.boundingBox(), at.x, at.y), 'the inspect card leaves the station in view').toBe(false);
 		expect(inside(await win.boundingBox(), at.x, at.y), 'its window leaves the station in view').toBe(false);
+		expect(await zoom()).toBeGreaterThan(zoomBefore);
+		expect(await zoom()).toBeLessThan(zoomBefore + 2);
 		const tabs = win.getByRole('tab');
 		await expect(tabs).toHaveCount(4);
 		await expect(tabs.locator('.label')).toHaveText([...STATIONS.grade.labels]);

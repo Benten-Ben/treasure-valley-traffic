@@ -4,8 +4,9 @@ import { landing } from '../cameras/place.js';
 /**
  * Where a clicked road-weather station goes on screen (docs/14 §14.6 "Road
  * weather"), so the inspect card and its window leave it in view. Cameras fly
- * to a landing point in the free middle (WP12); a station keeps the zoom and
- * only pans there, and only when something would cover it. Pure.
+ * to a landing point in the free middle (WP12); a station pans there, and
+ * only when something would cover it, keeping the zoom unless the map's
+ * bounds would stop the pan short (`zoomToLand`). Pure.
  */
 
 /** Room kept between a station's centre and the edge of the free middle, px (the badge is 30 px). */
@@ -46,4 +47,47 @@ export function stationLanding(p: Point, box: Box, windowWidth: number, layout: 
 	const midY = Math.round(box.top + box.height / 2);
 	if (tablet) return { x: Math.round(box.left + (box.width - TABLET_RIGHT_COLUMN) / 2), y: midY };
 	return landing(box, windowWidth, layout) ?? { x: Math.round(box.left + box.width / 2), y: midY };
+}
+
+/** The deepest a click on a station zooms in, so the map's bounds let it reach its landing point. */
+export const MAX_LAND_ZOOM = 14;
+/** MapLibre's world is 512 px across at zoom 0. */
+const TILE_PX = 512;
+const mercX = (lon: number) => (lon + 180) / 360;
+const mercY = (lat: number) => (1 - Math.log(Math.tan(Math.PI / 4 + (lat * Math.PI) / 360)) / Math.PI) / 2;
+
+/**
+ * The zoom at which the map can put a station at `land`. MapLibre keeps the
+ * view inside the map's bounds (maxBounds), so at low zooms, where the view
+ * spans them, and near their edge, a pan alone stops short and leaves the
+ * station under the inspect card. The current zoom when it's enough, else
+ * just enough more; null when even `maxZoom` isn't, or the station is
+ * outside the bounds (the map then stays put).
+ *
+ * `at` is the station (lon, lat), `land` where it should go (px in the map's
+ * box), `size` the map's box and `bounds` [[west, south], [east, north]]. For
+ * a flat view; MapLibre bounds the centre the same way when the map is
+ * tilted, so it's close then too.
+ */
+export function zoomToLand(
+	at: [number, number],
+	land: Point,
+	size: { width: number; height: number },
+	bounds: [[number, number], [number, number]],
+	zoom: number,
+	maxZoom = MAX_LAND_ZOOM
+): number | null {
+	const [[west, south], [east, north]] = bounds;
+	const x = mercX(at[0]);
+	const y = mercY(at[1]);
+	// Room between the station and each edge of the bounds (left, right, top, bottom), as a share of the world,
+	// and the screen it must fill on that side once the station is at `land`.
+	const room = [x - mercX(west), mercX(east) - x, y - mercY(north), mercY(south) - y];
+	const fill = [land.x, size.width - land.x, land.y, size.height - land.y];
+	if (room.some((r) => r <= 0)) return null;
+	const world = Math.max(...fill.map((f, i) => f / room[i]));
+	// A hair more than the least (MapLibre rounds its bounds), so the station lands within a pixel or two.
+	const least = Math.log2(world / TILE_PX) + 0.01;
+	if (least > maxZoom) return null;
+	return Math.max(zoom, least);
 }
