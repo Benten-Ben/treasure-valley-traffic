@@ -99,7 +99,10 @@ docker compose up -d --build <services>
 
 Run Compose from `deploy/` **without `-f`**, so it reads `COMPOSE_FILE` from
 `deploy/.env` and includes the overrides that are switched on (live images,
-the preview). With an explicit `-f`, the overrides are skipped.
+the preview, private plugins). With an explicit `-f`, the overrides are skipped.
+[`compose.private.yml`](compose.private.yml) gives the ingest service the
+private plugins (docs/15 §15.3), from `PRIVATE_PLUGINS_DIR` (default
+`/srv/tvt/plugins-private`), read-only.
 
 ### Checking the app by hand
 

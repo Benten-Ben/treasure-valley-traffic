@@ -111,8 +111,9 @@ robots.txt sets no rules). No licence is stated, only a disclaimer, so the
 records stay private: never committed, published or tiled. The plugin
 exposes the catalogue to the build (trunk points, species, diameter,
 planting date) and its attributes to the app's tree panel on the owner's
-own site. It is the first private plugin with code a service runs, so it
-turns on Compose's private build context (§15.3).
+own site. It is the first private plugin with code a service runs: the
+`compose.private.yml` override mounts the private repository into the ingest
+service (§15.3).
 
 ## 19.5 Building
 

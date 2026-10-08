@@ -156,9 +156,11 @@ Where they live (owner, Oct 7: a private GitHub repo and/or the server):
   `tools/check_public.py` also rejects any `plugins-private/` path.
 - **Data:** in each private plugin's own schema, and in its own archive
   folder.
-- **Build:** Compose gives the app and ingest images the private folder as
-  an extra build context, so a build without it simply has no private
-  plugins.
+- **Running them:** the `compose.private.yml` override mounts the private
+  repository read-only into the ingest service and puts it on
+  `TVT_PLUGIN_PATH` (Oct 8: simpler than a second build context, and private
+  code updates without a rebuild). A server without it simply has no private
+  plugins. The app reads private data only from the database.
 - **Showing it:** private layers are shown only to the owner. Today
   everyone who can reach the site (the owner's tailnet) is the owner. If
   guests ever get access, Caddy will pass the viewer's Tailscale identity
@@ -323,8 +325,9 @@ sources, tables and URLs), with every test green, before the next one starts.
      Assessor copy's manifest and terms, and `tools/` the one-off 511 probe
      and camera sampler; the data stays in `/srv/tvt/private/data`, which
      the ingest service mounts read-only;
-   - Compose gets the extra build context when a private plugin first has
-     code a service runs (none yet).
+   - `city_trees` (Oct 8) is the first with code a service runs: the City of
+     Boise's park and street trees for the trees layer ([ch. 19](19-trees.md)),
+     run by the ingest service through `deploy/compose.private.yml`.
 4. **New plugins,** one source at a time with the owner:
    - `aircraft` (started Oct 7, unfinished): adsb.lol's live data (ODbL)
      every 10 s, with the FAA registry for types; it starts once the owner

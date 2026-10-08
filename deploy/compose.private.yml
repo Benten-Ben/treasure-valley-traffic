@@ -1,0 +1,16 @@
+# Private plugins (docs/15 §15.3): the ingest service reads the private
+# plugins' code, manifests and migrations from the server's private
+# repository, mounted read-only and put on TVT_PLUGIN_PATH. db/migrate.py then
+# applies their migrations and `ingest serve` runs their sources. Today that is
+# city_trees (the City of Boise's park and street trees, docs/19).
+#
+# Enable it by adding this file to COMPOSE_FILE in deploy/.env:
+#   COMPOSE_FILE=docker-compose.yml:compose.private.yml
+# (keep the other overrides you use). A server without the private repository
+# simply leaves it out and has no private plugins.
+services:
+  ingest:
+    environment:
+      TVT_PLUGIN_PATH: /srv/plugins-private
+    volumes:
+      - ${PRIVATE_PLUGINS_DIR:-/srv/tvt/plugins-private}:/srv/plugins-private:ro
