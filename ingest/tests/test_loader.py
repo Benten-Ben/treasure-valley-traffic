@@ -78,7 +78,7 @@ class RegistryTest(unittest.TestCase):
     def test_the_plugins(self):
         self.assertEqual(sorted(p.name for p in ours()),
                          ["air", "cameras", "conditions", "development", "farm", "flow", "hazards", "intersections",
-                          "lands", "roads", "safety", "sky", "trails", "transit", "water", "weather", "wildlife"])
+                          "lands", "roads", "safety", "sky", "trails", "transit", "trees", "water", "weather", "wildlife"])
 
     def test_manifests_agree_with_their_modules(self):
         for plugin in ours():
@@ -105,7 +105,7 @@ class RegistryTest(unittest.TestCase):
     def test_commands_resolve_and_keep_clear_of_the_built_ins(self):
         self.assertEqual(sorted(registry.COMMANDS),
                          ["match-intersections", "match-routes", "osm-load", "rollup", "route-colors", "segment-match",
-                          "transit-progress", "transit-ribbons"])
+                          "transit-progress", "transit-ribbons", "trees-load"])
         self.assertFalse(set(registry.COMMANDS) & set(BUILTINS))
         for name in registry.COMMANDS:
             self.assertTrue(callable(registry.command(name)), name)

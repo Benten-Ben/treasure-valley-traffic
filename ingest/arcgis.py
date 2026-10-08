@@ -54,21 +54,28 @@ def ids_url(layer, where="1=1", box=None):
                                                         **_box(box)})
 
 
-def query_url(layer, oid_field, lo, hi, where="1=1", box=None, precision=None):
-    """Features with lo <= ID <= hi, every field, geometry in WGS84."""
+def _out_fields(fields, oid_field):
+    """'*' (every field), or just the named fields plus the object ID (fetch_layer needs it)."""
+    if not fields:
+        return "*"
+    return ",".join(dict.fromkeys([oid_field, *fields]))
+
+
+def query_url(layer, oid_field, lo, hi, where="1=1", box=None, precision=None, fields=None):
+    """Features with lo <= ID <= hi, every field (or only `fields`), geometry in WGS84."""
     clause = f"{oid_field} >= {int(lo)} AND {oid_field} <= {int(hi)}"
     if where and where != "1=1":
         clause = f"({where}) AND {clause}"
-    q = {"where": clause, "outFields": "*", "returnGeometry": "true", "outSR": "4326",
+    q = {"where": clause, "outFields": _out_fields(fields, oid_field), "returnGeometry": "true", "outSR": "4326",
          "orderByFields": f"{oid_field} ASC", "f": "json", **_box(box)}
     if precision is not None:
         q["geometryPrecision"] = precision
     return layer + "/query?" + urllib.parse.urlencode(q)
 
 
-def by_ids_url(layer, ids, precision=None):
+def by_ids_url(layer, ids, precision=None, fields=None, oid_field="OBJECTID"):
     """Features by object ID, without any filter."""
-    q = {"objectIds": ",".join(str(int(i)) for i in ids), "outFields": "*", "returnGeometry": "true",
+    q = {"objectIds": ",".join(str(int(i)) for i in ids), "outFields": _out_fields(fields, oid_field), "returnGeometry": "true",
          "outSR": "4326", "f": "json"}
     if precision is not None:
         q["geometryPrecision"] = precision
@@ -113,11 +120,12 @@ def _exceeded(data):
 
 
 def fetch_layer(layer, label, *, where="1=1", box=None, batch=BATCH, pause_s=PAUSE_S, precision=None,
-                max_features=MAX_FEATURES, stats=None, get=None, sleep=time.sleep):
+                max_features=MAX_FEATURES, stats=None, get=None, sleep=time.sleep, fields=None):
     """Every feature of a layer (or of its rows matching `where` and touching `box`), each
     once, in ID order, as Esri JSON. Returns (features, bytes, http status, robots decision).
     Raises RuntimeError if the layer doesn't come back whole. stats, if given, gets
-    'listed' and 'by_id' (listed rows a range answer left out, fetched by ID).
+    'listed' and 'by_id' (listed rows a range answer left out, fetched by ID). fields, if
+    given, asks for only those fields (plus the object ID): fields we don't keep aren't fetched.
 
     Answers come in ID order, so a listed ID below the highest one an answer brings
     was left out of it (with a box, it lies outside): it's fetched by ID. IDs above
@@ -151,7 +159,7 @@ def fetch_layer(layer, label, *, where="1=1", box=None, batch=BATCH, pause_s=PAU
                                f"{requests - 1} requests")
         chunk = pending[:batch]
         sleep(pause_s)
-        data = fetch(query_url(layer, oid_field, chunk[0], chunk[-1], where, box, precision))
+        data = fetch(query_url(layer, oid_field, chunk[0], chunk[-1], where, box, precision, fields))
         features = data.get("features") or []
         answered = []
         for f in features:
@@ -173,7 +181,7 @@ def fetch_layer(layer, label, *, where="1=1", box=None, batch=BATCH, pause_s=PAU
     for k in range(0, len(by_id), BY_ID_CHUNK):
         chunk = by_id[k:k + BY_ID_CHUNK]
         sleep(pause_s)
-        data = fetch(by_ids_url(layer, chunk, precision))
+        data = fetch(by_ids_url(layer, chunk, precision, fields, oid_field))
         arrived = 0
         for f in data.get("features") or []:
             oid = object_id(f.get("attributes") or {}, oid_field)
