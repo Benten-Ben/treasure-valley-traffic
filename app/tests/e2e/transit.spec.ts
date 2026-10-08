@@ -361,6 +361,7 @@ test.describe('transit', () => {
 		await expect(card).toContainText(`Bus ${bus.id.trim()}`);
 		await expect(card).not.toContainText(/Bus \d\d:\d\d/);
 		await expect(card).not.toContainText(/toward (Inbound|Outbound|Towards?\b)/i);
+		await expect(card).not.toContainText(/\S·|·\S/); // "Bus 3507 · toward …", spaced both sides
 		await expect(card).toContainText('Valley Regional Transit (CC BY 3.0)');
 		await expect(card).toContainText(/Last fix \d+:\d\d:\d\d [AP]M/);
 		await expect(card).toContainText(/between reported positions|At its reported position|waiting for GPS/i);
