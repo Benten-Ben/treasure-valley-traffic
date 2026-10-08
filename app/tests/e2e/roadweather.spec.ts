@@ -17,7 +17,7 @@ import { cleanRoadWeather, seedRoadWeather, STATIONS } from './roadweather-seed.
  */
 
 type Drawn = { id: number; name: string; provider: string; hollow: boolean; views: number; x: number | null; y: number | null };
-type RwView = { id: number; imageId: number; label: string; disabled: boolean; ageS: number | null; feed: string };
+type RwView = { id: number; imageId: number; label: string; disabled: boolean; ageS: number | null; capturing: boolean; feed: string };
 type RwStation = { id: number; name: string; hollow: boolean; views: RwView[] };
 
 /** Every seeded station on screen, clear of the legend column and the toolbar. */
@@ -35,12 +35,16 @@ function ensureSeeded(request: import('@playwright/test').APIRequestContext): Pr
 	seeded ??= (async () => {
 		seedRoadWeather();
 		let stations: RwStation[] = [];
+		// Also wait for the seeded capture status: the archive keeps its list of capture services for
+		// 15 s, so right after a spec that had Road weather on (the review's checklist runs just before
+		// this one), the stations can come back before the server reads the new status.
 		await expect
 			.poll(
 				async () => {
 					const rw = await (await request.get('/api/roadweather')).json();
 					stations = (rw.stations as RwStation[]).filter((s) => NAMES.includes(s.name));
-					return stations.length;
+					const seen = stations.flatMap((s) => s.views).filter((v) => v.imageId !== null);
+					return stations.length === 3 && seen.length > 0 && seen.every((v) => v.capturing) ? 3 : -stations.length;
 				},
 				{ timeout: 60_000, intervals: [1000, 2000] }
 			)

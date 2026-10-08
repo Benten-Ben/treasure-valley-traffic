@@ -75,7 +75,13 @@ async function inCalibrate(page: Page) {
 
 /** Everything entering and leaving must give back (§14.3's snapshot, plus the buildings' opacity). */
 const everything = (page: Page) =>
-	page.evaluate(() => {
+	page.evaluate(async () => {
+		// A window pops in (scale 0.96 to 1 in 160 ms), and its box below is measured as drawn, so let the
+		// pop finish first: under SwiftShader the first frame after a window opens can take seconds, and a
+		// window caught mid-pop measured 384 px wide instead of its 400 (the integration run, Oct 7).
+		await Promise.all(
+			[...document.querySelectorAll('[data-window-key]')].flatMap((el) => el.getAnimations().map((a) => a.finished.catch(() => null)))
+		);
 		const t = (globalThis as any).__tvt;
 		const m = t.map;
 		const c = m.getCenter();
