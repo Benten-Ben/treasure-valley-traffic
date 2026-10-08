@@ -36,8 +36,11 @@ export const STATIONS = {
 } as const;
 export const IMAGES = Object.values(STATIONS).flatMap((s) => [...s.images]);
 
-/** Seeded pictures: image → minutes old. 990014 and 990032 are disabled in the list; Test Summit has none. */
-export const AGES_MIN: Record<number, number> = { 990011: 4, 990012: 30, 990013: 70, 990031: 8 };
+/**
+ * Seeded pictures: image → minutes old (live within 30, late within 60, stale after; §14.6).
+ * 990014 and 990032 are disabled in the list; Test Summit has none.
+ */
+export const AGES_MIN: Record<number, number> = { 990011: 4, 990012: 40, 990013: 70, 990031: 8 };
 
 const python = () => process.env.TVT_PYTHON || localSettings(mainCheckout()).TVT_PYTHON || 'python3';
 

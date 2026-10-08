@@ -26,12 +26,15 @@ describe('freshness', () => {
 		}
 	});
 
-	it('road-weather pictures: live under 20 min, stale over 45', () => {
-		expect(THRESHOLDS.road_weather).toEqual({ fresh: 1200, late: 2700 });
-		expect(freshness(1199, 'road_weather')).toBe('fresh');
-		expect(freshness(1200, 'road_weather')).toBe('late');
-		expect(freshness(2700, 'road_weather')).toBe('late');
-		expect(freshness(2701, 'road_weather')).toBe('stale');
+	it('road-weather pictures: live within 30 min, late within 60, stale after (§14.6)', () => {
+		expect(THRESHOLDS.road_weather).toEqual({ fresh: 1800, late: 3600 });
+		expect(freshness(0, 'road_weather')).toBe('fresh');
+		// One missed 15-minute refresh of 511's is still live.
+		expect(freshness(25 * 60, 'road_weather')).toBe('fresh');
+		expect(freshness(1800, 'road_weather')).toBe('fresh');
+		expect(freshness(1801, 'road_weather')).toBe('late');
+		expect(freshness(3600, 'road_weather')).toBe('late');
+		expect(freshness(3601, 'road_weather')).toBe('stale');
 	});
 
 	it('formats ages as m:ss, then hours and minutes, then days', () => {

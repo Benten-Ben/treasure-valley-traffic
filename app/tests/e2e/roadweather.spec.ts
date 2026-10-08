@@ -9,8 +9,9 @@ import { cleanRoadWeather, seedRoadWeather, STATIONS } from './roadweather-seed.
  * road-weather freshness thresholds; a station whose views are all
  * placeholders ("no live feed") is drawn hollow. Also: the Cameras layer
  * doesn't list the stations, key 9 toggles the layer, and on a phone a
- * station opens as a sheet tab. A station clicked under the inspect card
- * pans into the free middle first.
+ * station opens as a sheet tab. The inspect card says each view's status in
+ * the window's words, and a station clicked under the inspect card pans into
+ * the free middle first.
  *
  * The spec sets up its own stations (roadweather-seed.ts: the real loader on
  * the plugin's synthetic list, test-pattern frames at chosen ages, a running
@@ -198,7 +199,8 @@ test.describe('road weather', () => {
 		const day = /\/\d{4}-\d{2}-\d{2}\/\d{8}T\d{6}Z\.jpg$/;
 		await expect.poll(() => pictureSrc(win), { timeout: 60_000 }).toMatch(new RegExp(`^/camera-frames/990011${day.source}`));
 		const seen = win.locator('.seen');
-		await expect(seen).toHaveText(/^seen \d+:\d\d ago · updates about every 10 minutes$/);
+		// 511's refresh, not our 10-minute capture.
+		await expect(seen).toHaveText(/^seen \d+:\d\d ago · 511 updates these pictures about every 15 minutes$/);
 		const age = async (i: number) => Number(await tabs.nth(i).getAttribute('data-age'));
 		const elapsed = 15 * 60; // the spec's own running time, at most
 		expect(await age(0)).toBeGreaterThanOrEqual(4 * 60 - 5);
@@ -211,12 +213,13 @@ test.describe('road weather', () => {
 		expect(live.some((u) => new URL(u).searchParams.get('views') === want), live.join('\n')).toBe(true);
 		await page.screenshot({ path: screenPath('roadweather-window.png'), animations: 'disabled' });
 
-		// 30 min: late (road-weather thresholds: live under 20 min, stale over 45).
+		// 40 min: late (road-weather thresholds: live within 30 min, late within 60, stale after).
 		await tabs.nth(1).click();
 		await expect(tabs.nth(1)).toHaveAttribute('aria-selected', 'true');
 		await expect.poll(() => pictureSrc(win), { timeout: 30_000 }).toMatch(new RegExp(`^/camera-frames/990012${day.source}`));
 		await expect(tabs.nth(1)).toHaveAttribute('data-state', 'late');
-		expect(await age(1)).toBeGreaterThanOrEqual(30 * 60 - 5);
+		expect(await age(1)).toBeGreaterThanOrEqual(40 * 60 - 5);
+		expect(await age(1)).toBeLessThan(60 * 60);
 		// 70 min: stale, and 511 is probably showing its "no live feed" picture.
 		await tabs.nth(2).click();
 		await expect.poll(() => pictureSrc(win), { timeout: 30_000 }).toMatch(new RegExp(`^/camera-frames/990013${day.source}`));
@@ -229,6 +232,18 @@ test.describe('road weather', () => {
 		await expect(tabs.nth(3)).toHaveAttribute('data-state', 'offline');
 		await expect(seen).toHaveText('no live feed · 511 lists this view as disabled');
 		await expect(win.getByText('No live feed: 511 has no picture from this camera now')).toBeVisible();
+
+		// The inspect card says each view's status in the window's words: live, late, stale, no live feed.
+		const states = ['fresh', 'late', 'stale', 'offline'];
+		const items = card.locator('.views li');
+		await expect(items).toHaveCount(4);
+		for (let i = 0; i < 4; i++) {
+			await expect(tabs.nth(i)).toHaveAttribute('data-state', states[i]);
+			await expect(items.nth(i)).toHaveAttribute('data-state', states[i]);
+		}
+		await expect(items).toHaveText([/^● Looking East: live · \d+ min$/, /^▲ Looking West: late · \d+ min$/, /^■ Pavement: stale · 1 h$/, /^■ View 4: no live feed$/]);
+		await expect(card.locator('.meta')).toHaveText(/1 of 4 views live · ITD RWIS/);
+		await page.screenshot({ path: screenPath('roadweather-card.png'), animations: 'disabled' });
 		await win.getByRole('button', { name: `Close ${STATIONS.grade.name}` }).click();
 		await expect(win).toHaveCount(0);
 
@@ -244,6 +259,8 @@ test.describe('road weather', () => {
 		for (let i = 0; i < 2; i++) await expect(hollow.getByRole('tab').nth(i)).toHaveAttribute('data-state', 'offline');
 		await expect(hollow.locator('header .status')).toHaveText(/no live feed/);
 		await expect(hollow.locator('.seen')).toHaveText('no live feed · no picture recorded lately');
+		await expect(card.locator('.views li')).toHaveText([/^■ View 1: no live feed$/, /^■ View 2: no live feed$/]);
+		await expect(card.locator('.meta')).toHaveText(/No live feed on any of 2 views/);
 		await page.screenshot({ path: screenPath('roadweather-window-hollow.png'), animations: 'disabled' });
 		expect(consoleErrors).toEqual([]);
 		expect(offsite).toEqual([]);

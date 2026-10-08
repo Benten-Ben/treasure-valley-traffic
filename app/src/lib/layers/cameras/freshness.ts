@@ -13,12 +13,13 @@ import type { CadenceClass, LiveView } from '#lib/contracts/live.js';
  * | Cadence | ● live | ▲ late | ■ stale | ◌ |
  * |---|---|---|---|---|
  * | key cameras and 511 on demand | ≤ 3 min | ≤ 10 min | > 10 min | no picture yet |
- * | road-weather views | < 20 min | ≤ 45 min | > 45 min | no picture yet |
+ * | road-weather views | ≤ 30 min | ≤ 60 min | > 60 min | no picture yet |
  *
- * (The road-weather numbers follow §14.6 "Road weather", which 511's
- * 15-minute refresh set after the "Live images" table's 30/60.) A picture
- * that can't be had now (robots.txt says no, the on-demand limit, an error,
- * live images off) is ■ with its own word and the reason.
+ * (511 refreshes the road-weather pictures only about every 15 minutes, so
+ * one missed refresh is still live: 30/60, the lead's recommendation of Oct 7
+ * that stood; §14.6 "Live images" and "Road weather".) A picture that can't
+ * be had now (robots.txt says no, the on-demand limit, an error, live images
+ * off) is ■ with its own word and the reason.
  */
 export type FreshnessKind = 'fresh' | 'late' | 'stale' | 'waiting' | 'blocked' | 'capped' | 'offline' | 'off' | 'no_image';
 
@@ -38,7 +39,7 @@ export interface Shown {
 export const THRESHOLDS: Readonly<Record<CadenceClass, { fresh: number; late: number }>> = {
 	key: { fresh: 180, late: 600 },
 	on_demand: { fresh: 180, late: 600 },
-	road_weather: { fresh: 20 * 60, late: 45 * 60 }
+	road_weather: { fresh: 30 * 60, late: 60 * 60 }
 };
 
 const TEAL = 'var(--accent-2)';
@@ -52,7 +53,7 @@ export const SEEN_NOTE = "Seen: when our server first got this picture. The time
 /** Fresh, late or stale, by age and cadence class. */
 export function freshness(ageS: number, cadence: CadenceClass): 'fresh' | 'late' | 'stale' {
 	const t = THRESHOLDS[cadence] ?? THRESHOLDS.key;
-	if (cadence === 'road_weather' ? ageS < t.fresh : ageS <= t.fresh) return 'fresh';
+	if (ageS <= t.fresh) return 'fresh';
 	return ageS <= t.late ? 'late' : 'stale';
 }
 
