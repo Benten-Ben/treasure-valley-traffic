@@ -152,14 +152,17 @@ test.describe('transit', () => {
 		if (chunk) await page.route(`**/${chunk}`, (r) => r.abort());
 		await page.goto(`/?at=${AT}`);
 		await transitReady(page);
-		await expect.poll(async () => (await drawn(page)).length, { timeout: 60_000 }).toBeGreaterThanOrEqual(15);
 		expect(await page.evaluate(() => (globalThis as any).__tvt.map.getZoom())).toBeCloseTo(10, 1);
 		await expect(pill(page)).toContainText('REPLAY');
+		// Read the buses once the overlay has settled: at z10 the loop runs at a few frames a second, so a
+		// read can land between a poll and the next drawn frame. 15 or more drawn, both times.
+		let a: BusDebug[] = [];
+		await expect.poll(async () => (a = await drawn(page)).length, { timeout: 60_000 }).toBeGreaterThanOrEqual(15);
 		const t0 = await transit<number>(page, 'playhead');
-		const a = await drawn(page);
 		const shotA = await page.screenshot({ path: screenPath('transit-replay-z10-a.png') });
 		await page.waitForTimeout(5000);
-		const b = await drawn(page);
+		let b: BusDebug[] = [];
+		await expect.poll(async () => (b = await drawn(page)).length, { timeout: 30_000 }).toBeGreaterThanOrEqual(15);
 		const shotB = await page.screenshot({ path: screenPath('transit-replay-z10-b.png') });
 		const t1 = await transit<number>(page, 'playhead');
 		expect(t1 - t0, 'the playhead runs in real time').toBeGreaterThan(4);

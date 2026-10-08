@@ -718,9 +718,12 @@ export class TransitModule implements LayerModule {
 			const old = this.#runtime.get(vid);
 			const pos: [number, number] = old?.pos ?? [0, 0];
 			const pick = this.busSelection(vid);
-			const bus: OverlayInstance = { id: vid, lng: pos[0], lat: pos[1], sprite: solid, opacity: 0, pick, radius: 14 };
-			const head: OverlayInstance = { id: vid, lng: pos[0], lat: pos[1], sprite: HEADING, rotate: old?.heading ?? 0, rotateWithMap: true, opacity: 0 };
-			const plate: OverlayInstance = { id: vid, lng: pos[0], lat: pos[1], sprite: plates.solid, opacity: 0, pick, radius: plateSize(b.text).width / 2 - 4 };
+			// A known bus keeps how it was drawn until the next frame works it out again: a rebuild after
+			// each poll never shows (or reports, through __tvtTransit) a moment with every bus at opacity 0.
+			const hollowNow = Boolean(old && old.bus.sprite === old.hollow);
+			const bus: OverlayInstance = { id: vid, lng: pos[0], lat: pos[1], sprite: hollowNow ? hollow : solid, opacity: old?.bus.opacity ?? 0, pick, radius: 14 };
+			const head: OverlayInstance = { id: vid, lng: pos[0], lat: pos[1], sprite: HEADING, rotate: old?.heading ?? 0, rotateWithMap: true, opacity: old?.head.opacity ?? 0 };
+			const plate: OverlayInstance = { id: vid, lng: pos[0], lat: pos[1], sprite: plates.solid, opacity: old?.plate.opacity ?? 0, pick, radius: plateSize(b.text).width / 2 - 4 };
 			const r = this.route(v?.routeId);
 			runtime.set(vid, {
 				bus,
