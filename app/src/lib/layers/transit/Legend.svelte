@@ -2,7 +2,7 @@
 	import Badge from '#lib/ui/Badge.svelte';
 	import { dayText, timeText } from '#lib/state/clock.svelte.js';
 	import type { LegendProps } from '../types.js';
-	import { routeBadge, type TransitModule } from './index.svelte.js';
+	import { ghostBadge, routeBadge, type TransitModule } from './index.svelte.js';
 	import { CREDIT, INK, UNKNOWN_COLOR } from './transit.js';
 
 	/**
@@ -35,7 +35,7 @@
 			aria-pressed={transit.spot === r.id}
 			onclick={() => transit.selectRoute(transit.spot === r.id ? null : r.id)}
 		>
-			<Badge badge={routeBadge(r)} />
+			<Badge badge={transit.running.has(r.id) ? routeBadge(r) : ghostBadge(r)} />
 			<span class="route-name">{r.longName ?? `Route ${r.shortName}`}</span>
 			<span class="num count">{byRoute[r.id] ?? ''}</span>
 		</button>
@@ -71,7 +71,7 @@
 	<ul class="routes dormant">
 		{#each dormant as { d, r } (d.routeId)}
 			<li class="unknown">
-				<Badge badge={routeBadge(r!)} />
+				<Badge badge={ghostBadge(r!)} />
 				<span class="route-name">{r!.longName ?? `Route ${r!.shortName}`}</span>
 				<span class="since">{d.lastFix ? `no buses seen since ${dayText(d.lastFix)}` : 'no buses seen'}</span>
 			</li>
@@ -129,9 +129,6 @@
 	.route.idle .route-name {
 		color: var(--ink-soft);
 	}
-	.route.idle :global(.badge) {
-		opacity: 0.55;
-	}
 	.route-name {
 		flex: 1;
 	}
@@ -139,9 +136,6 @@
 	.since {
 		font-size: 12px;
 		color: var(--ink-soft);
-	}
-	.dormant :global(.badge) {
-		opacity: 0.45;
 	}
 	.hint {
 		display: flex;

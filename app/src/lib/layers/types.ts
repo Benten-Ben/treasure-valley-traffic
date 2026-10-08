@@ -41,6 +41,8 @@ export interface Badge {
 	textColor: string;
 	/** The numerals need a 2 px halo in the opposite tone to reach 4.5:1. */
 	halo?: boolean;
+	/** A route not running now: its pale ghost plate, ink numerals and a dashed edge (§14.4), as on the map. */
+	ghost?: boolean;
 }
 
 /** The one selected thing (§14.3, "Hover, selection and picking"). */

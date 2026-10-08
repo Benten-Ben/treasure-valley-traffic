@@ -6,6 +6,10 @@
 	 * A route badge (docs/14 §14.3, the badge rule): numerals at least 14 px
 	 * bold in the slot's text color; where that misses 4.5:1 on the plate, a
 	 * 2 px halo in the opposite tone fills the digits' counters.
+	 *
+	 * A ghost badge (a route not running now) is told by form, not by fading:
+	 * its pale ghost plate, ink numerals at full contrast and a dashed edge,
+	 * like the ghost shields on the map (§14.4).
 	 */
 	let { badge, big = false }: { badge: Badge; big?: boolean } = $props();
 	const halo = $derived(badge.halo ? haloFor(badge.textColor) : null);
@@ -15,6 +19,7 @@
 	class="badge num"
 	class:big
 	class:halo={Boolean(halo)}
+	class:ghost={badge.ghost}
 	style:background={badge.color}
 	style:color={badge.textColor}
 	style:--halo={halo}>{badge.text}</span
@@ -33,6 +38,11 @@
 			0 0 0 1.5px var(--panel),
 			0 0 0 2.5px rgb(43 42 51 / 0.35);
 		flex: none;
+	}
+	.ghost {
+		box-shadow: 0 0 0 1.5px var(--panel);
+		outline: 1px dashed rgb(43 42 51 / 0.6);
+		outline-offset: -1px;
 	}
 	.big {
 		font-size: 16px;

@@ -6,7 +6,7 @@ import type { AppCtx } from '#lib/app/context.js';
 import type { NetworkRoute, TransitNetwork } from '#lib/contracts/network.js';
 import type { TrackVehicle, Tracks } from '#lib/contracts/tracks.js';
 import { addSlotted } from '#lib/map/order.js';
-import { discSprite, ringSprite, type OverlayInstance, type SpriteDef } from '#lib/overlay/index.js';
+import { discSprite, needsHalo, ringSprite, type OverlayInstance, type SpriteDef } from '#lib/overlay/index.js';
 import { clockOf, sinceText, type Clock } from '#lib/state/clock.svelte.js';
 import { Persisted } from '#lib/state/persisted.svelte.js';
 import { Poller } from '#lib/state/poll.svelte.js';
@@ -137,6 +137,11 @@ export function busBadge(v: TrackVehicle | undefined): Badge {
 
 export function routeBadge(r: NetworkRoute): Badge {
 	return { text: r.shortName, color: r.color, textColor: r.textColor, halo: r.halo };
+}
+
+/** A route not running now: its ghost plate, ink numerals (with the halo only if they'd miss 4.5:1) and a dashed edge. */
+export function ghostBadge(r: NetworkRoute): Badge {
+	return { text: r.shortName, color: r.ghost, textColor: INK, halo: needsHalo(r.ghost, INK), ghost: true };
 }
 
 const discKey = (b: Badge, hollow: boolean) => `bus:${b.color}:${b.textColor}:${b.text}:${b.halo ? 1 : 0}:${hollow ? 'h' : 's'}`;
