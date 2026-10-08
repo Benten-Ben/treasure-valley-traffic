@@ -204,23 +204,17 @@
 	.chrome > :global(*) {
 		pointer-events: auto;
 	}
-	/* Out of sight until it has keyboard focus. */
+	/* Above the top edge, out of sight, until it has keyboard focus; a full 44 px target when shown. */
 	.skip {
 		position: absolute;
 		top: 12px;
 		left: 16px;
 		z-index: 60;
 		min-height: 44px;
+		white-space: nowrap;
 	}
 	.skip:not(:focus) {
-		width: 1px;
-		height: 1px;
-		min-height: 0;
-		padding: 0;
-		border: 0;
-		overflow: hidden;
-		clip-path: inset(50%);
-		white-space: nowrap;
+		transform: translateY(-120px);
 	}
 	.skip:focus-visible {
 		outline: none;
