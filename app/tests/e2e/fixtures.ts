@@ -13,7 +13,7 @@
  *   canvas plus a quiet network.
  */
 import { test as base, expect, type Page } from '@playwright/test';
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { mapReady as waitForMap } from '../../scripts/net.mjs';
 
@@ -111,5 +111,9 @@ export async function mapReady(page: Page, opts: { timeout?: number; quietMs?: n
 	return (await waitForMap(page, opts)).how as 'tvt' | 'quiet';
 }
 
-/** Where a spec's evidence goes: data/dev/screens/<wp>/<name>. */
-export const screenPath = (name: string) => join(env().screens, name);
+/** Where a spec's evidence goes: data/dev/screens/<wp>/<name>. The folder is made on first use, so a
+ * spec that appends a text file before any screenshot (flavors' crossfade report) works in a fresh run. */
+export const screenPath = (name: string) => {
+	mkdirSync(env().screens, { recursive: true });
+	return join(env().screens, name);
+};
