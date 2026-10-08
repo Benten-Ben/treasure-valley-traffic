@@ -11,8 +11,9 @@ load_inputs, dormant_routes, store and run.
 A build runs in this fixed order:
 
 1. corridors and a crossing-optimal slot order, without colors (deterministic);
-2. neighbors from that order (adjacent slots for 100 m or more) plus the
-   proximity rule (sharing 300 m or more outside the hubs);
+2. neighbors from that order (adjacent slots for 100 m or more), routes in one
+   bundle for 100 m or more outside the hub segments, and the proximity rule
+   (sharing 300 m or more outside the hubs);
 3. colors against those neighbors, in the owner's mode (Q3: rebalance);
 4. a color pass that swaps routes only where the crossing cost is unchanged
    and the swap creates no clash.
@@ -64,6 +65,7 @@ SWEEPS = 30
 EXACT_MAX = 6            # try every permutation up to this many routes on a segment
 ADJACENT_M = 100.0       # adjacent slots for this long make neighbors
 SHARED_M = 300.0         # sharing this much outside the hubs makes neighbors (today's rule)
+BUNDLE_M = 100.0         # sharing a bundle this long outside the hub segments makes neighbors, slots apart or not
 DORMANT_DAYS = 7
 
 PARAMS = {k: v for k, v in globals().items() if k.isupper() and isinstance(v, (int, float)) and not k.startswith("_")}
@@ -750,22 +752,24 @@ class Network:
     # -- neighbors and the color pass -------------------------------------------------------------------------------
 
     def neighbors(self, orders=None):
+        """Route pairs that must not clash: adjacent slots for ADJACENT_M anywhere, one
+        bundle for BUNDLE_M outside the hub segments (two routes with others between them
+        are still read side by side there), or SHARED_M of street outside HUB_RADIUS_M."""
         orders = orders or self.orders
-        adj, shared = Counter(), Counter()
+        adj, bundle, shared = Counter(), Counter(), Counter()
         for s, o in zip(self.segs, orders):
             for a, b in zip(o, o[1:]):
                 adj[tuple(sorted((a, b)))] += s["length"]
             for a, b in itertools.combinations(sorted(o), 2):
                 shared[(a, b)] += s["outside_hubs"]
+                if not s["hub"]:
+                    bundle[(a, b)] += s["length"]
         out = defaultdict(set)
-        for (a, b), m in adj.items():
-            if m >= ADJACENT_M:
-                out[a].add(b)
-                out[b].add(a)
-        for (a, b), m in shared.items():
-            if m >= SHARED_M:
-                out[a].add(b)
-                out[b].add(a)
+        for counts, limit in ((adj, ADJACENT_M), (bundle, BUNDLE_M), (shared, SHARED_M)):
+            for (a, b), m in counts.items():
+                if m >= limit:
+                    out[a].add(b)
+                    out[b].add(a)
         return {r: out[r] for r in sorted(out)}
 
     def color_pass(self, colors):

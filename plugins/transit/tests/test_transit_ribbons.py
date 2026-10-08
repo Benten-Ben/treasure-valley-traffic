@@ -232,6 +232,36 @@ class NetworkTest(unittest.TestCase):
             for b in ns:
                 self.assertFalse(rc.clash(res["colors"][a], res["colors"][b]), (a, b))
 
+    @staticmethod
+    def three_in_a_bundle():
+        """Three routes in one 250 m bundle (under SHARED_M), each arriving and leaving by its own street."""
+        return [shape("a", "A", [(-1000, 0), (0, 0), (250, 0), (250, 1000)]),
+                shape("b", "B", [(0, -1000), (0, 0), (250, 0), (1250, 0)]),
+                shape("c", "C", [(0, 1000), (0, 0), (250, 0), (250, -1000)])]
+
+    def test_routes_in_one_bundle_are_neighbors_with_a_route_between_them(self):
+        # The two outer routes aren't in adjacent slots, but they're read side by side: same-colored,
+        # they'd look like one route on both edges of the bundle (4 and 40 downtown, Oct 7).
+        same = rc.PALETTE[1]
+        res = run_build(self.three_in_a_bundle(), ["A", "B", "C"], {"A": same, "B": rc.PALETTE[0], "C": same})
+        (seg,) = [s for s in res["segments"] if len(s["routes"]) == 3]
+        self.assertFalse(seg["hub"])
+        self.assertGreaterEqual(seg["length_m"], tr.BUNDLE_M)
+        self.assertLess(seg["length_m"], tr.SHARED_M)
+        a, _, c = seg["routes"]
+        self.assertIn(c, res["neighbors"][a])
+        self.assertEqual(res["clashes"], [])
+        self.assertFalse(rc.clash(res["colors"][a], res["colors"][c]))
+        self.assertNotEqual(res["colors"]["A"], res["colors"]["C"])
+
+    def test_a_bundle_at_a_station_doesnt_make_neighbors(self):
+        (lon, lat), = ll([(125, 0)])
+        res = run_build(self.three_in_a_bundle(), hub_stops=[{"stop_id": "H", "lon": lon, "lat": lat}])
+        (seg,) = [s for s in res["segments"] if len(s["routes"]) == 3]
+        self.assertTrue(seg["hub"])
+        a, _, c = seg["routes"]
+        self.assertNotIn(c, res["neighbors"].get(a, set()))
+
     def test_the_color_pass_keeps_the_cost(self):
         res = run_build(grid_network())
         self.assertEqual(res["stats"]["cost"], res["stats"]["cost_before_colors"])
