@@ -16,10 +16,11 @@ import { logKey, ranLog } from './keylog.js';
  *   summary, slider or anything with role=button, so one press never both
  *   activates a control and runs a shortcut.
  * - A binding runs only in its modes (Explore unless it says otherwise).
- * - Esc closes, in order: help or a popover; the focused window;
- *   look-through; calibrate; follow; the inspect card; the selection. Each
- *   closer registers with its rank (`ESC`), and the first that closes
- *   something wins.
+ * - Esc closes, in order: help or a popover; the focused window (with focus
+ *   outside every window, the top one, in Explore); look-through;
+ *   calibrate; follow; the inspect card; the selection. Each closer
+ *   registers with its rank (`ESC`), and the first that closes something
+ *   wins.
  */
 
 export interface KeyBinding {

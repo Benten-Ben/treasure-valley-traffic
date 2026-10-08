@@ -18,7 +18,7 @@
 	 * - the window manager (`app.windows`), told the screen size and where the
 	 *   bars are, so windows stay below the top bar and above the toolbar;
 	 * - the view history (`app.history`) and Backspace; follow (`app.follow`);
-	 * - the Esc closers for the focused window and for follow;
+	 * - the Esc closers for the focused (else the top) window and for follow;
 	 * - the open windows as a part of every view snapshot.
 	 *
 	 * On a phone the windows are tabs of the bottom sheet (Sheet.svelte), so
@@ -56,11 +56,19 @@
 			run: () => history.back()
 		})
 	);
+	// Esc closes the focused window; with focus outside every window, the top one (the most
+	// recently focused), in Explore. In a mode, Esc leaves the mode first: its snapshot would
+	// put a closed window back anyway.
 	undo.push(
 		onEscape(ESC.window, () => {
 			const key = (document.activeElement?.closest('[data-window-key]') as HTMLElement | null)?.dataset.windowKey;
-			if (!key || !windows.isOpen(key)) return false;
-			windows.close(key);
+			if (key && windows.isOpen(key)) {
+				windows.close(key);
+				return true;
+			}
+			const top = windows.top;
+			if (!top || ctx.modes.current !== 'explore') return false;
+			windows.close(top.key);
 			return true;
 		})
 	);
