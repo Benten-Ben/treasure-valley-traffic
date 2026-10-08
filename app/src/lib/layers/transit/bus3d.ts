@@ -9,13 +9,14 @@ import { UNKNOWN_COLOR } from './transit.js';
  * | Zoom (43.6° N) | A bus is | Drawn as |
  * |---|---|---|
  * | below about 15 | 3.5–7 px long | a disc with its number, in the overlay |
- * | about 15–17 | 28 px long, at up to 4× real size | a model in the scene layer, with a number plate above it |
- * | about 17 and up | true scale | the model and its plate |
+ * | about 15–17.6 | 42 px long, at up to 6× real size | a model in the scene layer, with a number plate above it |
+ * | about 17.6 and up | true scale | the model and its plate |
  *
- * A model appears once it can be at least 28 px long at up to 4× real size,
- * and the disc and the model crossfade over 0.3 zoom (the model dithers in,
- * the disc fades out). The plate rides above the model in the overlay at
- * every zoom from there.
+ * A model appears once it can be at least 42 px long at up to 6× real size
+ * (still about z15: the size went up 1.5× on Oct 8 so a bus reads as a bus
+ * from there, seen from above), and the disc and the model crossfade over
+ * 0.3 zoom (the model dithers in, the disc fades out). The plate rides above
+ * the model in the overlay at every zoom from there.
  *
  * - Models are the route color on a flat, high-ambient light; a stale bus
  *   takes the route's ghost body (and a hollow plate); an unknown-route bus
@@ -23,7 +24,9 @@ import { UNKNOWN_COLOR } from './transit.js';
  *   ghost body too (form, not opacity: a dithered model would speckle).
  * - The heading follows the path: the playback's path tangent (±8 m), with
  *   a shorter low-pass than the 2D arrow so a turning model stays within a
- *   few degrees of its path.
+ *   few degrees of its path. A bus with no heading yet (its first fix,
+ *   stopped, stale or in a GPS gap) lies along the street it's on: its
+ *   route's line within 30 m (`streetBearing`), not across it facing north.
  * - Models sit on the drawn terrain (the scene's ground) and pitch with its
  *   slope sampled ahead and behind: 6 m at true scale, 6 m × the model's
  *   scale when it's drawn larger, so an oversized model's ends follow the
@@ -36,9 +39,12 @@ import { UNKNOWN_COLOR } from './transit.js';
 /** The bus mesh's size (metres; `BUS` in #lib/scene/meshes, which this chunk doesn't load). */
 export const BUS_LENGTH_M = 12.2;
 export const BUS_HEIGHT_M = 3.1;
-/** A model is drawn at least this long (px), at up to MAX_MODEL_SCALE × real size. */
-export const MIN_MODEL_PX = 28;
-export const MAX_MODEL_SCALE = 4;
+/**
+ * A model is drawn at least this long (px), at up to MAX_MODEL_SCALE × real size: 1.5× the first 28 px
+ * (Oct 8), with the cap raised as much, so models still start at about z15.
+ */
+export const MIN_MODEL_PX = 42;
+export const MAX_MODEL_SCALE = 6;
 /** Sized 1% over the minimum, so float32 and the latitude across the screen never take a model under it. */
 export const LENGTH_MARGIN = 1.01;
 /** The disc-to-model crossfade, in zoom levels. */
@@ -67,7 +73,7 @@ const clamp = (x: number, a: number, b: number) => Math.min(b, Math.max(a, x));
 /** Ground metres per CSS pixel (512 px tiles). */
 export const metresPerPx = (zoom: number, lat: number) => circumferenceAt(lat) / (512 * 2 ** zoom);
 
-/** The zoom at which a model 4× real size is MIN_MODEL_PX long (with the margin): about 15 at 43.6° N. */
+/** The zoom at which a model MAX_MODEL_SCALE × real size is MIN_MODEL_PX long (with the margin): about 15 at 43.6° N. */
 export const modelZoom = (lat: number) => Math.log2((MIN_MODEL_PX * LENGTH_MARGIN * circumferenceAt(lat)) / (512 * BUS_LENGTH_M * MAX_MODEL_SCALE));
 
 /** The model's scale: MIN_MODEL_PX long (with the margin), at most MAX_MODEL_SCALE × real size, true size once that's long enough. */
@@ -124,7 +130,7 @@ export function lodAt(zoom: number, lat: number, pitchDeg: number, models: boole
  * A model's scale on ground `elev` metres high (drawn), when the view centre's
  * ground is `elevC` and the camera is `depthC` metres from it: the camera is
  * only 0.7–1.5 km up at z15–16, so a bus 20 m lower than the centre would be
- * drawn 1–3% short of its 28 px. Height differences are corrected; distance
+ * drawn 1–3% short of its 42 px. Height differences are corrected; distance
  * across a tilted view is not (that's perspective: farther buses look smaller).
  */
 export function scaleAt(lod: Pick<Lod, 'scale0' | 'cosPitch'>, elev: number | null, elevC: number, depthC: number): number {
@@ -179,6 +185,53 @@ export function groundAround(ground: GroundAt, lng: number, lat: number, heading
 	return { pitch: clamp(Math.atan2(a - b, 2 * reach) / DEG, -MAX_PITCH_DEG, MAX_PITCH_DEG), elev: (a + b) / 2 };
 }
 
+/** How near a route's line must be for a bus with no heading to lie along it (m). */
+export const STREET_MAX_M = 30;
+/** Look for the street again once the bus has moved this far (m). */
+export const STREET_MOVE_M = 5;
+
+/** Each route's lines (flat lon,lat,…), and every line for a bus whose route isn't known. */
+export interface RouteLines {
+	byRoute: ReadonlyMap<string, readonly (readonly number[])[]>;
+	all: readonly (readonly number[])[];
+}
+
+/**
+ * The bearing of the street a bus is on, for one with no heading yet: the
+ * nearest piece of its route's lines (every line when the route isn't known)
+ * within `maxM` metres, in the line's own direction (which way the bus faces
+ * along it isn't known, but it lies along the street, not across it). Null
+ * when no line is that near.
+ */
+export function streetBearing(lines: RouteLines, routeId: string | null, lng: number, lat: number, maxM = STREET_MAX_M): number | null {
+	const own = routeId ? lines.byRoute.get(routeId) : undefined;
+	const list = own?.length ? own : lines.all;
+	const kx = (R * DEG) * Math.cos(lat * DEG);
+	const ky = R * DEG;
+	let best = maxM * maxM;
+	let bearing: number | null = null;
+	for (const c of list) {
+		for (let i = 0; i + 3 < c.length; i += 2) {
+			// The piece in metres from the bus, and the bus's distance to it.
+			const ax = (c[i] - lng) * kx;
+			const ay = (c[i + 1] - lat) * ky;
+			const dx = (c[i + 2] - lng) * kx - ax;
+			const dy = (c[i + 3] - lat) * ky - ay;
+			const len2 = dx * dx + dy * dy;
+			if (!(len2 > 0)) continue;
+			const t = clamp(-(ax * dx + ay * dy) / len2, 0, 1);
+			const px = ax + t * dx;
+			const py = ay + t * dy;
+			const d2 = px * px + py * py;
+			if (d2 < best) {
+				best = d2;
+				bearing = (Math.atan2(dx, dy) / DEG + 360) % 360;
+			}
+		}
+	}
+	return bearing;
+}
+
 /** Turn `from` toward `to` (degrees) with a low-pass of `tauMs` over `dtMs`. */
 export function turn(from: number | null, to: number | null, dtMs: number, tauMs = MODEL_TAU_MS): number | null {
 	if (to === null) return from;
@@ -195,12 +248,14 @@ export interface BusModel {
 	turnedAt: number;
 	/** Where the slope was last read, and what it was (with the drawn ground's height there). */
 	slope: { lng: number; lat: number; heading: number; reach: number; epoch: number; pitch: number; elev: number | null } | null;
+	/** While a bus has had no heading of its own: where the street under it was last looked for, and its bearing (null: none near). */
+	street: { lng: number; lat: number; bearing: number | null } | null;
 }
 
 export function busModel(vid: string, pick: Selection | null, old?: BusModel): BusModel {
 	const inst: SceneInstance = old?.inst ?? { id: vid, mesh: 'bus', lng: 0, lat: 0, heading: 0, pitch: 0, scale: 1, color: UNKNOWN_COLOR, opacity: 0, shadow: true };
 	inst.pick = pick;
-	return { inst, heading: old?.heading ?? null, turnedAt: old?.turnedAt ?? 0, slope: old?.slope ?? null };
+	return { inst, heading: old?.heading ?? null, turnedAt: old?.turnedAt ?? 0, slope: old?.slope ?? null, street: old?.street ?? null };
 }
 
 /** What a frame says about one bus. */
@@ -223,12 +278,25 @@ export interface ModelFrame {
 	ground: GroundAt | null;
 	/** False: keep the slope it has (the bus is off screen, so the terrain reads would be wasted). */
 	slope?: boolean;
+	/** The bus's route, for `street`. */
+	routeId?: string | null;
+	/** The street's bearing at a point (`streetBearing` on the bus's route), for a bus that has no heading yet. */
+	street?: (lng: number, lat: number, routeId: string | null) => number | null;
 }
 
 /** Move one model to this frame (in place): position, heading, slope, size, look. */
 export function placeModel(m: BusModel, f: ModelFrame): SceneInstance {
 	const inst = m.inst;
-	m.heading = turn(m.heading, f.heading, f.now - m.turnedAt);
+	let to = f.heading;
+	if (to !== null) m.street = null;
+	else if (f.street && (m.heading === null || m.street)) {
+		// No heading yet: lie along the street, looked for again once it has moved a few metres (a gap's jump).
+		const s = m.street;
+		if (!s || Math.abs(s.lat - f.lat) * 111_000 > STREET_MOVE_M || Math.abs(s.lng - f.lng) * 111_000 * Math.cos(f.lat * DEG) > STREET_MOVE_M)
+			m.street = { lng: f.lng, lat: f.lat, bearing: f.street(f.lng, f.lat, f.routeId ?? null) };
+		to = m.street?.bearing ?? null;
+	}
+	m.heading = turn(m.heading, to, f.now - m.turnedAt);
 	m.turnedAt = f.now;
 	inst.lng = f.lng;
 	inst.lat = f.lat;

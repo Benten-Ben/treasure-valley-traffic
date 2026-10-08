@@ -8,6 +8,7 @@ import type { Loop } from '#lib/map/loop.js';
 import { ANCHORS } from '#lib/map/order.js';
 import type { Hit, HitSource } from '#lib/map/picker.js';
 import { circumferenceAt, mercatorX, mercatorY, projectTo, pxPerSecond } from './project.js';
+import { stackUp, type StackItem } from './stack.js';
 
 /**
  * The always-loaded 2D overlay (docs/14 §14.8, "The overlay"): one custom
@@ -24,8 +25,13 @@ import { circumferenceAt, mercatorX, mercatorY, projectTo, pxPerSecond } from '.
  *   once per rendered frame for things that move, and asks the loop for
  *   frames only while something does.
  * - Every group with a `pick` on its instances is hit-tested by the picker.
+ * - A group with `stack` fans out instances that cover each other (stack.ts):
+ *   bus plates at one stop stand in a column, the last one on the buses.
  * - If the custom layer can't start (no WebGL2), `ok` is false and `error`
  *   says why; owners fall back to MapLibre layers.
+ * - After a lost WebGL context, MapLibre rebuilds its style without custom
+ *   layers: the overlay adds itself again once the style is back, and
+ *   rebuilds its GPU objects on the first frame.
  */
 
 export interface OverlayInstance {
@@ -54,6 +60,24 @@ export interface GroupOptions {
 	z?: number;
 	/** Picking priority for its instances (default: by each pick's kind). */
 	priority?: number;
+	/**
+	 * Fan out instances that cover each other (stack.ts): earlier ones move up
+	 * out of the way of later ones, `gap` px apart. `inset` trims the sprite
+	 * to the box that must stay clear: top, right, bottom and left, px at
+	 * scale 1 (default none).
+	 */
+	stack?: { gap: number; inset?: [number, number, number, number] };
+}
+
+/** Where an instance was drawn in the last frame: its anchor (CSS px), and how far `stack` moved it up. */
+export interface Drawn {
+	id: string;
+	x: number;
+	y: number;
+	lng: number;
+	lat: number;
+	/** px the sprite was moved up to clear another (stacked groups only). */
+	dy?: number;
 }
 
 /**
@@ -75,6 +99,21 @@ interface Placed {
 	r: number;
 	inst: OverlayInstance;
 	priority: number;
+}
+
+/** One sprite of a stacked group, waiting for the group's fan-out before it's written. */
+interface Pending extends StackItem {
+	inst: OverlayInstance;
+	pos: Drawn;
+	w: number;
+	h: number;
+	u0: number;
+	v0: number;
+	u1: number;
+	v1: number;
+	opacity: number;
+	rot: number;
+	reach: number;
 }
 
 const FLOATS = 12; // x, y, w, h, u0, v0, u1, v1, ax, ay, opacity, rotation
@@ -129,9 +168,15 @@ export class Overlay implements HitSource {
 	#instances: GrowableBuffer | null = null;
 	#data = new Float32Array(FLOATS * 256);
 	#placed: Placed[] = [];
-	#positions = new globalThis.Map<string, { id: string; x: number; y: number; lng: number; lat: number }[]>();
+	#positions = new globalThis.Map<string, Drawn[]>();
+	/** Stacked groups: the ids lifted last frame (stack.ts's hysteresis), and a reused list of pending sprites. */
+	#lifted = new globalThis.Map<string, Set<string>>();
+	#pending: Pending[] = [];
+	#layer: CustomLayerInterface | null = null;
 	#size = { w: 0, h: 0 };
 	#pt = { x: 0, y: 0 };
+	/** The spare set stackUp writes into (swapped with the group's each frame). */
+	#liftedNext = new Set<string>();
 	/** Frames this layer drew (for tests and the ?perf HUD). */
 	frames = 0;
 	/** JS time of the last frame's update + projection + upload, ms. */
@@ -169,6 +214,7 @@ export class Overlay implements HitSource {
 	remove(group: string): void {
 		this.#groups.delete(group);
 		this.#positions.delete(group);
+		this.#lifted.delete(group);
 		this.#loop?.want(`overlay:${group}`, null);
 		this.#repaint();
 	}
@@ -177,8 +223,8 @@ export class Overlay implements HitSource {
 		return [...this.#groups.keys()];
 	}
 
-	/** Where each of a group's instances was drawn in the last frame (anchor, CSS px). */
-	positions(group: string): { id: string; x: number; y: number; lng: number; lat: number }[] {
+	/** Where each of a group's instances was drawn in the last frame (anchor, CSS px; `dy`: lifted by `stack`). */
+	positions(group: string): Drawn[] {
 		return this.#positions.get(group) ?? [];
 	}
 
@@ -200,7 +246,7 @@ export class Overlay implements HitSource {
 		this.#loop = loop;
 		const pr = Math.min(globalThis.devicePixelRatio || 1, 2);
 		this.#atlas = new SpriteAtlas(pr);
-		const layer: CustomLayerInterface = {
+		this.#layer = {
 			id: this.layerId,
 			type: 'custom',
 			renderingMode: '2d',
@@ -208,13 +254,10 @@ export class Overlay implements HitSource {
 			onRemove: () => this.#teardown(),
 			render: (gl, args) => this.#render(gl as WebGL2RenderingContext, args)
 		};
-		try {
-			map.addLayer(layer, map.getLayer(ANCHORS.overlay) ? ANCHORS.overlay : undefined);
-		} catch (e) {
-			this.#fail(e);
-		}
+		this.#add();
 		map.on('resize', this.#onResize);
 		map.on('webglcontextlost', this.#onLost);
+		map.on('webglcontextrestored', this.#onRestored);
 		this.#onResize();
 		for (const [key, g] of this.#groups) if (g.update) loop.want(`overlay:${key}`, 60);
 		return this.ok;
@@ -225,6 +268,8 @@ export class Overlay implements HitSource {
 		if (!map) return;
 		map.off('resize', this.#onResize);
 		map.off('webglcontextlost', this.#onLost);
+		map.off('webglcontextrestored', this.#onRestored);
+		map.off('style.load', this.#readd);
 		try {
 			if (map.getLayer(this.layerId)) map.removeLayer(this.layerId);
 		} catch {
@@ -233,6 +278,31 @@ export class Overlay implements HitSource {
 		for (const key of this.#groups.keys()) this.#loop?.want(`overlay:${key}`, null);
 		this.#map = null;
 	}
+
+	/** Add the custom layer (before `anchor:overlay`) unless it's there. */
+	#add() {
+		const map = this.#map;
+		if (!map || !this.#layer || map.getLayer(this.layerId)) return;
+		try {
+			map.addLayer(this.#layer, map.getLayer(ANCHORS.overlay) ? ANCHORS.overlay : undefined);
+		} catch (e) {
+			this.#fail(e);
+		}
+	}
+
+	#readd = () => {
+		this.#add();
+		this.#repaint();
+	};
+
+	/** MapLibre rebuilt its style after the restore, without custom layers: add ours again once it's back. */
+	#onRestored = () => {
+		const map = this.#map;
+		if (!map) return;
+		map.off('style.load', this.#readd);
+		if (map.isStyleLoaded()) this.#readd();
+		else map.once('style.load', this.#readd);
+	};
 
 	#fail(e: unknown) {
 		this.ok = false;
@@ -250,7 +320,8 @@ export class Overlay implements HitSource {
 	};
 
 	#onLost = () => {
-		// Everything GPU-side is gone; the next render after the restore rebuilds it.
+		// Everything GPU-side is gone; the layer is added again after the restore (#onRestored), and its
+		// first render rebuilds it.
 		this.#gl = null;
 		this.#program = null;
 		this.#vao = null;
@@ -336,7 +407,7 @@ export class Overlay implements HitSource {
 
 		if (!this.#size.w) this.#onResize();
 		const { w: W, h: H } = this.#size;
-		const m = args.defaultProjectionData.mainMatrix;
+		const m4 = args.defaultProjectionData.mainMatrix;
 		const zScale = 1 / circumferenceAt(centerLat);
 		const atlas = this.#atlas!;
 		const pt = this.#pt;
@@ -356,16 +427,38 @@ export class Overlay implements HitSource {
 		if (this.#data.length < total * FLOATS) this.#data = new Float32Array(Math.max(total, this.#data.length / FLOATS * 2) * FLOATS);
 		const data = this.#data;
 		const placed: Placed[] = [];
+		const pending = this.#pending;
 		let n = 0;
+		/** Write one sprite into the instance buffer, and remember it for picking. */
+		const emit = (inst: OverlayInstance, x: number, y: number, w: number, h: number, u0: number, v0: number, u1: number, v1: number, opacity: number, rot: number, reach: number, priority: number) => {
+			const o = n * FLOATS;
+			data[o] = x;
+			data[o + 1] = y;
+			data[o + 2] = w;
+			data[o + 3] = h;
+			data[o + 4] = u0;
+			data[o + 5] = v0;
+			data[o + 6] = u1;
+			data[o + 7] = v1;
+			data[o + 8] = 0.5;
+			data[o + 9] = 0.5;
+			data[o + 10] = opacity;
+			data[o + 11] = rot;
+			n++;
+			if (inst.pick) placed.push({ x, y, r: inst.radius ?? reach / 2, inst, priority });
+		};
 		for (const [key, g] of order) {
-			const positions: { id: string; x: number; y: number; lng: number; lat: number }[] = [];
+			const positions: Drawn[] = [];
+			const stack = g.opts.stack;
+			let m = 0;
 			for (const inst of g.instances) {
 				const def = this.#defs.get(inst.sprite);
 				const rect = def && atlas.rect(inst.sprite);
 				if (!def || !rect) continue;
 				const elevation = (map.queryTerrainElevation([inst.lng, inst.lat]) ?? 0) + (inst.altitude ?? 0);
-				if (!projectTo(pt, m, mercatorX(inst.lng), mercatorY(inst.lat), elevation, zScale, W, H)) continue;
-				positions.push({ id: inst.id, x: pt.x, y: pt.y, lng: inst.lng, lat: inst.lat });
+				if (!projectTo(pt, m4, mercatorX(inst.lng), mercatorY(inst.lat), elevation, zScale, W, H)) continue;
+				const pos: Drawn = { id: inst.id, x: pt.x, y: pt.y, lng: inst.lng, lat: inst.lat };
+				positions.push(pos);
 				const scale = inst.scale ?? 1;
 				const w = def.width * scale;
 				const h = def.height * scale;
@@ -376,22 +469,51 @@ export class Overlay implements HitSource {
 				const opacity = inst.opacity ?? 1;
 				if (opacity <= 0) continue;
 				const rot = (((inst.rotate ?? 0) - (inst.rotateWithMap ? bearing : 0)) * Math.PI) / 180;
-				const o = n * FLOATS;
-				data[o] = x;
-				data[o + 1] = y;
-				data[o + 2] = w;
-				data[o + 3] = h;
-				data[o + 4] = rect.x / aw;
-				data[o + 5] = rect.y / ah;
-				data[o + 6] = (rect.x + rect.w) / aw;
-				data[o + 7] = (rect.y + rect.h) / ah;
-				data[o + 8] = 0.5;
-				data[o + 9] = 0.5;
-				data[o + 10] = opacity;
-				data[o + 11] = rot;
-				n++;
-				if (inst.pick)
-					placed.push({ x, y, r: inst.radius ?? reach / 2, inst, priority: g.opts.priority ?? PRIORITY[inst.pick.kind as keyof typeof PRIORITY] ?? PRIORITY.sprite });
+				const u0 = rect.x / aw;
+				const v0 = rect.y / ah;
+				const u1 = (rect.x + rect.w) / aw;
+				const v1 = (rect.y + rect.h) / ah;
+				if (!stack) {
+					emit(inst, x, y, w, h, u0, v0, u1, v1, opacity, rot, reach, priorityFor(g, inst));
+					continue;
+				}
+				// Stacked: held until the whole group is placed, then fanned out (stack.ts).
+				const [it, ir, ib, il] = stack.inset ?? [0, 0, 0, 0];
+				let q = pending[m];
+				if (!q) pending.push((q = {} as Pending));
+				q.id = inst.id;
+				q.x = x;
+				q.y = y;
+				q.l = w / 2 - il * scale;
+				q.t = h / 2 - it * scale;
+				q.r = w / 2 - ir * scale;
+				q.b = h / 2 - ib * scale;
+				q.dy = 0;
+				q.inst = inst;
+				q.pos = pos;
+				q.w = w;
+				q.h = h;
+				q.u0 = u0;
+				q.v0 = v0;
+				q.u1 = u1;
+				q.v1 = v1;
+				q.opacity = opacity;
+				q.rot = rot;
+				q.reach = reach;
+				m++;
+			}
+			if (stack && m) {
+				let lifted = this.#lifted.get(key);
+				if (!lifted) this.#lifted.set(key, (lifted = new Set()));
+				const next = stackUp(pending, m, stack.gap, lifted, this.#liftedNext);
+				this.#liftedNext = lifted;
+				this.#lifted.set(key, next);
+				for (let k = 0; k < m; k++) {
+					const q = pending[k];
+					if (q.dy) q.pos.dy = q.dy;
+					emit(q.inst, q.x, q.y, q.w, q.h, q.u0, q.v0, q.u1, q.v1, q.opacity, q.rot, q.reach, priorityFor(g, q.inst));
+					q.inst = q.pos = null as never;
+				}
 			}
 			this.#positions.set(key, positions);
 		}
@@ -416,3 +538,6 @@ export class Overlay implements HitSource {
 		gl.bindVertexArray(null);
 	}
 }
+
+/** A group's picking priority for an instance: the group's own, else by the pick's kind. */
+const priorityFor = (g: Group, inst: OverlayInstance) => g.opts.priority ?? PRIORITY[inst.pick?.kind as keyof typeof PRIORITY] ?? PRIORITY.sprite;

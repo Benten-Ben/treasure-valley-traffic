@@ -45,7 +45,8 @@
 	app.overlay = new Overlay();
 	app.picker = new Picker({
 		canPick: () => app.modes.current === 'explore',
-		select: (s) => app.selection.select(s)
+		select: (s) => app.selection.select(s),
+		selected: () => app.selection.current
 	});
 	app.picker.addSource(app.overlay);
 	app.layers = new LayerManager(app, LAYER_DEFS);

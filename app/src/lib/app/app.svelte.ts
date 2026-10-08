@@ -1,5 +1,6 @@
 import type { Map } from 'maplibre-gl';
 import type { DataMeta } from '#lib/contracts/meta.js';
+import { redrapeTerrain } from '#lib/map/restore.js';
 import { setAerial, type BasemapManifest } from '#lib/map/style.js';
 import { Modes } from '#lib/state/modes.svelte.js';
 import { ViewManager } from '#lib/state/view.svelte.js';
@@ -105,12 +106,25 @@ export class App implements AppCtx {
 		map.once('load', () => performance.mark('tvt:load'));
 		map.once('idle', () => performance.mark('tvt:idle'));
 		const lost = () => (this.paused = true);
-		const restored = () => (this.paused = false);
+		// The style is reloaded after a restore (asynchronously): then redrape the terrain.
+		const redrape = () => {
+			try {
+				redrapeTerrain(map);
+			} catch (e) {
+				console.warn('terrain after a context restore:', e);
+			}
+		};
+		const restored = () => {
+			this.paused = false;
+			map.off('style.load', redrape);
+			map.once('style.load', redrape);
+		};
 		map.on('webglcontextlost', lost);
 		map.on('webglcontextrestored', restored);
 		this.#cleanup.push(() => {
 			map.off('webglcontextlost', lost);
 			map.off('webglcontextrestored', restored);
+			map.off('style.load', redrape);
 		});
 	}
 

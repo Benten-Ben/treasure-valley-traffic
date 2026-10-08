@@ -10,7 +10,10 @@ import { PRIORITY, type Interactive, type Selection } from '#lib/layers/types.js
  * - Then MapLibre features in a ±6 px box (±12 px on touch), from the layers
  *   modules registered as interactive.
  * - The highest priority wins (bus > camera > hub > stop > route > lane >
- *   street), then the nearest. Exactly one thing is selected.
+ *   street), then the nearest. Exactly one thing is selected. Within TIE_PX
+ *   of the nearest, what's selected already wins, for hover and click alike:
+ *   two buses at one stop, the selected one lifted, don't swap under a still
+ *   pointer.
  * - Where several routes share the street, the selection lists them all
  *   ("3 routes here: 7 · 8 · 9"), each opening its own card.
  * - Clicks count only while the map is in Explore (a calibration click never
@@ -20,6 +23,8 @@ export const MOUSE_RADIUS = 14;
 export const TOUCH_RADIUS = 22;
 export const MOUSE_BOX = 6;
 export const TOUCH_BOX = 12;
+/** Within this much (px) of the nearest hit at its priority, the selected thing wins. */
+export const TIE_PX = 6;
 
 export interface Hit {
 	selection: Selection;
@@ -50,13 +55,22 @@ export interface PickerOptions {
 	canPick: () => boolean;
 	/** Select (or with null, clear). */
 	select: (s: Selection | null) => void;
+	/** What's selected now (it wins a near tie). */
+	selected?: () => Selection | null;
 }
 
-/** The best hit, with shared streets folded into one "n routes here" selection. */
-export function resolve(hits: Hit[]): Selection | null {
+const same = (a: Selection, b: Selection) => a.kind === b.kind && a.layer === b.layer && a.id === b.id;
+
+/**
+ * The best hit, with shared streets folded into one "n routes here" selection.
+ * `selected` (what's selected now) wins over a hit up to TIE_PX nearer at the same priority.
+ */
+export function resolve(hits: Hit[], selected?: Selection | null): Selection | null {
 	if (!hits.length) return null;
 	const sorted = [...hits].sort((a, b) => b.priority - a.priority || a.distance - b.distance);
-	const top = sorted[0];
+	let top = sorted[0];
+	if (selected && top.selection.kind !== 'route' && !same(top.selection, selected))
+		top = sorted.find((h) => h.priority === top.priority && h.distance <= top.distance + TIE_PX && same(h.selection, selected)) ?? top;
 	if (top.selection.kind !== 'route') return top.selection;
 	const routes: Selection[] = [];
 	for (const h of sorted) {
@@ -149,7 +163,7 @@ export class Picker {
 				}
 			}
 		}
-		return { top: resolve(hits), hits };
+		return { top: resolve(hits, this.#o.selected?.()), hits };
 	}
 
 	/** Hear about hover changes (for the tooltip); returns the unsubscribe. */
