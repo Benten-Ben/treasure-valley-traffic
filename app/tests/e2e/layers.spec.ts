@@ -410,7 +410,8 @@ test.describe('layers', () => {
 			await button.click();
 			await expect(button).toHaveAttribute('aria-pressed', 'false');
 			expect(await vis('streets-speed'), 'hidden').toBe('none');
-			expect(await vis('streets-keep'), 'the keeper holds the tiles while the view stays put').toBe('visible');
+			// Soft: if the keeper goes, the road-tile count below says what that costs.
+			expect.soft(await vis('streets-keep'), 'the keeper holds the tiles while the view stays put').toBe('visible');
 			await page.waitForTimeout(pause);
 			// How soon the roads draw again: the first frame with speed lines in it, from the click.
 			await page.evaluate(() => {
@@ -438,7 +439,7 @@ test.describe('layers', () => {
 		await expect(button).toHaveAttribute('aria-pressed', 'false');
 		await page.evaluate(() => (globalThis as any).__tvt.map.jumpTo({ center: [-116.3915, 43.6187] }));
 		await mapReady(page);
-		expect(await vis('streets-keep'), 'released once the map moved').toBe('none');
+		expect.soft(await vis('streets-keep'), 'released once the map moved').toBe('none');
 		expect(roads.urls, 'road tiles while Streets is off and the map moves').toEqual([]);
 		// On again in the new view: its tiles load (it had none), and the roads draw.
 		await button.click();
