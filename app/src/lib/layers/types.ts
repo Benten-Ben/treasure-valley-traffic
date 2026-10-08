@@ -14,12 +14,16 @@ import type { IconData } from '#lib/ui/icons.js';
  * needs its icon); `load()` imports the module itself, its own chunk (≤ 30 KB
  * brotli), the first time the layer is switched on or prefetched.
  */
-export type LayerId = 'streets' | 'transit' | 'cameras' | 'lanes' | 'weather';
+export type LayerId = 'streets' | 'transit' | 'cameras' | 'lanes' | 'weather' | 'trees';
 
 /** idle: not loaded yet; loading; ready; stale: shown but its feed is old; error. */
 export type LayerStatus = 'idle' | 'loading' | 'ready' | 'stale' | 'error';
 
-/** What can be selected, and its picking priority (§14.3: bus > camera > hub > stop > route > lane > street). */
+/**
+ * What can be selected, and its picking priority (§14.3: bus > camera > hub > stop > route > lane > street).
+ * Trees (docs/19) rank just under streets: crowns line the streets, so a click on a road under one
+ * still opens the road, and a click on the crown away from it opens the tree.
+ */
 export const PRIORITY = {
 	bus: 100,
 	camera: 90,
@@ -29,6 +33,7 @@ export const PRIORITY = {
 	route: 60,
 	lane: 50,
 	street: 40,
+	tree: 35,
 	sprite: 30
 } as const;
 

@@ -11,8 +11,8 @@
  * - 2–5: the instance's slot colors 0–3 (the stop post's route flags; a slot
  *   left empty isn't drawn).
  *
- * Axes: buses, stop posts, poles and pins use x right, y forward, z up, with
- * the origin on the ground at the footprint's centre. The camera head uses
+ * Axes: buses, stop posts, poles, pins and trees use x right, y forward, z
+ * up, with the origin on the ground at the footprint's centre. The camera head uses
  * x right, y down (image y) and z forward along the view axis, with the
  * origin at the optical centre, so the solver's axes() map onto it directly.
  *
@@ -21,10 +21,23 @@
  */
 export const FLOATS_PER_VERTEX = 10;
 
-export type MeshKind = 'bus' | 'stop' | 'pole' | 'head' | 'pin' | 'ring';
+export type MeshKind = 'bus' | 'stop' | 'pole' | 'head' | 'pin' | 'ring' | 'tree-broad' | 'tree-cone' | 'tree-column';
 
-/** Triangle budgets (§14.8, "Models"); `ring` is the selection ground ring. */
-export const BUDGETS: Record<MeshKind, number> = { bus: 300, stop: 60, pole: 80, head: 120, pin: 80, ring: 80 };
+/**
+ * Triangle budgets (§14.8, "Models"); `ring` is the selection ground ring. Trees (docs/19 §19.6): the
+ * concept models' 92, 60 and 92, plus 8 to cap the trunk (a closed mesh), under the 128 ceiling.
+ */
+export const BUDGETS: Record<MeshKind, number> = {
+	bus: 300,
+	stop: 60,
+	pole: 80,
+	head: 120,
+	pin: 80,
+	ring: 80,
+	'tree-broad': 104,
+	'tree-cone': 72,
+	'tree-column': 104
+};
 
 export interface Mesh {
 	kind: MeshKind;
@@ -338,7 +351,169 @@ export function ringMesh(segments = 16): Mesh {
 	return b.build('ring');
 }
 
-export const MESHES: Record<MeshKind, () => Mesh> = { bus: busMesh, stop: stopMesh, pole: poleMesh, head: headMesh, pin: () => pinMesh(), ring: () => ringMesh() };
+// --- Trees (docs/19 §19.6) ----------------------------------------------------------------------------
+//
+// Low-poly and faceted on purpose (the city-builder look, docs/13), after the
+// concept models the owner saw (Oct 8): a hexagonal trunk under a lumpy
+// icosphere crown (broadleaf, narrow) or three stacked cones (conifer). Unit
+// size: origin on the ground at the trunk's centre, crown radius 1 in x and
+// y, height 1; instances scale [r, r, h]. The trunk is a fixed warm brown;
+// crown faces take the instance's green (tint 1).
+
+/** The trunk's warm brown. */
+export const TRUNK = rgb('#785a3d');
+
+/** A small seeded generator (mulberry32), so the crowns' lumps are the same on every build. */
+export function seeded(seed: number): () => number {
+	let a = seed >>> 0;
+	return () => {
+		a = (a + 0x6d2b79f5) >>> 0;
+		let t = a;
+		t = Math.imul(t ^ (t >>> 15), t | 1);
+		t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+		return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+	};
+}
+
+/** A flat triangle whose normal faces away from `centre` (the solids are convex, or nearly). */
+function outward(b: Builder, p: V3, q: V3, r: V3, centre: V3, color: Rgb, tint: number): void {
+	let n = norm(cross(sub(q, p), sub(r, p)));
+	const c: V3 = [(p[0] + q[0] + r[0]) / 3, (p[1] + q[1] + r[1]) / 3, (p[2] + q[2] + r[2]) / 3];
+	if (dot(n, sub(c, centre)) < 0) n = [-n[0], -n[1], -n[2]];
+	b.poly([p, q, r], color, tint, n);
+}
+
+/** The trunk: a hexagonal prism, capped at both ends (20 triangles). */
+function trunk(b: Builder, r: number, top: number): void {
+	b.prism(circle(r, 6), 0, top, (x, y, z) => [x, y, z], TRUNK, { start: TRUNK, end: TRUNK });
+}
+
+/** An icosphere subdivided `levels` times (unit radius): 20 · 4^levels faces, outward-wound. */
+export function icosphere(levels = 1): { v: V3[]; f: [number, number, number][] } {
+	const t = (1 + Math.sqrt(5)) / 2;
+	const v: V3[] = (
+		[
+			[-1, t, 0], [1, t, 0], [-1, -t, 0], [1, -t, 0], [0, -1, t], [0, 1, t],
+			[0, -1, -t], [0, 1, -t], [t, 0, -1], [t, 0, 1], [-t, 0, -1], [-t, 0, 1]
+		] as V3[]
+	).map(norm);
+	let f: [number, number, number][] = [
+		[0, 11, 5], [0, 5, 1], [0, 1, 7], [0, 7, 10], [0, 10, 11], [1, 5, 9], [5, 11, 4], [11, 10, 2], [10, 7, 6], [7, 1, 8],
+		[3, 9, 4], [3, 4, 2], [3, 2, 6], [3, 6, 8], [3, 8, 9], [4, 9, 5], [2, 4, 11], [6, 2, 10], [8, 6, 7], [9, 8, 1]
+	];
+	for (let l = 0; l < levels; l++) {
+		const mid = new globalThis.Map<string, number>();
+		const m = (a: number, b: number) => {
+			const k = a < b ? `${a},${b}` : `${b},${a}`;
+			let i = mid.get(k);
+			if (i === undefined) {
+				v.push(norm([(v[a][0] + v[b][0]) / 2, (v[a][1] + v[b][1]) / 2, (v[a][2] + v[b][2]) / 2]));
+				mid.set(k, (i = v.length - 1));
+			}
+			return i;
+		};
+		const next: [number, number, number][] = [];
+		for (const [a, b, c] of f) {
+			const ab = m(a, b);
+			const bc = m(b, c);
+			const ca = m(c, a);
+			next.push([a, ab, ca], [b, bc, ab], [c, ca, bc], [ab, bc, ca]);
+		}
+		f = next;
+	}
+	return { v, f };
+}
+
+/**
+ * A lumpy low-poly crown (80 triangles): an icosphere subdivided once, each
+ * vertex pushed in or out by up to `lump` (seeded), the underside flattened
+ * by `flat`, `rz` tall about `cz`; then fitted to the unit size (widest
+ * vertex at radius 1, top at 1). Returns its lowest point.
+ */
+function blob(b: Builder, cz: number, rz: number, lump: number, flat: number, seed: number): number {
+	const { v, f } = icosphere(1);
+	const rand = seeded(seed);
+	const p = v.map(([x, y, z]): V3 => {
+		const k = 1 + lump * (rand() * 2 - 1);
+		const zz = z * k;
+		return [x * k, y * k, cz + (zz < 0 ? zz * flat : zz) * rz];
+	});
+	const across = Math.max(...p.map(([x, y]) => Math.hypot(x, y)));
+	const top = Math.max(...p.map((q) => q[2]));
+	const sz = (1 - cz) / (top - cz);
+	const fitted = p.map(([x, y, z]): V3 => [x / across, y / across, cz + (z - cz) * sz]);
+	const centre: V3 = [0, 0, cz];
+	for (const [a, c, d] of f) outward(b, fitted[a], fitted[c], fitted[d], centre, CREAM, TINT.instance);
+	return Math.min(...fitted.map((q) => q[2]));
+}
+
+/** A cone: `sides` around, its base cap fanned to the centre (2 · sides triangles), turned by `twist` radians. */
+function cone(b: Builder, r: number, z0: number, z1: number, twist: number, sides = 8): void {
+	const centre: V3 = [0, 0, (z0 + z1) / 2];
+	const tip: V3 = [0, 0, z1];
+	const base: V3 = [0, 0, z0];
+	for (let i = 0; i < sides; i++) {
+		const a0 = twist + (2 * Math.PI * i) / sides;
+		const a1 = twist + (2 * Math.PI * ((i + 1) % sides)) / sides;
+		const p: V3 = [r * Math.cos(a0), r * Math.sin(a0), z0];
+		const q: V3 = [r * Math.cos(a1), r * Math.sin(a1), z0];
+		outward(b, p, q, tip, centre, CREAM, TINT.instance);
+		b.poly([q, p, base], CREAM, TINT.instance, [0, 0, -1]);
+	}
+}
+
+/** How far a trunk reaches into the crown above its lowest point, so the crown never floats. */
+const TRUNK_INTO_CROWN = 0.05;
+
+/**
+ * A broadleaf tree (100 triangles): a hexagonal trunk (r 0.07) under a lumpy
+ * crown centred at 0.62 with a 0.40 semi-axis, its underside flattened by
+ * 0.35 (lumps ±7%, seed 3).
+ */
+export function treeBroadMesh(): Mesh {
+	const b = new Builder();
+	const bottom = blob(b, 0.62, 0.4, 0.07, 0.35, 3);
+	trunk(b, 0.07, Math.max(0.42, bottom + TRUNK_INTO_CROWN));
+	return b.build('tree-broad');
+}
+
+/**
+ * A conifer (68 triangles): a hexagonal trunk (r 0.06, to 0.16) under three
+ * stacked octagonal cones, (base radius, z0, z1) = (1, 0.12, 0.58), (0.74,
+ * 0.40, 0.80) and (0.46, 0.64, 1), each turned 0.2 rad from the one below.
+ */
+export function treeConeMesh(): Mesh {
+	const b = new Builder();
+	trunk(b, 0.06, 0.16);
+	cone(b, 1, 0.12, 0.58, 0);
+	cone(b, 0.74, 0.4, 0.8, 0.2);
+	cone(b, 0.46, 0.64, 1, 0.4);
+	return b.build('tree-cone');
+}
+
+/**
+ * A narrow tree (100 triangles): a hexagonal trunk (r 0.08) under the same
+ * lumpy crown, centred at 0.58 with a 0.44 semi-axis, its underside flattened
+ * by 0.6 (lumps ±6%, seed 7): spruce, poplars, young street trees.
+ */
+export function treeColumnMesh(): Mesh {
+	const b = new Builder();
+	const bottom = blob(b, 0.58, 0.44, 0.06, 0.6, 7);
+	trunk(b, 0.08, Math.max(0.18, bottom + TRUNK_INTO_CROWN));
+	return b.build('tree-column');
+}
+
+export const MESHES: Record<MeshKind, () => Mesh> = {
+	bus: busMesh,
+	stop: stopMesh,
+	pole: poleMesh,
+	head: headMesh,
+	pin: () => pinMesh(),
+	ring: () => ringMesh(),
+	'tree-broad': treeBroadMesh,
+	'tree-cone': treeConeMesh,
+	'tree-column': treeColumnMesh
+};
 
 /** Every mesh, once (they're pure, so the result can be shared). */
 let built: Record<MeshKind, Mesh> | null = null;

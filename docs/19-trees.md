@@ -139,6 +139,30 @@ rebuilt when its catalogue changes (monthly) or new lidar arrives.
   last verified and condition; and its log.
 - **Only where built:** elsewhere the layer says where trees exist so far.
 
+**As built (Oct 8, `app/src/lib/layers/trees/`):**
+
+- **API:** `GET /api/trees?bbox=w,s,e,n&limit=N` gives the trees whose point
+  is in the box, tallest first (`limit` 4,000 by default, 8,000 at most),
+  with `truncated` when there were more. `GET /api/trees/areas` gives where
+  trees are built. `GET /api/trees/<id>` gives one tree with its log, newest
+  first, and its catalogue entry when the private `city_trees.tree` is
+  there (`catalogue: null` elsewhere). Before the plugin's migration every
+  list is empty, never a 500.
+- **Models:** `tree-broad`, `tree-cone` and `tree-column` in
+  `#lib/scene/meshes.ts` (100, 68 and 100 triangles), after the concept
+  models the owner saw. They have a unit crown radius and height, scaled
+  [r, r, h], with a brown trunk and the crown in the tree's green. The
+  greens are olive, three per type, at least ΔE 10 from every route color
+  ([ch. 14's color budget](14-ui-v2.md#the-color-budget)).
+- **Zooms:** crown discs from z13; the scene engine is asked for at z14.5;
+  models dither in over 14.7–15 as the discs fade out. The view's trees are
+  asked for 250 ms after the map stops, in a box a quarter bigger than the
+  view and kept within a screen diagonal of the centre. Nothing is asked for
+  where no area is built.
+- **Picking:** trees rank just under streets, so a click on a road under a
+  crown still opens the road. A model's hit radius is its crown, not its
+  bounding sphere (the scene engine's opt-in `pickRadius`).
+
 ## 19.7 The pilot: North End
 
 The North End box on the preview site first, with θ set from the street

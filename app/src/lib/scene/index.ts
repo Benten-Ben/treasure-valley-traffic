@@ -89,6 +89,11 @@ export interface SceneInstance {
 	pick?: Selection | null;
 	/** Least hit radius, px (the picker adds its own minimum: 14 px, 22 for touch). */
 	radius?: number;
+	/**
+	 * Hit radius in metres, instead of the bounding sphere's (trees: their crown radius; the sphere
+	 * of a model three times taller than wide would catch clicks metres off it).
+	 */
+	pickRadius?: number;
 }
 
 /** A view cone: the apex and its ray ends, true metres (absolute). */
@@ -708,7 +713,10 @@ export class Scene implements HitSource {
 						ra[ro + 20] = 0;
 					}
 				}
-				if (inst.pick && visible) this.#pick.add({ x: pt.x, y: pt.y, r: Math.max(rPx, inst.radius ?? 0), w: pt.w, pick: inst.pick, priority: priorityOf(inst.pick, g.opts.priority) });
+				if (inst.pick && visible) {
+					const hitPx = inst.pickRadius === undefined ? rPx : (inst.pickRadius * s * f.pxPerMetreW) / pt.w;
+					this.#pick.add({ x: pt.x, y: pt.y, r: Math.max(hitPx, inst.radius ?? 0), w: pt.w, pick: inst.pick, priority: priorityOf(inst.pick, g.opts.priority) });
+				}
 			}
 			for (const cone of g.cones) this.#cone(cone, f, zAt);
 			for (const line of g.lines) this.#line(line, f, zAt);

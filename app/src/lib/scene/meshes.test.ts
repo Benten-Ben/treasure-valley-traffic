@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { allMeshes, BUDGETS, BUS, FLOATS_PER_VERTEX, triangles, type Mesh, type MeshKind } from './meshes.js';
+import { allMeshes, BUDGETS, BUS, FLOATS_PER_VERTEX, seeded, triangles, TRUNK, type Mesh, type MeshKind } from './meshes.js';
 
 /** Mesh budgets (docs/14 §14.8, "Models"): triangle budgets, bounding boxes, index ranges and the tint flag. */
 const meshes = allMeshes();
@@ -124,5 +124,108 @@ describe('meshes', () => {
 		const { busMesh } = await import('./meshes.js');
 		expect(busMesh().vertices).toEqual(busMesh().vertices);
 		expect(busMesh().indices).toEqual(busMesh().indices);
+	});
+
+	describe('trees (docs/19 §19.6)', () => {
+		const TREES = ['tree-broad', 'tree-cone', 'tree-column'] as const;
+		const pos = (m: Mesh, i: number) => [0, 1, 2].map((k) => m.vertices[i * FLOATS_PER_VERTEX + k]);
+		const key = (p: number[]) => p.map((x) => x.toFixed(5)).join(',');
+
+		it('are the concept models plus a capped trunk: 100, 68 and 100 triangles, under the 128 ceiling', () => {
+			expect(triangles(meshes['tree-broad'])).toBe(100);
+			expect(triangles(meshes['tree-cone'])).toBe(68);
+			expect(triangles(meshes['tree-column'])).toBe(100);
+			for (const k of TREES) expect(BUDGETS[k]).toBeLessThanOrEqual(128);
+		});
+
+		it.each(TREES)('%s is closed: every edge is shared by two triangles running opposite ways', (kind) => {
+			const m = meshes[kind];
+			const edges = new Map<string, number>();
+			for (let t = 0; t < m.indices.length; t += 3) {
+				const k = [0, 1, 2].map((j) => key(pos(m, m.indices[t + j])));
+				for (let j = 0; j < 3; j++) {
+					const e = `${k[j]}>${k[(j + 1) % 3]}`;
+					edges.set(e, (edges.get(e) ?? 0) + 1);
+				}
+			}
+			for (const [e, n] of edges) {
+				expect(n, e).toBe(1);
+				const [a, b] = e.split('>');
+				expect(edges.get(`${b}>${a}`), `the reverse of ${e}`).toBe(1);
+			}
+		});
+
+		it.each(TREES)('%s faces outward: each closed part (trunk, crown, cones) has a positive volume', (kind) => {
+			const m = meshes[kind];
+			// Parts: triangles joined through shared corner positions.
+			const parent = new Map<string, string>();
+			const find = (x: string): string => {
+				while (parent.get(x) !== x) x = parent.get(x)!;
+				return x;
+			};
+			const tris: number[][][] = [];
+			for (let t = 0; t < m.indices.length; t += 3) {
+				const p = [0, 1, 2].map((j) => pos(m, m.indices[t + j]));
+				tris.push(p);
+				const k = p.map(key);
+				for (const x of k) if (!parent.has(x)) parent.set(x, x);
+				parent.set(find(k[1]), find(k[0]));
+				parent.set(find(k[2]), find(k[0]));
+			}
+			const volume = new Map<string, number>();
+			for (const [a, b, c] of tris) {
+				const v = (a[0] * (b[1] * c[2] - b[2] * c[1]) - a[1] * (b[0] * c[2] - b[2] * c[0]) + a[2] * (b[0] * c[1] - b[1] * c[0])) / 6;
+				const root = find(key(a));
+				volume.set(root, (volume.get(root) ?? 0) + v);
+			}
+			expect(volume.size).toBe(kind === 'tree-cone' ? 4 : 2);
+			for (const v of volume.values()) expect(v).toBeGreaterThan(0);
+		});
+
+		it.each(TREES)('%s has the unit size: on the ground at its trunk, crown radius 1, height 1', (kind) => {
+			const m = meshes[kind];
+			expect(m.min[2]).toBeCloseTo(0, 6);
+			expect(m.max[2]).toBeCloseTo(1, 6);
+			let widest = 0;
+			for (let i = 0; i < m.vertices.length / FLOATS_PER_VERTEX; i++) {
+				const [x, y] = pos(m, i);
+				widest = Math.max(widest, Math.hypot(x, y));
+			}
+			expect(widest).toBeCloseTo(1, 6);
+			for (const a of [0, 1]) {
+				expect(m.min[a]).toBeGreaterThanOrEqual(-1 - 1e-6);
+				expect(m.max[a]).toBeLessThanOrEqual(1 + 1e-6);
+			}
+		});
+
+		it.each(TREES)('%s has a brown trunk (as built) that reaches into its crown (the instance green, tint 1)', (kind) => {
+			const m = meshes[kind];
+			let trunkTop = 0;
+			let crownBottom = Infinity;
+			for (let o = 0; o < m.vertices.length; o += FLOATS_PER_VERTEX) {
+				const tint = m.vertices[o + 9];
+				expect([0, 1]).toContain(tint);
+				if (tint === 0) {
+					expect([m.vertices[o + 6], m.vertices[o + 7], m.vertices[o + 8]].map((c) => c.toFixed(4))).toEqual(TRUNK.map((c) => c.toFixed(4)));
+					trunkTop = Math.max(trunkTop, m.vertices[o + 2]);
+				} else crownBottom = Math.min(crownBottom, m.vertices[o + 2]);
+			}
+			expect(trunkTop).toBeGreaterThan(0.1);
+			// No floating crown: the trunk's top is inside the crown, above its lowest point.
+			expect(trunkTop).toBeGreaterThan(crownBottom);
+		});
+
+		it('lumps the crowns with a seeded generator, so every build is the same', async () => {
+			const a = seeded(3);
+			const b = seeded(3);
+			const xs = Array.from({ length: 5 }, () => a());
+			expect(Array.from({ length: 5 }, () => b())).toEqual(xs);
+			for (const x of xs) expect(x >= 0 && x < 1).toBe(true);
+			const { treeBroadMesh, treeColumnMesh } = await import('./meshes.js');
+			expect(treeBroadMesh().vertices).toEqual(treeBroadMesh().vertices);
+			// The two crowns are lumped differently (seeds 3 and 7).
+			expect(treeColumnMesh().vertices.length).toBe(treeBroadMesh().vertices.length);
+			expect(treeColumnMesh().vertices).not.toEqual(treeBroadMesh().vertices);
+		});
 	});
 });

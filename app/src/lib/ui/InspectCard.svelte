@@ -27,6 +27,7 @@
 		hub: 'Selected station',
 		lane: 'Selected lane',
 		weather: 'Selected station',
+		tree: 'Selected tree',
 		sprite: 'Selected marker'
 	};
 
