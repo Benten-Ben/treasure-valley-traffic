@@ -829,7 +829,7 @@ their pictures reach the map. The owner approved each part on Oct 6
 | Camera | Where the app gets its picture | How fresh |
 |---|---|---|
 | The 34 recorded key cameras | the capture archive's newest frame (§11.5), read from today's `index.csv` only when that file changes | every 50 s; the app never fetches these from 511 |
-| Road-weather views | the capture archive's newest frame | every 10 minutes |
+| Road-weather views | the capture archive's newest frame | captured every 10 minutes; 511 refreshes them about every 15 |
 | Every other camera | fetched by the server from 511's allowed image route (`/map/Cctv/<id>`), **only while someone has it open**, looks through it or calibrates it | at most once per 55 s per image |
 
 The on-demand fetcher keeps to §11.7's "gently": only image IDs in

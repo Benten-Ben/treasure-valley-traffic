@@ -18,7 +18,7 @@ names didn't change, so `ops.source` and `ops.fetch` carry on:
 
 | Plugin | Sources (in run order) | Commands |
 |---|---|---|
-| [cameras](../plugins/cameras) | `achd_cameras`, `idaho511_views_oneoff`; stream `idaho511_frames` | `rollup` |
+| [cameras](../plugins/cameras) | `achd_cameras`, `idaho511_views_oneoff`, `idaho511_rwis_sites_oneoff`; stream `idaho511_frames` | `rollup` |
 | [transit](../plugins/transit) | `vrt_gtfs`; stream `vrt_realtime` | `match-routes`, `transit-progress`, `transit-ribbons`, `route-colors` |
 | [roads](../plugins/roads) | `achd_roads`, `itd_hpms`, `achd_msm`, `compass_centerline`; by hand `osm_valley` | `osm-load`, `segment-match` |
 | [conditions](../plugins/conditions) | streams `itd_wzdx`, `idaho511_api` | |
@@ -48,6 +48,7 @@ still work and name the new commands.
 |---|---|---|---|
 | `achd_cameras` | open (ACHD GIS, no robots.txt) | daily | `raw.record`, `core.camera` (228), `core.source_link` |
 | `idaho511_views_oneoff` | one-off (dated private file `511-camera-views-2026-10-05.csv`, read from `TVT_PRIVATE_DATA`) | never | `core.camera_view` (210 linked within 200 m) |
+| `idaho511_rwis_sites_oneoff` | one-off (dated private file `511-camera-sites-statewide-2026-10-05.json`, read from `TVT_PRIVATE_DATA`; no request to 511) | never (by hand: the deploy runbook's step 2) | `raw.record`, `core.camera` (ITD's road-weather stations statewide as provider `ITD RWIS`, about 130, and Oregon DOT's cameras in the regional ring as `ODOT`; [docs/14 §14.6](../docs/14-ui-v2.md#road-weather)), `core.camera_view` (each station's views by 511 image id, about 385), `core.source_link` |
 | `achd_roads` | open (ACHD GIS, no robots.txt) | weekly | `raw.record`, `core.road_segment` (38,727 Ada County segments: posted speed, class, one-way, level, community), `core.source_link`; a run that changes the segments rematches every lane source and OpenStreetMap in `core.segment_match` |
 | `itd_hpms` | open (ITD GIS, no robots.txt; no license stated, credit ITD) | monthly | `raw.record` (one source per layer, `itd_hpms_<kind>`, keyed `<EventID>@<RouteID>:<FromMeasure>`, plus `itd_hpms_road_names`), `core.hpms_section` (33,770 pieces touching the valley box: through lanes 19,507, turn lanes 637, lane width 558, median 738, shoulders 634, access control 5,376, peak lanes 1,384, facility type 4,936), `core.segment_match` |
 | `achd_msm` | open (ACHD GIS, no robots.txt; no license stated) | monthly | `raw.record` (by GlobalID; the bulk-stamped edit dates left out), `core.msm_arterial` (1,049 Master Street Map arterials; existing lanes on 896), `core.segment_match` (`buffer10_name`; `buffer10_bearing20` where a state-route name faces a street name) |
