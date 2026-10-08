@@ -58,6 +58,7 @@ Tick an item when it's built, with the date, or strike it if we drop it.
 | [ ] | Lower rendering resolution while the map moves; a live server-sent-events channel | Measure first (HTTP/2 is now on) | — |
 | [ ] | Serving tiles as plain z/x/y files (a Caddy build with the PMTiles module), so browsers cache them | Mainly helps Chrome and Edge on Windows; the owner uses Chrome on a Mac | Server change |
 | [ ] | A night look for the map | Polish | — |
+| [ ] | Trees across the whole valley, beyond the North End pilot ([ch. 19](19-trees.md)) | Needs lidar height products everywhere, a large build on the server | Lidar products for each area |
 | [ ] | Hand-made glTF models (instead of generated ones) | Polish | — |
 | [ ] | 3D road decks (bridges and overpasses with height) | Polish | Road levels (in ACHD's data) |
 | [ ] | deck.gl for heavy analysis layers (crash hexbins and similar) | deck.gl doesn't run on MapLibre 6 yet | A deck.gl release that supports MapLibre 6 |
