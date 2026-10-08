@@ -131,7 +131,7 @@ describe('rttStacks', () => {
 		expect(at('cameras-calibrated')).toBeGreaterThan(at(ANCHORS.scene));
 		expect(at('cameras-calibrated')).toBeLessThan(at(ANCHORS.points));
 		// Labels below the buses: every symbol layer sits under the overlay and the fallback bus layers.
-		const lastSymbol = a.findLastIndex((id) => id === 'streets-speed-labels' || id === 'transit-shields' || id === 'places_locality');
+		const lastSymbol = a.findLastIndex((id) => id === 'streets-speed-labels' || id === 'transit-shields' || id === 'transit-hubs' || id === 'places_locality');
 		expect(lastSymbol).toBeLessThan(at('transit-buses'));
 		expect(at('transit-buses')).toBeLessThan(at('overlay'));
 	});

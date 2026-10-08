@@ -22,8 +22,10 @@ import type { SlottedLayer } from '#lib/map/order.js';
  *   order (ghost badges for routes not running), drawn on demand; that
  *   source changes only when the set of running routes does.
  * - Stops are cream capsules across the bundle, turned to the street, from
- *   z14; hubs are station pills from z14, drawn with the labels so a base
- *   POI label never covers one.
+ *   z14; hubs are station pills from z14, drawn above the base labels and
+ *   the shields so neither covers one. A pill stands on a stem whose dot
+ *   marks the station, so the buses waiting there (drawn above every map
+ *   layer) never cover its name.
  */
 
 /** Per-zoom ribbon width w, gap g and bundle cap B, px (§14.4): [zoom, w, g, B]. */
@@ -71,6 +73,19 @@ export const SOURCES = {
 } as const;
 
 export const NETWORK_LAYERS: string[] = Object.values(L);
+
+/**
+ * The hub's station pill (images.ts draws it, CSS px): a capsule w × h whose
+ * text area is content (x0, y0, x1, y1), on a stem down to a dot at dotY,
+ * centred, on the station. The capsule's bottom is dotY − h px above the
+ * station, clear of a bus disc (radius 14) and its heading arrow (21 px).
+ */
+export const HUB_PILL = { w: 40, h: 24, content: [8, 4, 32, 20], dotY: 47, dotR: 3.5 } as const;
+export const HUB_TEXT_SIZE = 13;
+/** icon-text-fit-padding around the station's name: top, right, bottom, left (px). */
+export const HUB_PADDING: [number, number, number, number] = [3, 9, 3, 9];
+/** The name's offset (em) with its bottom anchored on the station, so the pill's dot lands on it. */
+export const hubTextOffset = (): [number, number] => [0, -(HUB_PILL.dotY - HUB_PILL.content[3] + HUB_PADDING[2]) / HUB_TEXT_SIZE];
 
 /** Image name prefixes (drawn on `styleimagemissing`). */
 export const IMG = { shield: 'tvt-shield:', capsule: 'tvt-capsule:', pill: 'tvt-hub-pill' } as const;
@@ -299,15 +314,18 @@ export function networkLayers(): SlottedLayer[] {
 					[z, ['/', ['+', ['*', N, pitch(w, g, B)], OUTLINE_EXTRA], ['get', 'w15']]])] as unknown as ExpressionSpecification,
 				'icon-allow-overlap': true, 'icon-ignore-placement': true },
 			paint: { 'icon-opacity': ['case', state('idle'), IDLE_STOP_OPACITY, 1] } } },
-		// Above the base labels, so a POI never covers the station's name.
-		{ slot: 'labels', layer: { id: L.hubs, type: 'symbol', source: SOURCES.hubs, minzoom: STOP_MINZOOM,
-			layout: { ...hidden, 'text-field': ['get', 'name'], 'text-font': ['Noto Sans Medium'], 'text-size': 13,
-				'icon-image': IMG.pill, 'icon-text-fit': 'both', 'icon-text-fit-padding': [3, 9, 3, 9],
-				'text-allow-overlap': true, 'icon-allow-overlap': true, 'symbol-sort-key': 0 },
-			paint: { 'text-color': INK } } },
 		{ slot: 'labels', layer: { id: L.shields, type: 'symbol', source: SOURCES.shields, minzoom: SHIELD_MINZOOM,
 			layout: { ...hidden, 'symbol-placement': 'line', 'symbol-spacing': 400, 'icon-image': ['get', 'shield'],
 				'icon-rotation-alignment': 'viewport', 'icon-pitch-alignment': 'viewport', 'icon-padding': 4 },
-			paint: { 'icon-opacity': shieldOpacity() } } }
+			paint: { 'icon-opacity': shieldOpacity() } } },
+		// Above the base labels and the shields, so neither a POI nor a route shield covers the station's
+		// name (it's placed first, so shields that would overlap it give way); above the station on its
+		// stem, so the buses waiting there don't either.
+		{ slot: 'labels', layer: { id: L.hubs, type: 'symbol', source: SOURCES.hubs, minzoom: STOP_MINZOOM,
+			layout: { ...hidden, 'text-field': ['get', 'name'], 'text-font': ['Noto Sans Medium'], 'text-size': HUB_TEXT_SIZE,
+				'text-anchor': 'bottom', 'text-offset': hubTextOffset(),
+				'icon-image': IMG.pill, 'icon-text-fit': 'both', 'icon-text-fit-padding': HUB_PADDING,
+				'text-allow-overlap': true, 'icon-allow-overlap': true, 'symbol-sort-key': 0 },
+			paint: { 'text-color': INK } } }
 	];
 }
