@@ -57,13 +57,13 @@ describe('3D cameras (build3d)', () => {
 		expect((flat.instances.find((i) => i.mesh === 'pole')!.scale as number[])[2]).toBeCloseTo(811.1 - 801.1 - 0.15, 9);
 	});
 
-	it('sizes the head so its thinnest side is at least 14 px from any angle (§14.6 asks for 12)', () => {
+	it('sizes the head so its thinnest side is at least 16 px from any angle (§14.6 asks for 12)', () => {
 		// The scene grows a model until its bounding sphere is minPx across; every side of the head's box is at
 		// least its thinnest side, which then gets HEAD_MIN_PX.
 		const m = headMesh();
 		const sides = [0, 1, 2].map((a) => m.max[a] - m.min[a]);
 		const k = headMinPx() / (2 * m.radius);
-		expect(HEAD_MIN_PX).toBeGreaterThanOrEqual(12);
+		expect(HEAD_MIN_PX).toBeGreaterThanOrEqual(16);
 		for (const side of sides) expect(side * k).toBeGreaterThanOrEqual(HEAD_MIN_PX - 1e-9);
 		expect(Math.min(...sides) * k).toBeCloseTo(HEAD_MIN_PX, 9);
 		// Compact: its longest side isn't more than about 1.5 times its thinnest, so it reads from the side and end-on alike.

@@ -12,7 +12,7 @@ import { AMBER, INK, TEAL, type Calibration, type CameraProps } from './cameras.
  *
  * - **calibrated:** a pole from the drawn ground up to the solved height, a
  *   teal camera head with an ink hood and a cream-ringed lens, turned to its
- *   heading, tilt and roll (its thinnest side at least 14 px from any angle:
+ *   heading, tilt and roll (its thinnest side at least 16 px from any angle:
  *   `headMinPx`), the
  *   teal view cone (an apex and 32 rays, 8 per image edge, each ending on the
  *   ground at the calibration's ground height, or 120 m out when it points
@@ -43,13 +43,14 @@ export const MODELS_FADE = 0.3;
  * The head's thinnest side is drawn at least this big, px, from any angle
  * (§14.6 asks for 12; a head seen end-on or from the side was 4–9 px).
  */
-export const HEAD_MIN_PX = 14;
+export const HEAD_MIN_PX = 16;
 
 /**
  * The scene's `minPx` for the head: the scene grows a model until its
  * bounding sphere is that many px across, which is more than the head shows
  * from any one side. Scaled by the sphere's diameter over the head's thinnest
- * side, the thinnest side gets `HEAD_MIN_PX` (about 20 px along its length).
+ * side, the thinnest side gets `HEAD_MIN_PX` (about 19 px tall and 23 px
+ * along its length).
  */
 export function headMinPx(minPx = HEAD_MIN_PX): number {
 	const m = headMesh();
