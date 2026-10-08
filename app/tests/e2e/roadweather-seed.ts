@@ -11,8 +11,12 @@
  *   status that records all of them, so the Test Summit station, which has
  *   no picture, shows 511's "no live feed" on every view and is drawn hollow.
  *
+ * The road-weather spec and the review's screenshot matrix both use it
+ * (`seedRoadWeather`, then `waitForSeeded`; `cleanRoadWeather` afterwards).
+ *
  *   node tests/e2e/roadweather-seed.ts [--clean]   (by hand, with the package environment)
  */
+import type { APIRequestContext } from '@playwright/test';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -92,6 +96,39 @@ export function seedRoadWeather(env = harnessEnv(), nowMs = Date.now()): { loade
 		return { loaded };
 	} finally {
 		rmSync(priv, { recursive: true, force: true });
+	}
+}
+
+export type SeededView = { id: number; imageId: number | null; label: string; disabled: boolean; ageS: number | null; capturing: boolean; feed: string };
+export type SeededStation = { id: number; name: string; hollow: boolean; views: SeededView[] };
+
+/**
+ * Wait until the app serves the seeded stations as seeded: all three, with the
+ * seeded capture status (the archive keeps its list of capture services for
+ * 15 s, so right after another spec had Road weather on, the stations can come
+ * back before the server reads the new status), and every view's picture
+ * through /api/cameras/live (which keeps its view list for a minute).
+ */
+export async function waitForSeeded(request: APIRequestContext, timeoutMs = 150_000): Promise<SeededStation[]> {
+	const names: string[] = Object.values(STATIONS).map((s) => s.name);
+	const until = Date.now() + timeoutMs;
+	const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
+	let stations: SeededStation[] = [];
+	for (;;) {
+		const rw = await (await request.get('/api/roadweather')).json();
+		stations = (rw.stations as SeededStation[]).filter((s) => names.includes(s.name));
+		const seen = stations.flatMap((s) => s.views).filter((v) => v.imageId !== null);
+		if (stations.length === 3 && seen.length > 0 && seen.every((v) => v.capturing)) break;
+		if (Date.now() > until) throw new Error(`the app serves ${stations.length} of the 3 seeded stations, or not their capture status yet`);
+		await pause(1000);
+	}
+	const ids = stations.flatMap((s) => s.views.map((v) => v.id));
+	for (;;) {
+		const live = await (await request.get(`/api/cameras/live?views=${ids.join(',')}`)).json();
+		const n = Object.values(live.views as Record<string, { cadence: string }>).filter((v) => v.cadence === 'road_weather').length;
+		if (n === ids.length) return stations;
+		if (Date.now() > until) throw new Error(`/api/cameras/live serves ${n} of the ${ids.length} seeded views`);
+		await pause(2000);
 	}
 }
 

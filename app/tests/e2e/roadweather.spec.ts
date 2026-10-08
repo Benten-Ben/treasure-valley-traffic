@@ -1,6 +1,6 @@
 import type { Locator, Page } from '@playwright/test';
 import { expect, mapReady, screenPath, test } from './fixtures.js';
-import { cleanRoadWeather, seedRoadWeather, STATIONS } from './roadweather-seed.js';
+import { cleanRoadWeather, seedRoadWeather, STATIONS, waitForSeeded } from './roadweather-seed.js';
 
 /**
  * road weather (docs/14 §14.10, WP16 acceptance; §14.6 "Road weather"):
@@ -19,8 +19,6 @@ import { cleanRoadWeather, seedRoadWeather, STATIONS } from './roadweather-seed.
  */
 
 type Drawn = { id: number; name: string; provider: string; hollow: boolean; views: number; x: number | null; y: number | null };
-type RwView = { id: number; imageId: number; label: string; disabled: boolean; ageS: number | null; capturing: boolean; feed: string };
-type RwStation = { id: number; name: string; hollow: boolean; views: RwView[] };
 
 /** Every seeded station on screen, clear of the legend column and the toolbar. */
 const VIEW = '#map=9/43.64/-116.62/0/0';
@@ -30,39 +28,16 @@ const toolbar = (page: Page) => page.getByRole('toolbar', { name: 'Map layers' }
 const button = (page: Page) => toolbar(page).getByRole('button', { name: 'Road weather', exact: true });
 const drawn = (page: Page): Promise<Drawn[]> => page.evaluate(() => (globalThis as any).__tvtRoadWeather?.stations() ?? []);
 
-let seeded: Promise<RwStation[]> | null = null;
+let seeded: ReturnType<typeof waitForSeeded> | null = null;
 
-/** Seed once for the spec, then wait until the server knows the new stations and their views (its lists are cached). */
-function ensureSeeded(request: import('@playwright/test').APIRequestContext): Promise<RwStation[]> {
+/**
+ * Seed once for the spec, then wait until the server knows the new stations and their views (its
+ * lists are cached; the review's checklist, which has Road weather on, runs just before this one).
+ */
+function ensureSeeded(request: import('@playwright/test').APIRequestContext) {
 	seeded ??= (async () => {
 		seedRoadWeather();
-		let stations: RwStation[] = [];
-		// Also wait for the seeded capture status: the archive keeps its list of capture services for
-		// 15 s, so right after a spec that had Road weather on (the review's checklist runs just before
-		// this one), the stations can come back before the server reads the new status.
-		await expect
-			.poll(
-				async () => {
-					const rw = await (await request.get('/api/roadweather')).json();
-					stations = (rw.stations as RwStation[]).filter((s) => NAMES.includes(s.name));
-					const seen = stations.flatMap((s) => s.views).filter((v) => v.imageId !== null);
-					return stations.length === 3 && seen.length > 0 && seen.every((v) => v.capturing) ? 3 : -stations.length;
-				},
-				{ timeout: 60_000, intervals: [1000, 2000] }
-			)
-			.toBe(3);
-		const ids = stations.flatMap((s) => s.views.map((v) => v.id));
-		// /api/cameras/live keeps its view list for a minute: wait until it serves the new views from the archive.
-		await expect
-			.poll(
-				async () => {
-					const live = await (await request.get(`/api/cameras/live?views=${ids.join(',')}`)).json();
-					return Object.values(live.views as Record<string, { cadence: string }>).filter((v) => v.cadence === 'road_weather').length;
-				},
-				{ timeout: 90_000, intervals: [2000, 5000] }
-			)
-			.toBe(ids.length);
-		return stations;
+		return waitForSeeded(request);
 	})();
 	return seeded;
 }
