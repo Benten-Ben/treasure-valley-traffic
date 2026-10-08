@@ -191,14 +191,14 @@ export class Clock {
 	}
 
 	/**
-	 * `waiting`: live, but no word from the bus feed yet (Transit hasn't polled), so the pill
-	 * doesn't claim LIVE before there's anything live to show.
+	 * `waiting`: live, but no bus fix known yet (Transit hasn't polled, its first poll failed, or
+	 * no bus has ever reported), so the pill doesn't claim LIVE before there's anything live.
 	 */
 	get state(): ClockState {
 		if (this.paused !== null) return 'paused';
 		if (this.replayAt !== null) return 'replay';
 		if (!this.live) return 'behind';
-		if (this.feed === null) return 'waiting';
+		if (!this.feed?.lastFix) return 'waiting';
 		const age = this.feedAge;
 		return age !== null && age >= STALL_S ? 'stalled' : 'live';
 	}

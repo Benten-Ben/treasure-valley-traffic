@@ -190,6 +190,9 @@ describe('the clock', () => {
 		const c = new Clock({ now: () => wall, ticking: false, delay: 90 });
 		expect(c.state).toBe('waiting');
 		expect(c.label).toBe('NO GPS YET');
+		// A first poll that failed, or a feed with no bus ever: still no LIVE.
+		c.feed = { lastFix: null, ok: false, at: wall };
+		expect(c.label).toBe('NO GPS YET');
 		c.feed = { lastFix: wall / 1000 - 20, ok: true, at: wall };
 		expect(c.state).toBe('live');
 		expect(c.label).toBe('LIVE −1:30');
