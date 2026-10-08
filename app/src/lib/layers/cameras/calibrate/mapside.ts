@@ -128,6 +128,7 @@ export class CalibrateMap {
 		const map = app.map;
 		if (!map || this.#scope || this.#gone) return false;
 		this.#map = map;
+		this.#hidden = false;
 		map.stop();
 		app.modes.enter('calibrate');
 		app.setAerial(true);

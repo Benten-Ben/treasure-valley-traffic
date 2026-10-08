@@ -182,6 +182,19 @@ export function rescalePairs(pairs: readonly DraftPair[], from: ImageSize, to: I
 	return pairs.map((p) => (p.pixel ? { ...p, pixel: [p.pixel[0] * k, p.pixel[1] * k] as Pixel } : { ...p }));
 }
 
+/**
+ * Where Calibrate mode looks (§14.6, "Entering"): over the worked part of the
+ * footprint (the pole and the finished pairs' ground points), facing the
+ * solved heading; the pole, facing north, when there's no pose yet. The
+ * whole footprint runs 250 m out, more than z19 shows.
+ */
+export function aimAt(pole: [number, number], pairs: readonly DraftPair[], heading: number | null): { center: [number, number]; bearing: number } {
+	const pts: [number, number][] = [pole, ...complete(pairs).map((p) => [p.ground[0], p.ground[1]] as [number, number])];
+	const xs = pts.map((p) => p[0]);
+	const ys = pts.map((p) => p[1]);
+	return { center: [(Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...ys) + Math.max(...ys)) / 2], bearing: heading ?? 0 };
+}
+
 // --- frames --------------------------------------------------------------------------
 
 /** "Use this frame": the identity of the live picture shown, as POST /api/views/[id]/frame wants it. */

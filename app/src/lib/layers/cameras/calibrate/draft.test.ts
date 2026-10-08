@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+	aimAt,
 	clearDraft,
 	compass,
 	complete,
@@ -89,6 +90,17 @@ describe('pairs', () => {
 		]);
 		expect(rescalePairs(a, { width: 768, height: 466 }, { width: 768, height: 466 })).toEqual(a);
 		expect(rescalePairs(a, { width: 768, height: 466 }, { width: 640, height: 480 })).toBeNull();
+	});
+});
+
+describe('aiming', () => {
+	it('centres the pole and the finished pairs, facing the heading; the pole facing north without one', () => {
+		const pole: [number, number] = [-116.3, 43.6];
+		expect(aimAt(pole, [], null)).toEqual({ center: pole, bearing: 0 });
+		const a = aimAt(pole, [{ pixel: [1, 1], ground: [-116.298, 43.602, 800] }, { ground: [-116.2, 43.7, 800] }], 35);
+		expect(a.bearing).toBe(35);
+		expect(a.center[0]).toBeCloseTo(-116.299, 9);
+		expect(a.center[1]).toBeCloseTo(43.601, 9);
 	});
 });
 

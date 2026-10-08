@@ -16,6 +16,7 @@
 	import { afterSave, type Saved } from './after.js';
 	import CalibrateBanner from './CalibrateBanner.svelte';
 	import {
+		aimAt,
 		clearDraft,
 		compass,
 		complete,
@@ -330,18 +331,10 @@
 		return { top: 0, right: 0, bottom: 0, left: r ? Math.round(r.right) : 0 };
 	}
 
-	/**
-	 * Where to look: pitch 0 over the worked part of the footprint (the pole
-	 * and the pairs' ground points), facing the solved heading; the pole,
-	 * facing north, when there's no pose yet. (The whole footprint runs 250 m
-	 * out, more than z19 shows.)
-	 */
+	/** Where to look (draft.ts's aimAt): the worked footprint, facing the solved heading, or the pole facing north. */
 	function aimFor(): Aim {
-		const pts: [number, number][] = [cam.pole, ...done.map((p) => [p.ground[0], p.ground[1]] as [number, number])];
-		const xs = pts.map((p) => p[0]);
-		const ys = pts.map((p) => p[1]);
-		const heading = solution?.pose.heading ?? view?.calibration?.pose.heading ?? 0;
-		return { center: [(Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...ys) + Math.max(...ys)) / 2], bearing: solution || view?.calibration ? heading : 0 };
+		const heading = solution?.pose.heading ?? view?.calibration?.pose.heading ?? null;
+		return aimAt(cam.pole, pairs, heading);
 	}
 
 	let undoMode: (() => void)[] = [];
@@ -610,6 +603,11 @@
 		};
 	});
 
+	const keptAt = $derived.by(() => {
+		const t = frame?.capturedAt ? new Date(frame.capturedAt) : null;
+		if (!t || Number.isNaN(t.getTime())) return null;
+		return t.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+	});
 	const resumedAt = $derived(resumed === null ? null : new Date(resumed).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }));
 	const hint = $derived(
 		step === 'map'
@@ -666,6 +664,10 @@
 
 			<section class="frame-pane" aria-label="Reference frame">
 				{#if frame}
+					<p class="caption">
+						<b>Reference frame</b> (frozen: the pairs are clicked on it){#if keptAt} · kept {keptAt}{/if}
+						<span class="num">{frame.width}×{frame.height}</span>
+					</p>
 					<ReferenceFrame
 						{frame}
 						live={live?.frame ?? null}
@@ -871,6 +873,20 @@
 	.frame-pane {
 		display: flex;
 		flex-direction: column;
+	}
+	.caption {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0 6px;
+		margin: 0 0 4px;
+		color: var(--ink-soft);
+		font-size: 12px;
+	}
+	.caption b {
+		color: var(--ink);
+	}
+	.caption .num {
+		margin-left: auto;
 	}
 	.step {
 		margin: 6px 0 0;
