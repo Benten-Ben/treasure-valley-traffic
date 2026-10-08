@@ -30,7 +30,8 @@ import { PhotoTextures } from './textures.js';
  *   lines, then photo planes: 12 draw calls or fewer in all;
  * - picks on the CPU through the central picker, and shows hover (a cream
  *   tint) and selection (lifted 2 m, 1.2×, an ink-and-cream ground ring and
- *   one 1.2 s pulse) for whatever the picker and the selection say;
+ *   one 1.2 s pulse; a `grounded` instance only gets the ring) for whatever
+ *   the picker and the selection say;
  * - asks the render loop for frames only while something moves or eases;
  * - survives a lost WebGL context.
  *
@@ -90,10 +91,24 @@ export interface SceneInstance {
 	/** Least hit radius, px (the picker adds its own minimum: 14 px, 22 for touch). */
 	radius?: number;
 	/**
-	 * Hit radius in metres, instead of the bounding sphere's (trees: their crown radius; the sphere
-	 * of a model three times taller than wide would catch clicks metres off it).
+	 * Hit shape in metres instead of the bounding sphere (trees): a vertical capsule of this radius
+	 * over the model's height, from just above its base to just under its top (pickSpan). The sphere
+	 * of a model three times taller than wide would catch clicks metres off it, and a circle round its
+	 * middle misses its top and trunk once the map is tilted.
 	 */
 	pickRadius?: number;
+	/** Stays on the ground at its own size when selected (trees): the ground ring alone marks it, no lift or growth. */
+	grounded?: boolean;
+}
+
+/**
+ * The heights (model units × scale, metres) of a pick capsule's axis ends: its
+ * radius in from the base and the top, so the capsule spans the model, and
+ * meeting at mid-height for a model no taller than it is wide.
+ */
+export function pickSpan(zLo: number, zHi: number, r: number): [number, number] {
+	const mid = (zLo + zHi) / 2;
+	return [Math.min(zLo + r, mid), Math.max(zHi - r, mid)];
 }
 
 /** A view cone: the apex and its ray ends, true metres (absolute). */
@@ -480,9 +495,12 @@ export class Scene implements HitSource {
 		return this.#pick.hits(x, y, minRadius);
 	}
 
-	/** Where each pickable instance was drawn in the last frame (screen centre and radius, px). */
-	placed(): { id: string; x: number; y: number; r: number }[] {
-		return this.#pick.placed().map((p) => ({ id: p.pick.id, x: p.x, y: p.y, r: p.r }));
+	/**
+	 * Where each pickable instance was drawn in the last frame: screen centre and radius (px), its
+	 * distance from the camera (clip w) and, for a capsule, its axis on screen.
+	 */
+	placed(): { id: string; x: number; y: number; r: number; w: number; seg?: [number, number, number, number] }[] {
+		return this.#pick.placed().map((p) => ({ id: p.pick.id, x: p.x, y: p.y, r: p.r, w: p.w, ...(p.seg ? { seg: p.seg } : {}) }));
 	}
 
 	/**
@@ -602,6 +620,8 @@ export class Scene implements HitSource {
 			return alt === undefined ? exag * g : renderedZ(alt, g, exag);
 		};
 		const pt = { x: 0, y: 0, w: 0 };
+		const end0 = { x: 0, y: 0, w: 0 };
+		const end1 = { x: 0, y: 0, w: 0 };
 		const local: Vec3 = [0, 0, 0];
 		const tested: ScenePhoto[] = [];
 		const over: ScenePhoto[] = [];
@@ -619,8 +639,9 @@ export class Scene implements HitSource {
 				const mx = mercatorX(inst.lng);
 				const my = mercatorY(inst.lat);
 				const sv = typeof inst.scale === 'number' ? this.#sv.fill(inst.scale) : (inst.scale ?? ONES);
-				let s = selected ? SELECT_SCALE * (1 + 0.08 * pulse) : 1;
-				const lift = (inst.lift ?? 0) + (selected ? SELECT_LIFT : 0);
+				const lifted = selected && !inst.grounded;
+				let s = lifted ? SELECT_SCALE * (1 + 0.08 * pulse) : 1;
+				const lift = (inst.lift ?? 0) + (lifted ? SELECT_LIFT : 0);
 				// Off screen (judged on the ground last read under it): neither drawn, picked nor queried for its ground.
 				// That reading counts only from the current terrain data: one taken before its DEM tile arrived
 				// (0) could place it off screen for good, since a culled model isn't read again.
@@ -714,8 +735,20 @@ export class Scene implements HitSource {
 					}
 				}
 				if (inst.pick && visible) {
-					const hitPx = inst.pickRadius === undefined ? rPx : (inst.pickRadius * s * f.pxPerMetreW) / pt.w;
-					this.#pick.add({ x: pt.x, y: pt.y, r: Math.max(hitPx, inst.radius ?? 0), w: pt.w, pick: inst.pick, priority: priorityOf(inst.pick, g.opts.priority) });
+					let hitPx = rPx;
+					let seg: [number, number, number, number] | undefined;
+					if (inst.pickRadius !== undefined) {
+						// A vertical capsule from trunk to top, as wide as the crown (on screen at the centre's depth).
+						const rM = inst.pickRadius * s;
+						hitPx = (rM * f.pxPerMetreW) / pt.w;
+						const [z0, z1] = pickSpan(mesh.min[2] * sv[2] * s, mesh.max[2] * sv[2] * s, rM);
+						const ux = axes[2][0] * c;
+						const uy = axes[2][1] * c;
+						const uz = axes[2][2];
+						if (projectLocal(f, local[0] + ux * z0, local[1] + uy * z0, local[2] + uz * z0, end0) && projectLocal(f, local[0] + ux * z1, local[1] + uy * z1, local[2] + uz * z1, end1))
+							seg = [end0.x, end0.y, end1.x, end1.y];
+					}
+					this.#pick.add({ x: pt.x, y: pt.y, r: Math.max(hitPx, inst.radius ?? 0), w: pt.w, seg, pick: inst.pick, priority: priorityOf(inst.pick, g.opts.priority) });
 				}
 			}
 			for (const cone of g.cones) this.#cone(cone, f, zAt);

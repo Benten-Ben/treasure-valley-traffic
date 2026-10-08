@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { along, GroundTracker, renderedZ, slopePitch, TWEEN_MS } from './ground.js';
 import { pickLayer } from './textures.js';
-import { PickIndex, priorityOf, selectionKey } from './pick.js';
-import { hprBasis, packColor } from './index.js';
+import { PickIndex, priorityOf, segmentDistance, selectionKey } from './pick.js';
+import { hprBasis, packColor, pickSpan } from './index.js';
 import { PRIORITY, type Selection } from '#lib/layers/types.js';
 
 describe('ground', () => {
@@ -166,6 +166,42 @@ describe('picking', () => {
 		expect(p.hits(0, 0, 14)).toHaveLength(0);
 		p.commit();
 		expect(p.hits(0, 0, 14)).toHaveLength(1);
+	});
+
+	it('a capsule (a tall tree) is hit along its whole axis, not only round its middle', () => {
+		const tree: Selection = { kind: 'tree', id: 'tall', layer: 'trees', title: 'Conifer' };
+		const p = new PickIndex();
+		p.begin();
+		// Drawn from y 350 (trunk) to y 155 (tip), 38 px wide each side; centre at y 253.
+		p.add({ x: 577, y: 253, r: 38, w: 10, seg: [577, 312, 577, 193], pick: tree, priority: PRIORITY.tree });
+		p.commit();
+		for (const y of [163, 183, 203, 303, 323, 343]) expect(p.hits(577, y, 14), `y ${y}`).toHaveLength(1);
+		expect(p.hits(577 + 37, 193, 14)).toHaveLength(1);
+		expect(p.hits(577 + 40, 193, 14)).toHaveLength(0);
+		expect(p.hits(577, 312 + 40, 14)).toHaveLength(0);
+		expect(segmentDistance(0, 5, [0, 0, 0, 0])).toBe(5);
+		expect(segmentDistance(3, 20, [0, 0, 0, 10])).toBe(Math.hypot(3, 10));
+	});
+
+	it('where trees overlap on screen, the one nearest the camera wins', () => {
+		const near: Selection = { kind: 'tree', id: 'near', layer: 'trees', title: 'Conifer' };
+		const far: Selection = { kind: 'tree', id: 'far', layer: 'trees', title: 'Broadleaf tree' };
+		const p = new PickIndex();
+		p.begin();
+		// The far tree's axis runs right through the point; the near one only covers it with its crown.
+		p.add({ x: 100, y: 100, r: 30, w: 20, seg: [100, 120, 100, 80], pick: far, priority: PRIORITY.tree });
+		p.add({ x: 120, y: 130, r: 30, w: 8, seg: [120, 160, 120, 100], pick: near, priority: PRIORITY.tree });
+		p.commit();
+		const hits = p.hits(100, 100, 14);
+		expect(hits.map((h) => h.selection.id)).toEqual(['near']);
+		expect(hits[0].distance).toBe(0);
+		// Off the near one's crown (and within only the far one's), the far one.
+		expect(p.hits(80, 85, 14).map((h) => h.selection.id)).toEqual(['far']);
+	});
+
+	it('a pick capsule spans the model, its ends one radius in, meeting at mid-height when it’s as wide as tall', () => {
+		expect(pickSpan(0, 15, 3)).toEqual([3, 12]);
+		expect(pickSpan(0, 6, 4)).toEqual([3, 3]);
 	});
 
 	it('a selection key names kind, layer and id', () => {

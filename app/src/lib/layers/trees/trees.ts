@@ -1,3 +1,4 @@
+import { mixOklab } from '#lib/map/color.js';
 import type { SlottedLayer } from '#lib/map/order.js';
 import type { MeshKind, SceneInstance } from '#lib/scene/index.js';
 import { PRIORITY, type Selection } from '../types.js';
@@ -12,9 +13,11 @@ import { PRIORITY, type Selection } from '../types.js';
  *   height, with a soft shadow.
  * - **Farther out** (or without the scene): crown discs, a MapLibre circle
  *   layer sized in metres.
- * - **Kinds** are told apart by opacity, as buildings tell measured from
- *   estimated heights (§13.8): catalogued solid, placed lighter, estimated
- *   lightest; and by name in the legend and the panel, never by color alone.
+ * - **Kinds** are told apart by tone, as buildings tell measured from
+ *   estimated heights (§13.8): catalogued in its full green, placed lighter,
+ *   estimated lightest (mixed toward cream, drawn solid: the dither is only
+ *   for the disc-to-model crossfade); and by name in the legend, the
+ *   tooltip and the panel, never by color alone.
  */
 
 // --- the API (GET /api/trees, /api/trees/areas, /api/trees/<id>) ------------------------------------
@@ -95,11 +98,24 @@ export const TYPES: readonly TreeType[] = ['broadleaf', 'conifer', 'narrow'];
 /** The MapLibre source and the crown-disc layer. */
 export const SOURCE = 'trees';
 export const DISCS = 'trees-discs';
+/**
+ * A layer on the source that draws nothing, at every zoom the trees draw:
+ * MapLibre credits a source only while one of its layers is shown, and the
+ * discs stop at z15 once the models take over.
+ */
+export const CREDIT_LAYER = 'trees-credit';
+/** The map's attribution while Trees is on. */
+export const CREDIT = 'Trees: USGS 3DEP lidar, City of Boise, US Forest Service';
 /** The scene's group of tree models. */
 export const TREES_3D = 'trees-3d';
 
-/** Opacity by kind (§19.1): catalogued solid, placed lighter, estimated lightest. The scene dithers below 1. */
-export const KIND_OPACITY: Record<TreeKind, number> = { catalogued: 1, placed: 0.8, estimated: 0.5 };
+/**
+ * Tone by kind (§19.1): how much cream is mixed into the tree's green (in
+ * OKLab). Catalogued its own green, placed a quarter lighter, estimated half
+ * (with the discs' dark edge, its legend swatch keeps 3:1 against the card).
+ * Every kind draws solid, as buildings show estimates in a lighter tone.
+ */
+export const KIND_TONE: Record<TreeKind, number> = { catalogued: 0, placed: 0.25, estimated: 0.5 };
 
 /** The model for each type (#lib/scene/meshes.ts). */
 export const MESH_OF_TYPE: Record<TreeType, MeshKind> = { broadleaf: 'tree-broad', conifer: 'tree-cone', narrow: 'tree-column' };
@@ -136,9 +152,9 @@ export const LIMIT_DISCS = 8000;
 /**
  * At most this many trees go to the scene: the tallest in view (the legend
  * says so when it applies). Measured on the owner's laptop (M1 GPU, Oct 8;
- * docs/19 §19.6): 4,000 in the scene (about 2,550 drawn) held 60 fps while
- * rotating, at about 3 ms of the scene's JS a frame (4 ms with Transit,
- * Cameras and Streets on too).
+ * docs/19 §19.6): 4,000 in the scene (about 2,500 drawn) held 60 fps while
+ * rotating, at 3–4 ms of the scene's JS a frame (4 ms with Transit, Cameras
+ * and Streets on too; 4.1 ms with the hit capsules).
  */
 export const SCENE_CAP = 4000;
 
@@ -161,6 +177,20 @@ export function hashId(id: string): number {
 export const treeGreen = (id: string, type: TreeType): string => {
 	const greens = TREE_GREENS[type] ?? TREE_GREENS.broadleaf;
 	return greens[hashId(id) % greens.length];
+};
+
+/** Each type's greens in each kind's tone. */
+export const TREE_TONES = Object.fromEntries(
+	(Object.keys(TREE_GREENS) as TreeType[]).map((type) => [
+		type,
+		Object.fromEntries((Object.keys(KIND_TONE) as TreeKind[]).map((kind) => [kind, TREE_GREENS[type].map((g) => (KIND_TONE[kind] ? mixOklab(g, CREAM, KIND_TONE[kind]) : g))]))
+	])
+) as Record<TreeType, Record<TreeKind, string[]>>;
+
+/** The tree's color: its green (treeGreen) in its kind's tone, the same on the disc, the model and the panel. */
+export const treeColor = (id: string, type: TreeType, kind: TreeKind): string => {
+	const tones = (TREE_TONES[type] ?? TREE_TONES.broadleaf)[kind] ?? TREE_TONES.broadleaf.catalogued;
+	return tones[hashId(id) % tones.length];
 };
 
 export const TYPE_NAME: Record<TreeType, string> = { broadleaf: 'Broadleaf tree', conifer: 'Conifer', narrow: 'Narrow tree' };
@@ -188,10 +218,11 @@ export const TREE_PREFIX = 'tree:';
 
 /**
  * The tree as a scene instance: its type's model, scaled [r, r, h] (the
- * meshes are a unit crown radius and height), a soft shadow, its kind's
- * opacity times the dither-in, its green, and a hit radius of its crown (the
- * bounding sphere of a tree three times taller than wide would catch clicks
- * metres off it).
+ * meshes are a unit crown radius and height), a soft shadow, its color
+ * (treeColor: its kind's tone), solid but for the dither-in, and a hit
+ * capsule as wide as its crown from trunk to top (the bounding sphere of a
+ * tree three times taller than wide would catch clicks metres off it).
+ * Selected, it stays on the ground at its size: the ground ring marks it.
  */
 export function treeInstance(t: TreeRow, fade = 1, pick: Selection | null = treeSelection(t)): SceneInstance {
 	return {
@@ -200,11 +231,12 @@ export function treeInstance(t: TreeRow, fade = 1, pick: Selection | null = tree
 		lng: t.lng,
 		lat: t.lat,
 		scale: [t.r, t.r, t.h],
-		color: treeGreen(t.id, t.type),
-		opacity: KIND_OPACITY[t.kind] * fade,
+		color: treeColor(t.id, t.type, t.kind),
+		opacity: fade,
 		shadow: true,
 		pick,
-		pickRadius: t.r
+		pickRadius: t.r,
+		grounded: true
 	};
 }
 
@@ -213,7 +245,7 @@ export function discFeature(t: TreeRow): GeoJSON.Feature<GeoJSON.Point> {
 	return {
 		type: 'Feature',
 		geometry: { type: 'Point', coordinates: [t.lng, t.lat] },
-		properties: { id: t.id, kind: t.kind, type: t.type, h: t.h, r: t.r, c: treeGreen(t.id, t.type), o: KIND_OPACITY[t.kind] }
+		properties: { id: t.id, kind: t.kind, type: t.type, h: t.h, r: t.r, c: treeColor(t.id, t.type, t.kind) }
 	};
 }
 
@@ -240,10 +272,15 @@ export function discRadius(): unknown[] {
 	return ['interpolate', ['exponential', 2], ['zoom'], ...stops];
 }
 
-/** The disc's opacity: its kind's; with models, fading out as they dither in. */
+/**
+ * The disc's opacity: solid (the kind is in its color); with models, fading
+ * out as they dither in. Zoom alone, never a feature's value: MapLibre
+ * evaluates a zoom-and-feature expression only at whole zooms and blends
+ * between them, which would start the fade at z14 instead of 14.7.
+ */
 export function discOpacity(withModels: boolean): unknown {
-	if (!withModels) return ['get', 'o'];
-	return ['interpolate', ['linear'], ['zoom'], MODELS_ZOOM - MODELS_FADE, ['get', 'o'], MODELS_ZOOM, 0];
+	if (!withModels) return 1;
+	return ['interpolate', ['linear'], ['zoom'], MODELS_ZOOM - MODELS_FADE, 1, MODELS_ZOOM, 0];
 }
 
 /**
@@ -251,6 +288,7 @@ export function discOpacity(withModels: boolean): unknown {
  * (they take turns by zoom), under the 2D points (stop capsules, camera
  * icons) and the labels. A circle layer isn't draped, so it never splits the
  * terrain's draped run. The taller tree's disc is drawn over the shorter.
+ * And the credit layer (CREDIT_LAYER), which matches no tree.
  */
 export function treeLayers(): SlottedLayer[] {
 	return [
@@ -268,10 +306,22 @@ export function treeLayers(): SlottedLayer[] {
 					'circle-opacity': discOpacity(false) as never,
 					'circle-stroke-color': ['case', ['boolean', ['feature-state', 'hover'], false], INK, DISC_EDGE],
 					'circle-stroke-width': ['case', ['boolean', ['feature-state', 'hover'], false], 2, 0.75],
-					'circle-stroke-opacity': ['get', 'o'],
+					'circle-stroke-opacity': discOpacity(false) as never,
 					'circle-pitch-alignment': 'map',
 					'circle-pitch-scale': 'map'
 				}
+			}
+		},
+		{
+			slot: 'scene',
+			layer: {
+				id: CREDIT_LAYER,
+				type: 'circle',
+				source: SOURCE,
+				minzoom: DISCS_ZOOM,
+				filter: ['==', ['get', 'kind'], ''],
+				layout: { visibility: 'none' },
+				paint: { 'circle-radius': 0, 'circle-opacity': 0, 'circle-stroke-width': 0 }
 			}
 		}
 	];

@@ -2,13 +2,15 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { deltaE } from '#lib/map/color.js';
+import { contrast, deltaE } from '#lib/map/color.js';
 import { allMeshes } from '#lib/scene/meshes.js';
 import { PRIORITY } from '../types.js';
 import { TREE } from './icons.js';
 import {
 	builtText,
 	contains,
+	CREDIT,
+	CREDIT_LAYER,
 	credits,
 	dateText,
 	discCollection,
@@ -18,7 +20,7 @@ import {
 	eventDetail,
 	eventName,
 	howWeKnow,
-	KIND_OPACITY,
+	KIND_TONE,
 	kindText,
 	lidarYear,
 	metresToPx,
@@ -27,6 +29,8 @@ import {
 	stillServes,
 	TREE_GREENS,
 	TREE_PREFIX,
+	TREE_TONES,
+	treeColor,
 	treeGreen,
 	treeInstance,
 	treeLayers,
@@ -60,23 +64,28 @@ describe('a tree as a 3D model (docs/19 §19.6)', () => {
 		expect(i.alt).toBeUndefined();
 	});
 
-	it('is solid when catalogued, lighter when placed, lightest when estimated (the engine dithers below 1)', () => {
-		expect(KIND_OPACITY).toEqual({ catalogued: 1, placed: 0.8, estimated: 0.5 });
-		expect(treeInstance(T({ kind: 'catalogued' })).opacity).toBe(1);
-		expect(treeInstance(T({ kind: 'placed' })).opacity).toBe(0.8);
-		expect(treeInstance(T({ kind: 'estimated' })).opacity).toBe(0.5);
+	it('is its full green when catalogued, lighter when placed, lightest when estimated, and solid in every kind', () => {
+		expect(KIND_TONE).toEqual({ catalogued: 0, placed: 0.25, estimated: 0.5 });
+		const id = 'c-7-9';
+		expect(treeInstance(T({ id, kind: 'catalogued' })).color).toBe(treeGreen(id, 'broadleaf'));
+		expect(treeInstance(T({ id, kind: 'placed' })).color).toBe(treeColor(id, 'broadleaf', 'placed'));
+		expect(treeInstance(T({ id, kind: 'estimated' })).color).toBe(treeColor(id, 'broadleaf', 'estimated'));
+		// Drawn solid: the engine's dither is only for the crossfade.
+		for (const kind of ['catalogued', 'placed', 'estimated'] as const) expect(treeInstance(T({ kind })).opacity).toBe(1);
 		// And dithers in with the zoom, as the 3D cameras do.
-		expect(treeInstance(T({ kind: 'placed' }), 0.5).opacity).toBeCloseTo(0.4, 9);
+		expect(treeInstance(T({ kind: 'placed' }), 0.5).opacity).toBe(0.5);
 		expect(modelFade(14.6)).toBe(0);
 		expect(modelFade(14.85)).toBeCloseTo(0.5, 9);
 		expect(modelFade(15)).toBe(1);
 	});
 
-	it('has a soft shadow, a hit radius of its crown, and selects a tree through the picker', () => {
+	it('has a soft shadow, a hit capsule as wide as its crown, stays grounded when selected, and selects a tree through the picker', () => {
 		const t = T({ id: 'c-1-2', h: 12, r: 4 });
 		const i = treeInstance(t);
 		expect(i.shadow).toBe(true);
 		expect(i.pickRadius).toBe(4);
+		// No lift or growth when selected: the ground ring marks it, standing on its shadow.
+		expect(i.grounded).toBe(true);
 		expect(i.id).toBe(`${TREE_PREFIX}c-1-2`);
 		expect(i.pick).toMatchObject({ kind: 'tree', id: 'c-1-2', layer: 'trees', title: 'Broadleaf tree', at: [-116.2, 43.62] });
 		expect(i.pick?.data).toBe(t);
@@ -98,7 +107,7 @@ describe('a tree as a 3D model (docs/19 §19.6)', () => {
 			for (const g of used) expect(TREE_GREENS[type]).toContain(g);
 		}
 		expect(treeGreen('boise-abc', 'broadleaf')).toBe(treeGreen('boise-abc', 'broadleaf'));
-		expect(treeInstance(T({ id: 'q' })).color).toBe(treeGreen('q', 'broadleaf'));
+		expect(treeInstance(T({ id: 'q', kind: 'catalogued' })).color).toBe(treeGreen('q', 'broadleaf'));
 	});
 });
 
@@ -117,6 +126,22 @@ describe('the trees’ colors keep to the color budget (docs/14 §14.3)', () => 
 		}
 	});
 
+	it('each kind’s tone is a visible step lighter, never fades into the ground, and its swatch’s edge keeps 3:1 on the card', () => {
+		const PLAIN = ['#eee7da', '#f3ede2', '#e4e8d6'];
+		for (const type of ['broadleaf', 'conifer', 'narrow'] as const) {
+			const t = TREE_TONES[type];
+			expect(t.catalogued).toEqual([...TREE_GREENS[type]]);
+			for (let k = 0; k < 3; k++) {
+				expect(deltaE(t.catalogued[k], t.placed[k])).toBeGreaterThanOrEqual(8);
+				expect(deltaE(t.placed[k], t.estimated[k])).toBeGreaterThanOrEqual(8);
+				for (const g of PLAIN) expect(deltaE(t.estimated[k], g), `${t.estimated[k]} vs ${g}`).toBeGreaterThanOrEqual(10);
+			}
+		}
+		expect(contrast('#3f4f2e', '#fffbf4')).toBeGreaterThanOrEqual(3);
+		// The same tree is the same color on its disc, its model and its panel.
+		expect(discCollection([T({ id: 'q', kind: 'estimated' })]).features[0].properties!.c).toBe(treeInstance(T({ id: 'q', kind: 'estimated' })).color);
+	});
+
 	it('conifers are the darkest; each type’s greens vary only a little', () => {
 		const L = (hex: string) => {
 			const n = parseInt(hex.slice(1), 16);
@@ -129,9 +154,9 @@ describe('the trees’ colors keep to the color budget (docs/14 §14.3)', () => 
 });
 
 describe('crown discs (farther out, or without the scene)', () => {
-	it('carry each tree’s radius, green and kind opacity', () => {
+	it('carry each tree’s radius and its color in its kind’s tone', () => {
 		const fc = discCollection([T({ id: 'a', kind: 'estimated', r: 3.5 })]);
-		expect(fc.features[0].properties).toMatchObject({ id: 'a', kind: 'estimated', r: 3.5, o: 0.5, c: treeGreen('a', 'broadleaf') });
+		expect(fc.features[0].properties).toMatchObject({ id: 'a', kind: 'estimated', r: 3.5, c: treeColor('a', 'broadleaf', 'estimated') });
 		expect(fc.features[0].geometry.coordinates).toEqual([-116.2, 43.62]);
 	});
 
@@ -145,9 +170,14 @@ describe('crown discs (farther out, or without the scene)', () => {
 		expect(metresToPx(1, 16) / metresToPx(1, 15)).toBeCloseTo(2, 9);
 	});
 
-	it('fade out over 14.7–15 when the models take over, and keep their kind’s opacity otherwise', () => {
-		expect(discOpacity(false)).toEqual(['get', 'o']);
-		expect(discOpacity(true)).toEqual(['interpolate', ['linear'], ['zoom'], 14.7, ['get', 'o'], 15, 0]);
+	it('fade out over 14.7–15 when the models take over (by zoom alone, which MapLibre follows exactly), and are solid otherwise', () => {
+		expect(discOpacity(false)).toBe(1);
+		expect(discOpacity(true)).toEqual(['interpolate', ['linear'], ['zoom'], 14.7, 1, 15, 0]);
+		// No feature value in it: MapLibre evaluates zoom-and-feature expressions only at whole zooms.
+		expect(JSON.stringify(discOpacity(true))).not.toContain('get');
+		const paint = treeLayers()[0].layer.paint as Record<string, unknown>;
+		expect(paint['circle-opacity']).toBe(1);
+		expect(paint['circle-stroke-opacity']).toBe(1);
 	});
 
 	it('are one circle layer in the scene slot: not draped, so the terrain keeps one draped run', () => {
@@ -157,6 +187,15 @@ describe('crown discs (farther out, or without the scene)', () => {
 		expect(l.layer.type).toBe('circle');
 		expect((l.layer.layout as Record<string, unknown>).visibility).toBe('none');
 		expect((l.layer.paint as Record<string, unknown>)['circle-pitch-alignment']).toBe('map');
+	});
+
+	it('keep the credit in the attribution at every zoom the trees draw, with a layer that matches no tree', () => {
+		const credit = treeLayers().find((l) => l.layer.id === CREDIT_LAYER)!;
+		expect(credit.layer).toMatchObject({ type: 'circle', source: 'trees', minzoom: 13, layout: { visibility: 'none' } });
+		expect((credit.layer as { maxzoom?: number }).maxzoom).toBeUndefined();
+		expect((credit.layer as { filter?: unknown }).filter).toEqual(['==', ['get', 'kind'], '']);
+		expect((credit.layer.paint as Record<string, unknown>)['circle-radius']).toBe(0);
+		expect(CREDIT).toBe('Trees: USGS 3DEP lidar, City of Boise, US Forest Service');
 	});
 });
 

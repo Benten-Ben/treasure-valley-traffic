@@ -6,16 +6,17 @@
 		builtText,
 		DISC_EDGE,
 		fmtCount,
-		KIND_OPACITY,
 		KIND_WORD,
 		KINDS,
 		TREE_GREENS,
+		TREE_TONES,
 		type TreeKind
 	} from './trees.js';
 
 	/**
 	 * The Trees legend (docs/19 §19.6): the three kinds, each drawn as the map
-	 * draws it (by opacity) and named, never told by color alone; the three
+	 * draws it (by tone, with the discs' dark edge) and named, never told by
+	 * color alone; the three
 	 * shapes; when the view's trees were cut to the tallest; and where trees are
 	 * built so far, with a way there when the view has none.
 	 */
@@ -29,8 +30,7 @@
 		placed: 'found in the lidar; crown placed',
 		estimated: 'in the inventory, not in the lidar; sized from species'
 	};
-	const LOOK: Record<TreeKind, string> = { catalogued: 'solid', placed: 'lighter', estimated: 'lightest' };
-	const green = TREE_GREENS.broadleaf[1];
+	const LOOK: Record<TreeKind, string> = { catalogued: 'full green', placed: 'lighter', estimated: 'lightest' };
 </script>
 
 <p class="legend-title">Trees</p>
@@ -38,7 +38,7 @@
 	{#each KINDS as k (k)}
 		<li>
 			<svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true">
-				<circle cx="10" cy="10" r="7.5" fill={green} stroke={DISC_EDGE} stroke-width="1" opacity={KIND_OPACITY[k]} />
+				<circle cx="10" cy="10" r="7.5" fill={TREE_TONES.broadleaf[k][1]} stroke={DISC_EDGE} stroke-width="1" />
 			</svg>
 			<span><b>{KIND_WORD[k]}</b> ({LOOK[k]}): {ABOUT[k]}{#if view.shown}{' '}<span class="num">({fmtCount(view.kinds[k])})</span>{/if}</span>
 		</li>

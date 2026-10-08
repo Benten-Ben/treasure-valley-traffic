@@ -8,6 +8,12 @@ import type { Hit, HitSource } from '#lib/map/picker.js';
  * them within max(radius, 14 px) (22 px for touch) through the central
  * picker. The picker ranks by priority (bus > camera > hub > stop > route…),
  * so a click on a 3D bus never also selects the route under it.
+ *
+ * An instance can give a screen segment instead (`seg`, a vertical capsule:
+ * trees, from trunk to top): it's hit within its radius of that segment.
+ * Where the point is on several such capsules (trees in front of each
+ * other), only the one nearest the camera is seen there: it's hit at
+ * distance 0, and those behind it aren't hit.
  */
 export interface Placed {
 	x: number;
@@ -18,6 +24,17 @@ export interface Placed {
 	w: number;
 	pick: Selection;
 	priority: number;
+	/** A vertical capsule's axis on screen, [x1, y1, x2, y2] px: hit within `r` of it (x, y stay its centre). */
+	seg?: [number, number, number, number];
+}
+
+/** Distance from (x, y) to the segment (x1, y1)–(x2, y2), px. */
+export function segmentDistance(x: number, y: number, [x1, y1, x2, y2]: readonly [number, number, number, number]): number {
+	const dx = x2 - x1;
+	const dy = y2 - y1;
+	const len2 = dx * dx + dy * dy;
+	const t = len2 > 0 ? Math.min(1, Math.max(0, ((x - x1) * dx + (y - y1) * dy) / len2)) : 0;
+	return Math.hypot(x - (x1 + t * dx), y - (y1 + t * dy));
 }
 
 export const priorityOf = (s: Selection, override?: number) => override ?? PRIORITY[s.kind as keyof typeof PRIORITY] ?? PRIORITY.sprite;
@@ -56,13 +73,21 @@ export class PickIndex implements HitSource {
 		return this.#placed;
 	}
 
-	/** The picker's hit test: everything within max(its radius, minRadius) of (x, y). */
+	/**
+	 * The picker's hit test: everything within max(its radius, minRadius) of (x, y) (of its segment, for a
+	 * capsule). Of the capsules the point is on, only the nearest to the camera, at distance 0.
+	 */
 	hits(x: number, y: number, minRadius: number): Hit[] {
 		const out: Hit[] = [];
+		let front: Placed | null = null;
 		for (const p of this.#placed) {
-			const d = Math.hypot(p.x - x, p.y - y);
-			if (d <= Math.max(p.r, minRadius)) out.push({ selection: p.pick, priority: p.priority, distance: d });
+			const d = p.seg ? segmentDistance(x, y, p.seg) : Math.hypot(p.x - x, p.y - y);
+			if (d > Math.max(p.r, minRadius)) continue;
+			if (p.seg && d <= p.r) {
+				if (!front || p.w < front.w) front = p;
+			} else out.push({ selection: p.pick, priority: p.priority, distance: d });
 		}
+		if (front) out.unshift({ selection: front.pick, priority: front.priority, distance: 0 });
 		return out;
 	}
 }

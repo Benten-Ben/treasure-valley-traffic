@@ -10,13 +10,14 @@ import Card from './Card.svelte';
 import def, { AREAS_URL } from './def.js';
 import Legend from './Legend.svelte';
 import {
+	CREDIT,
+	CREDIT_LAYER,
 	discCollection,
 	discOpacity,
 	DISCS,
 	DISCS_ZOOM,
 	inBox,
 	intersects,
-	KIND_OPACITY,
 	KINDS,
 	LIMIT_3D,
 	LIMIT_DISCS,
@@ -75,7 +76,9 @@ const metresPerPx = (zoom: number, lat: number) => (40_075_016.686 * Math.cos((l
  *   nothing is asked for where nothing is built);
  * - the view's trees from /api/trees, asked for when the map stops (250 ms
  *   later; a box that still serves the view isn't asked for again), the
- *   tallest first;
+ *   tallest first. Only the newest request may land: whenever the view no
+ *   longer wants what's on its way (zoomed out, nothing built here, or what
+ *   was fetched already serves it), that request is called off;
  * - **close up** (z15 and in, once the scene engine runs): one scene
  *   instance per tree, up to the tallest SCENE_CAP in view, dithering in over
  *   14.7–15 as the discs fade out;
@@ -145,7 +148,7 @@ export class TreesModule implements LayerModule {
 		const map = await ctx.styleReady;
 		if (this.#destroyed) return;
 		const scope = (this.#scope = new MapScope(map));
-		scope.addSource(SOURCE, { type: 'geojson', data: EMPTY, promoteId: 'id', attribution: 'Trees: USGS 3DEP lidar, City of Boise, US Forest Service' });
+		scope.addSource(SOURCE, { type: 'geojson', data: EMPTY, promoteId: 'id', attribution: CREDIT });
 		addSlotted(map, treeLayers(), def.order, (l, before) => scope.addLayer(l, before));
 		scope.on('moveend', () => this.#schedule());
 		scope.on('resize', () => this.#schedule());
@@ -153,7 +156,7 @@ export class TreesModule implements LayerModule {
 		scope.defer(ctx.picker.onHover((h) => this.#hover(h?.selection ?? null)));
 		scope.defer(() => {
 			clearTimeout(this.#timer);
-			this.#abort?.abort();
+			this.#cancel();
 		});
 		scope.defer(() => this.#dropScene());
 		this.#installDebug();
@@ -167,13 +170,13 @@ export class TreesModule implements LayerModule {
 		this.#visible = on;
 		const map = this.#scope?.map;
 		if (!map) return;
-		if (map.getLayer(DISCS)) map.setLayoutProperty(DISCS, 'visibility', on ? 'visible' : 'none');
+		for (const id of [DISCS, CREDIT_LAYER]) if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', on ? 'visible' : 'none');
 		if (on) {
 			this.#onZoom();
 			void this.#refresh();
 		} else {
 			clearTimeout(this.#timer);
-			this.#abort?.abort();
+			this.#cancel();
 			this.#showModels(false);
 			this.#setHover(null);
 		}
@@ -187,7 +190,17 @@ export class TreesModule implements LayerModule {
 		this.#timer = setTimeout(() => void this.#refresh(), FETCH_DEBOUNCE_MS);
 	}
 
-	/** Ask for the view's trees, unless what's here still serves it. */
+	/** Call off the request on its way, if any: its answer is no longer wanted. */
+	#cancel() {
+		this.#abort?.abort();
+		this.#abort = null;
+	}
+
+	/**
+	 * Ask for the view's trees, unless what's here still serves it. Every
+	 * branch that doesn't ask calls off the request on its way, so an answer
+	 * for an earlier view never lands over this one.
+	 */
 	async #refresh(force = false): Promise<void> {
 		const map = this.#scope?.map;
 		if (!map || !this.#visible || this.#destroyed) return;
@@ -199,30 +212,41 @@ export class TreesModule implements LayerModule {
 		const want = wantedBox([b.getWest(), b.getSouth(), b.getEast(), b.getNorth()], [c.lng, c.lat], radius);
 		const here = this.areas.some((a) => intersects(a.bounds, want));
 		this.#setMode(zoom, here);
-		if (zoom < DISCS_ZOOM) return;
+		if (zoom < DISCS_ZOOM) {
+			this.#cancel();
+			return;
+		}
 		const limit = zoom >= SCENE_FROM_ZOOM ? this.#limit3d : LIMIT_DISCS;
 		if (!here) {
+			this.#cancel();
 			if (this.#rows.length) this.#setTrees({ trees: [], truncated: false }, want, limit);
 			return;
 		}
 		if (!force && stillServes(this.#fetched, want, limit)) {
+			this.#cancel();
 			this.#syncScene();
 			return;
 		}
-		this.#abort?.abort();
-		const ctl = (this.#abort = new AbortController());
 		const url = treesUrl(want, limit);
+		// The same box is already on its way: let it land.
+		if (!force && this.#abort && url === this.#lastUrl) return;
+		this.#cancel();
+		const ctl = (this.#abort = new AbortController());
 		this.#lastUrl = url;
 		this.requests++;
+		// Only the newest request lands (a called-off one may still answer).
+		const current = () => ctl === this.#abort && !ctl.signal.aborted && !this.#destroyed;
 		try {
 			const res = await fetch(url, { signal: ctl.signal });
 			if (!res.ok) throw new Error((await res.json().catch(() => null))?.message ?? `HTTP ${res.status}`);
 			const data = (await res.json()) as TreesInView;
-			if (ctl.signal.aborted || this.#destroyed) return;
+			if (!current()) return;
+			this.#abort = null;
 			this.#setTrees(data, want, limit);
 			if (this.view.problem) this.view = { ...this.view, problem: null };
 		} catch (e) {
-			if (ctl.signal.aborted || this.#destroyed) return;
+			if (!current()) return;
+			this.#abort = null;
 			this.view = { ...this.view, problem: `Couldn't load the trees here: ${e instanceof Error ? e.message : e}` };
 		}
 	}
@@ -283,10 +307,7 @@ export class TreesModule implements LayerModule {
 	#applyFade(fade: number) {
 		if (fade === this.#fade) return;
 		this.#fade = fade;
-		for (const inst of this.#instances) {
-			const row = this.#byId.get(inst.id.slice(TREE_PREFIX.length));
-			if (row) inst.opacity = KIND_OPACITY[row.kind] * fade;
-		}
+		for (const inst of this.#instances) inst.opacity = fade;
 		this.#scope?.map.triggerRepaint();
 	}
 

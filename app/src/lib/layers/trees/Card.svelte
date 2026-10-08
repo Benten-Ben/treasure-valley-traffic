@@ -9,12 +9,11 @@
 		eventDetail,
 		eventName,
 		howWeKnow,
-		KIND_OPACITY,
 		KIND_WORD,
 		kindText,
 		lidarYear,
 		metresFeet,
-		treeGreen,
+		treeColor,
 		treeTitle,
 		trunkIn,
 		TYPE_NAME,
@@ -81,7 +80,7 @@
 <h2>{title}</h2>
 <p class="meta kind-line">
 	<svg viewBox="0 0 14 14" width="13" height="13" aria-hidden="true">
-		<circle cx="7" cy="7" r="5.5" fill={treeGreen(row.id, type)} stroke={DISC_EDGE} stroke-width="1" opacity={KIND_OPACITY[kind]} />
+		<circle cx="7" cy="7" r="5.5" fill={treeColor(row.id, type, kind)} stroke={DISC_EDGE} stroke-width="1" />
 	</svg>
 	<span><b>{KIND_WORD[kind]}</b> · {TYPE_NAME[type].replace(' tree', '').toLowerCase()}</span>
 </p>

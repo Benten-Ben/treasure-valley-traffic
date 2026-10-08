@@ -130,10 +130,10 @@ rebuilt when its catalogue changes (monthly) or new lidar arrives.
   (`#lib/scene`, §14.8), built in code like the buses: a round crown for
   broadleaf trees, stacked cones for conifers, a tall rounded column for
   narrow trees, each on a short trunk, scaled to the tree's crown and
-  height, with a soft shadow. Kinds are told apart by opacity, as with
-  buildings (catalogued solid, placed lighter, estimated lightest), and by
-  name in the tree panel and the legend, never by color alone.
-- **Farther out:** crown discs, with the same opacity rule.
+  height, with a soft shadow. Kinds are told apart by tone, as with
+  buildings (catalogued in full green, placed lighter, estimated lightest),
+  and by name in the tree panel and the legend, never by color alone.
+- **Farther out:** crown discs, in the same tones.
 - **Click a tree:** its kind and how we know it; height and crown width;
   type; for catalogued trees the species, trunk diameter, planting date,
   last verified and condition; and its log.
@@ -154,14 +154,33 @@ rebuilt when its catalogue changes (monthly) or new lidar arrives.
   [r, r, h], with a brown trunk and the crown in the tree's green. The
   greens are olive, three per type, at least ΔE 10 from every route color
   ([ch. 14's color budget](14-ui-v2.md#the-color-budget)).
+- **Kinds by tone** (Oct 8, after the review): every tree draws solid.
+  Placed trees mix a quarter of cream into their green (OKLab), estimated
+  ones half, on the models, the discs, the legend and the panel. The first
+  build dithered placed trees at 80% and estimated ones at 50%, which made
+  most of the map's trees grey, speckled and see-through; the dither is now
+  only for the disc-to-model crossfade. The discs keep a thin dark edge, so
+  an estimated disc's swatch keeps 3:1 against the legend card.
 - **Zooms:** crown discs from z13; the scene engine is asked for at z14.5;
-  models dither in over 14.7–15 as the discs fade out. The view's trees are
+  models dither in over 14.7–15 as the discs fade out. The discs' fade
+  depends on the zoom alone: MapLibre evaluates an expression of zoom and a
+  feature's value only at whole zooms and blends between them, so a fade
+  that also read each kind's opacity started at z14. The view's trees are
   asked for 250 ms after the map stops, in a box a quarter bigger than the
-  view and kept within a screen diagonal of the centre. Nothing is asked for
-  where no area is built.
+  view and kept within a screen diagonal of the centre. Only the newest
+  request lands: one the view no longer wants is called off. Nothing is
+  asked for where no area is built.
+- **Credit:** the map's attribution credits the trees (USGS 3DEP lidar,
+  City of Boise, US Forest Service) at every zoom they're drawn, through a
+  layer that matches no tree (MapLibre credits a source only while one of
+  its layers is shown, and the discs stop at z15).
 - **Picking:** trees rank just under streets, so a click on a road under a
-  crown still opens the road. A model's hit radius is its crown, not its
-  bounding sphere (the scene engine's opt-in `pickRadius`).
+  crown still opens the road. A model's hit area is a capsule from its
+  trunk to its top, as wide as its crown, not its bounding sphere (the
+  scene engine's opt-in `pickRadius`), so a tall tree is picked anywhere
+  along it with the map tilted. Where trees overlap on screen, the one
+  nearest the camera wins. A selected tree stays on the ground at its size
+  (the engine's `grounded`): the ground ring marks it.
 - **Measured (Oct 8, owner's laptop, headless Chromium on the M1 GPU):**
   15,000 synthetic trees around the North End box, viewed at z16 with
   pitch 50 while rotating. With 1,000, 2,000, 3,000 and 4,000 trees handed
@@ -170,7 +189,10 @@ rebuilt when its catalogue changes (monthly) or new lidar arrives.
   Cameras and Streets on as well, 4,000 trees still held 16.7 ms, at 4.0 ms
   of scene JS. So the cap is the API's close-up limit: the tallest 4,000
   trees in view, and the legend says so when it applies. Under SwiftShader
-  (the test browser) a frame takes hundreds of ms at any count.
+  (the test browser) a frame takes hundreds of ms at any count. Measured
+  again with the hit capsules (two more projections per tree): still
+  16.7 ms at every count, at a median 1.1, 2.2, 3.0 and 4.1 ms of scene JS
+  (95th percentile 7.4 ms at 4,000).
 
 ## 19.7 The pilot: North End
 
