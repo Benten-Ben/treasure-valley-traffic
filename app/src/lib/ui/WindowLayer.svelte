@@ -72,16 +72,33 @@
 		})
 	);
 
-	/** Where the bars are now: the top bar's bottom and the toolbar's (or a mode banner's) top, plus a 12 px gap. */
+	/** The camera widget's column and the Map / Aerial switch beside it (MapHost's), when shown. */
+	const RIGHT_SIDE = '.chrome .right .widget [role="group"], main > .views';
+
+	/**
+	 * Where the bars are now, plus a 12 px gap: the top bar's bottom, the toolbar's (or a mode
+	 * banner's) top, and the left edge of the camera widget and the Map / Aerial switch, so a
+	 * window docked or dragged right stops beside them instead of covering them.
+	 */
 	function bars(): Bars {
+		const vw = innerWidth;
 		const vh = innerHeight;
 		const top = document.querySelector('.chrome header.topbar')?.getBoundingClientRect();
 		const bottom = document.querySelector('.chrome .bottom')?.getBoundingClientRect();
+		let right = 0;
+		for (const el of document.querySelectorAll(RIGHT_SIDE)) {
+			const r = el.getBoundingClientRect();
+			if (r.width > 0 && r.height > 0 && r.left > vw / 2) right = Math.max(right, Math.ceil(vw - r.left + 12));
+		}
 		return {
 			top: Math.max(SAFE_TOP, top && top.height > 0 ? Math.ceil(top.bottom + 12) : 0),
-			bottom: Math.max(SAFE_BOTTOM, bottom && bottom.height > 0 ? Math.ceil(vh - bottom.top + 12) : 0)
+			bottom: Math.max(SAFE_BOTTOM, bottom && bottom.height > 0 ? Math.ceil(vh - bottom.top + 12) : 0),
+			right
 		};
 	}
+
+	/** What `bars()` measures: the bars, the widget and the switch. */
+	const MEASURED = `.chrome header.topbar, .chrome .bottom, ${RIGHT_SIDE}`;
 
 	function measure() {
 		if (gone) return;
@@ -96,16 +113,18 @@
 		frame = requestAnimationFrame(() => {
 			measure();
 			observer = new ResizeObserver(() => measure());
-			for (const el of document.querySelectorAll('.chrome header.topbar, .chrome .bottom')) observer.observe(el);
+			for (const el of document.querySelectorAll(MEASURED)) observer.observe(el);
 		});
 	});
 
-	// The bars differ between modes (a banner instead of the toolbar, no top bar).
+	// The bars differ between modes (a banner instead of the toolbar, no top bar), and the
+	// Map / Aerial switch appears once the manifest says there's imagery.
 	$effect(() => {
 		void app.modes.current;
+		void app.manifest;
 		const f = requestAnimationFrame(() => {
 			measure();
-			if (observer) for (const el of document.querySelectorAll('.chrome header.topbar, .chrome .bottom')) observer.observe(el);
+			if (observer) for (const el of document.querySelectorAll(MEASURED)) observer.observe(el);
 		});
 		return () => cancelAnimationFrame(f);
 	});

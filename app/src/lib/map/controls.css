@@ -99,9 +99,16 @@ main .maplibregl-ctrl-attrib .maplibregl-ctrl-attrib-button:focus:not(:focus-vis
 }
 
 /* --- MapHost's Map / Aerial switch, beside the camera widget's column ---------------- */
+/* In Explore it's a map control like the widget: the z-20 band, under floating windows (30–39)
+   and the bars (40), never over them (§14.3 "Stacking"). Windows keep clear of it anyway
+   (WindowLayer counts it in the safe area). In a mode it keeps MapHost's 40, over the mode's
+   panels. */
 main > div.views.card {
 	top: 76px;
 	right: 64px;
+}
+main > div.views.card:not(.in-mode) {
+	z-index: 20;
 }
 
 /* --- phone: the sheet and tab bar own the bottom of the screen ------------------------ */
