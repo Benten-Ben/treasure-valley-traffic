@@ -14,8 +14,9 @@
 	 * - `BEHIND −3:05` after playing on from a pause, until Go live;
 	 * - `LIVE · no new GPS for 3 min` with a hollow dot when the feed stalls
 	 *   (`26 h`, `2 days` for long stalls);
-	 * - `NO GPS YET` with a hollow dot, unfilled, until the bus feed has
-	 *   answered once (it never says LIVE before there's data);
+	 * - `NO GPS YET` with a hollow dot, unfilled, while Transit is on and no
+	 *   bus fix is known yet (it never says LIVE before there's data; with
+	 *   Transit off there's nothing to wait for);
 	 * - `REPLAY · Oct 6` for a `?at=` link (the time bar comes later).
 	 *
 	 * Space pauses and plays, L goes back to live (the keymap registry), while

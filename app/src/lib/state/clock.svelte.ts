@@ -49,6 +49,12 @@ export interface ClockOptions {
 	ticking?: boolean;
 	/** Called when Go live leaves a replay (drops `?at=` from the URL). */
 	onLeaveReplay?: () => void;
+	/**
+	 * Whether the bus feed is wanted now (the Transit layer is on), read reactively. Only then
+	 * does the pill wait for it (`NO GPS YET`); with Transit off there's nothing to wait for.
+	 * Default: always.
+	 */
+	wanted?: () => boolean;
 }
 
 /** The median of a list of numbers (0 for none). */
@@ -138,10 +144,12 @@ export class Clock {
 	#keys: (() => void) | null = null;
 	#keyHolders = 0;
 	#onLeaveReplay: (() => void) | undefined;
+	#wanted: () => boolean;
 
 	constructor(o: ClockOptions = {}) {
 		this.#now = o.now ?? (() => Date.now());
 		this.#onLeaveReplay = o.onLeaveReplay;
+		this.#wanted = o.wanted ?? (() => true);
 		const d = o.delay ?? readStored(DELAY_KEY, isDelay) ?? DEFAULT_DELAY;
 		this.delay = d;
 		this.lag = d;
@@ -191,14 +199,15 @@ export class Clock {
 	}
 
 	/**
-	 * `waiting`: live, but no bus fix known yet (Transit hasn't polled, its first poll failed, or
-	 * no bus has ever reported), so the pill doesn't claim LIVE before there's anything live.
+	 * `waiting`: live and the bus feed wanted (Transit is on), but no bus fix known yet (Transit
+	 * hasn't loaded or polled, its first poll failed, or no bus has ever reported), so the pill
+	 * doesn't claim LIVE before there's anything live. With Transit off it doesn't wait.
 	 */
 	get state(): ClockState {
 		if (this.paused !== null) return 'paused';
 		if (this.replayAt !== null) return 'replay';
 		if (!this.live) return 'behind';
-		if (!this.feed?.lastFix) return 'waiting';
+		if (!this.feed?.lastFix && this.#wanted()) return 'waiting';
 		const age = this.feedAge;
 		return age !== null && age >= STALL_S ? 'stalled' : 'live';
 	}
@@ -330,7 +339,8 @@ export function clockOf(app: AppCtx): Clock {
 	let c = clocks.get(app);
 	if (!c) {
 		const at = typeof location === 'undefined' ? null : parseAt(new URL(location.href).searchParams.get('at'));
-		c = new Clock({ at, onLeaveReplay: () => void dropAtParam() });
+		// The feed is wanted while Transit is on (before its module has even loaded).
+		c = new Clock({ at, onLeaveReplay: () => void dropAtParam(), wanted: () => app.layers?.isOn('transit') ?? true });
 		clocks.set(app, c);
 		Object.defineProperty(app, 'clock', { value: c, configurable: true, enumerable: false });
 	}

@@ -200,6 +200,13 @@ describe('the clock', () => {
 		const d = new Clock({ now: () => wall, ticking: false, delay: 90 });
 		d.pause();
 		expect(d.label).toBe('PAUSED −1:30');
+		// With Transit off there's no feed to wait for: the clock itself is live.
+		let on = true;
+		const e = new Clock({ now: () => wall, ticking: false, delay: 90, wanted: () => on });
+		expect(e.label).toBe('NO GPS YET');
+		on = false;
+		expect(e.state).toBe('live');
+		expect(e.label).toBe('LIVE −1:30');
 	});
 
 	it('says a long stall in hours, then days', () => {
