@@ -354,7 +354,9 @@
 		undoMode.push(
 			onEscape(ESC.calibrate, () => {
 				if (app.modes.current !== 'calibrate') return false;
-				leave();
+				// Cancel's question first, like a popover; then leave, keeping the draft.
+				if (confirming) confirming = false;
+				else leave();
 				return true;
 			})
 		);
@@ -488,8 +490,12 @@
 		cameFromMap = fromMap && (nav.type === 'link' || nav.type === 'goto' || (nav.type === 'popstate' && (nav.delta ?? 0) > 0));
 	});
 
+	let leaving = false;
 	function leave() {
 		confirming = false;
+		// Once: a second Back would go past the map.
+		if (leaving) return;
+		leaving = true;
 		if (cameFromMap) history.back();
 		else void goto('/');
 	}
@@ -730,23 +736,25 @@
 				</section>
 			</div>
 
-			<div class="actions">
+			<footer class="actions">
+				<div class="buttons">
 				<button class="pill" onclick={checkAlignment} disabled={!solution || !cams || checking} title="Look through the camera at this unsaved pose">
 					<Icon icon={LOOK} size={18} /> Check alignment
 				</button>
 				<button class="pill primary" onclick={save} disabled={!solution || !!busy} title="Save (Ctrl+S)">
 					<Icon icon={SAVE} size={18} /> Save calibration
 				</button>
-			</div>
-			{#if message}
-				<p class="msg {message.kind}" role={message.kind === 'problem' ? 'alert' : 'status'}>
-					<span aria-hidden="true">{message.kind === 'problem' ? '▲' : '●'}</span> {message.text}
+				</div>
+				{#if message}
+					<p class="msg {message.kind}" role={message.kind === 'problem' ? 'alert' : 'status'}>
+						<span aria-hidden="true">{message.kind === 'problem' ? '▲' : '●'}</span> {message.text}
+					</p>
+				{/if}
+				{#if busy && frame}<p class="muted">{busy}</p>{/if}
+				<p class="keys">
+					<kbd>Ctrl</kbd>+<kbd>Z</kbd> undo · <kbd>Delete</kbd> removes the selected pair · <kbd>Ctrl</kbd>+<kbd>S</kbd> saves · <kbd>Esc</kbd> leaves, keeping the draft
 				</p>
-			{/if}
-			{#if busy && frame}<p class="muted">{busy}</p>{/if}
-			<p class="keys">
-				<kbd>Ctrl</kbd>+<kbd>Z</kbd> undo · <kbd>Delete</kbd> removes the selected pair · <kbd>Ctrl</kbd>+<kbd>S</kbd> saves · <kbd>Esc</kbd> leaves, keeping the draft
-			</p>
+			</footer>
 		{/if}
 	</div>
 {/if}
@@ -755,6 +763,7 @@
 	/* Docked left at 45%; the map's left padding follows it. */
 	.calibrator {
 		position: absolute;
+		scrollbar-width: thin;
 		top: 10px;
 		left: 10px;
 		bottom: 10px;
@@ -979,7 +988,20 @@
 		margin-top: 8px;
 		font-size: 13px;
 	}
+	/* The actions stay in reach however long the pairs list grows. */
 	.actions {
+		position: sticky;
+		bottom: -12px;
+		z-index: 1;
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+		margin: 0 -14px -12px;
+		padding: 8px 14px 10px;
+		border-top: 2px solid var(--panel-edge);
+		background: var(--panel);
+	}
+	.buttons {
 		display: flex;
 		flex-wrap: wrap;
 		gap: 8px;

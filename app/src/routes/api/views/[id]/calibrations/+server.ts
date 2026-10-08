@@ -7,7 +7,7 @@ import { MIN_PAIRS, project, type Pair, type Pose } from '#lib/calibration/solve
 const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 
 /** More pairs than anyone clicks by hand: a body this big is a mistake. */
-export const MAX_PAIRS = 200;
+const MAX_PAIRS = 200;
 
 /** The JSON body, or a 400. */
 async function body(request: Request): Promise<Record<string, unknown>> {
