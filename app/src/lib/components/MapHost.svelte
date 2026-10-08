@@ -19,6 +19,14 @@
 	let container: HTMLDivElement;
 	const hasImagery = $derived(Boolean(app.manifest?.imagery));
 
+	// Entering a mode (look-through, calibrate) folds the open credits card back to its (i),
+	// as MapLibre does on the first drag: the mode's banner takes the bottom of the screen,
+	// and the card would sit under it (WP15's review). The (i) still opens it.
+	$effect(() => {
+		if (app.modes.current === 'explore') return;
+		container?.querySelector('.maplibregl-ctrl-attrib.maplibregl-compact-show')?.classList.remove('maplibregl-compact-show');
+	});
+
 	onMount(() => {
 		let gone = false;
 		let map: Map | undefined;

@@ -105,7 +105,7 @@ export class RoadWeatherModule implements LayerModule {
 			const img = badgeImage(hollow, 2);
 			if (img) scope.addImage(id, img, { pixelRatio: 2 });
 		}
-		scope.addSource(SOURCE, { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+		scope.addSource(SOURCE, { type: 'geojson', data: { type: 'FeatureCollection', features: [] }, attribution: def.source });
 		addSlotted(map, roadWeatherLayers(), def.order, (l, before) => scope.addLayer(l, before));
 		this.#set(data);
 
