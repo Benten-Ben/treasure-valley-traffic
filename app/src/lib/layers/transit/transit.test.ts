@@ -59,6 +59,8 @@ describe('wording', () => {
 		expect(ageText(42.4)).toBe('42 s ago');
 		expect(ageText(185)).toBe('3 min ago');
 		expect(ageText(3900)).toBe('1 h 5 min ago');
+		expect(ageText(1557 * 60)).toBe('25 h 57 min ago');
+		expect(ageText(50 * 3600)).toBe('2 days ago');
 		expect(ageText(-3)).toBe('0 s ago');
 	});
 

@@ -138,6 +138,11 @@ export interface LayerModule {
 	readonly error?: string | null;
 	/** When its data last arrived (epoch ms), for "source and age". */
 	readonly updatedAt?: number | null;
+	/**
+	 * How old its data is, in words, when that isn't when it last arrived (Transit: the newest bus
+	 * fix, not the last poll). The toolbar's tooltip prefers it to `updatedAt`.
+	 */
+	age?(): string | null;
 	/** Counts for the loading card: "42 routes". */
 	summary?(): string | null;
 	/** The selection changed (to one of its own, or to anything else). */

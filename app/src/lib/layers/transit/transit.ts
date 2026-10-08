@@ -61,6 +61,7 @@ export function ageText(seconds: number): string {
 	const s = Math.max(0, Math.round(seconds));
 	if (s < 90) return `${s} s ago`;
 	const m = Math.round(s / 60);
+	if (m >= 48 * 60) return `${Math.floor(m / 1440)} days ago`;
 	return m < 60 ? `${m} min ago` : `${Math.floor(m / 60)} h ${m % 60} min ago`;
 }
 
