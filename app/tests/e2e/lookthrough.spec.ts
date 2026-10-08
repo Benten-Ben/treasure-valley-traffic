@@ -27,7 +27,12 @@ import { env, expect, mapReady, screenPath, seeds, test, type Seed } from './fix
  * - the Esc order (help, then look-through, before the card and selection);
  *   Enter on a focused window and a double-click go straight in, the latter
  *   from the view before the clicks' fly;
- * - a phone gets the full-screen picture and a bottom strip.
+ * - a phone gets the full-screen picture and a bottom strip;
+ * - entered from a z13 overview over ground higher than the camera's eye
+ *   (through the API, and by a double-click on the camera there), the map's
+ *   centre is on the terrain under the view axis and the near plane is under
+ *   2 m, on arrival and after the terrain has loaded (the fix round, Oct 8:
+ *   it was 10 km out, kilometres underground, with a near plane of 140–200 m).
  */
 type Pair = { pixel: [number, number]; ground: [number, number, number] };
 type SeedPairs = Seed & { pairs: Pair[]; groundZ: number };
@@ -133,6 +138,17 @@ const note = (line: string) => {
 	mkdirSync(env().screens, { recursive: true });
 	appendFileSync(screenPath('wp13-numbers.txt'), `${new Date().toISOString()} ${line}\n`);
 };
+
+/**
+ * z13 overviews over ground higher than the camera's eye (true heights from
+ * the map's terrain, Oct 8): the foothills north-east of downtown for Capitol
+ * & Myrtle (about 905 m against an eye at 829 m), the bench south-east of
+ * Franklin & Milwaukee (about 845 m against 835 m). The camera stays on screen.
+ */
+const OVERVIEWS: [Seed['kind'], [number, number]][] = [
+	['roll', [-116.1742, 43.62266]],
+	['low-tilt', [-116.25672, 43.59345]]
+];
 
 /** Let CSS animations finish (SwiftShader starves them while the map draws), for screenshots. */
 async function settle(page: Page) {
@@ -406,6 +422,74 @@ test.describe('cameras: 3D and look-through', () => {
 		await page.screenshot({ path: screenPath('wp13-look-phone.png') });
 		await strip.getByRole('button', { name: 'Step out' }).click();
 		await expect.poll(() => mode(page), { timeout: 120_000 }).toBe('explore');
+		expect(offsite).toEqual([]);
+	});
+
+	test('entered from a z13 overview over higher ground, through the API and by a double-click: the centre on the terrain, the near plane under 2 m', { tag: '@wp13' }, async ({ page, offsite }) => {
+		test.setTimeout(1_200_000);
+		const all = seedsWithPairs();
+		for (const [kind, centre] of OVERVIEWS) {
+			const s = all.find((x) => x.kind === kind)!;
+			for (const how of ['the API', 'a double-click'] as const) {
+				// A fresh page each time: no window, no selection, nothing polled yet.
+				await page.goto('about:blank');
+				await openMap(page, `#map=13/${centre[1].toFixed(5)}/${centre[0].toFixed(5)}/0/0&layers=cameras`);
+				// The overview's centre is above the camera's eye: MapLibre alone would put the centre 10 km out from there.
+				const high = await page.evaluate(() => {
+					const m = (globalThis as any).__tvt.map;
+					const g = m.queryTerrainElevation(m.getCenter());
+					return g === null ? null : g / (m.getTerrain()?.exaggeration ?? 1);
+				});
+				expect(high, `${s.kind}: the overview's ground (m) is above the eye at ${s.pose.alt} m`).toBeGreaterThan(s.pose.alt + 2);
+				const start = await camera(page);
+				// Load look-through (Step out is a no-op outside it), so its trace records the flight in.
+				await page.evaluate(() => (globalThis as any).__tvtLook.stepOut());
+				await page.evaluate(() => (globalThis as any).__tvtLook.trace(true));
+				if (how === 'the API') {
+					expect(await page.evaluate(([id, v]) => (globalThis as any).__tvtLook.enter(id, v), [s.cameraId, s.viewId] as const)).toBe(true);
+				} else {
+					// The first click flies to the camera; the double-click goes in from the overview, before that fly.
+					const pole = await page.evaluate((id) => (globalThis as any).__tvtCameras.cameras().find((c: any) => c.id === id), s.cameraId);
+					const p = await pointOf(page, [pole.lng, pole.lat]);
+					await page.mouse.dblclick(p.x, p.y);
+				}
+				await expect.poll(async () => (await lookState(page)).phase, { timeout: 180_000 }).toBe('looking');
+				expect((await lookState(page)).cameraId).toBe(s.cameraId);
+				// The flight in never collapses the zoom (the bug's centre 10 km out read as zoom 12.1–12.7).
+				const trace: { phase: string; zoom: number }[] = await page.evaluate(() => (globalThis as any).__tvtLook.trace(false));
+				const fly = trace.filter((x) => x.phase === 'fly');
+				expect(fly.length).toBeGreaterThan(0);
+				const lowest = Math.min(...fly.map((x) => x.zoom));
+				expect(lowest, 'the lowest zoom on the way in').toBeGreaterThan(start.zoom - 0.3);
+				for (const when of ['on arrival', 'once the terrain has loaded'] as const) {
+					if (when !== 'on arrival') {
+						await mapReady(page);
+						await page.waitForTimeout(3000);
+					}
+					const ins = await inspect(page);
+					const line = `from the overview (${how}) ${s.kind} ${when}: centre ${ins.centre.elevation.toFixed(2)} m over terrain ${ins.centre.ground?.toFixed(2)} m, zoom ${ins.centre.zoom.toFixed(2)}, near ${ins.near.toFixed(2)} m, plane ${ins.plane.d.toFixed(2)} m, eye ${ins.errorM.toExponential(2)} m off; the flight's lowest zoom ${lowest.toFixed(2)} from ${start.zoom.toFixed(2)}`;
+					note(line);
+					test.info().annotations.push({ type: 'overview', description: line });
+					expect(ins.errorM, line).toBeLessThanOrEqual(0.1);
+					expect(ins.near, line).toBeLessThanOrEqual(2);
+					expect(ins.centre.zoom, line).toBeGreaterThan(18);
+					expect(ins.centre.ground, line).not.toBeNull();
+					expect(Math.abs(ins.centre.elevation - ins.centre.ground), line).toBeLessThan(3);
+					expect(ins.plane.d, line).toBeGreaterThanOrEqual(2 * ins.near);
+				}
+				const reg = await registration(page, s, s.pose);
+				note(`from the overview (${how}) ${s.kind}: registration mean ${reg.mean.toFixed(3)} px, max ${reg.max.toFixed(3)} px`);
+				expect(reg.mean).toBeLessThanOrEqual(1.5);
+				await settle(page);
+				await page.screenshot({ path: screenPath(`fix-look-overview-${s.kind}-${how === 'the API' ? 'api' : 'dblclick'}.png`) });
+				// Out: back to the overview exactly.
+				await page.keyboard.press('Escape');
+				await expect.poll(() => mode(page), { timeout: 120_000 }).toBe('explore');
+				await mapReady(page);
+				const back = await camera(page);
+				for (const k of ['lng', 'lat', 'zoom', 'bearing', 'pitch'] as const) expect(Math.abs(back[k] - start[k]), `${how}: ${k}`).toBeLessThan(1e-6);
+			}
+		}
 		expect(offsite).toEqual([]);
 	});
 });
