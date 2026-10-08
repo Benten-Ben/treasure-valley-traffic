@@ -10,7 +10,8 @@ import type { PhotoTextures } from '../textures.js';
  * the picture (a layer of the photo texture array) with a thin cream frame,
  * and the back is a cream panel with the camera's name. Blended, no depth
  * writes; planes that ask for it (look-through) draw without the depth test,
- * so nothing in front can cut them.
+ * so nothing in front can cut them, and without the cream frame (the page
+ * draws look-through's 2 px viewfinder edge just outside the picture).
  */
 export const PHOTO_FLOATS = 11; // position 3, uv 2, layer 1, back label rect 4, opacity 1
 
@@ -127,8 +128,10 @@ export class PhotoBatch {
 	}
 
 	/**
-	 * Draw `count` uploaded vertices from vertex `first` (6 a plane).
-	 * Blending on, depth writes off; the caller sets the depth test.
+	 * Draw `count` uploaded vertices from vertex `first` (6 a plane), with a
+	 * cream frame over the outer `edge` of each (uv; 0 for none: look-through's
+	 * plane, framed by the page instead). Blending on, depth writes off; the
+	 * caller sets the depth test.
 	 */
 	draw(first: number, count: number, m32: Float32Array, textures: PhotoTextures, edge = 0.012): number {
 		if (!count) return 0;

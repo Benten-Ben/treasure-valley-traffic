@@ -12,7 +12,6 @@ import {
 	metresBetween,
 	nearMetres,
 	photoCrop,
-	framedCrop,
 	photoDistance,
 	photoPlane,
 	planeApex,
@@ -98,13 +97,6 @@ const lerpPad = (a: PaddingOptions, b: PaddingOptions, t: number): PaddingOption
 	left: lerp(a.left ?? 0, b.left ?? 0, t)
 });
 const reducedMotion = () => typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches;
-
-/**
- * The scene's photo planes draw a cream edge over the outer 1.2% of their
- * texture (PhotoBatch's `edge`). Look-through grows its crop by as much
- * (`framedCrop`), so the edge frames the picture instead of covering it.
- */
-export const SCENE_PHOTO_EDGE = 0.012;
 
 /** Every animation takes at least this many frames, however slow they come, so nothing ever jumps. */
 export const MIN_STEPS = 8;
@@ -406,8 +398,9 @@ export class LookThrough {
 		const { w, h } = canvasSize(this.#map);
 		const box = letterbox(w, h, cal.size);
 		const fov = mapFov(pose.vfov, h, box.height);
-		// The picture above the 511 bar, grown so the plane's cream edge falls just outside it.
-		const crop = framedCrop(photoCrop(cal.size, false), SCENE_PHOTO_EDGE);
+		// The picture above the 511 bar. A plane drawn over everything has no cream edge of its own (the scene's
+		// PhotoBatch): the frame's 2 px viewfinder edge goes just outside it (LookFrame.svelte).
+		const crop = photoCrop(cal.size, false);
 		const plane = photoPlane(pose, cal.size, crop);
 		const name = this.#src.nameOf(cal.cameraId);
 		const photo: ScenePhoto = {

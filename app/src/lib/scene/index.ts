@@ -139,7 +139,10 @@ export interface ScenePhoto {
 	/** The back panel's text (the camera's name). */
 	label?: string;
 	opacity?: number;
-	/** False in look-through: nothing in front can cut it. */
+	/**
+	 * False in look-through: nothing in front can cut it, and it has no cream
+	 * frame of its own (the page draws the viewfinder edge outside it).
+	 */
 	depthTest?: boolean;
 }
 
@@ -750,7 +753,7 @@ export class Scene implements HitSource {
 			gpu.photos.upload(this.#photos);
 			calls += gpu.photos.draw(0, split, f.m32, this.textures);
 			gl.disable(gl.DEPTH_TEST);
-			calls += gpu.photos.draw(split, this.#photos.n - split, f.m32, this.textures);
+			calls += gpu.photos.draw(split, this.#photos.n - split, f.m32, this.textures, 0);
 			gl.enable(gl.DEPTH_TEST);
 		}
 		gl.depthMask(true);

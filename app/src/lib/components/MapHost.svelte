@@ -63,7 +63,7 @@
 <div class="map" bind:this={container}></div>
 
 {#if hasImagery}
-	<div class="views card" class:in-mode={app.modes.current !== 'explore'} role="group" aria-label="Map view">
+	<div class="views card" class:in-mode={app.modes.current !== 'explore'} class:looking={app.modes.current === 'look'} role="group" aria-label="Map view">
 		<button aria-pressed={!app.aerial} onclick={() => app.setAerial(false)}>Map</button>
 		<button aria-pressed={app.aerial} onclick={() => app.setAerial(true)}>Aerial</button>
 	</div>
@@ -113,6 +113,10 @@
 		.views.in-mode {
 			display: none;
 		}
+	}
+	/* Looking through, the picture fills the screen and the switch would sit over it (the view comes back on leaving). */
+	.views.looking {
+		display: none;
 	}
 	.problem {
 		position: absolute;
