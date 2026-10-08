@@ -24,11 +24,12 @@ import {
 	type PhotoPlane
 } from '#lib/calibration/frustum.js';
 import type { ImageSize, Pose } from '#lib/calibration/solver.js';
-import type { LiveView } from '#lib/contracts/live.js';
+import type { LiveFrame, LiveView } from '#lib/contracts/live.js';
 import type { Scene, ScenePhoto } from '#lib/scene/index.js';
 import type { ViewSnapshot } from '#lib/state/view.svelte.js';
 import { toasts } from '#lib/ui/toasts.svelte.js';
 import type { Calibration } from './cameras.js';
+import { sizeChanged } from './freshness.js';
 import type { LiveFeed } from './live.svelte.js';
 import { look } from './look.svelte.js';
 
@@ -121,6 +122,11 @@ export function progress(elapsed: number, ms: number, step: number): number {
 export function shownBox(box: Box, size: ImageSize, crop: Crop): Box {
 	const k = box.height / size.height;
 	return { x: box.x + crop.x * k, y: box.y + crop.y * k, width: crop.width * k, height: crop.height * k };
+}
+
+/** "Image size changed (768×466 → 1920×1166); recalibrate" when a live frame isn't the calibrated size (the window's words), else null. */
+export function resizedText(size: ImageSize, frame: { width: number; height: number } | null | undefined): string | null {
+	return sizeChanged(frame, { imageWidth: size.width, imageHeight: size.height });
 }
 
 /** The canvas size MapLibre uses (it floors the container's). */
@@ -252,6 +258,10 @@ interface Target {
 	/** The picture shown (live frame sha, or 'ref' for the reference frame), and the one decoding. */
 	sha: string | null;
 	loading: string | null;
+	/** "Image size changed (… → …); recalibrate" while the live picture is of another size, else null. */
+	resized: string | null;
+	/** The live picture is of another size and there's no reference frame to show instead: step out. */
+	noPicture: boolean;
 	unwatch: () => void;
 }
 
@@ -381,9 +391,7 @@ export class LookThrough {
 
 	/** Why a view's live picture can't be looked through (its size changed), or null. */
 	#sizeProblem(cal: Calibration): string | null {
-		const f = this.#feed.views[cal.viewId]?.frame;
-		if (!f || (f.width === cal.size.width && f.height === cal.size.height)) return null;
-		return `Image size changed (${cal.size.width}×${cal.size.height} → ${f.width}×${f.height}); recalibrate`;
+		return resizedText(cal.size, this.#feed.views[cal.viewId]?.frame);
 	}
 
 	/** ← and → order: every calibrated view, nearest the first camera first. */
@@ -432,6 +440,8 @@ export class LookThrough {
 			photo,
 			sha: null,
 			loading: null,
+			resized: null,
+			noPicture: false,
 			unwatch: this.#feed.watch([cal.viewId])
 		};
 	}
@@ -459,6 +469,8 @@ export class LookThrough {
 		look.box = null;
 		look.shown = null;
 		look.reference = false;
+		look.seen = null;
+		look.problem = null;
 		this.#src.exclude([cal.cameraId]);
 		this.#picture(t);
 
@@ -491,6 +503,11 @@ export class LookThrough {
 		const after = this.#readback(t);
 		if (!(after <= READBACK_M)) {
 			this.#abort(`Can't place the map camera at this pose (the eye reads back ${after.toFixed(2)} m off)`);
+			return false;
+		}
+		// The live picture changed size on the way in, and there's no reference frame to show instead.
+		if (t.noPicture) {
+			this.#abort(t.resized ?? "There's no picture of the calibrated size to look through");
 			return false;
 		}
 		this.#setDistance(t);
@@ -563,20 +580,46 @@ export class LookThrough {
 	/**
 	 * Load the target's newest picture: the live frame; or, once the live feed
 	 * has answered that there's none (blocked, capped, images off…), the
-	 * calibration's reference frame, labelled as such. A frame of another size
-	 * never replaces the picture (it would land in the wrong place).
+	 * calibration's reference frame, labelled as such.
+	 *
+	 * A frame of another size never replaces the picture (it would land in the
+	 * wrong place). Look-through says so ("Image size changed (… → …);
+	 * recalibrate", as a toast, in `look.problem` and on the strip) and keeps
+	 * the live picture of the calibrated size it shows, if any, or else shows
+	 * the reference frame, labelled. With no reference frame either, it steps
+	 * out. When the size comes back, the live picture does too.
 	 */
 	#picture(t: Target) {
 		const live = this.#views[t.cal.viewId] ?? this.#feed.views[t.cal.viewId];
 		const f = live?.frame ?? null;
-		if (f) {
-			if (f.width === t.size.width && f.height === t.size.height && f.sha !== t.sha && f.sha !== t.loading) void this.#load(t, f.sha, f.url, false);
-		} else if (live && live.state !== 'waiting' && !t.sha && !t.loading && t.cal.frame) {
-			void this.#load(t, 'ref', `/frames/${t.cal.frame}`, true);
+		const resized = resizedText(t.size, f);
+		this.#setResized(t, resized);
+		if (f && !resized) {
+			if (f.sha !== t.sha && f.sha !== t.loading) void this.#load(t, f.sha, f.url, f);
+		} else if ((resized || (live && live.state !== 'waiting')) && !t.sha && !t.loading) {
+			if (t.cal.frame) void this.#load(t, 'ref', `/frames/${t.cal.frame}`, null);
+			else if (resized) this.#noPicture(t);
 		}
 	}
 
-	async #load(t: Target, sha: string, url: string, reference: boolean) {
+	/** The live picture's size changed (a message), or came back (null). */
+	#setResized(t: Target, resized: string | null) {
+		if (t.resized === resized) return;
+		t.resized = resized;
+		if (this.#target !== t) return;
+		look.problem = resized;
+		if (resized) this.#tell(resized);
+	}
+
+	/** Nothing of the calibrated size to show: step out (at once, or when the flight in lands). */
+	#noPicture(t: Target) {
+		t.noPicture = true;
+		if (this.#target === t && look.phase === 'looking') void this.stepOut();
+	}
+
+	/** Decode a picture into the plane: a live frame, or (`frame` null) the reference frame. */
+	async #load(t: Target, sha: string, url: string, frame: LiveFrame | null) {
+		const reference = frame === null;
 		t.loading = sha;
 		const key = `look:${t.cal.viewId}:${sha}`;
 		try {
@@ -595,7 +638,10 @@ export class LookThrough {
 		t.sha = sha;
 		t.loading = null;
 		if (old && old !== key) this.#scene.textures.release(old);
-		if (this.#target === t) look.reference = reference;
+		if (this.#target === t) {
+			look.reference = reference;
+			look.seen = frame;
+		}
 		this.#show();
 	}
 

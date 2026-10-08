@@ -2,7 +2,8 @@ import type { Map } from 'maplibre-gl';
 import { describe, expect, it } from 'vitest';
 import { eyeOf, eyePose, metresBetween, nearMetres, pxPerMetre, type EyePose } from '#lib/calibration/frustum.js';
 import type { Pose } from '#lib/calibration/solver.js';
-import { ANCHOR_BELOW_M, GROUND_JUMP_M, offGround, placeEye, usableGround } from './lookthrough.js';
+import { sizeChanged } from './freshness.js';
+import { ANCHOR_BELOW_M, GROUND_JUMP_M, offGround, placeEye, resizedText, usableGround } from './lookthrough.js';
 
 /**
  * Look-through's placement (docs/14 §14.6 "Look through", step 5), on a
@@ -147,5 +148,15 @@ describe('placing the map camera at a pose (step 5)', () => {
 		expect(usableGround(812, 810, 811)).toBe(false);
 		expect(usableGround(800 + GROUND_JUMP_M + 0.1, 800, 900)).toBe(false);
 		expect(usableGround(1000, 800, 2000, Infinity)).toBe(true);
+	});
+});
+
+describe('the image-size check while looking', () => {
+	it('says what the window says, and nothing when the sizes agree', () => {
+		const size = { width: 768, height: 466 };
+		expect(resizedText(size, { width: 1920, height: 1166 })).toBe('Image size changed (768×466 → 1920×1166); recalibrate');
+		expect(resizedText(size, { width: 1920, height: 1166 })).toBe(sizeChanged({ width: 1920, height: 1166 }, { imageWidth: 768, imageHeight: 466 }));
+		expect(resizedText(size, { width: 768, height: 466 })).toBeNull();
+		expect(resizedText(size, null)).toBeNull();
 	});
 });

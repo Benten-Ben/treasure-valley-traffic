@@ -14,7 +14,11 @@
 	 * - the camera's name and where it is in the ← → order;
 	 * - the opacity slider;
 	 * - both clocks: "picture seen 0:48 ago · buses 1:30 behind" (the bus part
-	 *   only with Transit on); the picture is "seen", never "taken";
+	 *   only with Transit on); the picture is "seen", never "taken", and the age
+	 *   is the picture's on screen (not a newer frame that isn't shown);
+	 * - while the live picture is of another size, "◌ Image size changed (… →
+	 *   …); recalibrate" (the reference frame or the last live picture of the
+	 *   calibrated size stays on screen);
 	 * - ← and → to the previous or next calibrated camera by distance;
 	 * - Step out (also Esc).
 	 *
@@ -27,15 +31,22 @@
 	const tick = setInterval(() => (now = Date.now()), 1000);
 	onDestroy(() => clearInterval(tick));
 
-	const frame = $derived(look.viewId !== null ? (feed.views[look.viewId]?.frame ?? null) : null);
-	const age = $derived(frame && !look.reference ? feed.ageOf(frame, now) : null);
+	// The picture on screen, not the feed's newest frame (which may be decoding, or of another size).
+	const age = $derived(look.seen && !look.reference ? feed.ageOf(look.seen, now) : null);
 	const transit = $derived(app.layers?.isOn('transit') ?? false);
 	const behind = $derived.by(() => {
 		void now;
 		return transit ? clockOf(app).behind : null;
 	});
+	const resized = $derived(look.phase === 'looking' ? look.problem : null);
 	const picture = $derived(
-		look.reference ? 'reference picture (no live one yet)' : age === null ? 'waiting for the picture' : `picture seen ${minSec(age)} ago`
+		look.reference
+			? resized
+				? 'reference picture'
+				: 'reference picture (no live one yet)'
+			: age === null
+				? 'waiting for the picture'
+				: `picture seen ${minSec(age)} ago`
 	);
 	const busy = $derived(look.phase !== 'looking');
 </script>
@@ -60,6 +71,9 @@
 	<span class="clocks num" title="Seen: when our server first got the picture. The time printed on the picture is ACHD's own clock.">
 		{picture}{#if behind !== null} · buses {minSec(behind)} behind{/if}
 	</span>
+	{#if resized}
+		<span class="problem" role="status"><span aria-hidden="true">◌</span> {resized}</span>
+	{/if}
 	<div class="nav">
 		<button class="pill icon" aria-label="Previous camera (←)" title="Previous camera (←)" disabled={busy || look.count < 2} onclick={() => look.actions?.next(-1)}>
 			<Icon icon={PREV} size={18} />
@@ -115,6 +129,13 @@
 		font-size: 12px;
 		color: var(--ink);
 		white-space: nowrap;
+	}
+	.problem {
+		font-size: 12px;
+		color: var(--ink);
+	}
+	.problem > span {
+		color: var(--accent);
 	}
 	.nav {
 		display: flex;

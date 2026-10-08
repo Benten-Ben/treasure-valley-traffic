@@ -1,5 +1,8 @@
 import type { Page } from '@playwright/test';
-import { appendFileSync, mkdirSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { fetchedAtOf, INDEX, INDEX_HEADER, jpegDir, localDay, stampOf, withComment } from '../../scripts/archive-tick.ts';
 import { recordNetwork } from '../../scripts/net.mjs';
 import { project, type Pose } from '../../src/lib/calibration/solver.ts';
 import { env, expect, mapReady, screenPath, seeds, test, type Seed } from './fixtures.js';
@@ -32,7 +35,11 @@ import { env, expect, mapReady, screenPath, seeds, test, type Seed } from './fix
  *   (through the API, and by a double-click on the camera there), the map's
  *   centre is on the terrain under the view axis and the near plane is under
  *   2 m, on arrival and after the terrain has loaded (the fix round, Oct 8:
- *   it was 10 km out, kilometres underground, with a near plane of 140–200 m).
+ *   it was 10 km out, kilometres underground, with a near plane of 140–200 m);
+ * - a frame of another size while looking through says so and never blanks
+ *   the picture: the reference frame (labelled) when entered straight in, or
+ *   the live picture of the calibrated size it had, with the strip's age the
+ *   age of the picture on screen.
  */
 type Pair = { pixel: [number, number]; ground: [number, number, number] };
 type SeedPairs = Seed & { pairs: Pair[]; groundZ: number };
@@ -138,6 +145,22 @@ const note = (line: string) => {
 	mkdirSync(env().screens, { recursive: true });
 	appendFileSync(screenPath('wp13-numbers.txt'), `${new Date().toISOString()} ${line}\n`);
 };
+
+/** A frame appended to a recorded camera's fake archive (the capture service's way), as the newest; its stamp and sha. */
+function appendFrame(image: number, bytes: Buffer, when: Date) {
+	let t = new Date(Math.floor(when.getTime() / 1000) * 1000);
+	const dir = jpegDir(env().archive, image, localDay(t));
+	mkdirSync(dir, { recursive: true });
+	while (existsSync(join(dir, `${stampOf(t)}.jpg`))) t = new Date(t.getTime() + 1000);
+	const stamp = stampOf(t);
+	const body = withComment(bytes, `tvt lookthrough spec ${fetchedAtOf(t)} (synthetic test frame)`);
+	writeFileSync(join(dir, `${stamp}.jpg`), body);
+	const index = join(dir, INDEX);
+	if (!existsSync(index)) writeFileSync(index, `${INDEX_HEADER}\n`);
+	const sha = createHash('sha256').update(body).digest('hex');
+	appendFileSync(index, `${fetchedAtOf(t)},${stamp}.jpg,${body.length},${sha}\n`);
+	return { stamp, sha };
+}
 
 /**
  * z13 overviews over ground higher than the camera's eye (true heights from
@@ -489,6 +512,69 @@ test.describe('cameras: 3D and look-through', () => {
 				const back = await camera(page);
 				for (const k of ['lng', 'lat', 'zoom', 'bearing', 'pitch'] as const) expect(Math.abs(back[k] - start[k]), `${how}: ${k}`).toBeLessThan(1e-6);
 			}
+		}
+		expect(offsite).toEqual([]);
+	});
+
+	test('a frame of another size while looking through: the message, never a blank picture, and the strip’s age is the picture’s', { tag: '@wp13' }, async ({ page, offsite }) => {
+		test.setTimeout(600_000);
+		await page.emulateMedia({ reducedMotion: 'reduce' });
+		const all = seedsWithPairs();
+		const key = all.find((x) => x.kind === 'key')!;
+		const hd = all.find((x) => x.kind === 'hd')!;
+		const big = readFileSync(join(env().framesDir, '_fixture', `view-${hd.viewId}.jpg`));
+		const original = readFileSync(join(env().framesDir, key.frame));
+		const msg = `Image size changed (${key.size.width}×${key.size.height} → ${hd.size.width}×${hd.size.height}); recalibrate`;
+		const strip = page.getByRole('group', { name: 'Look-through' });
+		const clocks = async () => (await strip.locator('.clocks').textContent())?.trim() ?? '';
+		try {
+			// 1. Straight in (no window, so nothing has polled the view) while the newest frame is of another size.
+			appendFrame(key.imageId, big, new Date());
+			await openMap(page, at(key, 16.5, 50));
+			await enter(page, key);
+			await expect.poll(async () => (await lookState(page)).problem, { timeout: 60_000 }).toBe(msg);
+			await expect(strip.getByText(msg)).toBeVisible();
+			// The reference frame (the calibrated size) is on the plane, labelled, and drawn: not a blank panel.
+			await expect.poll(async () => (await inspect(page)).plane.texture, { timeout: 60_000 }).toBe(`look:${key.viewId}:ref`);
+			expect((await inspect(page)).plane.layer).toBeGreaterThanOrEqual(0);
+			expect(await lookState(page)).toMatchObject({ phase: 'looking', reference: true, seen: null });
+			expect(await clocks()).toBe('reference picture');
+			await settle(page);
+			await page.screenshot({ path: screenPath('fix-look-size-changed-direct.png') });
+			await stepOut(page);
+
+			// 2. Back at the calibrated size, seen 10 minutes ago: looking through shows it, live.
+			const old = appendFrame(key.imageId, original, new Date(Date.now() - 10 * 60_000));
+			await page.goto('about:blank');
+			await openMap(page, at(key, 16.5, 50));
+			await enter(page, key);
+			await expect.poll(async () => (await lookState(page)).seen, { timeout: 60_000 }).toBe(old.sha);
+			expect(await lookState(page)).toMatchObject({ reference: false, problem: null });
+			const texture = (await inspect(page)).plane.texture;
+			expect(texture).toBe(`look:${key.viewId}:${old.sha}`);
+
+			// 3. A frame of another size arrives: the message; the picture stays, and so does its age (about 10 min, not 0).
+			appendFrame(key.imageId, big, new Date());
+			await expect.poll(async () => (await lookState(page)).problem, { timeout: 60_000 }).toBe(msg);
+			await expect(strip.getByText(msg)).toBeVisible();
+			expect((await inspect(page)).plane.texture).toBe(texture);
+			expect((await lookState(page)).seen).toBe(old.sha);
+			const text = await clocks();
+			const age = /^picture seen (\d+):(\d\d) ago$/.exec(text);
+			expect(age, text).not.toBeNull();
+			expect(Number(age![1]), text).toBeGreaterThanOrEqual(9);
+			await settle(page);
+			await page.screenshot({ path: screenPath('fix-look-size-changed-while-looking.png') });
+
+			// 4. The calibrated size again: the message goes and the new picture shows.
+			const back = appendFrame(key.imageId, original, new Date(Date.now() + 1000));
+			await expect.poll(async () => (await lookState(page)).seen, { timeout: 60_000 }).toBe(back.sha);
+			expect((await lookState(page)).problem).toBeNull();
+			await expect(strip.getByText(msg)).toHaveCount(0);
+			await stepOut(page);
+		} finally {
+			// Leave the newest frame at the calibrated size for the specs after this one.
+			appendFrame(key.imageId, original, new Date(Date.now() + 2000));
 		}
 		expect(offsite).toEqual([]);
 	});

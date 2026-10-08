@@ -853,6 +853,8 @@ export class CamerasModule implements LayerModule {
 				index: look.index,
 				count: look.count,
 				reference: look.reference,
+				/** The live frame whose picture is shown (its sha), or null (the reference frame, or none yet). */
+				seen: look.seen?.sha ?? null,
 				problem: look.problem
 			}),
 			/** The eye read back (public state and MapLibre's own), the picture's plane, the limits. */
