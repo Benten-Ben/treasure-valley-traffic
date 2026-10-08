@@ -17,6 +17,7 @@ our own base map with live and historical data layers.
 - Decisions: `docs/DECISIONS.md`. Read it before proposing anything
   structural.
 - Data sources still to do: `docs/SOURCES.md`.
+- Map and site work left for a later round: `docs/DEFERRED.md`.
 - How the two Claude sessions work together: `HANDOFF.md`.
 
 ## How we work with the owner
@@ -103,6 +104,7 @@ docs/09-17              platform: base-map data, architecture, camera layer, DB 
 docs/sources/           verified source catalogs per theme (Oct 7 research), for chapter 17
 docs/DECISIONS.md       decision log + pending questions + owner actions
 docs/SOURCES.md         data source backlog: what's in use, what's left, suggested order
+docs/DEFERRED.md        map and site work designed but left for a later round (lanes, replay, camera wall, ...)
 docs/data/README.md     what the reference datasets are (kept privately, not published)
 app/                    SvelteKit + MapLibre map (the platform front end)
 basemap/                builds self-hosted map layers into data/tiles/ (served at /tiles/)
@@ -128,6 +130,10 @@ python3 -m tvt sources|ingest|status|build   # prototype CLI
 
 cd app && npm install && npm run check && npm run build   # front end
 cd app && npm run dev                  # map at http://localhost:5173 (needs data/tiles/)
+cd app && npm test                     # unit tests (vitest)
+cd app && npm run seed                 # seeded frames and a fake capture archive for the browser specs
+cd app && npm run test:e2e -- --grep @wp3   # browser specs (Playwright), one package's tag; app/tests/e2e/README.md
+cd app && npm run perf -- --budget     # the performance harness (docs/14 §14.9)
 basemap/build.sh                       # build self-hosted basemap into data/tiles/
 
 export DATABASE_URL=postgres://tvt:<password>@localhost/tvt   # never commit a real password
@@ -146,6 +152,12 @@ python3 -m unittest discover -s plugins -t .        # every plugin's tests
 python3 tools/check_public.py              # nothing private in what would be pushed
 ```
 
+Front-end environment (app/README.md): `TVT_FRAME_SOURCE=fixture` serves
+seeded camera frames and never fetches 511 (tests and build agents always
+set it); `CAMERA_IMAGES_ENABLED=true` turns on live camera images (off by
+default; `deploy/compose.live-images.yml` sets it); `TVT_E2E_REQUIRE_DATA=1`
+makes a browser spec fail instead of skip when seeded data is missing.
+
 Front-end rules:
 
 - The map loads only **self-hosted** tiles, fonts and sprites: built
@@ -156,9 +168,11 @@ Front-end rules:
   another source.
 - The project uses SvelteKit 3 / Svelte 5 runes, with `#lib/...` imports
   (not `$lib`).
-- Follow the visual design in `docs/13-visual-design.md`: a friendly,
-  game-inspired command center. Use its tokens, fonts (self-hosted), lens
-  model and usability rules. Never use red/green alone.
+- Follow the visual design in `docs/13-visual-design.md` and UI v2 in
+  `docs/14-ui-v2.md`: a friendly, game-inspired command center. Use its
+  tokens, fonts (self-hosted), layers that combine (no longer one lens at a
+  time), the color budget and the usability rules. Never use color alone,
+  and never red/green.
 
 Python 3.11, standard library only, except `gtfs-realtime-bindings` for
 live bus positions (`requirements.txt`). Decoding gridded data (GRIB2,
