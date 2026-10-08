@@ -85,7 +85,7 @@ def main(argv=None):
     ap.add_argument("--lidar", default="USGS 3DEP QL1 lidar", help="the survey's name, for the log")
     ap.add_argument("--lidar-date", help="the flight date (YYYY-MM-DD); later catalogue plantings are 'estimated'")
     ap.add_argument("--theta", type=float, default=0.2, help="overlap limit (share of the smaller crown); 0.2 calibrated Oct 8")
-    ap.add_argument("--lam", type=float, default=20.0, help="per-tree cost (metres x cells)")
+    ap.add_argument("--lam", type=float, default=40.0, help="per-tree cost (metres x cells); 40 from the owner's 100 labelled trees (Oct 8)")
     ap.add_argument("--sweeps", type=int, default=2)
     ap.add_argument("--window", help="row0,col0,rows,cols: build only this part (tests)")
     ap.add_argument("--out", required=True)

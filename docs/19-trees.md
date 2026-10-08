@@ -87,6 +87,24 @@ rebuilt by hand when the owner picks more trees.
 θ is the main count setting. It is calibrated on the North End's street
 trees (§19.7).
 
+**One rule everywhere, checked by the owner (Oct 8).** Every tree tries the
+three types (broadleaf, conifer, narrow), each with its own width curve,
+and keeps the best fit; there is no switch by area. The owner typed 100
+larger trees from eight test areas (from 50 m views of the photo, the lidar
+heights and a height profile): 46 broadleaf, 20 conifer, 8 narrow, 20 part
+of a bigger tree and 6 not a tree. What that showed:
+- **Extra trees on big crowns.** The placer puts small trees on the flanks
+  of large crowns. A per-tree cost of 40 (was 20) removes about a quarter
+  of the fakes while keeping 73 of the 74 real trees and the same share of
+  city street trees (78% within 3 m); 80 removes more fakes but a third of
+  all trees, mostly small ones no test covers yet.
+- **Narrow trees** fall away fast: a crown that drops 45% of its height
+  within 3 m of its top caught all 8 (and 12 of 66 others; to tighten).
+- **Conifers have no cue yet.** The crown-width fit calls them broadleaf,
+  and the photo's darkness only looked like a cue because the forest
+  area's photo is darker. A spring Sentinel-2 image (evergreens green while
+  broadleaf trees are bare) is the next thing to try.
+
 ## 19.4 Data
 
 **Public plugin `trees`** (schema `trees`), holding only our own
