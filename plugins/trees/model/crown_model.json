@@ -1,0 +1,68 @@
+{
+ "source": "Fitted on 137 lone trees the owner kept in the Lone Tree Picker (Oct 8, 2026) out of 154 candidates in nine land-cover test areas; heights and crown widths from 2023 QL1 lidar (crown width = equal-area diameter at the 2 m canopy line); types from width for height (narrow under 0.5) and, in the North End, the City of Boise inventory. See docs/19.",
+ "width": {
+  "valley broadleaf": {
+   "a": 0.692,
+   "b": 1.012,
+   "n": 58,
+   "sd_log": 0.235
+  },
+  "mountain broadleaf": {
+   "a": 0.809,
+   "b": 0.888,
+   "n": 15,
+   "sd_log": 0.119
+  },
+  "conifer": {
+   "a": 0.621,
+   "b": 0.825,
+   "n": 39,
+   "sd_log": 0.165
+  },
+  "valley conifer": {
+   "a": 0.584,
+   "b": 0.882,
+   "n": 15,
+   "sd_log": 0.085
+  },
+  "mountain conifer": {
+   "a": 0.502,
+   "b": 0.887,
+   "n": 24,
+   "sd_log": 0.182
+  },
+  "valley broadleaf + small": {
+   "a": 0.75,
+   "b": 0.981,
+   "n": 76,
+   "sd_log": 0.216
+  }
+ },
+ "shape": {
+  "broadleaf": {
+   "a": 0.774,
+   "n": 1.643,
+   "trees": 73
+  },
+  "narrow": {
+   "a": 0.952,
+   "n": 2.089,
+   "trees": 37
+  },
+  "small": {
+   "a": 0.556,
+   "n": 1.535,
+   "trees": 25
+  }
+ },
+ "crowded_shape_a": {
+  "broadleaf": 0.45,
+  "narrow": 0.7
+ },
+ "check_utd_boise_large_broadleaf": {
+  "a": 0.669,
+  "b": 1.032,
+  "n": 706,
+  "resid_sd_log": 0.291
+ }
+}

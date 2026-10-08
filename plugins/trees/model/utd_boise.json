@@ -1,0 +1,350 @@
+{
+ "source": "USDA Forest Service Urban Tree Database (McPherson, van Doorn & Peper 2016, RDS-2016-0005), Boise, ID trees measured in 2005; fits made here: height_m = a * dbh_cm^b and crown_width_m = a * dbh_cm^b (log-log least squares)",
+ "by_genus": {
+  "Acer": {
+   "height": {
+    "a": 1.7913,
+    "b": 0.5506,
+    "n": 150,
+    "sd_log": 0.198
+   },
+   "crown_width": {
+    "a": 0.7739,
+    "b": 0.7062,
+    "n": 150,
+    "sd_log": 0.187
+   },
+   "types": [
+    "BDL",
+    "BDM"
+   ]
+  },
+  "Catalpa": {
+   "height": {
+    "a": 1.337,
+    "b": 0.6146,
+    "n": 59,
+    "sd_log": 0.235
+   },
+   "crown_width": {
+    "a": 0.8955,
+    "b": 0.5911,
+    "n": 59,
+    "sd_log": 0.178
+   },
+   "types": [
+    "BDL"
+   ]
+  },
+  "Crataegus": {
+   "height": {
+    "a": 1.6913,
+    "b": 0.4467,
+    "n": 33,
+    "sd_log": 0.169
+   },
+   "crown_width": {
+    "a": 0.9995,
+    "b": 0.5968,
+    "n": 33,
+    "sd_log": 0.198
+   },
+   "types": [
+    "BDS"
+   ]
+  },
+  "Fraxinus": {
+   "height": {
+    "a": 1.6285,
+    "b": 0.5875,
+    "n": 92,
+    "sd_log": 0.156
+   },
+   "crown_width": {
+    "a": 0.6798,
+    "b": 0.7556,
+    "n": 92,
+    "sd_log": 0.183
+   },
+   "types": [
+    "BDL"
+   ]
+  },
+  "Gleditsia": {
+   "height": {
+    "a": 1.4058,
+    "b": 0.6266,
+    "n": 33,
+    "sd_log": 0.192
+   },
+   "crown_width": {
+    "a": 0.8283,
+    "b": 0.7405,
+    "n": 33,
+    "sd_log": 0.209
+   },
+   "types": [
+    "BDL"
+   ]
+  },
+  "Juglans": {
+   "height": {
+    "a": 1.9248,
+    "b": 0.52,
+    "n": 57,
+    "sd_log": 0.27
+   },
+   "crown_width": {
+    "a": 1.0642,
+    "b": 0.6336,
+    "n": 57,
+    "sd_log": 0.191
+   },
+   "types": [
+    "BDL"
+   ]
+  },
+  "Liquidambar": {
+   "height": {
+    "a": 0.9526,
+    "b": 0.7752,
+    "n": 33,
+    "sd_log": 0.151
+   },
+   "crown_width": {
+    "a": 0.3533,
+    "b": 0.9063,
+    "n": 33,
+    "sd_log": 0.17
+   },
+   "types": [
+    "BDL"
+   ]
+  },
+  "Malus": {
+   "height": {
+    "a": 1.1495,
+    "b": 0.515,
+    "n": 30,
+    "sd_log": 0.155
+   },
+   "crown_width": {
+    "a": 0.8595,
+    "b": 0.6382,
+    "n": 30,
+    "sd_log": 0.257
+   },
+   "types": [
+    "BDS"
+   ]
+  },
+  "Picea": {
+   "height": {
+    "a": 0.7385,
+    "b": 0.7309,
+    "n": 29,
+    "sd_log": 0.224
+   },
+   "crown_width": {
+    "a": 0.7,
+    "b": 0.6262,
+    "n": 29,
+    "sd_log": 0.137
+   },
+   "types": [
+    "CEL"
+   ]
+  },
+  "Pinus": {
+   "height": {
+    "a": 0.7329,
+    "b": 0.724,
+    "n": 29,
+    "sd_log": 0.225
+   },
+   "crown_width": {
+    "a": 0.3642,
+    "b": 0.8499,
+    "n": 29,
+    "sd_log": 0.162
+   },
+   "types": [
+    "CEM"
+   ]
+  },
+  "Platanus": {
+   "height": {
+    "a": 1.9299,
+    "b": 0.5673,
+    "n": 112,
+    "sd_log": 0.151
+   },
+   "crown_width": {
+    "a": 0.8859,
+    "b": 0.7003,
+    "n": 112,
+    "sd_log": 0.173
+   },
+   "types": [
+    "BDL"
+   ]
+  },
+  "Pyrus": {
+   "height": {
+    "a": 1.6672,
+    "b": 0.5556,
+    "n": 34,
+    "sd_log": 0.201
+   },
+   "crown_width": {
+    "a": 0.3035,
+    "b": 0.9881,
+    "n": 34,
+    "sd_log": 0.197
+   },
+   "types": [
+    "BDM"
+   ]
+  },
+  "Quercus": {
+   "height": {
+    "a": 1.432,
+    "b": 0.6372,
+    "n": 56,
+    "sd_log": 0.154
+   },
+   "crown_width": {
+    "a": 0.8355,
+    "b": 0.7272,
+    "n": 56,
+    "sd_log": 0.119
+   },
+   "types": [
+    "BDL"
+   ]
+  },
+  "Robinia": {
+   "height": {
+    "a": 1.7034,
+    "b": 0.5642,
+    "n": 62,
+    "sd_log": 0.339
+   },
+   "crown_width": {
+    "a": 1.2231,
+    "b": 0.501,
+    "n": 62,
+    "sd_log": 0.331
+   },
+   "types": [
+    "BDL"
+   ]
+  },
+  "Tilia": {
+   "height": {
+    "a": 1.6929,
+    "b": 0.5509,
+    "n": 59,
+    "sd_log": 0.163
+   },
+   "crown_width": {
+    "a": 0.4805,
+    "b": 0.8095,
+    "n": 59,
+    "sd_log": 0.145
+   },
+   "types": [
+    "BDL"
+   ]
+  },
+  "Ulmus": {
+   "height": {
+    "a": 1.6776,
+    "b": 0.5752,
+    "n": 55,
+    "sd_log": 0.212
+   },
+   "crown_width": {
+    "a": 0.9065,
+    "b": 0.6623,
+    "n": 55,
+    "sd_log": 0.157
+   },
+   "types": [
+    "BDL"
+   ]
+  }
+ },
+ "by_type": {
+  "BDL": {
+   "height": {
+    "a": 1.6464,
+    "b": 0.5839,
+    "n": 706,
+    "sd_log": 0.217
+   },
+   "crown_width": {
+    "a": 0.8297,
+    "b": 0.6828,
+    "n": 706,
+    "sd_log": 0.256
+   }
+  },
+  "BDM": {
+   "height": {
+    "a": 1.7411,
+    "b": 0.5388,
+    "n": 96,
+    "sd_log": 0.193
+   },
+   "crown_width": {
+    "a": 0.4663,
+    "b": 0.8426,
+    "n": 96,
+    "sd_log": 0.195
+   }
+  },
+  "BDS": {
+   "height": {
+    "a": 1.3869,
+    "b": 0.4838,
+    "n": 63,
+    "sd_log": 0.182
+   },
+   "crown_width": {
+    "a": 0.9211,
+    "b": 0.6196,
+    "n": 63,
+    "sd_log": 0.225
+   }
+  },
+  "CEL": {
+   "height": {
+    "a": 0.7385,
+    "b": 0.7309,
+    "n": 29,
+    "sd_log": 0.224
+   },
+   "crown_width": {
+    "a": 0.7,
+    "b": 0.6262,
+    "n": 29,
+    "sd_log": 0.137
+   }
+  },
+  "CEM": {
+   "height": {
+    "a": 0.7329,
+    "b": 0.724,
+    "n": 29,
+    "sd_log": 0.225
+   },
+   "crown_width": {
+    "a": 0.3642,
+    "b": 0.8499,
+    "n": 29,
+    "sd_log": 0.162
+   }
+  }
+ }
+}

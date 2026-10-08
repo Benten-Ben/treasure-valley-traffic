@@ -1,0 +1,15 @@
+{
+  "name": "trees",
+  "title": "Trees: every tree in the lidar, catalogued trees first",
+  "depends": [],
+  "visibility": "public",
+  "order": 90,
+  "sources": [],
+  "tables": ["trees.build", "trees.tree", "trees.tree_log"],
+  "commands": [
+    {"name": "trees-load", "module": "ingest.load",
+     "help": "load a trees build made in the worker image into the database (--build DIR)"}
+  ],
+  "storage": "Small: about 60 trees per hectare where there is canopy (the North End box: about 15,000 rows); each build's files (GeoJSON and a log) stay in $TVT_ARCHIVE/trees/<build>/.",
+  "ethics": "Our own data, derived from public USGS 3DEP lidar and the crown model fitted on the owner's picks (and the US Forest Service's Urban Tree Database, cited). No catalogue's attributes are stored here: a catalogue (like the City of Boise's inventory, private) contributes trunk points to the build and is joined by id only on the owner's own site."
+}
