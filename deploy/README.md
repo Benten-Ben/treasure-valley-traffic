@@ -232,7 +232,9 @@ the default in the app). Run Compose from `deploy/` without `-f`
    check that the dated private list is where the loader reads it, the
    private files' data folder (`PRIVATE_DATA_DIR`, mounted read-only in
    `ingest` as `TVT_PRIVATE_DATA`):
-   `docker compose exec ingest sh -c 'ls -l "$TVT_PRIVATE_DATA"/511-camera-sites-statewide-*.json'`.
+   `docker compose exec ingest sh -c 'ls -l "$TVT_PRIVATE_DATA"/511-camera-sites-statewide-2026-10-05.json'`
+   (the loader reads exactly this file, `FILE_NAME` in
+   `plugins/cameras/ingest/sources/idaho511_rwis_sites.py`).
    Then load it:
    `docker compose exec ingest python3 -m ingest run idaho511_rwis_sites_oneoff`.
    It reads the file only (no request to 511), loads ITD's road-weather
