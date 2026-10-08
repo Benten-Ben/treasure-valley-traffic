@@ -15,12 +15,19 @@ import { CHROMIUM_ARGS, harnessEnv, lockedArgs } from './scripts/harness-env.mjs
  * In the workflow (a wp/WPn branch or TVT_WP), TVT_E2E_REQUIRE_DATA=1 makes
  * missing data (manifest, frames, archive, database) fail a spec; outside it,
  * such specs skip with a message.
+ *
+ * After a deploy (deploy/README.md, "Deploying UI v2", step 6), smoke specs
+ * run against the server instead: TVT_E2E_URL=https://<tailnet name> starts
+ * no local server, lets the browser resolve only that host, and skips the
+ * local data checks (the server has its own data). Only specs that need no
+ * seeds make sense there, e.g. tests/e2e/boot.spec.ts.
  */
 const env = harnessEnv();
 // Specs and helpers read the same values from process.env.
 Object.assign(process.env, env);
 const port = Number(env.TVT_PORT);
 const runDir = join(env.TVT_MAIN, 'data', 'dev', env.TVT_WP || 'local');
+const remote = process.env.TVT_E2E_URL?.replace(/\/$/, '') || null;
 
 export default defineConfig({
 	testDir: 'tests/e2e',
@@ -34,23 +41,25 @@ export default defineConfig({
 	forbidOnly: true,
 	reporter: [['list'], ['./tests/e2e/reporter.ts']],
 	use: {
-		baseURL: `http://127.0.0.1:${port}`,
+		baseURL: remote ?? `http://127.0.0.1:${port}`,
 		browserName: 'chromium',
 		viewport: { width: 1280, height: 800 },
 		// SwiftShader WebGL; and nothing resolves but localhost, so no request can leave the machine.
-		launchOptions: { args: [...CHROMIUM_ARGS, ...lockedArgs()] },
+		launchOptions: { args: [...CHROMIUM_ARGS, ...lockedArgs(remote ? [new URL(remote).hostname] : [])] },
 		actionTimeout: 60_000,
 		navigationTimeout: 120_000,
 		trace: 'retain-on-failure',
 		screenshot: 'only-on-failure'
 	},
-	webServer: {
-		command: 'node scripts/e2e-server.mjs',
-		url: `http://127.0.0.1:${port}/api/health`,
-		reuseExistingServer: false,
-		timeout: 600_000,
-		env: env as Record<string, string>,
-		stdout: 'pipe',
-		stderr: 'pipe'
-	}
+	webServer: remote
+		? undefined
+		: {
+				command: 'node scripts/e2e-server.mjs',
+				url: `http://127.0.0.1:${port}/api/health`,
+				reuseExistingServer: false,
+				timeout: 600_000,
+				env: env as Record<string, string>,
+				stdout: 'pipe',
+				stderr: 'pipe'
+			}
 });
