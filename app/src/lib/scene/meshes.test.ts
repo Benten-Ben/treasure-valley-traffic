@@ -51,6 +51,24 @@ describe('meshes', () => {
 		}
 	});
 
+	it('the camera head: its housing takes the instance color (teal), under an ink hood, with a cream-ringed lens facing forward', () => {
+		const m = meshes.head;
+		let tinted = 0;
+		const front = new Set<string>();
+		for (let o = 0; o < m.vertices.length; o += FLOATS_PER_VERTEX) {
+			if (m.vertices[o + 9] === 1) tinted++;
+			// Faces looking along +z (the view axis): the lens face.
+			if (m.vertices[o + 5] > 0.99 && m.vertices[o + 2] >= -0.021) front.add([6, 7, 8].map((k) => m.vertices[o + k].toFixed(2)).join(','));
+		}
+		expect(tinted).toBeGreaterThanOrEqual(24);
+		// Cream bezel, dark glass and the ink hood's front edge: at least two clearly different tones face forward.
+		const tones = [...front].map((c) => c.split(',').map(Number).reduce((a, b) => a + b, 0) / 3);
+		expect(Math.max(...tones) - Math.min(...tones)).toBeGreaterThan(0.6);
+		// The optical centre is the origin, and the lens is in front of it.
+		expect(m.max[2]).toBeGreaterThan(0);
+		expect(m.min[2]).toBeLessThan(-0.3);
+	});
+
 	it('the bus is a 12.2 × 2.6 × 3.1 m box standing on its origin, forward along +y', () => {
 		const m = meshes.bus;
 		expect(m.max[0] - m.min[0]).toBeCloseTo(BUS.width, 6);

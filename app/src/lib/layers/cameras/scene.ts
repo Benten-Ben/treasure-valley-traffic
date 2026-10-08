@@ -2,6 +2,7 @@ import type { Map } from 'maplibre-gl';
 import { axes } from '#lib/calibration/solver.js';
 import { viewCone, pxPerMetre } from '#lib/calibration/frustum.js';
 import type { LngLatAlt, Scene, SceneCone, SceneInstance, SceneLine } from '#lib/scene/index.js';
+import { headMesh } from '#lib/scene/meshes.js';
 import { PRIORITY, type Selection } from '../types.js';
 import { AMBER, INK, TEAL, type Calibration, type CameraProps } from './cameras.js';
 
@@ -10,7 +11,9 @@ import { AMBER, INK, TEAL, type Calibration, type CameraProps } from './cameras.
  * WP13), drawn by the scene engine from z15:
  *
  * - **calibrated:** a pole from the drawn ground up to the solved height, a
- *   camera head turned to its heading, tilt and roll (at least 12 px), the
+ *   teal camera head with an ink hood and a cream-ringed lens, turned to its
+ *   heading, tilt and roll (its thinnest side at least 14 px from any angle:
+ *   `headMinPx`), the
  *   teal view cone (an apex and 32 rays, 8 per image edge, each ending on the
  *   ground at the calibration's ground height, or 120 m out when it points
  *   above the horizon), and ink frustum edges from the head to the cone's
@@ -36,8 +39,24 @@ export const CAMERAS_3D = 'cameras-3d';
 /** Models from this zoom (§14.6: "Close (z15 and up)"), dithered in over the 0.3 zoom before it. */
 export const MODELS_ZOOM = 15;
 export const MODELS_FADE = 0.3;
-/** The head is drawn at least this big (§14.6). */
-export const HEAD_MIN_PX = 12;
+/**
+ * The head's thinnest side is drawn at least this big, px, from any angle
+ * (§14.6 asks for 12; a head seen end-on or from the side was 4–9 px).
+ */
+export const HEAD_MIN_PX = 14;
+
+/**
+ * The scene's `minPx` for the head: the scene grows a model until its
+ * bounding sphere is that many px across, which is more than the head shows
+ * from any one side. Scaled by the sphere's diameter over the head's thinnest
+ * side, the thinnest side gets `HEAD_MIN_PX` (about 20 px along its length).
+ */
+export function headMinPx(minPx = HEAD_MIN_PX): number {
+	const m = headMesh();
+	const thinnest = Math.min(m.max[0] - m.min[0], m.max[1] - m.min[1], m.max[2] - m.min[2]);
+	return (minPx * 2 * m.radius) / thinnest;
+}
+const HEAD_SPHERE_PX = headMinPx();
 /** Poles are drawn at least this wide, px (a 0.3 m pole is under a pixel until about z18). */
 export const POLE_MIN_PX = 3;
 export const POLE_RADIUS_M = 0.15;
@@ -121,7 +140,8 @@ export function build3d(cams: readonly Cam3D[], cals: readonly Calibration[], o:
 			alt: pose.alt,
 			groundAlt: ground,
 			basis: [right, down, fwd],
-			minPx: HEAD_MIN_PX,
+			color: TEAL,
+			minPx: HEAD_SPHERE_PX,
 			opacity: fade,
 			pick,
 			radius: 10
