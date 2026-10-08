@@ -6,6 +6,7 @@ import {
 	BUS_LENGTH_M,
 	busModel,
 	FADE_ZOOMS,
+	feedBearing,
 	ghostOf,
 	lodAt,
 	MAX_MODEL_SCALE,
@@ -27,6 +28,7 @@ import {
 	LENGTH_MARGIN,
 	type ModelFrame
 } from './bus3d.js';
+import { buildTracks } from './playback.js';
 import { UNKNOWN_COLOR } from './transit.js';
 
 const LAT = 43.6;
@@ -171,7 +173,7 @@ describe('heading and slope', () => {
 	};
 	const north = (m: number) => 43.6 + m / 111_195;
 
-	it('finds the bearing of the street a bus is on: its own route first, any route when it has none', () => {
+	it('finds the bearing of the street a bus is on: its own route first, any route when it has none or is off it', () => {
 		// 10 m north of the east-running street, on route 9: east.
 		expect(streetBearing(lines, '9', -116.199, north(10))).toBeCloseTo(90, 1);
 		// A bus 5 m off route 3's line lies along it (north-east, about 36° at this latitude).
@@ -181,18 +183,36 @@ describe('heading and slope', () => {
 		// No route (or one with no lines): the nearest line of any.
 		expect(streetBearing(lines, null, -116.199, north(5))).toBeCloseTo(90, 1);
 		expect(streetBearing(lines, 'nope', -116.199, north(5))).toBeCloseTo(90, 1);
+		// Off its own route (matched to 3, on route 9's street, 60 m from route 3's line): the street it's on.
+		expect(streetBearing(lines, '3', -116.1999, north(4))).toBeCloseTo(90, 1);
 		// Nothing within STREET_MAX_M.
-		expect(streetBearing(lines, '9', -116.199, north(STREET_MAX_M + 5))).toBeNull();
+		expect(streetBearing(lines, '9', -116.2005, north(STREET_MAX_M + 5))).toBeNull();
 	});
 
-	it('lays a bus with no heading yet along its street, until it has one of its own', () => {
+	it('takes the feed’s bearing at the fix being played, for a bus with no path heading', () => {
+		// Bus 722 in the replay: two straight steps, then waiting at its newest fix (bearing 44°).
+		const track = buildTracks([
+			['722', 100, 131, 'straight', -116.2006, 43.613209, 35, 2.8, null],
+			['722', 131, 160, 'straight', -116.200104, 43.613899, 36, 1.8, null],
+			['722', 160, null, null, -116.1996, 43.614208, 44, null, null]
+		]).get('722');
+		expect(feedBearing(track, 400)).toBe(44);
+		expect(feedBearing(track, 140)).toBe(36);
+		// Before its first fix, with no bearing, or no track: none.
+		expect(feedBearing(track, 50)).toBeNull();
+		expect(feedBearing(buildTracks([['9', 100, null, null, -116.2, 43.6, null, null, null]]).get('9'), 200)).toBeNull();
+		expect(feedBearing(undefined, 200)).toBeNull();
+	});
+
+	it('lays a bus with no heading yet along its stand-in (its street here), until it has one of its own', () => {
 		let looks = 0;
-		const street = (lng: number, lat: number, routeId: string | null) => {
+		const fallback = (lng: number, lat: number, routeId: string | null, id: string) => {
 			looks++;
+			expect(id).toBe(routeId === '9' ? '7' : '8');
 			return streetBearing(lines, routeId, lng, lat);
 		};
 		const m = busModel('7', null);
-		const frame = (over: Partial<ModelFrame> = {}): ModelFrame => ({ lng: -116.199, lat: north(3), heading: null, color: '#2a78d6', opacity: 1, scale: 1, now: 1000, epoch: 1, ground: null, routeId: '9', street, ...over });
+		const frame = (over: Partial<ModelFrame> = {}): ModelFrame => ({ lng: -116.199, lat: north(3), heading: null, color: '#2a78d6', opacity: 1, scale: 1, now: 1000, epoch: 1, ground: null, routeId: '9', fallback, ...over });
 		placeModel(m, frame());
 		expect(m.inst.heading).toBeCloseTo(90, 1);
 		expect(looks).toBe(1);
@@ -202,17 +222,17 @@ describe('heading and slope', () => {
 		// A jump of more than 5 m (a gap): looked for again.
 		placeModel(m, frame({ now: 1032, lng: -116.1985 }));
 		expect(looks).toBe(2);
-		// Its own heading arrives: it turns to that, and the street is forgotten.
+		// Its own heading arrives: it turns to that, and the stand-in is forgotten.
 		placeModel(m, frame({ now: 5000, heading: 270 }));
 		expect(m.inst.heading).toBe(270);
-		expect(m.street).toBeNull();
+		expect(m.fallback).toBeNull();
 		// Without one again later, it keeps its own.
 		placeModel(m, frame({ now: 5016 }));
 		expect(m.inst.heading).toBe(270);
 		expect(looks).toBe(2);
 		// Off every street and with no heading: north, the last resort.
 		const lost = busModel('8', null);
-		placeModel(lost, frame({ lat: north(500) }));
+		placeModel(lost, frame({ lat: north(500), routeId: '3' }));
 		expect(lost.inst.heading).toBe(0);
 	});
 

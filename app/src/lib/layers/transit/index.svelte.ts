@@ -34,7 +34,7 @@ import {
 import { busAt, Feed, positionAt, runningAt, sameSet, smoothAngle, trail, type BusAt, type BusState } from './playback.js';
 import { ageText, ARROW, arrowImage, CREAM, CREDIT, fallbackBusLayers, FALLBACK_LAYERS, INK, UNKNOWN_COLOR } from './transit.js';
 import type { Scene, SceneInstance } from '#lib/scene/index.js';
-import { bodyColor, busModel, BUS_LENGTH_M, lodAt, metresPerPx, modelFade, modelZoom, placeModel, plateAltitude, streetBearing, type BusModel, type GroundAt, type Lod, type RouteLines } from './bus3d.js';
+import { bodyColor, busModel, BUS_LENGTH_M, feedBearing, lodAt, metresPerPx, modelFade, modelZoom, placeModel, plateAltitude, streetBearing, type BusModel, type GroundAt, type Lod, type RouteLines } from './bus3d.js';
 import { loadPlateFont, PLATE_BODY_H, PLATE_PAD, plateBodyWidth, plateKey, plateOffset, plateSize, plateSprite, type PlateLook } from './plates.js';
 import { StopPosts, STOP_NAMES, stopNameLayer } from './stops3d.js';
 
@@ -308,6 +308,8 @@ export class TransitModule implements LayerModule {
 		}
 		return streetBearing(this.#lines, routeId, lng, lat);
 	};
+	/** A stand-in heading for a bus with none yet: the feed's bearing at its fix, else its street's. */
+	#fallback = (lng: number, lat: number, routeId: string | null, vid: string) => feedBearing(this.feed.tracks.get(vid), this.#frameT) ?? this.#street(lng, lat, routeId);
 
 	route(id: string | null | undefined): NetworkRoute | undefined {
 		return id ? this.#byId.get(id) : undefined;
@@ -989,7 +991,7 @@ export class TransitModule implements LayerModule {
 					ground,
 					slope: all || onScreen.has(vid),
 					routeId: rt.routeId,
-					street: this.#street
+					fallback: this.#fallback
 				})
 			);
 		}

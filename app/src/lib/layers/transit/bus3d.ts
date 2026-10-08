@@ -1,6 +1,7 @@
 import type { SceneInstance } from '#lib/scene/index.js';
 import { circumferenceAt } from '#lib/overlay/project.js';
 import type { Selection } from '../types.js';
+import { stepIndex, type Track } from './playback.js';
 import { UNKNOWN_COLOR } from './transit.js';
 
 /**
@@ -25,8 +26,9 @@ import { UNKNOWN_COLOR } from './transit.js';
  * - The heading follows the path: the playback's path tangent (±8 m), with
  *   a shorter low-pass than the 2D arrow so a turning model stays within a
  *   few degrees of its path. A bus with no heading yet (its first fix,
- *   stopped, stale or in a GPS gap) lies along the street it's on: its
- *   route's line within 30 m (`streetBearing`), not across it facing north.
+ *   stopped, stale or in a GPS gap) takes the feed's last reported bearing,
+ *   else lies along the street it's on (`streetBearing`: its route's line
+ *   within 30 m, else any route's), not across it facing north.
  * - Models sit on the drawn terrain (the scene's ground) and pitch with its
  *   slope sampled ahead and behind: 6 m at true scale, 6 m × the model's
  *   scale when it's drawn larger, so an oversized model's ends follow the
@@ -198,14 +200,18 @@ export interface RouteLines {
 
 /**
  * The bearing of the street a bus is on, for one with no heading yet: the
- * nearest piece of its route's lines (every line when the route isn't known)
- * within `maxM` metres, in the line's own direction (which way the bus faces
- * along it isn't known, but it lies along the street, not across it). Null
- * when no line is that near.
+ * nearest piece of its route's lines within `maxM` metres, else of any
+ * route's (a bus off its matched route, or with none), in the line's own
+ * direction (which way the bus faces along it isn't known, but it lies along
+ * the street, not across it). Null when no line is that near.
  */
 export function streetBearing(lines: RouteLines, routeId: string | null, lng: number, lat: number, maxM = STREET_MAX_M): number | null {
 	const own = routeId ? lines.byRoute.get(routeId) : undefined;
-	const list = own?.length ? own : lines.all;
+	return (own ? nearestBearing(own, lng, lat, maxM) : null) ?? nearestBearing(lines.all, lng, lat, maxM);
+}
+
+/** The bearing of the nearest piece of `list` within `maxM` metres of (lng, lat), or null. */
+function nearestBearing(list: readonly (readonly number[])[], lng: number, lat: number, maxM: number): number | null {
 	const kx = (R * DEG) * Math.cos(lat * DEG);
 	const ky = R * DEG;
 	let best = maxM * maxM;
@@ -232,6 +238,13 @@ export function streetBearing(lines: RouteLines, routeId: string | null, lng: nu
 	return bearing;
 }
 
+/** The feed's bearing at a bus's fix at T (the step being played: a fix it waits at, or a gap's start), or null. */
+export function feedBearing(track: Track | undefined, T: number): number | null {
+	const i = track ? stepIndex(track, T) : -1;
+	const b = i >= 0 ? track!.steps[i].bearing : null;
+	return b !== null && Number.isFinite(b) ? b : null;
+}
+
 /** Turn `from` toward `to` (degrees) with a low-pass of `tauMs` over `dtMs`. */
 export function turn(from: number | null, to: number | null, dtMs: number, tauMs = MODEL_TAU_MS): number | null {
 	if (to === null) return from;
@@ -248,14 +261,14 @@ export interface BusModel {
 	turnedAt: number;
 	/** Where the slope was last read, and what it was (with the drawn ground's height there). */
 	slope: { lng: number; lat: number; heading: number; reach: number; epoch: number; pitch: number; elev: number | null } | null;
-	/** While a bus has had no heading of its own: where the street under it was last looked for, and its bearing (null: none near). */
-	street: { lng: number; lat: number; bearing: number | null } | null;
+	/** While a bus has had no heading of its own: where its stand-in heading was last looked for, and what it was (null: none). */
+	fallback: { lng: number; lat: number; bearing: number | null } | null;
 }
 
 export function busModel(vid: string, pick: Selection | null, old?: BusModel): BusModel {
 	const inst: SceneInstance = old?.inst ?? { id: vid, mesh: 'bus', lng: 0, lat: 0, heading: 0, pitch: 0, scale: 1, color: UNKNOWN_COLOR, opacity: 0, shadow: true };
 	inst.pick = pick;
-	return { inst, heading: old?.heading ?? null, turnedAt: old?.turnedAt ?? 0, slope: old?.slope ?? null, street: old?.street ?? null };
+	return { inst, heading: old?.heading ?? null, turnedAt: old?.turnedAt ?? 0, slope: old?.slope ?? null, fallback: old?.fallback ?? null };
 }
 
 /** What a frame says about one bus. */
@@ -278,23 +291,26 @@ export interface ModelFrame {
 	ground: GroundAt | null;
 	/** False: keep the slope it has (the bus is off screen, so the terrain reads would be wasted). */
 	slope?: boolean;
-	/** The bus's route, for `street`. */
+	/** The bus's route, for `fallback`. */
 	routeId?: string | null;
-	/** The street's bearing at a point (`streetBearing` on the bus's route), for a bus that has no heading yet. */
-	street?: (lng: number, lat: number, routeId: string | null) => number | null;
+	/**
+	 * A stand-in heading for a bus that has none of its own yet, at a point: the feed's last reported
+	 * bearing, else its street's (`streetBearing`); null for none (it faces north, the last resort).
+	 */
+	fallback?: (lng: number, lat: number, routeId: string | null, id: string) => number | null;
 }
 
 /** Move one model to this frame (in place): position, heading, slope, size, look. */
 export function placeModel(m: BusModel, f: ModelFrame): SceneInstance {
 	const inst = m.inst;
 	let to = f.heading;
-	if (to !== null) m.street = null;
-	else if (f.street && (m.heading === null || m.street)) {
-		// No heading yet: lie along the street, looked for again once it has moved a few metres (a gap's jump).
-		const s = m.street;
+	if (to !== null) m.fallback = null;
+	else if (f.fallback && (m.heading === null || m.fallback)) {
+		// No heading yet: a stand-in, looked for again once it has moved a few metres (a gap's jump).
+		const s = m.fallback;
 		if (!s || Math.abs(s.lat - f.lat) * 111_000 > STREET_MOVE_M || Math.abs(s.lng - f.lng) * 111_000 * Math.cos(f.lat * DEG) > STREET_MOVE_M)
-			m.street = { lng: f.lng, lat: f.lat, bearing: f.street(f.lng, f.lat, f.routeId ?? null) };
-		to = m.street?.bearing ?? null;
+			m.fallback = { lng: f.lng, lat: f.lat, bearing: f.fallback(f.lng, f.lat, f.routeId ?? null, inst.id) };
+		to = m.fallback?.bearing ?? null;
 	}
 	m.heading = turn(m.heading, to, f.now - m.turnedAt);
 	m.turnedAt = f.now;
