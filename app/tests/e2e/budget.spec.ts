@@ -54,7 +54,7 @@ test.describe('budget', () => {
 	});
 
 	test('cold first load ≤ 50 requests (WP5)', { tag: ['@wp0', '@wp5'] }, async ({ page, baseURL }) => {
-		test.fail(true, "WP5 target (§14.9), still missed: about 89 requests, 57 of them the app's own JS, CSS and web fonts (UI v2's chunks); see §14.9's results.");
+		test.fail(true, "WP5 target (§14.9), still missed: 101–105 requests since waves E–G (perf.mjs counts 101; this spec 105, with the first idle's prefetches), 71 of them the app's own JS, CSS and web fonts (UI v2's chunks). Restating the target is the owner's call (DECISIONS, \"Pending\"); see §14.11's results.");
 		const { summary } = await coldLoad(page, baseURL!);
 		expect(summary.requests).toBeLessThanOrEqual(50);
 	});
