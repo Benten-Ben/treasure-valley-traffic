@@ -3,13 +3,17 @@
  * (`scripts/perf.mjs --real`) reads every `tvt:` mark with
  * `performance.getEntriesByType('mark')`.
  *
- * The boot sets `boot` and `manifest`; the app context sets `style-load`,
- * `first-frame`, `load` and `idle` when the map fires them; the `?perf` HUD
- * adds `tvt:layer:<id>:on` and `:idle` for each layer it sees turned on.
+ * The boot sets `boot` and `manifest`; the chrome sets `shell` in the first
+ * frame it paints in (an animation frame after it mounts, so it compares
+ * with `first-frame`, which MapLibre's first render sets in its own frame);
+ * the app context sets `style-load`, `first-frame`, `load` and `idle` when
+ * the map fires them; the `?perf` HUD adds `tvt:layer:<id>:on` and `:idle`
+ * for each layer it sees turned on.
  */
 export const MARK = {
 	boot: 'tvt:boot',
 	manifest: 'tvt:manifest',
+	shell: 'tvt:shell',
 	styleLoad: 'tvt:style-load',
 	firstFrame: 'tvt:first-frame',
 	load: 'tvt:load',

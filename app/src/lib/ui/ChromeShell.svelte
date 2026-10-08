@@ -1,7 +1,8 @@
 <script lang="ts">
-	import { onDestroy, untrack, type Component } from 'svelte';
+	import { onDestroy, onMount, untrack, type Component } from 'svelte';
 	import type { AppCtx } from '#lib/app/context.js';
 	import PanelBoundary from '#lib/components/PanelBoundary.svelte';
+	import { MARK, mark } from '#lib/perf/marks.js';
 	import CameraWidget from './CameraWidget.svelte';
 	import InspectCard from './InspectCard.svelte';
 	import { ESC, handleKey, onEscape } from './keys.js';
@@ -99,6 +100,11 @@
 		stopEsc();
 		unhover();
 		tooltip.hide();
+	});
+
+	// The frame the shell first paints in (docs/14 §14.9, "Shell paint"; perf.mjs --real compares it with the map's first frame).
+	onMount(() => {
+		requestAnimationFrame(() => mark(MARK.shell));
 	});
 </script>
 
