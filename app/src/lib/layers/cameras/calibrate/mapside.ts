@@ -6,7 +6,7 @@ import { drape, imageData } from '#lib/calibration/drape.js';
 import { groundMetres } from '#lib/calibration/frustum.js';
 import { footprint, type ImageSize, type LngLatZ, type Pose } from '#lib/calibration/solver.js';
 import { beforeSlot } from '#lib/map/order.js';
-import { BUILDINGS_LAYER } from '#lib/map/style.js';
+import { BUILDINGS_LAYERS } from '#lib/map/style.js';
 import type { Scene } from '#lib/scene/index.js';
 import type { Selection } from '../../types.js';
 import { INK, TEAL } from '../cameras.js';
@@ -91,7 +91,8 @@ export interface CalibrateMapInfo {
 	drape: boolean;
 	moved: boolean;
 	scene: { instances: number; cones: number; lines: number } | null;
-	buildingsOpacity: unknown;
+	/** Measured and estimated buildings. */
+	buildingsOpacity: unknown[];
 }
 
 export class CalibrateMap {
@@ -135,11 +136,13 @@ export class CalibrateMap {
 		app.setExaggeration(1);
 		const s = (this.#scope = new MapScope(map));
 
-		// Buildings faint, back as they were on leaving (the snapshot's Aerial then sets its own opacity).
-		if (map.getLayer(BUILDINGS_LAYER)) {
-			const before = map.getPaintProperty(BUILDINGS_LAYER, 'fill-extrusion-opacity');
+		// Buildings (measured and estimated) faint, back as they were on leaving (the snapshot's Aerial
+		// then sets its own opacity).
+		for (const id of BUILDINGS_LAYERS) {
+			if (!map.getLayer(id)) continue;
+			const before = map.getPaintProperty(id, 'fill-extrusion-opacity');
 			s.defer(() => {
-				if (map.getLayer(BUILDINGS_LAYER)) map.setPaintProperty(BUILDINGS_LAYER, 'fill-extrusion-opacity', before);
+				if (map.getLayer(id)) map.setPaintProperty(id, 'fill-extrusion-opacity', before);
 			});
 		}
 		this.#faintBuildings();
@@ -179,8 +182,9 @@ export class CalibrateMap {
 	/** Buildings at 0.25 (Aerial's own 0.3 comes back whenever a snapshot restores Aerial, e.g. after Check alignment). */
 	#faintBuildings() {
 		const map = this.#map;
-		if (map?.getLayer(BUILDINGS_LAYER) && map.getPaintProperty(BUILDINGS_LAYER, 'fill-extrusion-opacity') !== BUILDINGS_OPACITY)
-			map.setPaintProperty(BUILDINGS_LAYER, 'fill-extrusion-opacity', BUILDINGS_OPACITY);
+		for (const id of BUILDINGS_LAYERS)
+			if (map?.getLayer(id) && map.getPaintProperty(id, 'fill-extrusion-opacity') !== BUILDINGS_OPACITY)
+				map.setPaintProperty(id, 'fill-extrusion-opacity', BUILDINGS_OPACITY);
 	}
 
 	/** Jump (never fly) to the camera's working view. */
@@ -438,7 +442,7 @@ export class CalibrateMap {
 			drape: this.#drapeShown,
 			moved: !!this.#solved && groundMetres(this.#o.pole, [this.#solved.pose.lon, this.#solved.pose.lat]) > MOVED_M,
 			scene: this.#scene ? { ...this.#built } : null,
-			buildingsOpacity: map?.getLayer(BUILDINGS_LAYER) ? map.getPaintProperty(BUILDINGS_LAYER, 'fill-extrusion-opacity') : null
+			buildingsOpacity: BUILDINGS_LAYERS.map((id) => (map?.getLayer(id) ? map.getPaintProperty(id, 'fill-extrusion-opacity') : null))
 		};
 	}
 }

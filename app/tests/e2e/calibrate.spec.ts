@@ -38,7 +38,7 @@ type Calib = {
 	resumed: number | null;
 	busy: string | null;
 	solution: { pose: Seed['pose']; rms: number } | null;
-	map: { entered: boolean; hidden: boolean; markers: { n: number }[]; cone: boolean; drape: boolean; scene: unknown; buildingsOpacity: unknown };
+	map: { entered: boolean; hidden: boolean; markers: { n: number }[]; cone: boolean; drape: boolean; scene: unknown; buildingsOpacity: unknown[] };
 };
 
 const seed = (kind: Seed['kind']) => seeds().seeds.find((s) => s.kind === kind)! as SeedPairs;
@@ -97,7 +97,9 @@ const everything = (page: Page) =>
 			shown: [...info.shown].sort(),
 			flavor: info.flavor,
 			aerial: m.getLayer('aerial') ? m.getLayoutProperty('aerial', 'visibility') !== 'none' : false,
-			buildings: m.getLayer('buildings-3d') ? [m.getLayoutProperty('buildings-3d', 'visibility') ?? 'visible', m.getPaintProperty('buildings-3d', 'fill-extrusion-opacity') ?? null] : null,
+			buildings: ['buildings-3d', 'buildings-3d-estimated'].map((id) =>
+				m.getLayer(id) ? [m.getLayoutProperty(id, 'visibility') ?? 'visible', m.getPaintProperty(id, 'fill-extrusion-opacity') ?? null] : null
+			),
 			windows: (globalThis as any).__tvtCameras.windows().map((w: { key: string }) => w.key).sort(),
 			rects: [...document.querySelectorAll('[data-window-key]')].map((el) => {
 				const r = el.getBoundingClientRect();
@@ -176,7 +178,7 @@ test.describe('calibrate', () => {
 			expect(((inside.bearing - key.pose.heading + 540) % 360) - 180).toBeCloseTo(0, 3);
 			expect(inside.exaggeration).toBe(1);
 			expect(inside.aerial).toBe(true);
-			expect(inside.buildings?.[1]).toBe(0.25);
+			expect(inside.buildings.map((b) => b?.[1]), 'measured and estimated buildings faint').toEqual([0.25, 0.25]);
 			expect(inside.shown).toEqual([]);
 			expect(inside.enabled, 'the layer set itself is kept').toEqual(before.enabled);
 			expect(inside.windows).toEqual([]);
