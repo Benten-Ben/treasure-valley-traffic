@@ -137,6 +137,9 @@ main > div.views.card {
 	main .maplibregl-ctrl.maplibregl-ctrl-attrib.maplibregl-compact-show {
 		box-sizing: border-box;
 		width: auto;
+		/* Open, the card grows with its credits; the closed (i)'s 44 px height left every line after
+		   the second on the bare map (WP15's review). */
+		height: auto;
 		/* Clear of the Map / Aerial switch at the top right. */
 		max-width: calc(100vw - 176px);
 		padding-left: 52px;
