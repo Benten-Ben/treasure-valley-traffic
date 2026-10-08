@@ -1,13 +1,14 @@
 /**
  * Drape a calibrated camera frame onto the ground (projecting it onto the
- * ground plane). For each pixel of a small north-up raster around the
+ * ground plane): the calibrator's check (docs/14 §14.6), no longer drawn on
+ * the main map. For each pixel of a small north-up raster around the
  * camera, find where that ground point appears in the frame and sample it.
  *
  * Only the road surface lands in the right place: anything above it (cars,
  * poles, buildings) is smeared away from the camera, and detail thins with
  * distance, so the drape fades out toward maxDistance.
  */
-import { fromLocal, project, toLocal, type ImageSize, type Pose } from './solver';
+import { barPx, fromLocal, project, toLocal, type ImageSize, type Pose } from './solver';
 
 export interface Drape {
 	url: string; // PNG data URL with transparency
@@ -37,8 +38,9 @@ export function drape(
 	const ctx = canvas.getContext('2d')!;
 	const out = ctx.createImageData(w, h);
 	const src = pixels.data, sw = pixels.width, sh = pixels.height;
-	// The bottom timestamp bar and anything above the horizon aren't ground.
-	const usableBottom = sh - 36;
+	// The bottom timestamp bar (its height worked out per frame: the HD frames' is
+	// about 86 px, not 36) and anything above the horizon aren't ground.
+	const usableBottom = sh - (barPx(size.width, size.height) * sh) / size.height;
 
 	for (let j = 0; j < h; j++) {
 		const n = maxN - (j + 0.5) * stepN;
