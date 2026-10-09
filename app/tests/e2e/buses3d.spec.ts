@@ -151,6 +151,8 @@ interface AlongStep {
 	t1: number;
 	path: number[];
 	cum: number[];
+	/** Where the step starts as drawn: where the bus's previous step ended (§14.4, "No jumps at step boundaries"). */
+	start: [number, number];
 }
 
 function pointAt(s: AlongStep, d: number): [number, number] {
@@ -164,15 +166,52 @@ function pointAt(s: AlongStep, d: number): [number, number] {
 	return [path[2 * i - 2] + (path[2 * i] - path[2 * i - 2]) * f, path[2 * i - 1] + (path[2 * i + 1] - path[2 * i - 1]) * f];
 }
 
+/** Where an along step puts the bus `d` metres in: on its path, plus its start's offset from the path, eased out by its end. */
+function drawnAt(s: AlongStep, d: number): [number, number] {
+	const len = s.cum[s.cum.length - 1];
+	const p = pointAt(s, d);
+	const ease = len > 0 ? Math.max(0, 1 - Math.max(0, d) / len) : 0;
+	return [p[0] + (s.start[0] - s.path[0]) * ease, p[1] + (s.start[1] - s.path[1]) * ease];
+}
+
+/** A still step holds where the bus already is while that's within this of its own fix (m); beyond, it glides there (§14.4). */
+const HOLD_M = 30;
+
+/**
+ * Each bus's along steps, with where each starts as drawn (§14.4, "No jumps
+ * at step boundaries"): a step right after another starts where that one
+ * ended, its first at its own fix. An along step ends at its path's end; a
+ * straight step or a gap at the next fix; a still step where it held, or at
+ * its fix when it glided there (its start more than HOLD_M from the fix).
+ */
 function alongSteps(t: Tracks): Map<string, AlongStep[]> {
 	const out = new Map<string, AlongStep[]>();
+	const byBus = new Map<string, Tracks['steps']>();
 	for (const s of t.steps) {
-		if (s[3] !== 'along' || !s[8] || s[2] === null) continue;
-		const path = s[8];
-		const cum = [0];
-		for (let i = 2; i < path.length; i += 2) cum.push(cum[cum.length - 1] + metres(path[i - 2], path[i - 1], path[i], path[i + 1]));
-		if (!out.has(s[0])) out.set(s[0], []);
-		out.get(s[0])!.push({ t0: s[1], t1: s[2], path, cum });
+		if (!byBus.has(s[0])) byBus.set(s[0], []);
+		byBus.get(s[0])!.push(s);
+	}
+	for (const [vid, steps] of byBus) {
+		steps.sort((a, b) => a[1] - b[1]);
+		let prev: { t1: number | null; end: (next: Tracks['steps'][number]) => [number, number] } | null = null;
+		for (const s of steps) {
+			const fix: [number, number] = [s[4], s[5]];
+			const start: [number, number] = prev && prev.t1 !== null && prev.t1 === s[1] ? prev.end(s) : fix;
+			const path = s[3] === 'along' && s[8] && s[8].length >= 4 ? s[8] : null;
+			if (path) {
+				const end: [number, number] = [path[path.length - 2], path[path.length - 1]];
+				prev = { t1: s[2], end: () => end };
+			} else if (s[3] === 'straight' || s[3] === 'gap') prev = { t1: s[2], end: (next) => [next[4], next[5]] };
+			else {
+				const glide = s[2] !== null && metres(start[0], start[1], fix[0], fix[1]) > HOLD_M;
+				prev = { t1: s[2], end: () => (glide ? fix : start) };
+			}
+			if (!path || s[2] === null) continue;
+			const cum = [0];
+			for (let i = 2; i < path.length; i += 2) cum.push(cum[cum.length - 1] + metres(path[i - 2], path[i - 1], path[i], path[i + 1]));
+			if (!out.has(vid)) out.set(vid, []);
+			out.get(vid)!.push({ t0: s[1], t1: s[2], path, cum, start });
+		}
 	}
 	return out;
 }
@@ -296,7 +335,7 @@ test.describe('buses3d', () => {
 				if (!step) continue;
 				const len = step.cum[step.cum.length - 1];
 				const d = ((s.T - step.t0) / (step.t1 - step.t0)) * len;
-				const p = pointAt(step, d);
+				const p = drawnAt(step, d);
 				const a = pointAt(step, Math.max(0, d - 8));
 				const c = pointAt(step, Math.min(len, d + 8));
 				errs.push({ id: b.id, err: angle(b.heading3d, bearing(a[0], a[1], c[0], c[1])), off: metres(p[0], p[1], b.lng, b.lat) });
