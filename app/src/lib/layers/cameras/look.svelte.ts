@@ -1,4 +1,5 @@
 import type { Box } from '#lib/calibration/frustum.js';
+import type { LiveFrame } from '#lib/contracts/live.js';
 
 /**
  * What the look-through banner (the HUD) and the picture's frame show (docs/14
@@ -31,9 +32,15 @@ class LookState {
 	/** Where this camera is in the ← → order, and how many there are. */
 	index = $state(0);
 	count = $state(0);
-	/** The picture shown is the calibration's reference frame (no live picture yet). */
+	/** The picture shown is the calibration's reference frame (no live picture yet, or the live one changed size). */
 	reference = $state(false);
-	/** A message while it can't place the camera, or why it left. */
+	/** The live frame whose picture is shown (null for the reference frame, or before the first): the strip's age is its. */
+	seen = $state.raw<LiveFrame | null>(null);
+	/**
+	 * A message while it can't place the camera, or why it left; while looking,
+	 * "Image size changed (… → …); recalibrate" when the live picture is of
+	 * another size (the strip shows it).
+	 */
 	problem = $state<string | null>(null);
 	actions: LookActions | null = null;
 	/** The frame's element (the vignette), faded directly. */

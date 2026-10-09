@@ -1,5 +1,8 @@
 import type { Page } from '@playwright/test';
-import { appendFileSync, mkdirSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { fetchedAtOf, INDEX, INDEX_HEADER, jpegDir, localDay, stampOf, withComment } from '../../scripts/archive-tick.ts';
 import { recordNetwork } from '../../scripts/net.mjs';
 import { project, type Pose } from '../../src/lib/calibration/solver.ts';
 import { env, expect, mapReady, screenPath, seeds, test, type Seed } from './fixtures.js';
@@ -27,7 +30,16 @@ import { env, expect, mapReady, screenPath, seeds, test, type Seed } from './fix
  * - the Esc order (help, then look-through, before the card and selection);
  *   Enter on a focused window and a double-click go straight in, the latter
  *   from the view before the clicks' fly;
- * - a phone gets the full-screen picture and a bottom strip.
+ * - a phone gets the full-screen picture and a bottom strip;
+ * - entered from a z13 overview over ground higher than the camera's eye
+ *   (through the API, and by a double-click on the camera there), the map's
+ *   centre is on the terrain under the view axis and the near plane is under
+ *   2 m, on arrival and after the terrain has loaded (the fix round, Oct 8:
+ *   it was 10 km out, kilometres underground, with a near plane of 140–200 m);
+ * - a frame of another size while looking through says so and never blanks
+ *   the picture: the reference frame (labelled) when entered straight in, or
+ *   the live picture of the calibrated size it had, with the strip's age the
+ *   age of the picture on screen.
  */
 type Pair = { pixel: [number, number]; ground: [number, number, number] };
 type SeedPairs = Seed & { pairs: Pair[]; groundZ: number };
@@ -133,6 +145,33 @@ const note = (line: string) => {
 	mkdirSync(env().screens, { recursive: true });
 	appendFileSync(screenPath('wp13-numbers.txt'), `${new Date().toISOString()} ${line}\n`);
 };
+
+/** A frame appended to a recorded camera's fake archive (the capture service's way), as the newest; its stamp and sha. */
+function appendFrame(image: number, bytes: Buffer, when: Date) {
+	let t = new Date(Math.floor(when.getTime() / 1000) * 1000);
+	const dir = jpegDir(env().archive, image, localDay(t));
+	mkdirSync(dir, { recursive: true });
+	while (existsSync(join(dir, `${stampOf(t)}.jpg`))) t = new Date(t.getTime() + 1000);
+	const stamp = stampOf(t);
+	const body = withComment(bytes, `tvt lookthrough spec ${fetchedAtOf(t)} (synthetic test frame)`);
+	writeFileSync(join(dir, `${stamp}.jpg`), body);
+	const index = join(dir, INDEX);
+	if (!existsSync(index)) writeFileSync(index, `${INDEX_HEADER}\n`);
+	const sha = createHash('sha256').update(body).digest('hex');
+	appendFileSync(index, `${fetchedAtOf(t)},${stamp}.jpg,${body.length},${sha}\n`);
+	return { stamp, sha };
+}
+
+/**
+ * z13 overviews over ground higher than the camera's eye (true heights from
+ * the map's terrain, Oct 8): the foothills north-east of downtown for Capitol
+ * & Myrtle (about 905 m against an eye at 829 m), the bench south-east of
+ * Franklin & Milwaukee (about 845 m against 835 m). The camera stays on screen.
+ */
+const OVERVIEWS: [Seed['kind'], [number, number]][] = [
+	['roll', [-116.1742, 43.62266]],
+	['low-tilt', [-116.25672, 43.59345]]
+];
 
 /** Let CSS animations finish (SwiftShader starves them while the map draws), for screenshots. */
 async function settle(page: Page) {
@@ -406,6 +445,137 @@ test.describe('cameras: 3D and look-through', () => {
 		await page.screenshot({ path: screenPath('wp13-look-phone.png') });
 		await strip.getByRole('button', { name: 'Step out' }).click();
 		await expect.poll(() => mode(page), { timeout: 120_000 }).toBe('explore');
+		expect(offsite).toEqual([]);
+	});
+
+	test('entered from a z13 overview over higher ground, through the API and by a double-click: the centre on the terrain, the near plane under 2 m', { tag: '@wp13' }, async ({ page, offsite }) => {
+		test.setTimeout(1_200_000);
+		const all = seedsWithPairs();
+		for (const [kind, centre] of OVERVIEWS) {
+			const s = all.find((x) => x.kind === kind)!;
+			for (const how of ['the API', 'a double-click'] as const) {
+				// A fresh page each time: no window, no selection, nothing polled yet.
+				await page.goto('about:blank');
+				await openMap(page, `#map=13/${centre[1].toFixed(5)}/${centre[0].toFixed(5)}/0/0&layers=cameras`);
+				// The overview's centre is above the camera's eye: MapLibre alone would put the centre 10 km out from there.
+				const high = await page.evaluate(() => {
+					const m = (globalThis as any).__tvt.map;
+					const g = m.queryTerrainElevation(m.getCenter());
+					return g === null ? null : g / (m.getTerrain()?.exaggeration ?? 1);
+				});
+				expect(high, `${s.kind}: the overview's ground (m) is above the eye at ${s.pose.alt} m`).toBeGreaterThan(s.pose.alt + 2);
+				const start = await camera(page);
+				// Load look-through (Step out is a no-op outside it), so its trace records the flight in.
+				await page.evaluate(() => (globalThis as any).__tvtLook.stepOut());
+				await page.evaluate(() => (globalThis as any).__tvtLook.trace(true));
+				if (how === 'the API') {
+					expect(await page.evaluate(([id, v]) => (globalThis as any).__tvtLook.enter(id, v), [s.cameraId, s.viewId] as const)).toBe(true);
+				} else {
+					// The first click flies to the camera; the double-click goes in from the overview, before that fly.
+					const pole = await page.evaluate((id) => (globalThis as any).__tvtCameras.cameras().find((c: any) => c.id === id), s.cameraId);
+					const p = await pointOf(page, [pole.lng, pole.lat]);
+					await page.mouse.dblclick(p.x, p.y);
+				}
+				await expect.poll(async () => (await lookState(page)).phase, { timeout: 180_000 }).toBe('looking');
+				expect((await lookState(page)).cameraId).toBe(s.cameraId);
+				// The flight in never collapses the zoom (the bug's centre 10 km out read as zoom 12.1–12.7).
+				const trace: { phase: string; zoom: number }[] = await page.evaluate(() => (globalThis as any).__tvtLook.trace(false));
+				const fly = trace.filter((x) => x.phase === 'fly');
+				expect(fly.length).toBeGreaterThan(0);
+				const lowest = Math.min(...fly.map((x) => x.zoom));
+				expect(lowest, 'the lowest zoom on the way in').toBeGreaterThan(start.zoom - 0.3);
+				for (const when of ['on arrival', 'once the terrain has loaded'] as const) {
+					if (when !== 'on arrival') {
+						await mapReady(page);
+						await page.waitForTimeout(3000);
+					}
+					const ins = await inspect(page);
+					const line = `from the overview (${how}) ${s.kind} ${when}: centre ${ins.centre.elevation.toFixed(2)} m over terrain ${ins.centre.ground?.toFixed(2)} m, zoom ${ins.centre.zoom.toFixed(2)}, near ${ins.near.toFixed(2)} m, plane ${ins.plane.d.toFixed(2)} m, eye ${ins.errorM.toExponential(2)} m off; the flight's lowest zoom ${lowest.toFixed(2)} from ${start.zoom.toFixed(2)}`;
+					note(line);
+					test.info().annotations.push({ type: 'overview', description: line });
+					expect(ins.errorM, line).toBeLessThanOrEqual(0.1);
+					expect(ins.near, line).toBeLessThanOrEqual(2);
+					expect(ins.centre.zoom, line).toBeGreaterThan(18);
+					expect(ins.centre.ground, line).not.toBeNull();
+					expect(Math.abs(ins.centre.elevation - ins.centre.ground), line).toBeLessThan(3);
+					expect(ins.plane.d, line).toBeGreaterThanOrEqual(2 * ins.near);
+				}
+				const reg = await registration(page, s, s.pose);
+				note(`from the overview (${how}) ${s.kind}: registration mean ${reg.mean.toFixed(3)} px, max ${reg.max.toFixed(3)} px`);
+				expect(reg.mean).toBeLessThanOrEqual(1.5);
+				await settle(page);
+				await page.screenshot({ path: screenPath(`fix-look-overview-${s.kind}-${how === 'the API' ? 'api' : 'dblclick'}.png`) });
+				// Out: back to the overview exactly.
+				await page.keyboard.press('Escape');
+				await expect.poll(() => mode(page), { timeout: 120_000 }).toBe('explore');
+				await mapReady(page);
+				const back = await camera(page);
+				for (const k of ['lng', 'lat', 'zoom', 'bearing', 'pitch'] as const) expect(Math.abs(back[k] - start[k]), `${how}: ${k}`).toBeLessThan(1e-6);
+			}
+		}
+		expect(offsite).toEqual([]);
+	});
+
+	test('a frame of another size while looking through: the message, never a blank picture, and the strip’s age is the picture’s', { tag: '@wp13' }, async ({ page, offsite }) => {
+		test.setTimeout(600_000);
+		await page.emulateMedia({ reducedMotion: 'reduce' });
+		const all = seedsWithPairs();
+		const key = all.find((x) => x.kind === 'key')!;
+		const hd = all.find((x) => x.kind === 'hd')!;
+		const big = readFileSync(join(env().framesDir, '_fixture', `view-${hd.viewId}.jpg`));
+		const original = readFileSync(join(env().framesDir, key.frame));
+		const msg = `Image size changed (${key.size.width}×${key.size.height} → ${hd.size.width}×${hd.size.height}); recalibrate`;
+		const strip = page.getByRole('group', { name: 'Look-through' });
+		const clocks = async () => (await strip.locator('.clocks').textContent())?.trim() ?? '';
+		try {
+			// 1. Straight in (no window, so nothing has polled the view) while the newest frame is of another size.
+			appendFrame(key.imageId, big, new Date());
+			await openMap(page, at(key, 16.5, 50));
+			await enter(page, key);
+			await expect.poll(async () => (await lookState(page)).problem, { timeout: 60_000 }).toBe(msg);
+			await expect(strip.getByText(msg)).toBeVisible();
+			// The reference frame (the calibrated size) is on the plane, labelled, and drawn: not a blank panel.
+			await expect.poll(async () => (await inspect(page)).plane.texture, { timeout: 60_000 }).toBe(`look:${key.viewId}:ref`);
+			expect((await inspect(page)).plane.layer).toBeGreaterThanOrEqual(0);
+			expect(await lookState(page)).toMatchObject({ phase: 'looking', reference: true, seen: null });
+			expect(await clocks()).toBe('reference picture');
+			await settle(page);
+			await page.screenshot({ path: screenPath('fix-look-size-changed-direct.png') });
+			await stepOut(page);
+
+			// 2. Back at the calibrated size, seen 10 minutes ago: looking through shows it, live.
+			const old = appendFrame(key.imageId, original, new Date(Date.now() - 10 * 60_000));
+			await page.goto('about:blank');
+			await openMap(page, at(key, 16.5, 50));
+			await enter(page, key);
+			await expect.poll(async () => (await lookState(page)).seen, { timeout: 60_000 }).toBe(old.sha);
+			expect(await lookState(page)).toMatchObject({ reference: false, problem: null });
+			const texture = (await inspect(page)).plane.texture;
+			expect(texture).toBe(`look:${key.viewId}:${old.sha}`);
+
+			// 3. A frame of another size arrives: the message; the picture stays, and so does its age (about 10 min, not 0).
+			appendFrame(key.imageId, big, new Date());
+			await expect.poll(async () => (await lookState(page)).problem, { timeout: 60_000 }).toBe(msg);
+			await expect(strip.getByText(msg)).toBeVisible();
+			expect((await inspect(page)).plane.texture).toBe(texture);
+			expect((await lookState(page)).seen).toBe(old.sha);
+			const text = await clocks();
+			const age = /^picture seen (\d+):(\d\d) ago$/.exec(text);
+			expect(age, text).not.toBeNull();
+			expect(Number(age![1]), text).toBeGreaterThanOrEqual(9);
+			await settle(page);
+			await page.screenshot({ path: screenPath('fix-look-size-changed-while-looking.png') });
+
+			// 4. The calibrated size again: the message goes and the new picture shows.
+			const back = appendFrame(key.imageId, original, new Date(Date.now() + 1000));
+			await expect.poll(async () => (await lookState(page)).seen, { timeout: 60_000 }).toBe(back.sha);
+			expect((await lookState(page)).problem).toBeNull();
+			await expect(strip.getByText(msg)).toHaveCount(0);
+			await stepOut(page);
+		} finally {
+			// Leave the newest frame at the calibrated size for the specs after this one.
+			appendFrame(key.imageId, original, new Date(Date.now() + 2000));
+		}
 		expect(offsite).toEqual([]);
 	});
 });

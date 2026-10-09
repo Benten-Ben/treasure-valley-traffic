@@ -23,6 +23,7 @@ import {
 	cameraLayers,
 	CHECK_IMAGE,
 	checkImage,
+	ICON_LAYERS,
 	CONES,
 	counts,
 	CREAM,
@@ -148,6 +149,8 @@ export class CamerasModule implements LayerModule {
 	#scope: MapScope | null = null;
 	#byId = new Map<number, Cam>();
 	#visible = false;
+	/** Look-through is on: the icons step aside (they'd sit over the picture). */
+	#looking = false;
 	#destroyed = false;
 	#hoverCamera: number | null = null;
 	#windowCamera: number | null = null;
@@ -228,6 +231,15 @@ export class CamerasModule implements LayerModule {
 			$effect.root(() => {
 				$effect(() => {
 					if (ctx.modes.current !== 'explore') untrack(() => this.#closeWindows());
+				});
+				// Looking through: the other cameras' icons and notches would sit over the picture.
+				$effect(() => {
+					const looking = ctx.modes.current === 'look';
+					untrack(() => {
+						if (looking === this.#looking) return;
+						this.#looking = looking;
+						this.setVisible(this.#visible);
+					});
 				});
 			})
 		);
@@ -321,7 +333,11 @@ export class CamerasModule implements LayerModule {
 		this.#visible = on;
 		const map = this.#scope?.map;
 		if (!map) return;
-		for (const id of ALL_LAYERS) if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', on ? 'visible' : 'none');
+		const icons = new Set(ICON_LAYERS);
+		for (const id of ALL_LAYERS) {
+			const shown = on && !(this.#looking && icons.has(id));
+			if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', shown ? 'visible' : 'none');
+		}
 		this.#models?.setVisible(on);
 		this.#onZoom();
 		this.#syncBadges();
@@ -853,6 +869,8 @@ export class CamerasModule implements LayerModule {
 				index: look.index,
 				count: look.count,
 				reference: look.reference,
+				/** The live frame whose picture is shown (its sha), or null (the reference frame, or none yet). */
+				seen: look.seen?.sha ?? null,
 				problem: look.problem
 			}),
 			/** The eye read back (public state and MapLibre's own), the picture's plane, the limits. */

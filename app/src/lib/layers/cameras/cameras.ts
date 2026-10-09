@@ -63,6 +63,13 @@ export const ALL_LAYERS = [
 	'cameras-recorded'
 ];
 
+/**
+ * The icons and their marks (the `points` slot): hidden while looking
+ * through, where every other camera's icon would sit over the picture, along
+ * its horizon (the footprints stay: they lie on the ground the picture shows).
+ */
+export const ICON_LAYERS = [...CAMERA_LAYERS, 'cameras-calibrated-check', 'cameras-uncalibrated-mark', 'cameras-recorded'];
+
 /** Footprints are drawn from this zoom (§14.6). */
 export const FOOTPRINT_MINZOOM = 14;
 /** A solved position further than this from ACHD's point gets the ground line, m. */

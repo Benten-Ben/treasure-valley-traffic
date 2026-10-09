@@ -1,4 +1,4 @@
-import type { Map, PaddingOptions } from 'maplibre-gl';
+import type { Map, MapSourceDataEvent, PaddingOptions } from 'maplibre-gl';
 import type { AppCtx } from '#lib/app/context.js';
 import {
 	axisDistance,
@@ -12,7 +12,6 @@ import {
 	metresBetween,
 	nearMetres,
 	photoCrop,
-	framedCrop,
 	photoDistance,
 	photoPlane,
 	planeApex,
@@ -24,11 +23,12 @@ import {
 	type PhotoPlane
 } from '#lib/calibration/frustum.js';
 import type { ImageSize, Pose } from '#lib/calibration/solver.js';
-import type { LiveView } from '#lib/contracts/live.js';
+import type { LiveFrame, LiveView } from '#lib/contracts/live.js';
 import type { Scene, ScenePhoto } from '#lib/scene/index.js';
 import type { ViewSnapshot } from '#lib/state/view.svelte.js';
 import { toasts } from '#lib/ui/toasts.svelte.js';
 import type { Calibration } from './cameras.js';
+import { sizeChanged } from './freshness.js';
 import type { LiveFeed } from './live.svelte.js';
 import { look } from './look.svelte.js';
 
@@ -44,9 +44,13 @@ import { look } from './look.svelte.js';
  * 4. **Fit the picture:** letterboxed at its aspect, `h_img = min(0.92·H,
  *    0.96·W·h/w)`, and the map's field of view `Vm = 2·atan(tan(Vc/2)·H/h_img)`,
  *    set before the camera options are worked out.
- * 5. **Place** with `calculateCameraOptionsFromCameraLngLatAltRotation`, then
- *    a second pass puts the centre on the terrain under the view axis without
- *    moving the eye, so restoring the clamp later doesn't jump.
+ * 5. **Place** with `calculateCameraOptionsFromCameraLngLatAltRotation`, with
+ *    the centre first on the calibration's ground height along the view axis
+ *    (never on the height the centre had before, which can be at or above the
+ *    eye: `Grounding`), then on the terrain under the axis without moving the
+ *    eye, so restoring the clamp later doesn't jump. A terrain pass that would
+ *    reach the eye or jump more than a few metres isn't taken; as terrain tiles
+ *    arrive while looking, the centre is put on them again (the eye stays).
  * 6. **Fly in** with our own 1.2 s animation-frame loop (the eye, with a 40 m
  *    arc on flights over 300 m; bearing, pitch, roll and field of view; the
  *    field of view set first each frame). A jump under reduced motion.
@@ -94,13 +98,6 @@ const lerpPad = (a: PaddingOptions, b: PaddingOptions, t: number): PaddingOption
 });
 const reducedMotion = () => typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-/**
- * The scene's photo planes draw a cream edge over the outer 1.2% of their
- * texture (PhotoBatch's `edge`). Look-through grows its crop by as much
- * (`framedCrop`), so the edge frames the picture instead of covering it.
- */
-export const SCENE_PHOTO_EDGE = 0.012;
-
 /** Every animation takes at least this many frames, however slow they come, so nothing ever jumps. */
 export const MIN_STEPS = 8;
 
@@ -117,6 +114,11 @@ export function progress(elapsed: number, ms: number, step: number): number {
 export function shownBox(box: Box, size: ImageSize, crop: Crop): Box {
 	const k = box.height / size.height;
 	return { x: box.x + crop.x * k, y: box.y + crop.y * k, width: crop.width * k, height: crop.height * k };
+}
+
+/** "Image size changed (768×466 → 1920×1166); recalibrate" when a live frame isn't the calibrated size (the window's words), else null. */
+export function resizedText(size: ImageSize, frame: { width: number; height: number } | null | undefined): string | null {
+	return sizeChanged(frame, { imageWidth: size.width, imageHeight: size.height });
 }
 
 /** The canvas size MapLibre uses (it floors the container's). */
@@ -154,26 +156,77 @@ export function internalEye(map: Map): [number, number, number] | null {
 }
 
 /**
- * Put the map's eye at a pose, without animation. The field of view first
- * (the zoom depends on it). With `ground`, a second pass moves the centre
- * onto the terrain under the view axis, keeping the eye where it is.
+ * Where a placement puts the map's centre (step 5). MapLibre puts the centre
+ * where the view axis meets the height the centre has *now*, and when that
+ * height is at or above the eye (the view before entering was over higher
+ * ground, or at the 1.3× terrain) the axis never meets it: the centre lands
+ * 10 km out and kilometres underground, the zoom drops to about 12 and the
+ * near plane to 140–200 m, and the map draws as streaks. So the centre first
+ * goes onto a height known to be below the eye (the calibration's ground
+ * height), and only then onto the terrain, where that's believable.
  */
-export function placeEye(map: Map, e: EyePose, padding?: PaddingOptions, ground = false): void {
+export interface Grounding {
+	/** The height the centre goes to along the view axis first, true metres; kept at least ANCHOR_BELOW_M below the eye. */
+	anchor: number;
+	/** Then onto the terrain under the axis, in up to two passes, each taken only when `usableGround` says so. */
+	terrain?: boolean;
+	/** The most one terrain pass may move the centre's height, m (default GROUND_JUMP_M). */
+	maxJump?: number;
+}
+/** The anchor stays at least this far below the eye, m. */
+export const ANCHOR_BELOW_M = 1;
+/**
+ * A terrain pass moving the centre's height further than this is a guess
+ * (a tile not loaded yet reads 0, a far parent tile can be hundreds of metres
+ * off), so it isn't taken, m.
+ */
+export const GROUND_JUMP_M = 6;
+/** Terrain this close below the eye, or above it, never takes the centre, m. */
+export const EYE_CLEAR_M = 0.5;
+/** The centre counts as on the terrain within this, m (otherwise look-through places it again as tiles arrive). */
+export const ON_GROUND_M = 0.5;
+
+/** Whether a terrain height `g` may take a centre now at `z`: known, below the eye, and not a jump. */
+export function usableGround(g: number | null, z: number, eyeAlt: number, maxJump = GROUND_JUMP_M): g is number {
+	return g !== null && Number.isFinite(g) && g < eyeAlt - EYE_CLEAR_M && Math.abs(g - z) <= maxJump;
+}
+
+/**
+ * Put the map's eye at a pose, without animation. The field of view first
+ * (the zoom depends on it). With `ground`, the centre goes onto its anchor
+ * height along the view axis, then (with `terrain`) onto the terrain there,
+ * keeping the eye where it is. Every jump happens before the next frame is
+ * drawn, so the in-between camera is never seen.
+ */
+export function placeEye(map: Map, e: EyePose, padding?: PaddingOptions, ground?: Grounding): void {
 	if (Math.abs(map.getVerticalFieldOfView() - e.fov) > 1e-9) map.setVerticalFieldOfView(e.fov);
 	const at = (): void => {
 		const opts = map.calculateCameraOptionsFromCameraLngLatAltRotation([e.lng, e.lat], e.alt, e.bearing, e.pitch, e.roll);
 		map.jumpTo(padding ? { ...opts, padding } : opts);
 	};
+	if (ground) {
+		const anchor = Math.min(ground.anchor, e.alt - ANCHOR_BELOW_M);
+		if (Math.abs(map.getCenterElevation() - anchor) > 1e-9) map.jumpTo({ elevation: anchor });
+	}
 	at();
-	if (!ground || !map.getTerrain()) return;
+	if (!ground?.terrain || !map.getTerrain()) return;
 	for (let pass = 0; pass < 2; pass++) {
 		const c = map.getCenter();
+		const z = map.getCenterElevation();
 		const g = map.queryTerrainElevation([c.lng, c.lat]);
-		if (g === null || Math.abs(g - map.getCenterElevation()) < 0.01) break;
-		// Both jumps happen before the next frame is drawn, so the in-between camera is never seen.
+		if (!usableGround(g, z, e.alt, ground.maxJump) || Math.abs(g - z) < 0.01) break;
 		map.jumpTo({ elevation: g });
 		at();
 	}
+}
+
+/** How far the centre is from the terrain under it, m (null when that terrain isn't a usable height). */
+export function offGround(map: Map, eyeAlt: number): number | null {
+	if (!map.getTerrain()) return null;
+	const c = map.getCenter();
+	const z = map.getCenterElevation();
+	const g = map.queryTerrainElevation([c.lng, c.lat]);
+	return usableGround(g, z, eyeAlt) ? Math.abs(g - z) : null;
 }
 
 interface Target {
@@ -197,6 +250,10 @@ interface Target {
 	/** The picture shown (live frame sha, or 'ref' for the reference frame), and the one decoding. */
 	sha: string | null;
 	loading: string | null;
+	/** "Image size changed (… → …); recalibrate" while the live picture is of another size, else null. */
+	resized: string | null;
+	/** The live picture is of another size and there's no reference frame to show instead: step out. */
+	noPicture: boolean;
 	unwatch: () => void;
 }
 
@@ -243,6 +300,8 @@ export class LookThrough {
 	#target: Target | null = null;
 	#flight = 0;
 	#busy = false;
+	/** Check the centre against the terrain after the next frame (a terrain tile arrived). */
+	#groundDue = false;
 	#zeroTimer: ReturnType<typeof setTimeout> | undefined;
 	#views: Record<number, LiveView> = {};
 	#trace: TraceSample[] | null = null;
@@ -258,9 +317,13 @@ export class LookThrough {
 		scene.setPhotos(LOOK_GROUP, []);
 		map.on('move', this.#onMove);
 		map.on('resize', this.#onResize);
+		map.on('sourcedata', this.#onTerrainData);
+		map.on('render', this.#onRender);
 		this.#cleanup.push(() => {
 			map.off('move', this.#onMove);
 			map.off('resize', this.#onResize);
+			map.off('sourcedata', this.#onTerrainData);
+			map.off('render', this.#onRender);
 		});
 		look.actions = {
 			stepOut: () => void this.stepOut(),
@@ -320,9 +383,7 @@ export class LookThrough {
 
 	/** Why a view's live picture can't be looked through (its size changed), or null. */
 	#sizeProblem(cal: Calibration): string | null {
-		const f = this.#feed.views[cal.viewId]?.frame;
-		if (!f || (f.width === cal.size.width && f.height === cal.size.height)) return null;
-		return `Image size changed (${cal.size.width}×${cal.size.height} → ${f.width}×${f.height}); recalibrate`;
+		return resizedText(cal.size, this.#feed.views[cal.viewId]?.frame);
 	}
 
 	/** ← and → order: every calibrated view, nearest the first camera first. */
@@ -337,8 +398,9 @@ export class LookThrough {
 		const { w, h } = canvasSize(this.#map);
 		const box = letterbox(w, h, cal.size);
 		const fov = mapFov(pose.vfov, h, box.height);
-		// The picture above the 511 bar, grown so the plane's cream edge falls just outside it.
-		const crop = framedCrop(photoCrop(cal.size, false), SCENE_PHOTO_EDGE);
+		// The picture above the 511 bar. A plane drawn over everything has no cream edge of its own (the scene's
+		// PhotoBatch): the frame's 2 px viewfinder edge goes just outside it (LookFrame.svelte).
+		const crop = photoCrop(cal.size, false);
 		const plane = photoPlane(pose, cal.size, crop);
 		const name = this.#src.nameOf(cal.cameraId);
 		const photo: ScenePhoto = {
@@ -371,6 +433,8 @@ export class LookThrough {
 			photo,
 			sha: null,
 			loading: null,
+			resized: null,
+			noPicture: false,
 			unwatch: this.#feed.watch([cal.viewId])
 		};
 	}
@@ -398,17 +462,21 @@ export class LookThrough {
 		look.box = null;
 		look.shown = null;
 		look.reference = false;
+		look.seen = null;
+		look.problem = null;
 		this.#src.exclude([cal.cameraId]);
 		this.#picture(t);
 
 		// Step 7, first: place, read back and go back, in one task (nothing is drawn in between).
 		const start = eyeNow(map);
 		const startPad = map.getPadding();
+		// The height the centre has now is below the eye now (MapLibre placed it so), so it anchors the way back.
+		const startGround = map.getCenterElevation();
 		this.#busy = true;
-		placeEye(map, t.eye, ZERO, true);
+		placeEye(map, t.eye, ZERO, this.#grounding(t));
 		const err = this.#readback(t);
 		this.#setDistance(t);
-		placeEye(map, start, startPad);
+		placeEye(map, start, startPad, { anchor: startGround });
 		this.#busy = false;
 		if (old && old !== t) this.#drop(old);
 		if (!(err <= READBACK_M)) {
@@ -420,14 +488,19 @@ export class LookThrough {
 		t.photo.depthTest = true;
 		t.photo.opacity = PHOTO_OPACITY * look.slider;
 		this.#show();
-		const flown = await this.#fly(start, t.eye, startPad, ZERO);
+		const flown = await this.#fly(start, t.eye, startPad, ZERO, [startGround, t.cal.groundZ]);
 		if (!flown || this.#target !== t) return false;
 		this.#busy = true;
-		placeEye(map, t.eye, ZERO, true);
+		placeEye(map, t.eye, ZERO, this.#grounding(t));
 		this.#busy = false;
 		const after = this.#readback(t);
 		if (!(after <= READBACK_M)) {
 			this.#abort(`Can't place the map camera at this pose (the eye reads back ${after.toFixed(2)} m off)`);
+			return false;
+		}
+		// The live picture changed size on the way in, and there's no reference frame to show instead.
+		if (t.noPicture) {
+			this.#abort(t.resized ?? "There's no picture of the calibrated size to look through");
 			return false;
 		}
 		this.#setDistance(t);
@@ -439,6 +512,8 @@ export class LookThrough {
 		look.shown = t.shown;
 		look.phase = 'looking';
 		look.fade(1);
+		this.#groundDue = true;
+		map.triggerRepaint();
 		return true;
 	}
 
@@ -447,8 +522,17 @@ export class LookThrough {
 		return metresBetween([t.pose.lon, t.pose.lat, t.pose.alt], [...eyeOf(mapCamera(this.#map))] as [number, number, number]);
 	}
 
-	/** Our own animation-frame flight between two eyes (a jump under reduced motion). False when cut short. */
-	#fly(from: EyePose, to: EyePose, padFrom: PaddingOptions, padTo: PaddingOptions, exag?: [number, number]): Promise<boolean> {
+	/** Where the target's placement puts the centre: on the calibration's ground height, then on the terrain under the axis. */
+	#grounding(t: Target): Grounding {
+		return { anchor: t.cal.groundZ, terrain: true };
+	}
+
+	/**
+	 * Our own animation-frame flight between two eyes (a jump under reduced
+	 * motion), the centre's height eased between `ground`'s two (each below its
+	 * eye, so every eye in between is above it too). False when cut short.
+	 */
+	#fly(from: EyePose, to: EyePose, padFrom: PaddingOptions, padTo: PaddingOptions, ground: [number, number]): Promise<boolean> {
 		const id = ++this.#flight;
 		const map = this.#map;
 		const ms = reducedMotion() ? 0 : FLY_MS;
@@ -459,9 +543,8 @@ export class LookThrough {
 				if (this.#destroyed || id !== this.#flight) return resolve(false);
 				const t = ms ? progress(performance.now() - t0, ms, ++frames) : 1;
 				const k = easeInOut(t);
-				if (exag) this.#exaggerate(lerp(exag[0], exag[1], k), t === 1);
 				this.#busy = true;
-				placeEye(map, interpolate(from, to, k), lerpPad(padFrom, padTo, k));
+				placeEye(map, interpolate(from, to, k), lerpPad(padFrom, padTo, k), { anchor: lerp(ground[0], ground[1], k) });
 				this.#busy = false;
 				this.#sample('fly');
 				if (t < 1) requestAnimationFrame(frame);
@@ -490,20 +573,46 @@ export class LookThrough {
 	/**
 	 * Load the target's newest picture: the live frame; or, once the live feed
 	 * has answered that there's none (blocked, capped, images off…), the
-	 * calibration's reference frame, labelled as such. A frame of another size
-	 * never replaces the picture (it would land in the wrong place).
+	 * calibration's reference frame, labelled as such.
+	 *
+	 * A frame of another size never replaces the picture (it would land in the
+	 * wrong place). Look-through says so ("Image size changed (… → …);
+	 * recalibrate", as a toast, in `look.problem` and on the strip) and keeps
+	 * the live picture of the calibrated size it shows, if any, or else shows
+	 * the reference frame, labelled. With no reference frame either, it steps
+	 * out. When the size comes back, the live picture does too.
 	 */
 	#picture(t: Target) {
 		const live = this.#views[t.cal.viewId] ?? this.#feed.views[t.cal.viewId];
 		const f = live?.frame ?? null;
-		if (f) {
-			if (f.width === t.size.width && f.height === t.size.height && f.sha !== t.sha && f.sha !== t.loading) void this.#load(t, f.sha, f.url, false);
-		} else if (live && live.state !== 'waiting' && !t.sha && !t.loading && t.cal.frame) {
-			void this.#load(t, 'ref', `/frames/${t.cal.frame}`, true);
+		const resized = resizedText(t.size, f);
+		this.#setResized(t, resized);
+		if (f && !resized) {
+			if (f.sha !== t.sha && f.sha !== t.loading) void this.#load(t, f.sha, f.url, f);
+		} else if ((resized || (live && live.state !== 'waiting')) && !t.sha && !t.loading) {
+			if (t.cal.frame) void this.#load(t, 'ref', `/frames/${t.cal.frame}`, null);
+			else if (resized) this.#noPicture(t);
 		}
 	}
 
-	async #load(t: Target, sha: string, url: string, reference: boolean) {
+	/** The live picture's size changed (a message), or came back (null). */
+	#setResized(t: Target, resized: string | null) {
+		if (t.resized === resized) return;
+		t.resized = resized;
+		if (this.#target !== t) return;
+		look.problem = resized;
+		if (resized) this.#tell(resized);
+	}
+
+	/** Nothing of the calibrated size to show: step out (at once, or when the flight in lands). */
+	#noPicture(t: Target) {
+		t.noPicture = true;
+		if (this.#target === t && look.phase === 'looking') void this.stepOut();
+	}
+
+	/** Decode a picture into the plane: a live frame, or (`frame` null) the reference frame. */
+	async #load(t: Target, sha: string, url: string, frame: LiveFrame | null) {
+		const reference = frame === null;
 		t.loading = sha;
 		const key = `look:${t.cal.viewId}:${sha}`;
 		try {
@@ -522,7 +631,10 @@ export class LookThrough {
 		t.sha = sha;
 		t.loading = null;
 		if (old && old !== key) this.#scene.textures.release(old);
-		if (this.#target === t) look.reference = reference;
+		if (this.#target === t) {
+			look.reference = reference;
+			look.seen = frame;
+		}
 		this.#show();
 	}
 
@@ -591,11 +703,40 @@ export class LookThrough {
 		t.shown = shownBox(t.box, t.size, t.crop);
 		t.eye = eyePose(t.pose, mapFov(t.pose.vfov, h, t.box.height));
 		this.#busy = true;
-		placeEye(this.#map, t.eye, ZERO, true);
+		placeEye(this.#map, t.eye, ZERO, this.#grounding(t));
 		this.#busy = false;
 		this.#setDistance(t);
 		look.box = t.box;
 		look.shown = t.shown;
+		this.#show();
+	};
+
+	/** A terrain tile arrived: check the centre after the next frame (once it's drawn, the terrain reads as drawn). */
+	#onTerrainData = (e: MapSourceDataEvent) => {
+		if (this.#target && e.tile && e.sourceId === this.#map.getTerrain()?.source) this.#groundDue = true;
+	};
+
+	/**
+	 * After a frame that follows a terrain tile's arrival (or the arrival in
+	 * look-through): if the centre isn't on the terrain under the axis (that
+	 * tile wasn't there when it was placed), place it again (step 5). The eye
+	 * stays where it is, so nothing on screen moves; only the near plane and
+	 * the tiles' level of detail follow the centre. Not once the user has moved
+	 * the map camera.
+	 */
+	#onRender = () => {
+		if (!this.#groundDue) return;
+		const t = this.#target;
+		const map = this.#map;
+		if (!t || look.phase !== 'looking' || this.#busy) return;
+		this.#groundDue = false;
+		if (deviation(eyeNow(map), t.eye, t.D) > 1e-3) return;
+		const off = offGround(map, t.eye.alt);
+		if (off === null || off <= ON_GROUND_M) return;
+		this.#busy = true;
+		placeEye(map, t.eye, ZERO, this.#grounding(t));
+		this.#busy = false;
+		this.#setDistance(t);
 		this.#show();
 	};
 
@@ -672,9 +813,11 @@ export class LookThrough {
 		});
 		if (id !== this.#flight) return;
 		// B: the limits, and the centre back on the terrain under the axis with the eye kept, then the clamp.
+		// The centre's height now is below the eye (the user's moves keep it so), so it anchors the placement;
+		// the terrain here may be anywhere the user went, so any believable height under the axis is taken.
 		map.setMaxZoom(s.maxZoom);
 		map.setMaxPitch(s.maxPitch);
-		placeEye(map, eyeNow(map), undefined, true);
+		placeEye(map, eyeNow(map), undefined, { anchor: map.getCenterElevation(), terrain: true, maxJump: Infinity });
 		map.setCenterClampedToGround(s.centerClampedToGround);
 		this.#sample('end:limits');
 		// C: the exaggeration, keeping the eye clear of the drawn ground.
@@ -695,7 +838,8 @@ export class LookThrough {
 		const eye = eyeNow(map);
 		const g = map.queryTerrainElevation([eye.lng, eye.lat]);
 		if (g === null || eye.alt >= g + END.clearM) return;
-		placeEye(map, { ...eye, alt: g + END.clearM }, undefined, true);
+		// The exaggeration is easing, so the drawn ground moves further each step than a look-through placement allows.
+		placeEye(map, { ...eye, alt: g + END.clearM }, undefined, { anchor: map.getCenterElevation(), terrain: true, maxJump: Infinity });
 	}
 
 	/** Run `step(k)` with k eased from 0 to 1 over `ms` (once with 1 when ms is 0). */
@@ -821,6 +965,8 @@ export class LookThrough {
 			shown: t?.shown ?? null,
 			fov: map.getVerticalFieldOfView(),
 			near: nearMetres(h, map.getZoom(), map.getCenter().lat),
+			/** The map's centre: its height, and the drawn terrain there (null without terrain). */
+			centre: { zoom: map.getZoom(), elevation: map.getCenterElevation(), ground: map.getTerrain() ? map.queryTerrainElevation(map.getCenter()) : null },
 			plane: t ? { d: t.d, near: t.near, opacity: t.photo.opacity ?? 1, depthTest: t.photo.depthTest !== false, texture: t.photo.texture ?? null, layer: this.#scene.textures.layer(t.photo.texture) } : null,
 			limits: { maxPitch: map.getMaxPitch(), maxZoom: map.getMaxZoom(), clamp: map.getCenterClampedToGround(), exaggeration: this.#ctx.exaggeration() }
 		};

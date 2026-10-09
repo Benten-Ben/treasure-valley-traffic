@@ -5,7 +5,9 @@ import type { Selection } from '../types.js';
 import { cardPhoto, PHOTO_PX } from './card3d.js';
 import type { Calibration, CameraProps } from './cameras.js';
 import { progress, shownBox, MIN_STEPS } from './lookthrough.js';
-import { build3d, modelFade, poleGirth, type Cam3D } from './scene.js';
+import { headMesh } from '#lib/scene/meshes.js';
+import { TEAL } from './cameras.js';
+import { build3d, HEAD_MIN_PX, headMinPx, modelFade, poleGirth, type Cam3D } from './scene.js';
 
 const KEY: CameraProps = { id: 59, name: 'Eagle & Fairview', achdCamId: 1, views: 1, status: 'calibrated' };
 const OPEN: CameraProps = { id: 7, name: 'Somewhere', achdCamId: 2, views: 1, status: 'uncalibrated' };
@@ -47,11 +49,25 @@ describe('3D cameras (build3d)', () => {
 		expect(pole.alt).toBeUndefined();
 		expect((pole.scale as number[])[2]).toBeCloseTo(811.1 - 800.6 - 0.15, 9);
 		expect(head.alt).toBe(811.1);
-		expect(head.minPx).toBe(12);
+		expect(head.minPx).toBeCloseTo(headMinPx(), 9);
+		expect(head.color, 'a calibrated head is teal (§14.6, the color budget)').toBe(TEAL);
 		expect(head.basis).toEqual(axes(355, 20, 0));
 		// Without terrain data, the calibration's ground height.
 		const flat = build3d(CAMS, [CAL], { ...base, ground: () => null });
 		expect((flat.instances.find((i) => i.mesh === 'pole')!.scale as number[])[2]).toBeCloseTo(811.1 - 801.1 - 0.15, 9);
+	});
+
+	it('sizes the head so its thinnest side is at least 16 px from any angle (§14.6 asks for 12)', () => {
+		// The scene grows a model until its bounding sphere is minPx across; every side of the head's box is at
+		// least its thinnest side, which then gets HEAD_MIN_PX.
+		const m = headMesh();
+		const sides = [0, 1, 2].map((a) => m.max[a] - m.min[a]);
+		const k = headMinPx() / (2 * m.radius);
+		expect(HEAD_MIN_PX).toBeGreaterThanOrEqual(16);
+		for (const side of sides) expect(side * k).toBeGreaterThanOrEqual(HEAD_MIN_PX - 1e-9);
+		expect(Math.min(...sides) * k).toBeCloseTo(HEAD_MIN_PX, 9);
+		// Compact: its longest side isn't more than about 1.5 times its thinnest, so it reads from the side and end-on alike.
+		expect(Math.max(...sides) / Math.min(...sides)).toBeLessThan(1.5);
 	});
 
 	it("the cone's corner edges run from the head through the image corners", () => {

@@ -301,17 +301,22 @@ export function poleMesh(): Mesh {
 /**
  * The camera head (≤ 120 triangles): x right, y down, z forward, with the
  * origin at the optical centre, so a basis of the solver's axes() (right,
- * down, forward) turns it to its heading, tilt and roll.
+ * down, forward) turns it to its heading, tilt and roll. Built to read at a
+ * glance on the cream ground and on aerial imagery (docs/14 §14.6): the
+ * housing takes the instance's color (teal for a calibrated camera), under an
+ * ink sun hood, with a cream-ringed dark lens on its front face; a compact
+ * box, so it looks about as big from any side.
  */
 export function headMesh(): Mesh {
 	const b = new Builder();
-	// Housing behind the lens.
-	b.box([-0.13, -0.11, -0.46], [0.13, 0.11, -0.02], CREAM, 0);
-	// Lens: an 8-sided barrel along z, glass in front.
-	b.prism(circle(0.07, 8, Math.PI / 8), -0.02, 0, (x, y, z) => [x, y, z], INK, { end: GLASS });
+	// Housing behind the lens, in the instance's color.
+	b.box([-0.15, -0.13, -0.4], [0.15, 0.13, -0.02], CREAM, TINT.instance);
+	// The lens face: a cream bezel ring, then an 8-sided dark barrel with glass in front.
+	b.prism(circle(0.11, 8, Math.PI / 8), -0.02, 0, (x, y, z) => [x, y, z], CREAM, { end: CREAM });
+	b.prism(circle(0.07, 8, Math.PI / 8), 0, 0.03, (x, y, z) => [x, y, z], INK, { end: GLASS });
 	// Sun hood above (−y is up in the head's frame), and the mount below.
-	b.box([-0.16, -0.15, -0.5], [0.16, -0.11, 0.08], ROOF, 0);
-	b.box([-0.04, 0.11, -0.3], [0.04, 0.3, -0.18], STEEL, 0, ['+y']);
+	b.box([-0.18, -0.17, -0.44], [0.18, -0.13, 0.07], INK, 0);
+	b.box([-0.04, 0.13, -0.27], [0.04, 0.25, -0.15], STEEL, 0, ['+y']);
 	return b.build('head');
 }
 
