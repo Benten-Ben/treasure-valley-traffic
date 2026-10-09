@@ -22,7 +22,11 @@ type Drawn = { id: number; name: string; provider: string; hollow: boolean; view
 
 /** Every seeded station on screen, clear of the legend column and the toolbar. */
 const VIEW = '#map=9/43.64/-116.62/0/0';
-/** The same zoom further west: Example Grade sits under the inspect column, where the card opens (about x 1000). */
+/**
+ * The same zoom asked further west. At z9 the map spans its bounds from side to side, so MapLibre
+ * centres it whatever the hash says: Example Grade sits at about x 880, its badge reaching into the
+ * inspect column, where the card opens.
+ */
 const UNDER_CARD = '#map=9/43.64/-116.82/0/0';
 const NAMES: string[] = Object.values(STATIONS).map((s) => s.name);
 
@@ -74,6 +78,8 @@ const escapeRe = (t: string) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 /** The legend and inspect columns on a desktop (windows.svelte.ts, §14.3): the free middle is between them. */
 const LEFT_COLUMN = 312;
 const RIGHT_COLUMN = 392;
+/** The room a click keeps between a station and the edge of the free middle (roadweather/place.ts CLEAR_PX). */
+const CLEAR_PX = 32;
 
 type Box = { x: number; y: number; width: number; height: number } | null;
 const inside = (b: Box, x: number, y: number) => !!b && x >= b.x && x <= b.x + b.width && y >= b.y && y <= b.y + b.height;
@@ -152,10 +158,11 @@ test.describe('road weather', () => {
 		await openMap(page, 'weather', UNDER_CARD);
 		const on = await seededDrawn(page);
 
-		// At this view Example Grade sits under the inspect column, where the card opens: the click pans it clear.
-		// The map already spans its bounds from side to side here, so a pan alone can't move it: it zooms in just enough.
+		// At this view Example Grade's badge reaches into the inspect column, where the card opens: the click pans
+		// it clear (place.ts counts a station within CLEAR_PX of the column as covered). The map already spans its
+		// bounds from side to side here, so a pan alone can't move it: it zooms in just enough.
 		const before = on[STATIONS.grade.name];
-		expect(before.x!).toBeGreaterThan(1280 - RIGHT_COLUMN);
+		expect(before.x!, 'Example Grade starts covered by the inspect column').toBeGreaterThan(1280 - RIGHT_COLUMN - CLEAR_PX);
 		const zoom = () => page.evaluate(() => (globalThis as any).__tvt.map.getZoom() as number);
 		const zoomBefore = await zoom();
 		await clickStation(page, before);
