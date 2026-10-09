@@ -152,14 +152,17 @@ test.describe('transit', () => {
 		if (chunk) await page.route(`**/${chunk}`, (r) => r.abort());
 		await page.goto(`/?at=${AT}`);
 		await transitReady(page);
-		await expect.poll(async () => (await drawn(page)).length, { timeout: 60_000 }).toBeGreaterThanOrEqual(15);
 		expect(await page.evaluate(() => (globalThis as any).__tvt.map.getZoom())).toBeCloseTo(10, 1);
 		await expect(pill(page)).toContainText('REPLAY');
+		// Read the buses once the overlay has settled: at z10 the loop runs at a few frames a second, so a
+		// read can land between a poll and the next drawn frame. 15 or more drawn, both times.
+		let a: BusDebug[] = [];
+		await expect.poll(async () => (a = await drawn(page)).length, { timeout: 60_000 }).toBeGreaterThanOrEqual(15);
 		const t0 = await transit<number>(page, 'playhead');
-		const a = await drawn(page);
 		const shotA = await page.screenshot({ path: screenPath('transit-replay-z10-a.png') });
 		await page.waitForTimeout(5000);
-		const b = await drawn(page);
+		let b: BusDebug[] = [];
+		await expect.poll(async () => (b = await drawn(page)).length, { timeout: 30_000 }).toBeGreaterThanOrEqual(15);
 		const shotB = await page.screenshot({ path: screenPath('transit-replay-z10-b.png') });
 		const t1 = await transit<number>(page, 'playhead');
 		expect(t1 - t0, 'the playhead runs in real time').toBeGreaterThan(4);
@@ -354,7 +357,11 @@ test.describe('transit', () => {
 		await page.mouse.click(now.x!, now.y!);
 		const card = page.getByRole('region', { name: 'Selected bus' });
 		await expect(card).toBeVisible();
-		await expect(card).toContainText('Bus ');
+		// The bus number is its vehicle ID, not VRT's vehicle label (the run, "07:42:00-4").
+		await expect(card).toContainText(`Bus ${bus.id.trim()}`);
+		await expect(card).not.toContainText(/Bus \d\d:\d\d/);
+		await expect(card).not.toContainText(/toward (Inbound|Outbound|Towards?\b)/i);
+		await expect(card).not.toContainText(/\S·|·\S/); // "Bus 3507 · toward …", spaced both sides
 		await expect(card).toContainText('Valley Regional Transit (CC BY 3.0)');
 		await expect(card).toContainText(/Last fix \d+:\d\d:\d\d [AP]M/);
 		await expect(card).toContainText(/between reported positions|At its reported position|waiting for GPS/i);

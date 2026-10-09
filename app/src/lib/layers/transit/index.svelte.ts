@@ -14,7 +14,7 @@ import { take } from '../prefetch.js';
 import { PRIORITY, type Badge, type Chip, type Interactive, type LayerModule, type LayerStatus, type Selection } from '../types.js';
 import Card from './Card.svelte';
 import def from './def.js';
-import { followFor, type FollowLike } from './follow.svelte.js';
+import { followOf, type Follow } from '#lib/state/follow.svelte.js';
 import { capsuleImage, pillImage, shieldImage } from './images.js';
 import Legend from './Legend.svelte';
 import {
@@ -32,7 +32,7 @@ import {
 	stopFeatures
 } from './network.js';
 import { busAt, Feed, positionAt, runningAt, sameSet, smoothAngle, trail, type BusAt, type BusState } from './playback.js';
-import { ageText, ARROW, arrowImage, CREAM, CREDIT, fallbackBusLayers, FALLBACK_LAYERS, INK, UNKNOWN_COLOR } from './transit.js';
+import { ageText, ARROW, arrowImage, busNumber, CREAM, CREDIT, fallbackBusLayers, FALLBACK_LAYERS, INK, towardText, UNKNOWN_COLOR } from './transit.js';
 import type { Scene, SceneInstance } from '#lib/scene/index.js';
 import { bodyColor, busModel, BUS_LENGTH_M, feedBearing, lodAt, metresPerPx, modelFade, modelZoom, placeModel, plateAltitude, streetBearing, type BusModel, type GroundAt, type Lod, type RouteLines } from './bus3d.js';
 import { loadPlateFont, PLATE_BODY_H, PLATE_PAD, plateBodyWidth, plateKey, plateOffset, plateSize, plateSprite, type PlateLook } from './plates.js';
@@ -126,9 +126,6 @@ function headingSprite(): SpriteDef {
 	};
 }
 
-/** "toward Towne Square Mall" (some headsigns already say "Toward"). */
-export const towardText = (headsign: string) => (/^toward\b/i.test(headsign) ? headsign.replace(/^toward/i, 'toward') : `toward ${headsign}`);
-
 /** A bus's plate (unknown routes: gray with "?", with a halo). */
 export function busBadge(v: TrackVehicle | undefined): Badge {
 	if (!v || !v.routeId) return { text: '?', color: v?.color ?? UNKNOWN_COLOR, textColor: v?.textColor ?? INK, halo: v?.halo ?? true };
@@ -200,8 +197,8 @@ export class TransitModule implements LayerModule {
 	/** A tracks poll has come back (or failed) at least once. Until then the chips say "—", not "No buses
 	 * reporting": with Transit off nothing is polled, and nothing is known about the buses (WP15's review). */
 	polled = $state(false);
-	/** The follow API (WP3's, or the stand-in), once loaded. */
-	follow = $state.raw<FollowLike | null>(null);
+	/** The app's follow (WP3's `followOf`), once mounted. */
+	follow = $state.raw<Follow | null>(null);
 	/** Trails on or off (per viewer). */
 	readonly trails = new Persisted<boolean>('transit-trails', false, isBool);
 	clock: Clock | null = null;
@@ -364,7 +361,7 @@ export class TransitModule implements LayerModule {
 			kind: 'bus',
 			id: vid,
 			layer: 'transit',
-			title: `${name} · bus ${v?.label ?? vid}`,
+			title: `${name} · bus ${busNumber(vid)}`,
 			fact: v?.headsign ? towardText(v.headsign) : 'between reported positions',
 			source: CREDIT,
 			badge: busBadge(v),
@@ -464,9 +461,7 @@ export class TransitModule implements LayerModule {
 		}
 		// Hover widens a route 2 px.
 		scope.defer(ctx.picker.onHover((h) => this.#hover(h?.selection ?? null)));
-		void followFor(ctx).then((f) => {
-			if (!this.#destroyed) this.follow = f;
-		});
+		this.follow = followOf(ctx);
 		this.#stopTick = $effect.root(() => {
 			$effect(() => {
 				void clock.tick;
@@ -573,8 +568,7 @@ export class TransitModule implements LayerModule {
 		const f = this.follow;
 		if (!f) return;
 		if (f.is('bus', vid)) return f.stop();
-		const v = this.feed.vehicles[vid];
-		f.start({ kind: 'bus', id: vid, label: `bus ${v?.label ?? vid}`, position: () => this.position(vid) });
+		f.start({ kind: 'bus', id: vid, label: `bus ${busNumber(vid)}`, position: () => this.position(vid) });
 	}
 
 	/** Where a bus is drawn now (lon, lat), or null when it isn't. */
@@ -771,9 +765,12 @@ export class TransitModule implements LayerModule {
 			const old = this.#runtime.get(vid);
 			const pos: [number, number] = old?.pos ?? [0, 0];
 			const pick = this.busSelection(vid);
-			const bus: OverlayInstance = { id: vid, lng: pos[0], lat: pos[1], sprite: solid, opacity: 0, pick, radius: 14 };
-			const head: OverlayInstance = { id: vid, lng: pos[0], lat: pos[1], sprite: HEADING, rotate: old?.heading ?? 0, rotateWithMap: true, opacity: 0 };
-			const plate: OverlayInstance = { id: vid, lng: pos[0], lat: pos[1], sprite: plates.solid, opacity: 0, pick, radius: plateSize(b.text).width / 2 - 4 };
+			// A known bus keeps how it was drawn until the next frame works it out again: a rebuild after
+			// each poll never shows (or reports, through __tvtTransit) a moment with every bus at opacity 0.
+			const hollowNow = Boolean(old && old.bus.sprite === old.hollow);
+			const bus: OverlayInstance = { id: vid, lng: pos[0], lat: pos[1], sprite: hollowNow ? hollow : solid, opacity: old?.bus.opacity ?? 0, pick, radius: 14 };
+			const head: OverlayInstance = { id: vid, lng: pos[0], lat: pos[1], sprite: HEADING, rotate: old?.heading ?? 0, rotateWithMap: true, opacity: old?.head.opacity ?? 0 };
+			const plate: OverlayInstance = { id: vid, lng: pos[0], lat: pos[1], sprite: plates.solid, opacity: old?.plate.opacity ?? 0, pick, radius: plateSize(b.text).width / 2 - 4 };
 			const r = this.route(v?.routeId);
 			runtime.set(vid, {
 				bus,

@@ -4,6 +4,9 @@ import type { TransitNetwork } from '#lib/contracts/network.js';
 import {
 	bundlePx,
 	capsuleLength,
+	HUB_PADDING,
+	HUB_PILL,
+	HUB_TEXT_SIZE,
 	idleStops,
 	L,
 	networkLayers,
@@ -158,13 +161,27 @@ describe('shields, stops and layers', () => {
 			[L.routes, 'routes'],
 			[L.trails, 'routes'],
 			[L.stops, 'points'],
-			[L.hubs, 'labels'],
-			[L.shields, 'labels']
+			[L.shields, 'labels'],
+			// The station pill above the shields: placed first, so a shield never covers the name.
+			[L.hubs, 'labels']
 		]);
 		const sources = Object.fromEntries(
 			['transit-ribbons', 'transit-shields', 'transit-stops', 'transit-hubs', 'transit-trails'].map((id) => [id, { type: 'geojson', data: { type: 'FeatureCollection', features: [] } }])
 		);
 		const errors = validateStyleMin({ version: 8, glyphs: 'https://example.com/{fontstack}/{range}.pbf', sources, layers: layers.map((l) => l.layer) } as never);
 		expect(errors.map((e: { message: string }) => e.message)).toEqual([]);
+	});
+
+	it('stands the station pill on a stem whose dot is on the station, its name clear of waiting buses', () => {
+		const hub = networkLayers().find((l) => l.layer.id === L.hubs)!.layer as { layout: Record<string, unknown> };
+		expect(hub.layout['text-anchor']).toBe('bottom');
+		expect(hub.layout['icon-text-fit-padding']).toEqual(HUB_PADDING);
+		const [dx, dy] = hub.layout['text-offset'] as [number, number];
+		expect(dx).toBe(0);
+		// The name's bottom, plus the padding, is the pill's content bottom; the dot is below that by
+		// dotY − content bottom (unstretched): it lands on the station.
+		expect(-dy * HUB_TEXT_SIZE - HUB_PADDING[2] - (HUB_PILL.dotY - HUB_PILL.content[3])).toBeCloseTo(0, 9);
+		// The capsule's bottom clears a bus disc (radius 14) and its heading arrow (21 px) there.
+		expect(HUB_PILL.dotY - HUB_PILL.h).toBeGreaterThanOrEqual(21);
 	});
 });

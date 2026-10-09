@@ -148,6 +148,14 @@
 		padding: 0 12px 10px;
 		overflow-y: auto;
 		min-height: 0;
+		/* Scroll shadows: an ink shadow at an edge with more to scroll to. The panel-colored covers
+		   scroll with the content and hide the shadow once an end is reached (no script needed). */
+		background:
+			linear-gradient(var(--panel) 40%, transparent) top / 100% 32px no-repeat local,
+			linear-gradient(transparent, var(--panel) 60%) bottom / 100% 32px no-repeat local,
+			radial-gradient(farthest-side at 50% 0, rgb(43 42 51 / 0.24), transparent) top / 100% 12px no-repeat scroll,
+			radial-gradient(farthest-side at 50% 100%, rgb(43 42 51 / 0.24), transparent) bottom / 100% 12px no-repeat scroll,
+			var(--panel);
 	}
 	.problem {
 		padding: 0 12px 10px;

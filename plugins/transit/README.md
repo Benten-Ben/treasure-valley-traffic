@@ -29,7 +29,7 @@ colors; the app pins the same palette).
 ```bash
 TVT_ARCHIVE=data/archive python3 -m ingest stream vrt_realtime
 python3 -m ingest backfill vrt_realtime data/archive/vrt-gtfs-rt    # reload positions from the archive
-python3 -m ingest match-routes [--hours 24]
+python3 -m ingest match-routes [--hours 24]                          # also redoes playback rows a new match changes
 python3 -m ingest transit-progress --hours 24                       # backfill playback matches
 python3 -m ingest transit-ribbons [--force] [--dry-run]
 python3 -m ingest route-colors                                      # the palette table and its checks

@@ -1,6 +1,6 @@
 import type { NetworkRoute } from '#lib/contracts/network.js';
 import { haloFor, needsHalo } from '#lib/overlay/sprites.js';
-import { capsuleLength, CREAM, INK } from './network.js';
+import { capsuleLength, CREAM, HUB_PILL, INK } from './network.js';
 
 /**
  * Canvas-made map images for the Transit layer (docs/14 §14.4): route
@@ -112,11 +112,29 @@ export function capsuleImage(n: number): MapImage {
 	return { data: g.getImageData(0, 0, g.canvas.width, g.canvas.height), options: { pixelRatio: RATIO } };
 }
 
-/** The hub's station pill: a stretchable cream capsule with an ink edge (icon-text-fit). */
+/**
+ * The hub's station pill: a stretchable cream capsule with an ink edge
+ * (icon-text-fit), on an ink stem down to a cream dot on the station
+ * (HUB_PILL). The capsule stretches either side of the stem, so the stem
+ * and dot stay centred and unstretched.
+ */
 export function pillImage(): MapImage {
-	const w = 40;
-	const h = 24;
-	const g = canvas(w, h);
+	const { w, h, content, dotY, dotR } = HUB_PILL;
+	const H = Math.ceil(dotY + dotR + 2);
+	const g = canvas(w, H);
+	const cx = w / 2;
+	g.beginPath();
+	g.moveTo(cx, h - 2);
+	g.lineTo(cx, dotY);
+	g.lineWidth = 2;
+	g.strokeStyle = INK;
+	g.stroke();
+	g.beginPath();
+	g.arc(cx, dotY, dotR, 0, Math.PI * 2);
+	g.fillStyle = CREAM;
+	g.fill();
+	g.lineWidth = 2;
+	g.stroke();
 	roundRect(g, 1, 1, w - 2, h - 2, (h - 2) / 2);
 	g.fillStyle = CREAM;
 	g.fill();
@@ -124,8 +142,17 @@ export function pillImage(): MapImage {
 	g.strokeStyle = INK;
 	g.stroke();
 	const r = RATIO;
+	const side = cx - dotR - 1.5;
 	return {
 		data: g.getImageData(0, 0, g.canvas.width, g.canvas.height),
-		options: { pixelRatio: r, stretchX: [[14 * r, 26 * r]], stretchY: [[11 * r, 13 * r]], content: [8 * r, 4 * r, 32 * r, 20 * r] }
+		options: {
+			pixelRatio: r,
+			stretchX: [
+				[content[0] * r, Math.floor(side) * r],
+				[Math.ceil(w - side) * r, content[2] * r]
+			],
+			stretchY: [[11 * r, 13 * r]],
+			content: [content[0] * r, content[1] * r, content[2] * r, content[3] * r]
+		}
 	};
 }

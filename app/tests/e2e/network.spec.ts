@@ -157,6 +157,10 @@ test.describe('transit network', () => {
 			});
 			expect(forced).toMatch(/colors changed 0/);
 			expect(forced).toContain(`build ${build}`);
+			// execFileSync blocked this process for the whole build. When that's longer than the server's
+			// 5 s keep-alive, the server has closed the idle pooled socket, and a fetch straight away reuses
+			// it (ECONNRESET). A moment's pause lets the close be seen first.
+			await new Promise((r) => setTimeout(r, 1000));
 			expect(await (await fetch(`${base}/api/transit/network?v=${encodeURIComponent(build)}`)).text()).toBe(body);
 		} finally {
 			mkdirSync(dirname(screenPath('network.json')), { recursive: true });

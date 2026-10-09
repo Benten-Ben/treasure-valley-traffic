@@ -139,7 +139,7 @@ describe('rttStacks', () => {
 		expect(at('trees-discs')).toBeGreaterThan(at(ANCHORS.routes));
 		expect(at('trees-discs')).toBeLessThan(at(ANCHORS.scene));
 		// Labels below the buses: every symbol layer sits under the overlay and the fallback bus layers.
-		const lastSymbol = a.findLastIndex((id) => id === 'streets-speed-labels' || id === 'transit-shields' || id === 'places_locality');
+		const lastSymbol = a.findLastIndex((id) => id === 'streets-speed-labels' || id === 'transit-shields' || id === 'transit-hubs' || id === 'places_locality');
 		expect(lastSymbol).toBeLessThan(at('transit-buses'));
 		expect(at('transit-buses')).toBeLessThan(at('overlay'));
 	});

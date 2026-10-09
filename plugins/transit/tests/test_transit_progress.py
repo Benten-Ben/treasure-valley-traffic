@@ -219,6 +219,7 @@ class IsolationTest(unittest.TestCase):
 DB_URL = os.environ.get("TVT_TEST_DATABASE_URL")
 VEHICLES = [f"wp7-test-{i}" for i in range(6)]
 TRIP = "1_-_Regular_Service-Weekday-9-A-TO-0000-wp7test"
+NUMERIC_TRIP = "990000777"     # a trip ID that names no route (matched by path), for the redo test
 
 
 @unittest.skipUnless(DB_URL, "set TVT_TEST_DATABASE_URL to a scratch database (a package clone with migration 0007)")
@@ -257,6 +258,7 @@ class DatabaseTest(unittest.TestCase):
         self.conn.rollback()
         self.conn.execute("delete from obs.vehicle_progress where vehicle_id like 'wp7-test-%'")
         self.conn.execute("delete from obs.vehicle_position where vehicle_id like 'wp7-test-%'")
+        self.conn.execute("delete from obs.trip_route_match where trip_id = %s", (NUMERIC_TRIP,))
         self.conn.commit()
 
     def track(self, n, k):
@@ -337,6 +339,66 @@ class DatabaseTest(unittest.TestCase):
         rows = self.conn.execute("""select ts, backfill, method, route_source from obs.vehicle_progress
                                     where vehicle_id = %s order by ts""", (VEHICLES[0],)).fetchall()
         self.assertEqual([(r[1], r[2], r[3]) for r in rows], [(True, "window_v1", "trip"), (False, "window_v1", "trip")])
+
+    def test_a_trip_matched_again_to_another_route_is_redone_from_its_start(self):
+        # Five fixes on a labeled route 9 trip, then 25 on a numeric trip (no route in the feed) that
+        # trip_route_match first puts on a far-away route: placed off every candidate shape, the bus cuts
+        # across in straight steps. Matched again, to 9, its rows are redone along route 9 from the trip's
+        # start (buses 706 and 708 on Oct 7, matched to 7, then 8).
+        vid = VEHICLES[0]
+        fixes = [self.track(0, k) for k in range(30)]
+        for f in fixes[5:]:
+            f.update(trip_id=NUMERIC_TRIP, route_id=None)
+        vrt_realtime.store_positions(self.conn, fixes)
+        wrong = self.conn.execute(
+            """select r.route_id from core.transit_route r
+               where r.active and r.route_id <> '9'
+                 and exists (select 1 from core.transit_shape s where s.route_id = r.route_id and s.active)
+                 and not exists (select 1 from core.transit_shape s, obs.vehicle_position p
+                                 where s.route_id = r.route_id and s.active and p.vehicle_id = %s
+                                   and ST_DWithin(s.geom::geography, p.geom::geography, 200))
+               order by r.route_id limit 1""", (vid,)).fetchone()
+        if not wrong:
+            self.skipTest("no route far enough from route 9's start")
+        wrong = wrong[0]
+        day = self.conn.execute("select (%s::timestamptz at time zone 'America/Boise')::date",
+                                (fixes[5]["ts"],)).fetchone()[0]
+        self.conn.execute("""insert into obs.trip_route_match (trip_id, service_date, route_id, share, fixes, method,
+                                                              matched_at)
+                             values (%s, %s, %s, 0.6, 25, 'test', now())""", (NUMERIC_TRIP, day, wrong))
+        self.conn.commit()
+        tp.after_batch(self.conn)
+
+        def rows():
+            return self.conn.execute("""select ts, route_id, route_source, shape_id, step, method, backfill
+                                        from obs.vehicle_progress where vehicle_id = %s order by ts""",
+                                     (vid,)).fetchall()
+
+        before = rows()
+        self.assertEqual(len(before), 30)
+        self.assertEqual({(r[1], r[2]) for r in before[5:]}, {(wrong, "matched")})
+        self.assertNotIn("along", [r[4] for r in before[5:]])
+        # Nothing to redo while the rows agree with the match, nor for anything outside the window.
+        start = self.base - timedelta(minutes=1)
+        self.assertEqual(tp.redo_rerouted(self.conn, start), {"rerouted buses": 0})
+        self.conn.execute("update obs.trip_route_match set route_id = '9' where trip_id = %s", (NUMERIC_TRIP,))
+        self.conn.commit()
+        stats = tp.redo_rerouted(self.conn, start)
+        self.assertEqual(stats, {"rerouted buses": 1, "rows redone": 25, "rows dropped": 25})
+        after = rows()
+        self.assertEqual(len(after), 30)                                        # one row per fix, none twice
+        self.assertEqual(after[:4], before[:4])                                 # the labeled trip's rows stay
+        self.assertEqual({(r[1], r[2]) for r in after[5:]}, {("9", "matched")})
+        self.assertTrue(all(r[6] for r in after[5:]))                          # redone after the fact
+        # The same as threading every fix in one pass, knowing the match from the start.
+        net = tp.network(self.conn)
+        one_pass = [tp.Fix(vid, f["ts"], *self.conn.execute(
+                        f"select ST_X(p), ST_Y(p) from ST_Transform(ST_SetSRID(ST_MakePoint(%s, %s), 4326), {tp.UTM}) p",
+                        (f["lon"], f["lat"])).fetchone(), f["bearing"], f["trip_id"], f["route_id"],
+                        "trip" if f["route_id"] else None, None if f["route_id"] else "9") for f in fixes]
+        self.assertEqual([(r[3], r[4]) for r in after], [(r.shape_id, r.step) for r in run(net, one_pass)])
+        self.assertGreaterEqual([r[4] for r in after[5:]].count("along"), 10)
+        self.assertEqual(tp.redo_rerouted(self.conn, start), {"rerouted buses": 0})   # and it settles
 
     def test_backfill_racing_the_stream_writes_each_row_once_and_in_order(self):
         total, backlog = 100, 60
