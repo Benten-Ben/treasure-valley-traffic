@@ -2,7 +2,6 @@
 	import { onMount } from 'svelte';
 	import type { AppCtx } from '#lib/app/context.js';
 	import type { Look } from '#lib/layers/manager.svelte.js';
-	import { GROUND } from '#lib/map/flavors.js';
 
 	/**
 	 * The Base popover (docs/14 §14.3, "Base"; §14.5): Look (Auto · Map · Clay;
@@ -44,7 +43,7 @@
 				</label>
 			{/each}
 		</div>
-		<p class="now" data-flavor={flavor}><i class="chip" style:background={flavor === 'clay' ? GROUND.clay : GROUND.valley} aria-hidden="true"></i>{now}</p>
+		<p class="now" data-flavor={flavor}>{now}</p>
 	</fieldset>
 	{#if app.manifest?.imagery}
 		<label class="switch">
@@ -107,9 +106,11 @@
 		border-radius: 12px;
 		background: var(--ground);
 	}
+	/* The label is the target (44 px tall on a phone); the selected fill covers all of it. */
 	.seg label {
 		flex: 1;
 		position: relative;
+		display: flex;
 	}
 	.seg input {
 		position: absolute;
@@ -119,7 +120,10 @@
 		cursor: pointer;
 	}
 	.seg span {
-		display: block;
+		flex: 1;
+		display: flex;
+		align-items: center;
+		justify-content: center;
 		padding: 5px 0;
 		border-radius: 9px;
 		text-align: center;
@@ -142,13 +146,6 @@
 		font-size: 12px;
 		line-height: 1.3;
 		color: var(--ink-soft);
-	}
-	.chip {
-		flex: none;
-		width: 12px;
-		height: 12px;
-		border-radius: 4px;
-		box-shadow: inset 0 0 0 1px #b9ad99;
 	}
 	.switch {
 		display: flex;

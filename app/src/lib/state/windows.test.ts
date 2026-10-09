@@ -47,6 +47,15 @@ describe('window geometry', () => {
 		expect(safeArea(1280, 800, { top: 90, bottom: 120 })).toEqual({ left: 16, top: 90, right: 1264, bottom: 680 });
 	});
 
+	it('keeps clear of the camera widget and the Map / Aerial switch on the right', () => {
+		const clear = safeArea(1280, 800, { top: 76, bottom: 104, right: 195 });
+		expect(clear).toEqual({ left: 16, top: 76, right: 1085, bottom: 696 });
+		// Docking right stops beside them.
+		expect(dockRect('right', { x: 0, y: 0, w: 400, h: 200 }, clear, [])).toEqual({ x: 685, y: 76, w: 400, h: 200 });
+		// Never less than the 16 px margin.
+		expect(safeArea(1280, 800, { top: 76, bottom: 104, right: 0 }).right).toBe(1264);
+	});
+
 	it('layouts and limits follow the breakpoints', () => {
 		expect([layoutFor(390), layoutFor(599), layoutFor(600), layoutFor(1023), layoutFor(1024), layoutFor(1920)]).toEqual([
 			'phone',

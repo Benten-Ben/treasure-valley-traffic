@@ -15,8 +15,9 @@ import type { SnapshotPart } from './view.svelte.js';
  *   every window is pinned, a toast says so and nothing opens.
  * - **Numbers:** each open window has a number badge (1–4, the lowest free
  *   one), which WP12 also draws on its camera (`numberOf`).
- * - **Place:** inside the safe area, below the top bar and above the
- *   toolbar, never under either. A new window opens 24 px beside its anchor
+ * - **Place:** inside the safe area, below the top bar, above the toolbar
+ *   and left of the camera widget and the Map / Aerial switch, never under
+ *   any of them. A new window opens 24 px beside its anchor
  *   (the camera's screen position), on the side away from the screen centre
  *   and never covering it; otherwise it cascades from the top left of the
  *   free middle of the screen (between the legend and inspect columns when
@@ -87,17 +88,23 @@ export interface Point {
 	y: number;
 }
 
-/** Where the bars are: the safe area's top (px from the top) and bottom margin (px from the bottom). */
+/**
+ * Where the bars are: the safe area's top (px from the top) and bottom margin
+ * (px from the bottom), and its right margin (px from the right edge): the
+ * camera widget's column and the Map / Aerial switch beside it, which
+ * windows keep clear of (16 px when there's nothing there).
+ */
 export interface Bars {
 	top: number;
 	bottom: number;
+	right?: number;
 }
 
 export function safeArea(vw: number, vh: number, bars: Bars = { top: SAFE_TOP, bottom: SAFE_BOTTOM }): Box {
 	return {
 		left: MARGIN,
 		top: bars.top,
-		right: Math.max(MARGIN + WIDTH.min, vw - MARGIN),
+		right: Math.max(MARGIN + WIDTH.min, vw - Math.max(MARGIN, bars.right ?? MARGIN)),
 		bottom: Math.max(bars.top, vh - bars.bottom)
 	};
 }

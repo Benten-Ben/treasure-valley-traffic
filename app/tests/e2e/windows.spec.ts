@@ -9,7 +9,12 @@ import { expect, mapReady, screenPath, test } from './fixtures.js';
  *   window pinned a toast says so;
  * - windows can't go under the bars, and positions persist after a reload
  *   (pinned windows reopen by themselves); docking and keyboard resizing;
- * - Esc closes the focused window;
+ * - Esc closes the focused window, or with focus outside every window the
+ *   top one;
+ * - a window docked right stops beside the camera widget and the Map /
+ *   Aerial switch;
+ * - the map's padding follows the open columns, and H, O and Back land in
+ *   the visible area (under reduced motion too, through the history);
  * - at 390×844: a tab bar and a sheet (windows as its tabs), no horizontal
  *   scroll, targets ≥ 44 px;
  * - Backspace returns to the view before a programmatic fly;
@@ -129,10 +134,21 @@ test.describe('windows', () => {
 		await settle(page);
 		await page.screenshot({ path: screenPath('windows-clamped.png') });
 
-		// Dock right, without dragging.
+		// Dock right, without dragging: beside the camera widget and the Map / Aerial switch, not over them.
 		await w1.getByRole('button', { name: 'Dock right' }).click();
 		b = await box(w1);
 		expect(Math.round(b.x + b.width)).toBe(safe.right);
+		const widget = await box(page.getByRole('group', { name: 'Map camera' }));
+		const views = page.getByRole('group', { name: 'Map view' });
+		const clearOf = (await views.count()) ? Math.min(widget.x, (await box(views)).x) : widget.x;
+		expect(b.x + b.width, 'clear of the widget and the switch').toBeLessThanOrEqual(clearOf - 11.5);
+		for (const name of ['Pin', 'Dock left', 'Dock right', 'Close Test window 1']) {
+			const btn = await box(w1.getByRole('button', { name, exact: true }));
+			const hit = await page.evaluate(([x, y]) => Boolean(document.elementFromPoint(x, y)?.closest('[data-window-key="test:1"]')), [btn.x + btn.width / 2, btn.y + btn.height / 2]);
+			expect(hit, `${name} is on top`).toBe(true);
+		}
+		await settle(page);
+		await page.screenshot({ path: screenPath('windows-docked-right.png') });
 		// Resize from the keyboard: the grip, → wider; the picture keeps 16:9.
 		const before = await box(w1.getByRole('img'));
 		await w1.getByRole('button', { name: /^Resize/ }).focus();
@@ -183,14 +199,31 @@ test.describe('windows', () => {
 		await page.keyboard.press('Escape');
 		await expect(win(page, 1)).toHaveCount(0);
 		await expect(win(page, 3)).toBeVisible();
-		// With focus outside every window, Esc leaves them open.
+		// With focus outside every window, Esc closes the top one (the most recently focused), one per press.
+		// Window 4 opens on top (over window 3's header); focusing window 3 raises it.
+		await open(page, 4);
+		await expect(win(page, 4)).toBeVisible();
+		await win(page, 3).focus();
+		expect((await info(page)).list.find((w) => w.key === 'test:3')!.z, 'window 3 is on top').toBeGreaterThan((await info(page)).list.find((w) => w.key === 'test:4')!.z);
 		await page.locator('canvas.maplibregl-canvas').focus();
 		await page.keyboard.press('Escape');
-		await expect(win(page, 3)).toBeVisible();
-		expect((await info(page)).list.map((w) => w.key)).toEqual(['test:3']);
-		// The close button closes too.
-		await win(page, 3).getByRole('button', { name: 'Close Test window 3' }).click();
 		await expect(win(page, 3)).toHaveCount(0);
+		await expect(win(page, 4)).toBeVisible();
+		expect((await info(page)).list.map((w) => w.key)).toEqual(['test:4']);
+		// The close button closes too.
+		await win(page, 4).getByRole('button', { name: 'Close Test window 4' }).click();
+		await expect(win(page, 4)).toHaveCount(0);
+		// Popovers close before windows: Help first, then the window.
+		await open(page, 5);
+		await page.locator('canvas.maplibregl-canvas').focus();
+		await page.keyboard.press('Shift+Slash');
+		await expect(page.getByRole('dialog', { name: 'Keys' })).toBeVisible();
+		await page.keyboard.press('Escape');
+		await expect(page.getByRole('dialog', { name: 'Keys' })).toHaveCount(0);
+		await expect(win(page, 5)).toBeVisible();
+		await page.locator('canvas.maplibregl-canvas').focus();
+		await page.keyboard.press('Escape');
+		await expect(win(page, 5)).toHaveCount(0);
 	});
 
 	test('at 390×844: a tab bar and a sheet with the windows as tabs, no horizontal scroll, targets ≥ 44 px', { tag: '@wp3' }, async ({ page, consoleErrors }) => {
@@ -325,7 +358,7 @@ test.describe('windows', () => {
 		await expect(widget).toBeVisible();
 		for (const b of await widget.getByRole('button').all()) {
 			const r = await box(b);
-			expect(Math.round(Math.min(r.width, r.height)), 'widget buttons').toBeGreaterThanOrEqual(36);
+			expect(Math.round(Math.min(r.width, r.height)), 'widget buttons: 40 px targets').toBeGreaterThanOrEqual(40);
 		}
 		const view = () => page.evaluate(() => (globalThis as any).__tvt.view);
 		const settled = () => page.waitForFunction(() => !(globalThis as any).__tvt.map.isMoving(), null, { timeout: 60_000 });
@@ -370,5 +403,127 @@ test.describe('windows', () => {
 		await page.mouse.move(c.x + c.width / 2 - 80, c.y + c.height / 2, { steps: 5 });
 		await page.mouse.up();
 		expect(await page.evaluate(() => (globalThis as any).__tvtWindows.following())).toBeNull();
+	});
+	test('the map padding follows the open columns: H lands in the visible area, the inspect card moves nothing', { tag: '@wp3' }, async ({ page, consoleErrors }) => {
+		test.setTimeout(300_000);
+		await openTest(page, '#map=13/43.6/-116.25/0/0&layers=none');
+		const map = () =>
+			page.evaluate(() => {
+				const m = (globalThis as any).__tvt.map;
+				const c = m.getContainer().getBoundingClientRect();
+				return { padding: m.getPadding(), w: c.width, h: c.height, view: (globalThis as any).__tvt.view };
+			});
+		const at = (lngLat: [number, number]) => page.evaluate((ll) => (globalThis as any).__tvt.map.project(ll), lngLat);
+		const settled = () => page.waitForFunction(() => !(globalThis as any).__tvt.map.isMoving(), null, { timeout: 60_000 });
+		// Below the top bar, above the toolbar, right of the legends, left of the camera widget.
+		await expect.poll(async () => (await map()).padding).toEqual({ top: 76, right: 72, bottom: 104, left: 312 });
+		let m = await map();
+		// The link's centre is where it said, drawn in the middle of the visible area.
+		expect(Math.abs(m.view.center[0] - -116.25)).toBeLessThan(1e-6);
+		expect(Math.abs(m.view.center[1] - 43.6)).toBeLessThan(1e-6);
+		const mid = { x: 312 + (m.w - 312 - 72) / 2, y: 76 + (m.h - 76 - 104) / 2 };
+		let p = await at([-116.25, 43.6]);
+		expect(Math.abs(p.x - mid.x)).toBeLessThan(1.5);
+		expect(Math.abs(p.y - mid.y)).toBeLessThan(1.5);
+
+		// The inspect card opens: the padding takes its column, and the picture stays put.
+		const fixed: [number, number] = [-116.24, 43.605];
+		const before = await at(fixed);
+		await page.evaluate(() => (globalThis as any).__tvtWindows.select('A test thing'));
+		await expect(page.getByRole('region', { name: 'Selected marker' })).toBeVisible();
+		await expect.poll(async () => (await map()).padding.right).toBe(392);
+		await settled();
+		let after = await at(fixed);
+		expect(Math.hypot(after.x - before.x, after.y - before.y), 'the map didn’t move').toBeLessThan(1.5);
+		await page.keyboard.press('Escape');
+		await expect(page.getByRole('region', { name: 'Selected marker' })).toHaveCount(0);
+		await expect.poll(async () => (await map()).padding.right).toBe(72);
+		await settled();
+		after = await at(fixed);
+		expect(Math.hypot(after.x - before.x, after.y - before.y), 'nor when it closes').toBeLessThan(1.5);
+
+		// H: Meridian lands in the middle of the visible area, not of the whole screen.
+		await page.keyboard.press('KeyH');
+		await settled();
+		await mapReady(page);
+		m = await map();
+		p = await at([-116.3915, 43.6121]);
+		expect(Math.abs(p.x - mid.x)).toBeLessThan(2);
+		expect(Math.abs(p.y - mid.y)).toBeLessThan(2);
+
+		// A reload opens at the same view: the padding never drifts the saved centre (a drift would be
+		// half the columns' difference, about 2 km here; the hash keeps about a metre).
+		await page.waitForTimeout(1500);
+		const hash = await page.evaluate(() => location.hash);
+		const saved = (await map()).view;
+		await page.reload();
+		await mapReady(page);
+		await expect.poll(async () => (await map()).padding).toEqual({ top: 76, right: 72, bottom: 104, left: 312 });
+		const again = (await map()).view;
+		expect(Math.abs(again.center[0] - saved.center[0])).toBeLessThan(2e-5);
+		expect(Math.abs(again.center[1] - saved.center[1])).toBeLessThan(2e-5);
+		await page.waitForTimeout(1500);
+		expect(await page.evaluate(() => location.hash), 'the hash reads the same').toBe(hash);
+		expect(consoleErrors).toEqual([]);
+	});
+
+	test('under reduced motion H and O still go on the view history; Overview frames the valley', { tag: '@wp3' }, async ({ page }) => {
+		test.setTimeout(300_000);
+		await page.emulateMedia({ reducedMotion: 'reduce' });
+		await openTest(page, '#map=12.5/43.6/-116.25/-20/40&layers=none');
+		const view = () => page.evaluate(() => (globalThis as any).__tvt.view);
+		const history = () => page.evaluate(() => (globalThis as any).__tvtWindows.history());
+		const chip = page.getByRole('button', { name: /Back to previous view/ });
+		const start = await view();
+		const same = (a: any, b: any) => {
+			expect(Math.abs(a.center[0] - b.center[0])).toBeLessThan(1e-6);
+			expect(Math.abs(a.center[1] - b.center[1])).toBeLessThan(1e-6);
+			expect(Math.abs(a.zoom - b.zoom)).toBeLessThan(0.01);
+			expect(Math.abs(a.bearing - b.bearing)).toBeLessThan(0.01);
+			expect(Math.abs(a.pitch - b.pitch)).toBeLessThan(0.01);
+		};
+
+		// H jumps (no flight) and pushes; Backspace comes back.
+		await page.keyboard.press('KeyH');
+		await expect(chip).toBeVisible();
+		expect(await history()).toBe(1);
+		const home = await view();
+		expect(home.zoom).toBeCloseTo(13, 3);
+		expect(home.pitch).toBeCloseTo(50, 3);
+		await page.keyboard.press('Backspace');
+		await mapReady(page);
+		same(await view(), start);
+		expect(await history()).toBe(0);
+
+		// O the same way, framing the valley (Caldwell to east Boise, Kuna to Eagle) in the visible area.
+		await page.keyboard.press('KeyO');
+		await expect(chip).toBeVisible();
+		expect(await history()).toBe(1);
+		const o = await view();
+		expect(o.pitch).toBeCloseTo(0, 3);
+		expect(o.bearing).toBeCloseTo(0, 3);
+		const frame = await page.evaluate(() => {
+			const m = (globalThis as any).__tvt.map;
+			const c = m.getContainer().getBoundingClientRect();
+			const pad = m.getPadding();
+			const sw = m.project([-116.72, 43.47]);
+			const ne = m.project([-116.08, 43.73]);
+			return { sw, ne, pad, w: c.width, h: c.height };
+		});
+		const area = { left: frame.pad.left, right: frame.w - frame.pad.right, top: frame.pad.top, bottom: frame.h - frame.pad.bottom };
+		for (const pt of [frame.sw, frame.ne]) {
+			expect(pt.x).toBeGreaterThanOrEqual(area.left - 1);
+			expect(pt.x).toBeLessThanOrEqual(area.right + 1);
+			expect(pt.y).toBeGreaterThanOrEqual(area.top - 1);
+			expect(pt.y).toBeLessThanOrEqual(area.bottom + 1);
+		}
+		// Snug: the valley fills the visible area across or down (less the 40 px margin).
+		const fill = Math.max((frame.ne.x - frame.sw.x) / (area.right - area.left), (frame.sw.y - frame.ne.y) / (area.bottom - area.top));
+		expect(fill, 'the valley fills the visible area').toBeGreaterThan(0.7);
+		await mapReady(page);
+		await page.screenshot({ path: screenPath('windows-overview-valley.png') });
+		await chip.click();
+		await mapReady(page);
+		same(await view(), start);
 	});
 });

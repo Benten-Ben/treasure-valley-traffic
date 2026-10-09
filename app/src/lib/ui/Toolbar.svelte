@@ -49,8 +49,10 @@
 	function tipLines(d: LayerDef): string[] {
 		const lines = [d.blurb];
 		const m = manager.modules[d.id];
+		const age = m?.age?.();
 		const at = m?.updatedAt;
-		lines.push(at ? `${d.source} · updated ${new Date(at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}` : d.source);
+		if (age) lines.push(`${d.source} · ${age}`);
+		else lines.push(at ? `${d.source} · updated ${new Date(at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}` : d.source);
 		return lines;
 	}
 

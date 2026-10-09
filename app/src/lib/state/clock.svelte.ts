@@ -36,7 +36,7 @@ export const STALL_S = 120;
 const DELAY_KEY = 'delay';
 const isDelay = (v: unknown): v is number => typeof v === 'number' && (DELAYS as readonly number[]).includes(v);
 
-export type ClockState = 'live' | 'behind' | 'paused' | 'stalled' | 'replay';
+export type ClockState = 'live' | 'behind' | 'paused' | 'stalled' | 'replay' | 'waiting';
 
 export interface ClockOptions {
 	/** Wall clock, ms (Date.now). */
@@ -49,6 +49,12 @@ export interface ClockOptions {
 	ticking?: boolean;
 	/** Called when Go live leaves a replay (drops `?at=` from the URL). */
 	onLeaveReplay?: () => void;
+	/**
+	 * Whether the bus feed is wanted now (the Transit layer is on), read reactively. Only then
+	 * does the pill wait for it (`NO GPS YET`); with Transit off there's nothing to wait for.
+	 * Default: always.
+	 */
+	wanted?: () => boolean;
 }
 
 /** The median of a list of numbers (0 for none). */
@@ -95,6 +101,27 @@ const boiseDay = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Boise', m
 /** `Oct 6` in Boise. */
 export const dayText = (epochS: number) => boiseDay.format(new Date(epochS * 1000));
 
+const boiseWeekday = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Boise', weekday: 'short' });
+
+/**
+ * When something last happened, as short as it can be said from `nowS`
+ * (Boise): `8:39 AM` the same day, `Wed 8:39 AM` within the last 6 days,
+ * `Oct 1` before that.
+ */
+export function sinceText(epochS: number, nowS: number): string {
+	if (dayText(epochS) === dayText(nowS)) return timeText(epochS);
+	if (nowS - epochS < 6 * 86400) return `${boiseWeekday.format(new Date(epochS * 1000))} ${timeText(epochS)}`;
+	return dayText(epochS);
+}
+
+/** A long wait in words: `3 min` (at least `min` minutes), then `26 h` up to two days, then `3 days`. */
+export function spanText(seconds: number, min = 1): string {
+	const s = Math.max(0, seconds);
+	if (s < 3600) return `${Math.max(min, Math.floor(s / 60))} min`;
+	if (s < 48 * 3600) return `${Math.floor(s / 3600)} h`;
+	return `${Math.floor(s / 86400)} days`;
+}
+
 export class Clock {
 	/** The delay D behind live, seconds. */
 	delay = $state(DEFAULT_DELAY);
@@ -117,10 +144,12 @@ export class Clock {
 	#keys: (() => void) | null = null;
 	#keyHolders = 0;
 	#onLeaveReplay: (() => void) | undefined;
+	#wanted: () => boolean;
 
 	constructor(o: ClockOptions = {}) {
 		this.#now = o.now ?? (() => Date.now());
 		this.#onLeaveReplay = o.onLeaveReplay;
+		this.#wanted = o.wanted ?? (() => true);
 		const d = o.delay ?? readStored(DELAY_KEY, isDelay) ?? DEFAULT_DELAY;
 		this.delay = d;
 		this.lag = d;
@@ -169,10 +198,16 @@ export class Clock {
 		return f?.lastFix ? Math.max(0, this.serverNow(this.tick) - f.lastFix) : null;
 	}
 
+	/**
+	 * `waiting`: live and the bus feed wanted (Transit is on), but no bus fix known yet (Transit
+	 * hasn't loaded or polled, its first poll failed, or no bus has ever reported), so the pill
+	 * doesn't claim LIVE before there's anything live. With Transit off it doesn't wait.
+	 */
 	get state(): ClockState {
 		if (this.paused !== null) return 'paused';
 		if (this.replayAt !== null) return 'replay';
 		if (!this.live) return 'behind';
+		if (!this.feed?.lastFix && this.#wanted()) return 'waiting';
 		const age = this.feedAge;
 		return age !== null && age >= STALL_S ? 'stalled' : 'live';
 	}
@@ -227,7 +262,7 @@ export class Clock {
 		}
 	}
 
-	/** The pill's label: `LIVE −1:30`, `PAUSED −3:05`, `LIVE · no new GPS for 3 min`, `REPLAY …`. */
+	/** The pill's label: `LIVE −1:30`, `PAUSED −3:05`, `LIVE · no new GPS for 3 min` (or `26 h`, `2 days`), `NO GPS YET`, `REPLAY …`. */
 	get label(): string {
 		void this.tick;
 		switch (this.state) {
@@ -238,7 +273,9 @@ export class Clock {
 			case 'behind':
 				return `BEHIND −${minSec(this.behind)}`;
 			case 'stalled':
-				return `LIVE · no new GPS for ${Math.max(2, Math.floor((this.feedAge ?? 0) / 60))} min`;
+				return `LIVE · no new GPS for ${spanText(this.feedAge ?? 0, 2)}`;
+			case 'waiting':
+				return 'NO GPS YET';
 			default:
 				return `LIVE −${minSec(this.delay)}`;
 		}
@@ -302,7 +339,8 @@ export function clockOf(app: AppCtx): Clock {
 	let c = clocks.get(app);
 	if (!c) {
 		const at = typeof location === 'undefined' ? null : parseAt(new URL(location.href).searchParams.get('at'));
-		c = new Clock({ at, onLeaveReplay: () => void dropAtParam() });
+		// The feed is wanted while Transit is on (before its module has even loaded).
+		c = new Clock({ at, onLeaveReplay: () => void dropAtParam(), wanted: () => app.layers?.isOn('transit') ?? true });
 		clocks.set(app, c);
 		Object.defineProperty(app, 'clock', { value: c, configurable: true, enumerable: false });
 	}

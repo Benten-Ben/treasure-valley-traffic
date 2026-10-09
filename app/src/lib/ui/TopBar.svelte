@@ -26,6 +26,44 @@
 
 	const chips = $derived(app.layers.chips());
 
+	// Chips that don't fit stay one scroll away, and the row says so: a fade at the cut edge and a
+	// "+2" chip that brings the hidden ones into view (and back).
+	let row: HTMLUListElement | undefined = $state();
+	let hidden = $state(0);
+	let cut = $state<{ left: boolean; right: boolean }>({ left: false, right: false });
+	function measureChips() {
+		const ul = row;
+		if (!ul) return;
+		const box = ul.getBoundingClientRect();
+		let n = 0;
+		for (const li of ul.children) {
+			const r = li.getBoundingClientRect();
+			if (r.left < box.left - 1 || r.right > box.left + ul.clientWidth + 1) n++;
+		}
+		hidden = n;
+		const left = ul.scrollLeft > 1;
+		const right = ul.scrollLeft + ul.clientWidth < ul.scrollWidth - 1;
+		if (left !== cut.left || right !== cut.right) cut = { left, right };
+	}
+	function showMore() {
+		const ul = row;
+		if (!ul) return;
+		const smooth = typeof matchMedia !== 'undefined' && !matchMedia('(prefers-reduced-motion: reduce)').matches;
+		ul.scrollTo({ left: cut.right ? ul.scrollWidth : 0, behavior: smooth ? 'smooth' : 'auto' });
+	}
+	$effect(() => {
+		const ul = row;
+		if (!ul) return;
+		const ro = new ResizeObserver(() => measureChips());
+		ro.observe(ul);
+		return () => ro.disconnect();
+	});
+	// The chips' words change with the data.
+	$effect(() => {
+		void chips.map((c) => c.text).join('|');
+		requestAnimationFrame(measureChips);
+	});
+
 	// Announce only threshold crossings (a feed going stale or recovering).
 	let announce = $state('');
 	let wasStale = new Map<string, boolean>();
@@ -46,23 +84,34 @@
 			<h1>Treasure Valley</h1>
 			{#if phone}<span class="clock num" aria-label="Time in Boise">{clock}</span>{/if}
 		</div>
-		<ul class="chips" aria-label="Stats">
-			{#each chips as c (c.layer + c.id)}
-				<li>
-					<button
-						class="chip num"
-						class:stale={c.stale}
-						onclick={() => app.layers.setOn(c.layer, true)}
-						onpointerenter={(e) => tooltip.show(tipFor(e.currentTarget, c.text, [c.title, app.layers.isOn(c.layer) ? '' : 'Click to turn the layer on'].filter(Boolean)))}
-						onpointerleave={() => tooltip.hide()}
-						onfocus={(e) => tooltip.show(tipFor(e.currentTarget, c.text, [c.title]))}
-						onblur={() => tooltip.hide()}
-					>
-						{c.text}{#if c.stale}<span class="warn" aria-label="old data"> ▲</span>{/if}
-					</button>
-				</li>
-			{/each}
-		</ul>
+		<div class="chip-row" class:cut-left={cut.left} class:cut-right={cut.right}>
+			<ul class="chips" aria-label="Stats" bind:this={row} onscroll={measureChips}>
+				{#each chips as c (c.layer + c.id)}
+					<li>
+						<button
+							class="chip num"
+							class:stale={c.stale}
+							onclick={() => app.layers.setOn(c.layer, true)}
+							onpointerenter={(e) => tooltip.show(tipFor(e.currentTarget, c.text, [c.title, app.layers.isOn(c.layer) ? '' : 'Click to turn the layer on'].filter(Boolean)))}
+							onpointerleave={() => tooltip.hide()}
+							onfocus={(e) => tooltip.show(tipFor(e.currentTarget, c.text, [c.title]))}
+							onblur={() => tooltip.hide()}
+						>
+							{c.text}{#if c.stale}<span class="warn" aria-label="old data"> ▲</span>{/if}
+						</button>
+					</li>
+				{/each}
+			</ul>
+			{#if hidden > 0}
+				<button
+					class="chip more num"
+					aria-label={cut.right ? `${hidden} more ${hidden === 1 ? 'stat' : 'stats'}: show them` : `Back to the first stats`}
+					onclick={showMore}
+					onpointerenter={(e) => tooltip.show(tipFor(e.currentTarget, `${hidden} more`, ['Show the stats that don’t fit']))}
+					onpointerleave={() => tooltip.hide()}>{cut.right ? `+${hidden}` : '‹'}</button
+				>
+			{/if}
+		</div>
 	</div>
 	{#if !phone}
 		<div class="right">
@@ -111,14 +160,41 @@
 		font: 600 21px var(--font-display);
 		white-space: nowrap;
 	}
+	.chip-row {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		min-width: 0;
+	}
 	.chips {
 		display: flex;
 		gap: 6px;
-		margin: 0;
-		padding: 0;
+		min-width: 0;
+		/* Room for the chips' 3 px drop shadow, which the scroller would clip (the margin keeps the row's height). */
+		margin: 0 0 -3px;
+		padding: 0 0 3px;
 		list-style: none;
 		overflow-x: auto;
 		scrollbar-width: none;
+	}
+	.chips::-webkit-scrollbar {
+		display: none;
+	}
+	/* A fade at each edge that cuts a chip off. */
+	.cut-right .chips {
+		mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+	}
+	.cut-left .chips {
+		mask-image: linear-gradient(to left, #000 calc(100% - 28px), transparent);
+	}
+	.cut-left.cut-right .chips {
+		mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent);
+	}
+	.more {
+		flex: none;
+		min-width: 44px;
+		padding: 0 10px;
+		font-weight: 700;
 	}
 	.chip {
 		height: 34px;

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { TrackStep } from '#lib/contracts/tracks.js';
-import { Clock } from '#lib/state/clock.svelte.js';
+import { Clock, sinceText, spanText } from '#lib/state/clock.svelte.js';
 import {
 	bearingTo,
 	busAt,
@@ -285,6 +285,7 @@ describe('the clock', () => {
 		let wall = 1_000_000_000_000;
 		const c = new Clock({ now: () => wall, ticking: false, delay: 90 });
 		expect(c.playhead()).toBeCloseTo(wall / 1000 - 90, 6);
+		c.feed = { lastFix: wall / 1000 - 30, ok: true, at: wall };
 		expect(c.state).toBe('live');
 		c.pause();
 		const p = c.playhead();
@@ -300,10 +301,59 @@ describe('the clock', () => {
 		expect(c.playhead()).toBeCloseTo(wall / 1000 - 90, 6);
 		c.setDelay(180);
 		c.tick = wall;
+		c.feed = { lastFix: wall / 1000 - 30, ok: true, at: wall };
 		expect(c.label).toBe('LIVE −3:00');
 		expect(c.playhead()).toBeCloseTo(wall / 1000 - 180, 6);
 		c.setDelay(45); // not offered: ignored
 		expect(c.delay).toBe(180);
+	});
+
+	it('never says LIVE before the bus feed has answered', () => {
+		const wall = 1_000_000_000_000;
+		const c = new Clock({ now: () => wall, ticking: false, delay: 90 });
+		expect(c.state).toBe('waiting');
+		expect(c.label).toBe('NO GPS YET');
+		// A first poll that failed, or a feed with no bus ever: still no LIVE.
+		c.feed = { lastFix: null, ok: false, at: wall };
+		expect(c.label).toBe('NO GPS YET');
+		c.feed = { lastFix: wall / 1000 - 20, ok: true, at: wall };
+		expect(c.state).toBe('live');
+		expect(c.label).toBe('LIVE −1:30');
+		// Paused before any data: still says so.
+		const d = new Clock({ now: () => wall, ticking: false, delay: 90 });
+		d.pause();
+		expect(d.label).toBe('PAUSED −1:30');
+		// With Transit off there's no feed to wait for: the clock itself is live.
+		let on = true;
+		const e = new Clock({ now: () => wall, ticking: false, delay: 90, wanted: () => on });
+		expect(e.label).toBe('NO GPS YET');
+		on = false;
+		expect(e.state).toBe('live');
+		expect(e.label).toBe('LIVE −1:30');
+	});
+
+	it('says a long stall in hours, then days', () => {
+		const wall = 1_000_000_000_000;
+		const c = new Clock({ now: () => wall, ticking: false, delay: 90 });
+		c.tick = wall;
+		c.feed = { lastFix: wall / 1000 - 1557 * 60, ok: true, at: wall };
+		expect(c.label).toBe('LIVE · no new GPS for 25 h');
+		c.feed = { lastFix: wall / 1000 - 50 * 3600, ok: true, at: wall };
+		expect(c.label).toBe('LIVE · no new GPS for 2 days');
+		c.feed = { lastFix: wall / 1000 - 59 * 60, ok: true, at: wall };
+		expect(c.label).toBe('LIVE · no new GPS for 59 min');
+	});
+
+	it('says a last time as short as it can', () => {
+		// Boise is UTC−6 in October: 3:00 PM on Wed Oct 7.
+		const now = Date.parse('2026-10-07T21:00:00Z') / 1000;
+		expect(sinceText(now - 2 * 3600, now)).toBe('1:00 PM');
+		expect(sinceText(Date.parse('2026-10-06T14:39:00Z') / 1000, now)).toBe('Tue 8:39 AM');
+		expect(sinceText(Date.parse('2026-09-28T14:39:00Z') / 1000, now)).toBe('Sep 28');
+		expect(spanText(30)).toBe('1 min');
+		expect(spanText(30, 2)).toBe('2 min');
+		expect(spanText(26 * 3600 + 59)).toBe('26 h');
+		expect(spanText(3 * 86400)).toBe('3 days');
 	});
 
 	it('says when the feed has stalled, and replays a pinned time from `at` minus the delay', () => {

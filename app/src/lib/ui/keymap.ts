@@ -1,5 +1,6 @@
-import type { CameraOptions } from 'maplibre-gl';
+import type { CameraOptions, Map } from 'maplibre-gl';
 import type { AppCtx } from '#lib/app/context.js';
+import { historyOf } from '#lib/state/history.svelte.js';
 import { register, type KeyBinding } from './keys.js';
 
 /**
@@ -11,6 +12,41 @@ import { register, type KeyBinding } from './keys.js';
 
 /** Home: over Meridian, pitch 50, bearing −12. */
 export const HOME = { center: [-116.3915, 43.6121] as [number, number], zoom: 13, pitch: 50, bearing: -12 };
+
+/**
+ * What Overview frames: the populated valley, Caldwell to east Boise and
+ * Kuna to Eagle (west, south, east, north). That's the extent of the bus
+ * routes (−116.68 to −116.12, 43.56 to 43.68) and the cameras (−116.57 to
+ * −116.16, 43.49 to 43.71) with a margin, not the tiles' bounds, whose
+ * southern half is empty desert.
+ */
+export const VALLEY: readonly [number, number, number, number] = [-116.72, 43.47, -116.08, 43.73];
+
+/** Overview's box: the valley, within the tiles' bounds when they're given and overlap it. */
+export function overviewBounds(tiles?: readonly number[] | null): [[number, number], [number, number]] {
+	const [w, s, e, n] = VALLEY;
+	if (tiles && tiles.length >= 4) {
+		const box = [Math.max(w, tiles[0]), Math.max(s, tiles[1]), Math.min(e, tiles[2]), Math.min(n, tiles[3])];
+		if (box[0] < box[2] && box[1] < box[3]) return [
+			[box[0], box[1]],
+			[box[2], box[3]]
+		];
+	}
+	return [
+		[w, s],
+		[e, n]
+	];
+}
+
+/**
+ * Overview (O and the camera widget): the valley from straight above, north
+ * up, fitted inside the map's padding (the open columns and bars), with 40 px
+ * to spare.
+ */
+export function overviewCamera(map: Map, tiles?: readonly number[] | null): CameraOptions | null {
+	const cam = map.cameraForBounds(overviewBounds(tiles), { padding: 40, bearing: 0, pitch: 0 });
+	return cam ? { ...cam, bearing: 0, pitch: 0 } : null;
+}
 
 const PAN_PX = 120;
 const ROTATE_DEG = 15;
@@ -26,10 +62,14 @@ export function registerDefaultKeys(app: AppCtx, opts: { help: () => void }): ()
 		if (reducedMotion()) m.jumpTo(o);
 		else m.easeTo({ duration: 220, ...o });
 	};
+	// H and O are programmatic flies: through the view history, so the view they leave goes on it
+	// (a jump under reduced motion, still pushed) and Backspace or the chip comes back.
 	const fly = (o: CameraOptions) => {
 		const m = map();
 		if (!m) return;
-		if (reducedMotion()) m.jumpTo(o);
+		const history = historyOf(app);
+		if (history.attached) history.fly({ duration: 1200, ...o });
+		else if (reducedMotion()) m.jumpTo(o);
 		else m.flyTo({ duration: 1200, ...o });
 	};
 	const pan = (dx: number, dy: number) => {
@@ -66,10 +106,8 @@ export function registerDefaultKeys(app: AppCtx, opts: { help: () => void }): ()
 			group: 'Camera',
 			run: () => {
 				const m = map();
-				const b = app.manifest?.bounds;
-				if (!m || !b) return;
-				const cam = m.cameraForBounds([[b[0], b[1]], [b[2], b[3]]], { padding: 40, bearing: 0, pitch: 0 });
-				if (cam) fly({ ...cam, bearing: 0, pitch: 0 });
+				const cam = m && overviewCamera(m, app.manifest?.bounds);
+				if (cam) fly(cam);
 			}
 		},
 		{ id: 'help', codes: ['Slash'], shift: true, label: '?', description: 'Help (this list)', group: 'Help', modes: ['explore', 'look', 'calibrate'], run: () => opts.help() }

@@ -12,7 +12,11 @@
 	 *   live;
 	 * - `PAUSED −3:05` while paused (the data keeps buffering);
 	 * - `BEHIND −3:05` after playing on from a pause, until Go live;
-	 * - `LIVE · no new GPS for 3 min` with a hollow dot when the feed stalls;
+	 * - `LIVE · no new GPS for 3 min` with a hollow dot when the feed stalls
+	 *   (`26 h`, `2 days` for long stalls);
+	 * - `NO GPS YET` with a hollow dot, unfilled, while Transit is on and no
+	 *   bus fix is known yet (it never says LIVE before there's data; with
+	 *   Transit off there's nothing to wait for);
 	 * - `REPLAY · Oct 6` for a `?at=` link (the time bar comes later).
 	 *
 	 * Space pauses and plays, L goes back to live (the keymap registry), while
@@ -77,7 +81,7 @@
 			</fieldset>
 			<div class="row">
 				<button class="pill" onclick={() => clock.toggle()}>{clock.paused === null ? 'Pause' : 'Play'} <kbd>Space</kbd></button>
-				<button class="pill" disabled={mode === 'live' || mode === 'stalled'} onclick={() => clock.goLive()}>Go live <kbd>L</kbd></button>
+				<button class="pill" disabled={mode === 'live' || mode === 'stalled' || mode === 'waiting'} onclick={() => clock.goLive()}>Go live <kbd>L</kbd></button>
 			</div>
 			<p class="note">
 				Buses are drawn {minSec(clock.delay)} behind live, between the positions they reported: GPS takes up to a minute to reach us, and
@@ -131,6 +135,14 @@
 	.stalled .mark {
 		background: none;
 		border: 2px solid var(--panel);
+	}
+	/* Waiting for the first word from the bus feed: unfilled, a hollow ink dot. */
+	.waiting .mark {
+		width: 9px;
+		height: 9px;
+		border: 2px solid var(--ink);
+		border-radius: 50%;
+		box-sizing: border-box;
 	}
 	.mark {
 		font-size: 11px;

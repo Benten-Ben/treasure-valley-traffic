@@ -4,7 +4,7 @@
 	import type { AppCtx } from '#lib/app/context.js';
 	import { historyOf } from '#lib/state/history.svelte.js';
 	import Icon from './Icon.svelte';
-	import { HOME as HOME_VIEW, reducedMotion } from './keymap.js';
+	import { HOME as HOME_VIEW, overviewCamera, reducedMotion } from './keymap.js';
 	import { slots } from './slots.svelte.js';
 	import { tooltip } from './tooltip.svelte.js';
 	import { HOME, OVERVIEW, ZOOM_IN, ZOOM_OUT } from './window-icons.js';
@@ -111,16 +111,8 @@
 	}
 
 	function overview() {
-		const b = ctx.manifest?.bounds;
-		if (!map || !b) return;
-		const cam = map.cameraForBounds(
-			[
-				[b[0], b[1]],
-				[b[2], b[3]]
-			],
-			{ padding: 40, bearing: 0, pitch: 0 }
-		);
-		if (cam) history.fly({ ...cam, bearing: 0, pitch: 0, duration: 1200 });
+		const cam = map && overviewCamera(map, ctx.manifest?.bounds);
+		if (cam) history.fly({ ...cam, duration: 1200 });
 	}
 
 	/** The tooltip goes to the left of the column, never over the widget's other buttons. */
@@ -238,6 +230,11 @@
 		transform: translateY(2px);
 		box-shadow: 0 1px 0 rgb(60 45 20 / 0.16);
 	}
+	.pair .btn:active:not(:disabled) {
+		transform: none;
+		box-shadow: none;
+		background: #f6efe2;
+	}
 	.btn:disabled {
 		cursor: default;
 		color: var(--ink-soft);
@@ -252,30 +249,30 @@
 			0 0 0 5px var(--accent);
 		z-index: 1;
 	}
+	/* Two buttons joined into one 40 px column, each a full 40 × 40 target (the outer edges are the
+	   buttons' own borders, so the pair is as wide as the round buttons). */
 	.pair {
 		display: flex;
 		flex-direction: column;
-		border: 2px solid var(--panel-edge);
 		border-radius: 20px;
-		background: var(--panel);
 		box-shadow: 0 3px 0 rgb(60 45 20 / 0.16);
 	}
 	.pair .btn {
-		width: 36px;
-		height: 40px;
-		border: 0;
-		border-radius: 18px;
-		background: none;
 		box-shadow: none;
 	}
-	.pair .btn + .btn {
-		border-top: 2px solid var(--panel-edge);
-		border-radius: 0 0 18px 18px;
-	}
 	.pair .btn:first-child {
-		border-radius: 18px 18px 0 0;
+		border-bottom-width: 1px;
+		border-radius: 20px 20px 0 0;
 	}
-	.pair .btn:hover:not(:disabled),
+	.pair .btn + .btn {
+		border-top-width: 1px;
+		border-radius: 0 0 20px 20px;
+	}
+	.pair .btn:focus-visible {
+		box-shadow:
+			0 0 0 2px var(--ink),
+			0 0 0 5px var(--accent);
+	}
 	.btn:hover:not(:disabled) {
 		background: #f6efe2;
 	}
