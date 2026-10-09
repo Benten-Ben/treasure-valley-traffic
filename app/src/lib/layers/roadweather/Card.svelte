@@ -20,6 +20,7 @@
 	const tick = setInterval(() => (now = Date.now()), 15_000);
 	onDestroy(() => clearInterval(tick));
 	const nowS = $derived((now + rw.skew) / 1000);
+	// Each age is written " · 6 min" as one expression: Svelte trims a space at the start of an element's text.
 	const views = $derived(
 		s.views.map((v) => {
 			const age = v.disabled ? null : ageAt(v, nowS);
@@ -38,7 +39,7 @@
 		<li data-view-id={v.id} data-state={st.kind} title={st.detail}>
 			<!-- Ink shapes: amber alone on cream is 2.05:1, below the 3:1 a status shape needs (docs/13). -->
 			<span class="shape" aria-hidden="true">{st.shape}</span>
-			{v.label}: {st.word}{#if age !== null}<span class="age num"> · {shortAge(age)}</span>{/if}
+			{v.label}: {st.word}{#if age !== null}<span class="age num">{` · ${shortAge(age)}`}</span>{/if}
 		</li>
 	{/each}
 </ul>
