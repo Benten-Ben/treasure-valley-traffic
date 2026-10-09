@@ -224,6 +224,24 @@ the default in the app). Run Compose from `deploy/` without `-f`
    `obs.vehicle_progress`) and the plugins' migrations (the camera
    `provider` column, `cameras/0001`) on start, before the app needs them.
    Check: `docker compose logs ingest | grep -i migrat`.
+
+   **Road-weather stations**, with the owner's OK (a one-off source, run by
+   hand): the Road weather layer draws only stations in the database, and
+   nothing loads them on a schedule, so without this step the layer is
+   empty after deploy ("No road-weather stations are loaded yet"). First
+   check that the dated private list is where the loader reads it, the
+   private files' data folder (`PRIVATE_DATA_DIR`, mounted read-only in
+   `ingest` as `TVT_PRIVATE_DATA`):
+   `docker compose exec ingest sh -c 'ls -l "$TVT_PRIVATE_DATA"/511-camera-sites-statewide-2026-10-05.json'`
+   (the loader reads exactly this file, `FILE_NAME` in
+   `plugins/cameras/ingest/sources/idaho511_rwis_sites.py`).
+   Then load it:
+   `docker compose exec ingest python3 -m ingest run idaho511_rwis_sites_oneoff`.
+   It reads the file only (no request to 511), loads ITD's road-weather
+   stations statewide (provider `ITD RWIS`) and Oregon DOT's cameras in the
+   regional ring (`ODOT`), each with its views, and changes nothing when run
+   again. If the list is missing, it stops with a message saying so: put the
+   file back in the private files first, never in the repository.
 3. **The web server, the app and the services that changed.**
    - Glyphs precompressed, so Caddy serves them gzipped (about −90 KB on a
      first view): `basemap/build.sh --precompress-glyphs` on the tiles
@@ -261,6 +279,19 @@ the default in the app). Run Compose from `deploy/` without `-f`
    - `curl` (with the `Origin` header, [above](#checking-the-app-by-hand))
      `/api/meta`, `/api/cameras/live?views=<a few view ids>` and
      `/api/transit/tracks`;
+   - road weather: `/api/roadweather` lists the stations (no `note`), and,
+     once the `regional` capture service has run a cycle with the new code,
+     some views are `capturing` with an `ageS`:
+
+     ```bash
+     curl -s http://localhost:8080/api/roadweather -H "Origin: http://localhost:8080" | python3 -c '
+     import json, sys; d = json.load(sys.stdin); views = [v for s in d["stations"] for v in s["views"]]
+     print(len(d["stations"]), "stations,", len(views), "views,", sum(v["capturing"] for v in views), "capturing,",
+           sum(v["ageS"] is not None for v in views), "with a picture", d.get("note", ""))'
+     ```
+
+     Then switch Road weather on (key 9) in the app, click a station inside
+     the map and check that its window's tabs show pictures with their ages;
    - from the laptop, the smoke specs against the tailnet HTTPS address:
      `cd app && TVT_E2E_URL=https://<tailnet name> npx playwright test tests/e2e/boot.spec.ts`
      (every request same-origin, no console errors, at both screen sizes);

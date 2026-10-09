@@ -1,6 +1,6 @@
 import type { Locator, Page } from '@playwright/test';
 import { expect, mapReady, screenPath, test } from './fixtures.js';
-import { cleanRoadWeather, seedRoadWeather, STATIONS } from './roadweather-seed.js';
+import { cleanRoadWeather, seedRoadWeather, STATIONS, waitForSeeded } from './roadweather-seed.js';
 
 /**
  * road weather (docs/14 §14.10, WP16 acceptance; §14.6 "Road weather"):
@@ -9,7 +9,9 @@ import { cleanRoadWeather, seedRoadWeather, STATIONS } from './roadweather-seed.
  * road-weather freshness thresholds; a station whose views are all
  * placeholders ("no live feed") is drawn hollow. Also: the Cameras layer
  * doesn't list the stations, key 9 toggles the layer, and on a phone a
- * station opens as a sheet tab.
+ * station opens as a sheet tab. The inspect card says each view's status in
+ * the window's words, and a station clicked under the inspect card pans into
+ * the free middle first.
  *
  * The spec sets up its own stations (roadweather-seed.ts: the real loader on
  * the plugin's synthetic list, test-pattern frames at chosen ages, a running
@@ -17,50 +19,31 @@ import { cleanRoadWeather, seedRoadWeather, STATIONS } from './roadweather-seed.
  */
 
 type Drawn = { id: number; name: string; provider: string; hollow: boolean; views: number; x: number | null; y: number | null };
-type RwView = { id: number; imageId: number; label: string; disabled: boolean; ageS: number | null; capturing: boolean; feed: string };
-type RwStation = { id: number; name: string; hollow: boolean; views: RwView[] };
 
 /** Every seeded station on screen, clear of the legend column and the toolbar. */
 const VIEW = '#map=9/43.64/-116.62/0/0';
+/**
+ * The same zoom asked further west. At z9 the map spans its bounds from side to side, so MapLibre
+ * centres it whatever the hash says: Example Grade sits at about x 880, its badge reaching into the
+ * inspect column, where the card opens.
+ */
+const UNDER_CARD = '#map=9/43.64/-116.82/0/0';
 const NAMES: string[] = Object.values(STATIONS).map((s) => s.name);
 
 const toolbar = (page: Page) => page.getByRole('toolbar', { name: 'Map layers' });
 const button = (page: Page) => toolbar(page).getByRole('button', { name: 'Road weather', exact: true });
 const drawn = (page: Page): Promise<Drawn[]> => page.evaluate(() => (globalThis as any).__tvtRoadWeather?.stations() ?? []);
 
-let seeded: Promise<RwStation[]> | null = null;
+let seeded: ReturnType<typeof waitForSeeded> | null = null;
 
-/** Seed once for the spec, then wait until the server knows the new stations and their views (its lists are cached). */
-function ensureSeeded(request: import('@playwright/test').APIRequestContext): Promise<RwStation[]> {
+/**
+ * Seed once for the spec, then wait until the server knows the new stations and their views (its
+ * lists are cached; the review's checklist, which has Road weather on, runs just before this one).
+ */
+function ensureSeeded(request: import('@playwright/test').APIRequestContext) {
 	seeded ??= (async () => {
 		seedRoadWeather();
-		let stations: RwStation[] = [];
-		// Also wait for the seeded capture status: the archive keeps its list of capture services for
-		// 15 s, so right after a spec that had Road weather on (the review's checklist runs just before
-		// this one), the stations can come back before the server reads the new status.
-		await expect
-			.poll(
-				async () => {
-					const rw = await (await request.get('/api/roadweather')).json();
-					stations = (rw.stations as RwStation[]).filter((s) => NAMES.includes(s.name));
-					const seen = stations.flatMap((s) => s.views).filter((v) => v.imageId !== null);
-					return stations.length === 3 && seen.length > 0 && seen.every((v) => v.capturing) ? 3 : -stations.length;
-				},
-				{ timeout: 60_000, intervals: [1000, 2000] }
-			)
-			.toBe(3);
-		const ids = stations.flatMap((s) => s.views.map((v) => v.id));
-		// /api/cameras/live keeps its view list for a minute: wait until it serves the new views from the archive.
-		await expect
-			.poll(
-				async () => {
-					const live = await (await request.get(`/api/cameras/live?views=${ids.join(',')}`)).json();
-					return Object.values(live.views as Record<string, { cadence: string }>).filter((v) => v.cadence === 'road_weather').length;
-				},
-				{ timeout: 90_000, intervals: [2000, 5000] }
-			)
-			.toBe(ids.length);
-		return stations;
+		return waitForSeeded(request);
 	})();
 	return seeded;
 }
@@ -69,8 +52,8 @@ test.afterAll(async () => {
 	if (seeded) await cleanRoadWeather();
 });
 
-async function openMap(page: Page, layers: string) {
-	await page.goto(`/${VIEW}&layers=${layers}`);
+async function openMap(page: Page, layers: string, view = VIEW) {
+	await page.goto(`/${view}&layers=${layers}`);
 	await mapReady(page);
 }
 
@@ -91,6 +74,15 @@ async function clickStation(page: Page, s: Drawn) {
 const pictureSrc = (win: Locator) => win.locator('img[data-frame-url]').last().getAttribute('src');
 
 const escapeRe = (t: string) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/** The legend and inspect columns on a desktop (windows.svelte.ts, §14.3): the free middle is between them. */
+const LEFT_COLUMN = 312;
+const RIGHT_COLUMN = 392;
+/** The room a click keeps between a station and the edge of the free middle (roadweather/place.ts CLEAR_PX). */
+const CLEAR_PX = 32;
+
+type Box = { x: number; y: number; width: number; height: number } | null;
+const inside = (b: Box, x: number, y: number) => !!b && x >= b.x && x <= b.x + b.width && y >= b.y && y <= b.y + b.height;
 
 test.describe('road weather', () => {
 	test('toggling Road weather draws the seeded stations, hollow where every view has no live feed', { tag: '@wp16' }, async ({ page, request, consoleErrors, offsite }) => {
@@ -163,12 +155,33 @@ test.describe('road weather', () => {
 		page.on('request', (r) => {
 			if (r.url().includes('/api/cameras/live')) live.push(r.url());
 		});
-		await openMap(page, 'weather');
+		await openMap(page, 'weather', UNDER_CARD);
 		const on = await seededDrawn(page);
 
-		await clickStation(page, on[STATIONS.grade.name]);
+		// At this view Example Grade's badge reaches into the inspect column, where the card opens: the click pans
+		// it clear (place.ts counts a station within CLEAR_PX of the column as covered). The map already spans its
+		// bounds from side to side here, so a pan alone can't move it: it zooms in just enough.
+		const before = on[STATIONS.grade.name];
+		expect(before.x!, 'Example Grade starts covered by the inspect column').toBeGreaterThan(1280 - RIGHT_COLUMN - CLEAR_PX);
+		const zoom = () => page.evaluate(() => (globalThis as any).__tvt.map.getZoom() as number);
+		const zoomBefore = await zoom();
+		await clickStation(page, before);
 		const win = page.getByRole('dialog', { name: STATIONS.grade.name });
 		await expect(win).toBeVisible();
+		const card = page.getByRole('region', { name: 'Selected station' });
+		await expect(card.getByRole('heading', { name: STATIONS.grade.name })).toBeVisible();
+		// The pan runs 450 ms: read where it ends.
+		await page.waitForFunction(() => !(globalThis as any).__tvt.map.isMoving());
+		await mapReady(page);
+		const canvas = (await page.locator('canvas.maplibregl-canvas').boundingBox())!;
+		const landed = (await seededDrawn(page))[STATIONS.grade.name];
+		const at = { x: canvas.x + landed.x!, y: canvas.y + landed.y! };
+		expect(at.x, 'the station in the free middle').toBeGreaterThan(LEFT_COLUMN);
+		expect(at.x, 'the station in the free middle').toBeLessThan(1280 - RIGHT_COLUMN);
+		expect(inside(await card.boundingBox(), at.x, at.y), 'the inspect card leaves the station in view').toBe(false);
+		expect(inside(await win.boundingBox(), at.x, at.y), 'its window leaves the station in view').toBe(false);
+		expect(await zoom()).toBeGreaterThan(zoomBefore);
+		expect(await zoom()).toBeLessThan(zoomBefore + 2);
 		const tabs = win.getByRole('tab');
 		await expect(tabs).toHaveCount(4);
 		await expect(tabs.locator('.label')).toHaveText([...STATIONS.grade.labels]);
@@ -177,7 +190,8 @@ test.describe('road weather', () => {
 		const day = /\/\d{4}-\d{2}-\d{2}\/\d{8}T\d{6}Z\.jpg$/;
 		await expect.poll(() => pictureSrc(win), { timeout: 60_000 }).toMatch(new RegExp(`^/camera-frames/990011${day.source}`));
 		const seen = win.locator('.seen');
-		await expect(seen).toHaveText(/^seen \d+:\d\d ago · updates about every 10 minutes$/);
+		// 511's refresh, not our 10-minute capture.
+		await expect(seen).toHaveText(/^seen \d+:\d\d ago · 511 updates these pictures about every 15 minutes$/);
 		const age = async (i: number) => Number(await tabs.nth(i).getAttribute('data-age'));
 		const elapsed = 15 * 60; // the spec's own running time, at most
 		expect(await age(0)).toBeGreaterThanOrEqual(4 * 60 - 5);
@@ -190,12 +204,13 @@ test.describe('road weather', () => {
 		expect(live.some((u) => new URL(u).searchParams.get('views') === want), live.join('\n')).toBe(true);
 		await page.screenshot({ path: screenPath('roadweather-window.png'), animations: 'disabled' });
 
-		// 30 min: late (road-weather thresholds: live under 20 min, stale over 45).
+		// 40 min: late (road-weather thresholds: live within 30 min, late within 60, stale after).
 		await tabs.nth(1).click();
 		await expect(tabs.nth(1)).toHaveAttribute('aria-selected', 'true');
 		await expect.poll(() => pictureSrc(win), { timeout: 30_000 }).toMatch(new RegExp(`^/camera-frames/990012${day.source}`));
 		await expect(tabs.nth(1)).toHaveAttribute('data-state', 'late');
-		expect(await age(1)).toBeGreaterThanOrEqual(30 * 60 - 5);
+		expect(await age(1)).toBeGreaterThanOrEqual(40 * 60 - 5);
+		expect(await age(1)).toBeLessThan(60 * 60);
 		// 70 min: stale, and 511 is probably showing its "no live feed" picture.
 		await tabs.nth(2).click();
 		await expect.poll(() => pictureSrc(win), { timeout: 30_000 }).toMatch(new RegExp(`^/camera-frames/990013${day.source}`));
@@ -208,17 +223,35 @@ test.describe('road weather', () => {
 		await expect(tabs.nth(3)).toHaveAttribute('data-state', 'offline');
 		await expect(seen).toHaveText('no live feed · 511 lists this view as disabled');
 		await expect(win.getByText('No live feed: 511 has no picture from this camera now')).toBeVisible();
+
+		// The inspect card says each view's status in the window's words: live, late, stale, no live feed.
+		const states = ['fresh', 'late', 'stale', 'offline'];
+		const items = card.locator('.views li');
+		await expect(items).toHaveCount(4);
+		for (let i = 0; i < 4; i++) {
+			await expect(tabs.nth(i)).toHaveAttribute('data-state', states[i]);
+			await expect(items.nth(i)).toHaveAttribute('data-state', states[i]);
+		}
+		await expect(items).toHaveText([/^● Looking East: live · \d+ min$/, /^▲ Looking West: late · \d+ min$/, /^■ Pavement: stale · 1 h$/, /^■ View 4: no live feed$/]);
+		await expect(card.locator('.meta')).toHaveText(/1 of 4 views live · ITD RWIS/);
+		await page.screenshot({ path: screenPath('roadweather-card.png'), animations: 'disabled' });
 		await win.getByRole('button', { name: `Close ${STATIONS.grade.name}` }).click();
 		await expect(win).toHaveCount(0);
 
-		// The hollow station: every view without a live feed, and the window says so.
-		await clickStation(page, on[STATIONS.summit.name]);
+		// The hollow station: every view without a live feed, and the window says so. (Back to the first
+		// view, where it's in the free middle, so the click doesn't move the map.)
+		await page.evaluate(() => (globalThis as any).__tvt.map.jumpTo({ center: [-116.62, 43.64], zoom: 9 }));
+		await mapReady(page);
+		const summit = (await seededDrawn(page))[STATIONS.summit.name];
+		await clickStation(page, summit);
 		const hollow = page.getByRole('dialog', { name: STATIONS.summit.name });
 		await expect(hollow).toBeVisible();
 		await expect(hollow.getByRole('tab')).toHaveCount(2);
 		for (let i = 0; i < 2; i++) await expect(hollow.getByRole('tab').nth(i)).toHaveAttribute('data-state', 'offline');
 		await expect(hollow.locator('header .status')).toHaveText(/no live feed/);
 		await expect(hollow.locator('.seen')).toHaveText('no live feed · no picture recorded lately');
+		await expect(card.locator('.views li')).toHaveText([/^■ View 1: no live feed$/, /^■ View 2: no live feed$/]);
+		await expect(card.locator('.meta')).toHaveText(/No live feed on any of 2 views/);
 		await page.screenshot({ path: screenPath('roadweather-window-hollow.png'), animations: 'disabled' });
 		expect(consoleErrors).toEqual([]);
 		expect(offsite).toEqual([]);

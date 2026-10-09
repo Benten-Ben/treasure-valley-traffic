@@ -1,18 +1,23 @@
-import type { Page } from '@playwright/test';
+import type { APIRequestContext, Page } from '@playwright/test';
 import { writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { tick } from '../../scripts/archive-tick.ts';
 import { env, expect, mapReady, screenPath, seeds, test, type Seed } from './fixtures.js';
+import { AGES_MIN, cleanRoadWeather, seedRoadWeather, STATIONS, waitForSeeded } from './roadweather-seed.js';
 
 /**
  * review, WP15 (docs/14 §14.10 "WP15", §14.11): the final integration's own
  * evidence, on the seeded data (map-rendered camera frames only, never a real
  * camera image), in fixture mode.
  *
- * - **The screenshot matrix** (§14.11): views 1–8 at 1280×800 and 390×844,
+ * - **The screenshot matrix** (§14.11): views 1–10 at 1280×800 and 390×844,
  *   with an index (`wp15-matrix.json`) that `scripts/review-page.mjs` turns
  *   into the owner's review page (`review.html` beside the screenshots).
+ *   Road weather shows the synthetic stations (roadweather-seed.ts: the real
+ *   loader on the plugin's made-up list, test-pattern pictures), seeded for
+ *   this spec and removed after it: on the "every layer" views, the stations
+ *   on their own (view 9), and a station's window and inspect card (view 10).
  * - **The visual review checklist's automatable lines** (§14.11): only
  *   same-origin requests; the credits (OpenStreetMap, Protomaps, USGS, NAIP,
  *   Overture, Valley Regional Transit, ITD 511, ACHD); the three fonts in use;
@@ -75,6 +80,38 @@ async function openMap(page: Page, hash: string) {
 	await expect(page.getByText('Building the valley…')).toHaveCount(0);
 }
 
+/** The synthetic road-weather stations, seeded once for this spec (and their pictures' ages refreshed before views 9 and 10). */
+let rwSeeded: Promise<unknown> | null = null;
+function ensureRoadWeather(request: APIRequestContext) {
+	rwSeeded ??= (async () => {
+		seedRoadWeather();
+		return waitForSeeded(request);
+	})();
+	return rwSeeded;
+}
+
+test.afterAll(async () => {
+	if (rwSeeded) await cleanRoadWeather();
+});
+
+/** Where the map draws a seeded station now (CSS px in the map). */
+async function stationOnMap(page: Page, name: string): Promise<{ x: number; y: number }> {
+	await page.waitForFunction(() => (globalThis as any).__tvtRoadWeather, null, { timeout: 60_000 });
+	let at: { x: number; y: number } | null = null;
+	await expect
+		.poll(
+			async () => {
+				const all: { name: string; x: number | null; y: number | null }[] = await page.evaluate(() => (globalThis as any).__tvtRoadWeather.stations());
+				const s = all.find((d) => d.name === name);
+				at = s && s.x !== null && s.y !== null ? { x: s.x, y: s.y } : null;
+				return at !== null;
+			},
+			{ timeout: 60_000 }
+		)
+		.toBe(true);
+	return at!;
+}
+
 /** Whether the clone has a ribbon build (routes side by side) or Transit draws plain shapes. */
 const ribbons = (page: Page) => page.evaluate(() => fetch('/api/meta').then((r) => r.json()).then((m) => m.versions?.ribbons ?? 'none'));
 
@@ -82,9 +119,10 @@ const at = (s: Seed, zoom: number, pitch: number, bearing: number, layers = 'cam
 	`#map=${zoom}/${s.pose.lat.toFixed(5)}/${s.pose.lon.toFixed(5)}/${bearing.toFixed(1)}/${pitch}&layers=${layers}`;
 
 test.describe('review', () => {
-	test('the screenshot matrix (§14.11): views 1–8 at 1280×800 and 390×844', { tag: '@wp15' }, async ({ page, consoleErrors, offsite }) => {
-		test.setTimeout(2_400_000);
+	test('the screenshot matrix (§14.11): views 1–10 at 1280×800 and 390×844', { tag: '@wp15' }, async ({ page, request, consoleErrors, offsite }) => {
+		test.setTimeout(2_700_000);
 		const key = seed('key');
+		await ensureRoadWeather(request);
 		const entries: { file: string; view: number; size: string; title: string; notes: string[] }[] = [];
 		const shot = async (view: number, size: Size, title: string, notes: string[] = []) => {
 			await settle(page);
@@ -159,6 +197,33 @@ test.describe('review', () => {
 				expect(await mode(page)).toBe('calibrate');
 				await shot(8, size, `Calibrate mode: ${key.name}`);
 			}
+
+			// 9 and 10: road weather, on the synthetic stations. Their pictures' ages are set again first, so
+			// the window reads as seeded (live, late, stale, no live feed) however long the views above took.
+			seedRoadWeather();
+			await waitForSeeded(request);
+			const rwNote = `synthetic stations (made-up names and positions); test-pattern pictures ${Object.values(AGES_MIN).join(', ')} min old`;
+			// 9: the stations among every layer: solid badges, and Test Summit hollow (no live feed on any view).
+			await baseLook(page, 'auto');
+			await openMap(page, size === PHONE ? `#map=8.6/43.66/-116.40/0/0&layers=${ALL}` : `#map=9/43.64/-116.62/0/0&layers=${ALL}`);
+			await stationOnMap(page, STATIONS.summit.name);
+			await mapReady(page);
+			await shot(9, size, 'Road weather stations among every layer, z9 (one hollow: no live feed on any view)', [rwNote]);
+
+			// 10: a click on Example Grade, which starts under the inspect card on a desktop: the map pans it clear,
+			// its window (a sheet tab on the phone) shows the newest picture, and the inspect card lists its views.
+			// Streets and Road weather only: an ACHD camera 400 m from the made-up station would take the click.
+			const RW = 'streets,weather';
+			await openMap(page, size === PHONE ? `#map=10/43.56/-116.24/0/0&layers=${RW}` : `#map=10/43.6/-116.45/0/0&layers=${RW}`);
+			const grade = await stationOnMap(page, STATIONS.grade.name);
+			const box = (await page.locator('canvas.maplibregl-canvas').boundingBox())!;
+			await page.mouse.click(box.x + grade.x, box.y + grade.y);
+			const holder = size === PHONE ? page.getByRole('region', { name: 'Details' }) : page.getByRole('dialog', { name: STATIONS.grade.name });
+			await expect(holder.locator('img[data-frame-url]').last()).toBeVisible({ timeout: 60_000 });
+			if (size !== PHONE) await expect(page.getByRole('region', { name: 'Selected station' })).toContainText('views live');
+			await page.waitForFunction(() => !(globalThis as any).__tvt.map.isMoving());
+			await mapReady(page);
+			await shot(10, size, `A road-weather station's window and inspect card, z10, Streets and Road weather: ${STATIONS.grade.name}`, [rwNote]);
 		}
 
 		writeFileSync(screenPath('wp15-matrix.json'), JSON.stringify({ at: new Date().toISOString(), entries }, null, 2) + '\n');
@@ -169,9 +234,10 @@ test.describe('review', () => {
 		expect(offsite).toEqual([]);
 	});
 
-	test('the checklist: same origin, credits, fonts, no emoji, contrast, nothing under the bars', { tag: '@wp15' }, async ({ page, offsite }) => {
+	test('the checklist: same origin, credits, fonts, no emoji, contrast, nothing under the bars', { tag: '@wp15' }, async ({ page, request, offsite }) => {
 		test.setTimeout(900_000);
 		const key = seed('key');
+		await ensureRoadWeather(request);
 		const findings: Record<string, unknown> = {};
 		await page.setViewportSize(DESKTOP);
 		await page.emulateMedia({ reducedMotion: 'reduce' });

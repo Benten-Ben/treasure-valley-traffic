@@ -42,7 +42,7 @@ will be designed and built step by step with the project owner's sign-off.
 | Buildings | **Overture** footprints with heights. Boise 3D buildings if terms allow. | ❓ recommended |
 | Database | **PostgreSQL + PostGIS + TimescaleDB** (`timescaledb-ha` image) | ✅ owner approved |
 | Analysis side tool | DuckDB (+ spatial) for Overture/GeoParquet and heavy one-off analysis | ❓ recommended |
-| Vector tile server | Martin (serves tiles from PostGIS); static PMTiles for big static layers (built with tippecanoe) | ❓ recommended |
+| Vector tiles | **Dynamic tiles are cut by the app itself:** PostGIS's `ST_AsMVT` behind `/api/tiles/roads/z/x/y`, gzipped once per roads version, kept in a small LRU (about 40 MB) and cached as immutable for the current version ([ch. 14 §14.8–14.9](14-ui-v2.md#149-performance)). Static PMTiles for big static layers (built with tippecanoe). Martin, the earlier recommendation, was considered and isn't used: there's no separate tile server | ✅ built (UI v2, Oct 2026) |
 | Ingestion | **Python**, rebuilt cleanly from the prototype's lessons; simple scheduling (systemd timers or a small scheduler) | ❓ language agreed in practice; design pending |
 | Camera vision | PyTorch with a **permissively licensed** detector (Apache/BSD), not AGPL | ❓ recommended |
 | Deployment | **Owner's home server**: one dedicated VM running Docker Compose, reached over Tailscale | ✅ running since Oct 5, 2026 |
@@ -76,13 +76,18 @@ went the way it did. The owner's answers are in
                         │
           ┌─────────────┼───────────────────┐
           ▼             ▼                   ▼
-   aggregation jobs   Martin vector     analysis (DuckDB,
-   (per intersection, tiles (live)      notebooks, reports)
-   per corridor)        │
+   aggregation jobs   the app's APIs    analysis (DuckDB,
+   (per intersection, and vector tiles  notebooks, reports)
+   per corridor)      (ST_AsMVT, live)
+          │             │
           │             ▼
           └────► SvelteKit app + MapLibre (+ our WebGL scene layer)
                  base: PMTiles (OSM) + terrain (3DEP) + NAIP + buildings
 ```
+
+Live layers reach the map through the SvelteKit app's own `/api/` (JSON,
+and road tiles it cuts from PostGIS with `ST_AsMVT`), not through a separate
+tile server: Martin was considered and isn't used.
 
 Camera images follow a separate path; see [chapter 11](11-camera-validation-layer.md).
 

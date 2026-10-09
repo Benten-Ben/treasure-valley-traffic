@@ -6,25 +6,27 @@
 	import Icon from '#lib/ui/Icon.svelte';
 	import Frame from '../cameras/Frame.svelte';
 	import Freshness from '../cameras/Freshness.svelte';
-	import { footText, ringProgress, shown, THRESHOLDS, type Shown } from '../cameras/freshness.js';
+	import { ringProgress, shown, THRESHOLDS, type Shown } from '../cameras/freshness.js';
 	import { FLY_TO } from '../cameras/icons.js';
 	import { liveOf } from '../cameras/live.svelte.js';
 	import type { RoadWeatherModule } from './index.svelte.js';
-	import { creditOf, NO_FEED_AFTER_S, type RoadWeatherView } from './model.js';
+	import { creditOf, footOf, isNoFeed, NO_FEED_AFTER_S, shortAge, viewStatus, type RoadWeatherView } from './model.js';
 
 	/**
 	 * A road-weather station's window (docs/14 §14.6 "Road weather"; WP16):
 	 * one tab per view (direction), each with the newest captured picture and
-	 * its age, on the road-weather freshness thresholds (live under 20 min,
-	 * stale over 45; cameras/freshness.ts). WP3's frame draws the header
-	 * (number badge, name, status as shape and word), Pin, Dock and Close.
+	 * its age, on the road-weather freshness thresholds (live within 30 min,
+	 * stale after 60; cameras/freshness.ts), in the words the inspect card
+	 * uses too (model.ts `viewStatus`). WP3's frame draws the header (number
+	 * badge, name, status as shape and word), Pin, Dock and Close.
 	 *
 	 * The pictures come through the app's one live feed (WP12's batched poll of
 	 * /api/cameras/live, every 60 s when every view is a road-weather one) for
 	 * every view of the station that 511 doesn't list as disabled, while the
 	 * window is open; closing it releases them at once. A view that 511 lists
-	 * as disabled, or whose capture has had no new picture for 45 minutes,
-	 * shows 511's "no live feed" picture (model.ts), and the tab says so.
+	 * as disabled, or whose capture has recorded nothing from it lately, shows
+	 * 511's "no live feed" picture (model.ts), and the tab says so; one whose
+	 * newest picture is over an hour old is stale, and probably shows it too.
 	 */
 	let { stationId, name, win }: { stationId: number; name: string; win: WinState } = $props();
 	const app = getAppCtx();
@@ -73,27 +75,20 @@
 		return v.seenAt === null || !m ? null : Math.max(0, (t + m.skew) / 1000 - v.seenAt);
 	}
 
-	/** A view's status, in a shape and a word. */
+	/**
+	 * A view's status, in a shape and a word: the inspect card's words
+	 * (model.ts `viewStatus`), on the road-weather thresholds whatever the
+	 * picture's source. Only the live answer's own trouble (blocked, the
+	 * on-demand limit, an error, images off) and the wait for its first answer
+	 * have words of their own here.
+	 */
 	function stateOf(v: RoadWeatherView, t: number): Shown {
-		if (v.disabled)
-			return { kind: 'offline', shape: '■', word: 'no live feed', color: SOFT, detail: "511 lists this view as disabled: it shows 511's “no live feed” picture" };
 		const live = liveOfView(v);
 		const age = ageOf(v, t);
-		if (!live?.frame && v.feed === 'no_feed')
-			return { kind: 'offline', shape: '■', word: 'no live feed', color: SOFT, detail: "No picture recorded lately while capture runs: 511 is showing its “no live feed” picture" };
-		if (!live && age !== null)
-			return shown({ viewId: v.id, imageId: v.imageId, source: 'archive', frame: { url: '', firstSeenAt: v.seenAt ?? 0, width: 0, height: 0, sha: '' }, cadence: 'road_weather', cadenceS: 600, state: 'ok' }, age);
-		// Road-weather thresholds whatever the source: 511 refreshes these pictures about every 15 minutes,
-		// even when one comes on demand rather than from the capture archive.
-		return shown(live && { ...live, cadence: 'road_weather' }, age);
-	}
-
-	/** "4 min", "1 h", "2 d": the tab's short age. */
-	function shortAge(s: number): string {
-		if (s < 60) return '<1 min';
-		if (s < 3600) return `${Math.floor(s / 60)} min`;
-		if (s < 86_400) return `${Math.floor(s / 3600)} h`;
-		return `${Math.floor(s / 86_400)} d`;
+		if (!v.disabled && live && live.state !== 'ok' && live.state !== 'waiting' && !(v.feed === 'no_feed' && !live.frame))
+			return shown({ ...live, cadence: 'road_weather' }, age);
+		if (!v.disabled && !live && age === null && v.feed !== 'no_feed') return shown(null, null);
+		return viewStatus(v, age);
 	}
 
 	const live = $derived(view ? liveOfView(view) : null);
@@ -102,19 +97,19 @@
 	const status = $derived<Shown | null>(view ? stateOf(view, now) : null);
 	const aspect = $derived(frame && frame.width && frame.height ? frame.width / frame.height : 800 / 486);
 	const credit = $derived(station ? creditOf(station.provider) : 'ITD 511 road weather');
-	const noFeed = $derived(status?.word === 'no live feed');
-	const staleNoFeed = $derived(!!view && !view.disabled && view.feed === 'no_feed' && !!frame && (age ?? 0) > NO_FEED_AFTER_S);
+	const noFeed = $derived(!!status && isNoFeed(status));
+	const staleNoFeed = $derived(!!view && !view.disabled && view.feed === 'no_feed' && status?.kind === 'stale');
 
 	/** The header's status, without the age (so it changes only when the state does). */
 	function headerStatus(s: Shown | null): WindowStatus {
 		if (!station) return { shape: '◌', word: 'waiting', color: SOFT, detail: 'Loading the station…' };
-		if (station.hollow) return { shape: '■', word: 'no live feed', color: SOFT, detail: "Every view shows 511's “no live feed” picture" };
+		if (station.hollow && (!s || isNoFeed(s))) return { shape: '■', word: 'no live feed', color: SOFT, detail: "Every view shows 511's “no live feed” picture" };
 		if (!s) return { shape: '◌', word: 'no views', color: SOFT, detail: 'No views are listed for this station' };
 		const t = THRESHOLDS.road_weather;
 		const detail: Partial<Record<Shown['kind'], string>> = {
 			fresh: `Live: a new picture within the last ${t.fresh / 60} min`,
 			late: `Late: no new picture for over ${t.fresh / 60} min`,
-			stale: `Stale: no new picture for over ${t.late / 60} min`
+			stale: `Stale: no new picture for over ${t.late / 60} min${station.hollow ? "; every view probably shows 511's “no live feed” picture" : ''}`
 		};
 		return { shape: s.shape, word: s.word, color: s.color, detail: detail[s.kind] ?? s.detail };
 	}
@@ -200,12 +195,12 @@
 						? 'no live feed · 511 lists this view as disabled'
 						: noFeed && !frame
 							? 'no live feed · no picture recorded lately'
-							: footText(live, age)}
+							: footOf(age)}
 				</span>
 				<span class="credit">{credit}</span>
 			</div>
 			{#if staleNoFeed}
-				<p class="note"><span class="shape" aria-hidden="true">■</span> No new picture for over 45 minutes: 511 is probably showing its “no live feed” picture.</p>
+				<p class="note"><span class="shape" aria-hidden="true">■</span> No new picture for over {NO_FEED_AFTER_S / 60} minutes: 511 is probably showing its “no live feed” picture.</p>
 			{:else if live && live.state !== 'ok' && live.state !== 'waiting' && status}
 				<p class="note"><span class="shape" style:color={status.color} aria-hidden="true">{status.shape}</span> {status.detail}</p>
 			{/if}

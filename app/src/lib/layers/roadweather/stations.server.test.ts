@@ -102,7 +102,7 @@ describe('GET /api/roadweather', () => {
 		expect(c.views[0]).toMatchObject({ label: 'Northbound', capturing: false, feed: 'unknown' });
 	});
 
-	it('a picture older than 45 minutes while capture runs is no live feed', async () => {
+	it('a picture older than an hour (the stale threshold) while capture runs is no live feed', async () => {
 		await frame(990021, NOW - (NO_FEED_AFTER_S + 60) * 1000, 3);
 		await frame(990022, NOW - 10 * 60_000, 4);
 		const rw = await roadWeather({ sql: fakeSql(), archive: new Archive({ root: dir }), nowMs: NOW });

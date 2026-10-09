@@ -6,7 +6,7 @@ import { addSlotted } from '#lib/map/order.js';
 import { discSprite, type OverlayInstance } from '#lib/overlay/index.js';
 import { historyOf } from '#lib/state/history.svelte.js';
 import { Poller } from '#lib/state/poll.svelte.js';
-import { windowsOf, type Point, type WindowSpec } from '#lib/state/windows.svelte.js';
+import { WIDTH, windowsOf, type Point, type WindowSpec } from '#lib/state/windows.svelte.js';
 import { take } from '../prefetch.js';
 import { PRIORITY, type Interactive, type LayerModule, type LayerStatus, type Selection } from '../types.js';
 import { badgeImage } from './badges.js';
@@ -15,6 +15,8 @@ import def, { DATA_URL } from './def.js';
 import { ALL_LAYERS, BADGE_LAYER, CREAM, HOLLOW_IMAGE, INK, roadWeatherLayers, SOLID_IMAGE, SOURCE, stationFeatures } from './layers.js';
 import Legend from './Legend.svelte';
 import { creditOf, inBounds, stationFact, type Bounds, type RoadWeather, type RoadWeatherStation } from './model.js';
+import { paddedCentre } from '../cameras/place.js';
+import { stationLanding, zoomToLand } from './place.js';
 import StationWindow from './StationWindow.svelte';
 
 /** Ages and "no live feed" are fetched again this often while the layer is shown (pictures change about every 15 min). */
@@ -25,6 +27,10 @@ export const WINDOW_KIND = 'roadweather';
 export const BADGES = 'roadweather-windows';
 /** 511's road-weather pictures are 800 × 486. */
 export const ASPECT = 800 / 486;
+/** How long the pan that brings a clicked station clear of the inspect card takes, ms (a jump under reduced motion). */
+export const PAN_MS = 450;
+
+const reducedMotion = () => typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 export const stationKey = (id: number) => `roadweather:${id}`;
 export function stationIdOf(key: string): number | null {
@@ -48,7 +54,10 @@ async function getJson(res: Promise<Response>): Promise<RoadWeather> {
  * - a click on a station opens its window beside it: one tab per view, each
  *   with the newest captured picture and its age, on the road-weather
  *   freshness thresholds (StationWindow.svelte, through the app's one live
- *   feed);
+ *   feed). When the inspect card, a bar or the phone's sheet would cover the
+ *   station, the map first pans it into the free middle, as a camera click
+ *   flies there, zooming in only when the map's bounds would stop the pan
+ *   short (place.ts; a jump under reduced motion);
  * - each open window's number on its station (the overlay), pinned windows
  *   reopening on the next visit, and windows stepping aside during a mode;
  * - while shown, the list is fetched again every 5 minutes (paused while the
@@ -244,19 +253,43 @@ export class RoadWeatherModule implements LayerModule {
 		for (const w of [...windows.list]) if (stationIdOf(w.key) !== null) windows.close(w.key, { returnFocus: false, forget: false });
 	}
 
-	/** Open a station's window beside it (or focus it when open). Returns whether one is open now. */
-	open(id: number, o: { focus?: boolean } = {}): boolean {
+	/**
+	 * Open a station's window beside it (or focus it when open). With `pan`
+	 * (a click on the station), a station the inspect card, a bar or the
+	 * phone's sheet would cover first pans into the free middle, keeping the
+	 * zoom unless the map's bounds would stop the pan short (then it zooms in
+	 * just enough; place.ts `zoomToLand`), and the window opens beside where
+	 * it lands. Returns whether one is open now.
+	 */
+	open(id: number, o: { focus?: boolean; pan?: boolean } = {}): boolean {
 		const ctx = this.#ctx;
 		const s = this.#byId.get(id);
 		if (!ctx || !s) return false;
 		const map = this.#scope?.map ?? null;
+		const windows = windowsOf(ctx);
 		let anchor: Point | undefined;
 		if (map) {
 			const box = map.getContainer().getBoundingClientRect();
 			const p = map.project([s.lon, s.lat]);
 			if (p.x >= 0 && p.y >= 0 && p.x <= box.width && p.y <= box.height) anchor = { x: box.left + p.x, y: box.top + p.y };
+			const key = stationKey(s.id);
+			const land = o.pan && anchor && !windows.get(key) ? stationLanding(anchor, box, windows.remembered(key)?.w ?? WIDTH.default, windows.layout) : null;
+			const b = land ? map.getMaxBounds() : null;
+			const bounds: [[number, number], [number, number]] | null = b && [
+				[b.getWest(), b.getSouth()],
+				[b.getEast(), b.getNorth()]
+			];
+			const zoom = !land ? null : bounds ? zoomToLand([s.lon, s.lat], { x: land.x - box.left, y: land.y - box.top }, box, bounds, map.getZoom()) : map.getZoom();
+			if (land && zoom !== null) {
+				// An ease, not a fly, so no view is pushed: a pan at the same zoom, zooming in only as far as the
+				// map's bounds need to let the station reach the free middle (a jump under reduced motion).
+				const centre = paddedCentre(box, map.getPadding());
+				const offset: [number, number] = [land.x - centre.x, land.y - centre.y];
+				map.easeTo({ center: [s.lon, s.lat], zoom, offset, ...(reducedMotion() ? { animate: false } : { duration: PAN_MS }) });
+				anchor = land;
+			}
 		}
-		return windowsOf(ctx).open(this.#spec(s, anchor), { focus: o.focus ?? true }) !== null;
+		return windows.open(this.#spec(s, anchor), { focus: o.focus ?? true }) !== null;
 	}
 
 	/** The station's window number, or null when none is open. */
@@ -280,7 +313,7 @@ export class RoadWeatherModule implements LayerModule {
 		if (!ctx || !this.#visible || ctx.modes.current !== 'explore') return;
 		const touch = (e.originalEvent as PointerEvent | undefined)?.pointerType === 'touch';
 		const top = ctx.picker.pickAt(e.point, touch).top;
-		if (top?.kind === 'weather' && top.layer === def.id) this.open(Number(top.id));
+		if (top?.kind === 'weather' && top.layer === def.id) this.open(Number(top.id), { pan: true });
 	};
 
 	/** Each open station window's number on its station (through the overlay). */
@@ -327,7 +360,8 @@ export class RoadWeatherModule implements LayerModule {
 				}),
 			/** Every station loaded, drawn or not. */
 			loaded: () => this.data?.stations.map((s) => ({ id: s.id, name: s.name, drawn: inBounds(s, this.bounds) })) ?? [],
-			open: (id: number) => this.open(id),
+			/** Open a station's window; with `pan`, as a click does. */
+			open: (id: number, pan = false) => this.open(id, { pan }),
 			refresh: () => this.refresh(),
 			requests: () => this.requests,
 			polling: () => this.#poller?.running ?? false,
