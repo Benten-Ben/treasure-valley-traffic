@@ -25,6 +25,8 @@
  *             counts against the §14.9 targets; exits 1 when one is missed.
  *   --real    adds timings, fps and memory, for the owner's laptop over the
  *             tailnet address (--url https://…, --channel chrome, no throttling).
+ *             Checks the shell paint (S1: the `tvt:shell` mark within 300 ms
+ *             and before `tvt:first-frame` in every run); exits 1 when missed.
  *
  * Options: --runs N, --scenarios S1,S2, --url <origin> (default: the
  * package's own preview server, started if needed), --channel chrome,
@@ -176,11 +178,19 @@ async function S1(browser, base) {
 			const t0 = Math.min(...net.entries.map((x) => x.start));
 			const r = loadRecord(net, t0, ready);
 			r.requestList = requestList(net.entries, base);
-			if (mode === 'real') Object.assign(r, { marks: await marks(page), heapMB: await heapMB(page) });
+			if (mode === 'real') {
+				const m = await marks(page);
+				// The shell (top bar, toolbar) against the map's first frame: both are the frames they paint in.
+				const shellMs = m['tvt:shell'] ?? null;
+				const firstFrameMs = m['tvt:first-frame'] ?? null;
+				Object.assign(r, { marks: m, heapMB: await heapMB(page), shellMs, firstFrameMs,
+					shellLeadMs: shellMs !== null && firstFrameMs !== null ? firstFrameMs - shellMs : null });
+			}
 			list.push(r);
 			await net.detach();
 			await context.close();
-			log(`S1 ${name} run ${i + 1}: ${r.requests} requests, ${MB(r.bytes)} MB (terrain ${MB(r.terrainBytes)}), ${r.duplicates} duplicates`);
+			log(`S1 ${name} run ${i + 1}: ${r.requests} requests, ${MB(r.bytes)} MB (terrain ${MB(r.terrainBytes)}), ${r.duplicates} duplicates` +
+				(mode === 'real' ? `; shell ${r.shellMs} ms, first frame ${r.firstFrameMs} ms` : ''));
 		}
 		out[name] = { median: medians(list), byKind: list.at(-1).byKind, runs: list.map(({ byKind, requestList, ...r }) => r), requests: list.at(-1).requestList };
 	}
@@ -481,6 +491,19 @@ function targets(res) {
 	return t;
 }
 
+/** §14.9 targets a --real run checks: the shell paint (S1, default view). */
+function realTargets(res) {
+	const t = [];
+	const d = res.S1?.default;
+	if (d) {
+		const runs = d.runs ?? [];
+		t.push({ name: 'shell paints within 300 ms (median)', value: `${d.median.shellMs} ms`, ok: d.median.shellMs !== null && d.median.shellMs <= 300 });
+		t.push({ name: "shell paints before the map's first frame (every run)", value: runs.map((r) => `${r.shellMs}/${r.firstFrameMs}`).join(', ') + ' ms',
+			ok: runs.length > 0 && runs.every((r) => r.shellMs !== null && r.firstFrameMs !== null && r.shellMs <= r.firstFrameMs) });
+	}
+	return t;
+}
+
 function log(msg) {
 	process.stderr.write(`${msg}\n`);
 }
@@ -537,7 +560,7 @@ const report = {
 	tilesServer: local ? 'vite preview with the Caddy mirror (src/lib/server/tiles-static.ts)' : 'Caddy',
 	results,
 	offsite: [...new Set(offsite)],
-	targets: mode === 'budget' ? targets(results) : []
+	targets: mode === 'budget' ? targets(results) : realTargets(results)
 };
 
 const dir = join(env.TVT_MAIN, 'data', 'perf');

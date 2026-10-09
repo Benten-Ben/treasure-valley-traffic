@@ -8,7 +8,7 @@ import Card from './Card.svelte';
 import def from './def.js';
 import Legend from './Legend.svelte';
 import type { RampName } from './ramp.js';
-import { chevron, CHEVRON, L, ROADS_SOURCE, selectedFilter, STREET_LAYERS, streetLayers, visibleStreetLayers, type StreetProps } from './streets.js';
+import { chevron, CHEVRON, KEEPER, L, ROADS_SOURCE, selectedFilter, STREET_LAYERS, streetLayers, visibleStreetLayers, type StreetProps } from './streets.js';
 
 export const SOURCE = 'ACHD road centerlines';
 
@@ -18,6 +18,10 @@ export const SOURCE = 'ACHD road centerlines';
  * slate ramp at 70% width replaces the blue one (§14.3 "The color budget"):
  * the two are separate layers on the same source, so switching only changes
  * visibility and fetches no tile.
+ *
+ * Turning Streets off and on again in the same view fetches no tile either:
+ * the keeper layer (KEEPER in streets.ts) holds the road tiles while Streets
+ * is hidden, until the map moves.
  */
 export class StreetsModule implements LayerModule {
 	status = $state<LayerStatus>('loading');
@@ -47,6 +51,8 @@ export class StreetsModule implements LayerModule {
 	];
 	#scope: MapScope | null = null;
 	#visible = false;
+	/** The keeper is holding the road tiles: from the first show until the map moves with Streets off. */
+	#keeping = false;
 	#destroyed = false;
 	#stopEffects: (() => void) | null = null;
 
@@ -70,6 +76,12 @@ export class StreetsModule implements LayerModule {
 			this.status = 'stale';
 			this.error = `Some road tiles failed to load: ${e.error?.message ?? 'unknown error'}`;
 		});
+		// Hidden and moving: let the tiles go, so a hidden Streets fetches nothing for the new view.
+		scope.on('movestart', () => {
+			if (this.#visible || !this.#keeping) return;
+			this.#keeping = false;
+			this.#show();
+		});
 		// The ramp follows Transit: slate while it's on (whether or not its routes have loaded yet).
 		this.#stopEffects = $effect.root(() => {
 			$effect(() => {
@@ -90,12 +102,14 @@ export class StreetsModule implements LayerModule {
 		this.#show();
 	}
 
-	/** Layout visibility only: the layer's on/off and which ramp pair is drawn. */
+	/** Layout visibility only: the layer's on/off, which ramp pair is drawn, and the keeper. */
 	#show(): void {
 		const map = this.#scope?.map;
 		if (!map) return;
+		if (this.#visible) this.#keeping = true;
 		const shown = visibleStreetLayers(this.#visible, this.ramp);
-		for (const id of STREET_LAYERS) {
+		if (this.#keeping) shown.add(KEEPER);
+		for (const id of [KEEPER, ...STREET_LAYERS]) {
 			const want = shown.has(id) ? 'visible' : 'none';
 			if (map.getLayer(id) && map.getLayoutProperty(id, 'visibility') !== want) map.setLayoutProperty(id, 'visibility', want);
 		}
