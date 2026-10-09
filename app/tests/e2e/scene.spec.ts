@@ -96,6 +96,29 @@ function sceneChunk(): { file: string; gzip: number } {
 	return { file: entry.file, gzip: gzipSync(bytes, { level: 6 }).length };
 }
 
+/** The share of pixels that differ (any channel by more than 24) between two screenshots of one size, decoded in the page. */
+async function changedShare(page: Page, a: Buffer, b: Buffer): Promise<number> {
+	return page.evaluate(
+		async ([a64, b64]) => {
+			const decode = async (b64: string) => {
+				const img = new Image();
+				img.src = `data:image/png;base64,${b64}`;
+				await img.decode();
+				const c = new OffscreenCanvas(img.width, img.height);
+				const g = c.getContext('2d')!;
+				g.drawImage(img, 0, 0);
+				return g.getImageData(0, 0, img.width, img.height).data;
+			};
+			const [x, y] = await Promise.all([decode(a64), decode(b64)]);
+			if (x.length !== y.length) return 1;
+			let n = 0;
+			for (let i = 0; i < x.length; i += 4) if (Math.abs(x[i] - y[i]) > 24 || Math.abs(x[i + 1] - y[i + 1]) > 24 || Math.abs(x[i + 2] - y[i + 2]) > 24) n++;
+			return n / (x.length / 4);
+		},
+		[a.toString('base64'), b.toString('base64')] as const
+	);
+}
+
 test.describe('scene', () => {
 	test('spike gate: one instanced batch on the terrain lands within 0.1 px of map.project (pitch 0–85, fov 20–60, roll ±5)', { tag: '@wp9' }, async ({ page, consoleErrors }) => {
 		test.setTimeout(1_500_000);
@@ -278,12 +301,18 @@ test.describe('scene', () => {
 	test('after WEBGL_lose_context lose and restore, the scene comes back', { tag: '@wp9' }, async ({ page }) => {
 		test.setTimeout(600_000);
 		await openTest(page, `#map=16/${FOOTHILLS.center[1]}/${FOOTHILLS.center[0]}/20/50&layers=none`);
+		// WebGL's warnings about objects of the dead context: MapLibre 6.12's terrain drew with them after a
+		// restore (the ground came back as the glyph atlas) until the app redraped it (app.svelte.ts).
+		const foreign: string[] = [];
+		page.on('console', (m) => {
+			if (/does not belong to this context/.test(m.text())) foreign.push(m.text());
+		});
 		const before = await page.evaluate(async () => {
 			const s = await (globalThis as any).__tvtSceneTest.probe();
 			return { n: s.n, max: s.max };
 		});
 		expect(before.n).toBeGreaterThan(50);
-		await page.screenshot({ path: screenPath('context-before.png') });
+		const shotBefore = await page.screenshot({ path: screenPath('context-before.png') });
 		await page.evaluate(async () => {
 			const gl = (globalThis as any).__tvt.map.getCanvas().getContext('webgl2');
 			const ext = gl.getExtension('WEBGL_lose_context');
@@ -291,21 +320,62 @@ test.describe('scene', () => {
 			await new Promise((r) => setTimeout(r, 1000));
 			ext.restoreContext();
 		});
-		await page.waitForFunction(() => Boolean((globalThis as any).__tvt.map.getLayer('scene-3d')), null, { timeout: 120_000 });
+		// Both custom layers are added again once MapLibre has rebuilt its style.
+		await page.waitForFunction(() => {
+			const map = (globalThis as any).__tvt.map;
+			return Boolean(map.getLayer('scene-3d')) && Boolean(map.getLayer('overlay'));
+		}, null, { timeout: 120_000 });
 		await mapReady(page);
-		const after = await page.evaluate(async () => {
-			const t = (globalThis as any).__tvtSceneTest;
-			const s = await t.probe();
-			return { n: s.n, max: s.max, ok: t.ok(), stats: t.stats() };
+		// The terrain's DEM tiles are loaded again before anything is measured on them (they're reloaded after
+		// the restore; a probe before that measured 596 px on Oct 7).
+		await page.waitForFunction(() => {
+			const map = (globalThis as any).__tvt.map;
+			const t = map.getTerrain();
+			return !t || map.isSourceLoaded(t.source);
+		}, null, { timeout: 120_000 });
+		await mapReady(page);
+		// The scene eases heights in as DEM tiles refine: probe until it has settled.
+		type Probe = { n: number; max: number; ok: boolean; stats: { drawCalls: number } };
+		const probes: Probe[] = [];
+		await expect
+			.poll(
+				async () => {
+					const p: Probe = await page.evaluate(async () => {
+						const t = (globalThis as any).__tvtSceneTest;
+						const s = await t.probe();
+						return { n: s.n, max: s.max, ok: t.ok(), stats: t.stats() };
+					});
+					probes.push(p);
+					return p.max;
+				},
+				{ timeout: 60_000, intervals: [500, 1000, 2000] }
+			)
+			.toBeLessThanOrEqual(0.1);
+		// Settled: a few more frames add no warning about the dead context's objects (Chrome stops
+		// reporting after 32 per context, so the picture below is the stronger check).
+		const warned = foreign.length;
+		await page.evaluate(async () => {
+			const map = (globalThis as any).__tvt.map;
+			for (let i = 0; i < 10; i++)
+				await new Promise((r) => {
+					map.once('render', r);
+					map.triggerRepaint();
+				});
 		});
-		await page.screenshot({ path: screenPath('context-restored.png') });
-		// For the record (not WP9's): whether the 2D overlay's custom layer came back too.
+		const shotAfter = await page.screenshot({ path: screenPath('context-restored.png') });
+		// The picture is the one before: the ground, buildings and models, not a stale texture draped on
+		// the hills (414,716 pixels changed then; the clock alone changes 64).
+		const changed = await changedShare(page, shotBefore, shotAfter);
 		const overlayLayer = await page.evaluate(() => Boolean((globalThis as any).__tvt.map.getLayer('overlay')));
-		record('context-restore.json', { before, after, overlayLayerAfterRestore: overlayLayer });
+		const after = probes[probes.length - 1];
+		record('context-restore.json', { before, first: probes[0], probes: probes.length, after, overlayLayerAfterRestore: overlayLayer, foreignWarnings: { total: foreign.length, afterSettled: foreign.length - warned }, changedShare: changed });
 		expect(after.ok).toBe(true);
 		expect(after.n).toBe(before.n);
 		expect(after.max).toBeLessThanOrEqual(0.1);
 		expect(after.stats.drawCalls).toBeGreaterThanOrEqual(1);
+		expect(overlayLayer, 'the overlay’s custom layer is back').toBe(true);
+		expect(foreign.length - warned, 'warnings about the lost context’s objects once settled').toBe(0);
+		expect(changed, 'share of pixels changed by the lose and restore').toBeLessThan(0.02);
 	});
 
 	test('a model whose ground was read before its terrain tile arrived comes back when the tile does', { tag: '@wp9' }, async ({ page }) => {

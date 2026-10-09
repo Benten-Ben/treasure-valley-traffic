@@ -173,10 +173,21 @@ function circle(r: number, sides: number, a0 = 0): [number, number][] {
 
 export const BUS = { length: 12.2, width: 2.6, height: 3.1 };
 
+/** The bus roof's ink rim (§14.4): the margin left round the route-colored roof panel, at the sides (inside the bevel) and the ends (m). */
+export const ROOF_RIM_M = 0.14;
+export const ROOF_END_M = 0.35;
+/** How far the roof panel sits above the roof (m): a decal, like the glass and the sign. */
+const ROOF_PANEL_LIFT = 0.03;
+
 /**
  * The bus (§14.4 "Buses and stops"; ≤ 300 triangles): a bevelled 12.2 × 2.6 ×
- * 3.1 m body in the route color (tint 1) with a cream roof, an ink window
- * band, 8-sided wheels, a roof pod and a destination sign. Forward is +y.
+ * 3.1 m body in the route color (tint 1), an ink window band, 8-sided wheels,
+ * a roof pod and a destination sign. Forward is +y.
+ *
+ * The roof is the route color too, inside an ink rim (the roof bevels and a
+ * margin round the panel): seen from above, a bus is a route-colored bar with
+ * an ink outline, which carries the pale colors (yellow, the ghosts) on the
+ * cream ground, where they're under 3:1.
  */
 export function busMesh(): Mesh {
 	const b = new Builder();
@@ -202,11 +213,10 @@ export function busMesh(): Mesh {
 		[-W, bottom + bevel],
 		[-W + bevel, bottom]
 	];
-	// Per edge: underside ink; sides tinted; window band ink; the roof cream.
+	// Per edge: underside ink; sides tinted; window band glass; the roof and its bevels ink (the rim round the roof panel).
 	const edgeLook = (k: number): [Rgb, number] => {
-		if (k === 11) return [INK, 0];
+		if (k === 11 || k === 4 || k === 5 || k === 6) return [INK, 0];
 		if (k === 2 || k === 8) return [GLASS, 0];
-		if (k === 5) return [ROOF, 0];
 		return [CREAM, 1];
 	};
 	b.prism(profile, -L + 0.02, L - 0.02, (x, z, y) => [x, y, z], edgeLook);
@@ -229,8 +239,21 @@ export function busMesh(): Mesh {
 	decal(L - 0.01, -W + 0.12, W - 0.12, winLow - 0.25, winHigh, GLASS, [0, 1, 0]);
 	decal(L, -W + 0.4, W - 0.4, winHigh + 0.07, roof - 0.06, CREAM, [0, 1, 0]);
 	decal(-L, -W + 0.2, W - 0.2, winLow + 0.1, winHigh, GLASS, [0, -1, 0]);
-	// The roof pod.
-	b.box([-0.8, -2.6, roof], [0.8, 0.4, BUS.height], ROOF, 0, ['-z']);
+	// The roof panel in the route color, inside the ink rim, and the roof pod on it (tinted too: from above it's all roof).
+	const rx = W - bevel - ROOF_RIM_M;
+	const ry = L - ROOF_END_M;
+	b.poly(
+		[
+			[-rx, -ry, roof + ROOF_PANEL_LIFT],
+			[rx, -ry, roof + ROOF_PANEL_LIFT],
+			[rx, ry, roof + ROOF_PANEL_LIFT],
+			[-rx, ry, roof + ROOF_PANEL_LIFT]
+		],
+		CREAM,
+		TINT.instance,
+		[0, 0, 1]
+	);
+	b.box([-0.8, -2.6, roof], [0.8, 0.4, BUS.height], CREAM, TINT.instance, ['-z']);
 	// Wheels: 8-sided, axis along x, the outer face just inside the body's width.
 	const wheel = (x: number, y: number) => {
 		const outer = x > 0 ? W - 0.02 : -W + 0.02;

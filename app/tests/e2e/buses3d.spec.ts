@@ -9,9 +9,10 @@ import type { Tracks } from '../../src/lib/contracts/tracks.js';
  * buses3d (docs/14 §14.10 WP10; §14.4 "Buses and stops"): 3D buses and stops
  * on the `at=` replay.
  *
- * - a bus model is at least 28 px long at z15–16 (measured on the GPU: the
+ * - a bus model is at least 42 px long at z15–16 (measured on the GPU: the
  *   scene's probe projects each model's nose and tail with the mesh shader's
- *   own placement);
+ *   own placement), at up to 6× real size (1.5× the first 28 px and 4×,
+ *   Oct 8, so a bus reads as a bus from z15);
  * - its heading is within 10° of the path bearing (the path's tangent over
  *   ±8 m, worked out here from the tracks API's steps at the frame's
  *   playhead);
@@ -25,6 +26,9 @@ import type { Tracks } from '../../src/lib/contracts/tracks.js';
  *   an animation frame;
  * - stale, unknown-route, selected and spotlit looks; stop posts and names;
  *   buses stay discs when the scene can't load;
+ * - two buses at one spot: both plates readable, standing in a column; the
+ *   selected one's drawn last, on the buses;
+ * - after a lost WebGL context the models, plates and ground come back;
  * - the screenshot set for the owner (data/dev/screens/wp10/).
  *
  * The laptop's database holds the 24 hours before 8:40 AM MDT Oct 7 (fixes
@@ -35,6 +39,9 @@ const AT = '2026-10-06T23:00:00Z';
 const AT_S = Date.parse(AT) / 1000;
 const DOWNTOWN = '43.6152/-116.2035';
 const APP = resolve(import.meta.dirname, '..', '..');
+/** bus3d.ts's MIN_MODEL_PX and MAX_MODEL_SCALE (§14.4). */
+const MIN_MODEL_PX = 42;
+const MAX_MODEL_SCALE = 6;
 /** The overlay's disc (WP2's discSprite default): 26 px across. */
 const DISC = 26;
 
@@ -63,6 +70,8 @@ interface PlateDebug {
 	altitude: number;
 	x: number | null;
 	y: number | null;
+	/** px the overlay's stack lifted it to clear another plate. */
+	dy: number;
 	box: { x: number; y: number; w: number; h: number } | null;
 }
 interface Lod {
@@ -216,8 +225,40 @@ function readable(px: { w: number; h: number; data: number[] }, badge: { color: 
 	return { numerals: n, plate: p, halo: h };
 }
 
+type Box = { x: number; y: number; w: number; h: number };
+
+/** How much of the smaller of two boxes the other covers (0–1). */
+function overlapShare(a: Box, b: Box): number {
+	const w = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+	const h = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+	return w > 0 && h > 0 ? (w * h) / Math.min(a.w * a.h, b.w * b.h) : 0;
+}
+
+/** The share of pixels that differ (any channel by more than 24) between two screenshots of one size, decoded in the page. */
+async function changedShare(page: Page, a: Buffer, b: Buffer): Promise<number> {
+	return page.evaluate(
+		async ([a64, b64]) => {
+			const decode = async (b64: string) => {
+				const img = new Image();
+				img.src = `data:image/png;base64,${b64}`;
+				await img.decode();
+				const c = new OffscreenCanvas(img.width, img.height);
+				const g = c.getContext('2d')!;
+				g.drawImage(img, 0, 0);
+				return g.getImageData(0, 0, img.width, img.height).data;
+			};
+			const [x, y] = await Promise.all([decode(a64), decode(b64)]);
+			if (x.length !== y.length) return 1;
+			let n = 0;
+			for (let i = 0; i < x.length; i += 4) if (Math.abs(x[i] - y[i]) > 24 || Math.abs(x[i + 1] - y[i + 1]) > 24 || Math.abs(x[i + 2] - y[i + 2]) > 24) n++;
+			return n / (x.length / 4);
+		},
+		[a.toString('base64'), b.toString('base64')] as const
+	);
+}
+
 test.describe('buses3d', () => {
-	test('a bus model is at least 28 px long at z15–16, and its heading is within 10° of the path bearing', { tag: '@wp10' }, async ({ page, request, consoleErrors }) => {
+	test('a bus model is at least 42 px long at z15–16, and its heading is within 10° of the path bearing', { tag: '@wp10' }, async ({ page, request, consoleErrors }) => {
 		test.setTimeout(600_000);
 		await open(page, `15.05/${DOWNTOWN}/0/0`);
 		await modelsDrawn(page);
@@ -233,8 +274,8 @@ test.describe('buses3d', () => {
 			rows.push(row);
 			console.log(`z${zoom}: ${row.n} models on screen, ${row.min.toFixed(2)}–${row.max.toFixed(2)} px long (scale ${row.scale.toFixed(2)}, fade ${l.fade.toFixed(2)})`);
 			expect(row.n, `models on screen at z${zoom}`).toBeGreaterThan(0);
-			expect(row.min, `shortest model at z${zoom} (px)`).toBeGreaterThanOrEqual(28);
-			expect(l.scale).toBeLessThanOrEqual(4);
+			expect(row.min, `shortest model at z${zoom} (px)`).toBeGreaterThanOrEqual(MIN_MODEL_PX);
+			expect(l.scale).toBeLessThanOrEqual(MAX_MODEL_SCALE);
 		}
 		await page.screenshot({ path: screenPath('length-z16-top.png') });
 		record('model-lengths.json', rows);
@@ -564,6 +605,128 @@ test.describe('buses3d', () => {
 		expect((await lod(p2)).disc).toBe(1);
 		await p2.screenshot({ path: screenPath('look-no-scene-discs-z16.png') });
 		await ctx.close();
+	});
+
+	test('two buses at one spot: both plates readable in a column, the selected one drawn last on the buses', { tag: '@wp10' }, async ({ page }) => {
+		test.setTimeout(600_000);
+		// A twin: a second bus with another route, given the same steps as a real one, so the two always
+		// stand on one spot (as two buses at Main Street Station do: their plates were 1–3 px apart).
+		let twin: { of: string; id: string; vehicle: Tracks['vehicles'][string] } | null = null;
+		await page.route('**/api/transit/tracks**', async (r) => {
+			const res = await r.fetch();
+			const t: Tracks = await res.json();
+			if (!twin) {
+				// A bus shown at the playhead (now − the 90 s delay), and a vehicle of another known route to copy.
+				const of = t.steps.find((x) => t.vehicles[x[0]]?.routeId && x[1] <= t.now - 90 && (x[2] ?? Infinity) > t.now - 90 && x[3] !== 'gap')?.[0];
+				const other = of ? Object.values(t.vehicles).find((v) => v.routeId && v.routeId !== t.vehicles[of].routeId) : undefined;
+				if (of && other) twin = { of, id: 'twin-of-' + of, vehicle: { ...other, label: 'twin' } };
+			}
+			if (twin) {
+				const tw = twin;
+				t.vehicles[tw.id] = tw.vehicle;
+				t.steps.push(...t.steps.filter((x) => x[0] === tw.of).map((x) => [tw.id, ...x.slice(1)] as Tracks['steps'][number]));
+			}
+			await r.fulfill({ json: t, headers: { 'cache-control': 'no-store' } });
+		});
+		await open(page, `15/${DOWNTOWN}/0/0`);
+		await togglePause(page, 'PAUSED');
+		expect(twin, 'a bus to copy').toBeTruthy();
+		const ids = [twin!.of, twin!.id];
+		const pair = (await buses(page)).filter((b) => ids.includes(b.id));
+		expect(pair.length, 'the bus and its twin').toBe(2);
+		expect(Math.hypot(pair[0].lng - pair[1].lng, pair[0].lat - pair[1].lat)).toBeLessThan(1e-9);
+		await jump(page, { center: [pair[0].lng, pair[0].lat], zoom: 17, pitch: 0, bearing: 0 });
+		await modelsDrawn(page);
+		await page.waitForTimeout(800);
+		await mapReady(page);
+		const both = async () => (await plates(page)).filter((p) => ids.includes(p.id) && p.box && p.opacity > 0.99);
+		const ps = await both();
+		expect(ps.length, 'both plates drawn').toBe(2);
+		const share = overlapShare(ps[0].box!, ps[1].box!);
+		console.log(`twin plates at z17: boxes overlap ${(share * 100).toFixed(1)}%, lifted ${ps.map((p) => p.dy.toFixed(1)).join(' and ')} px`);
+		expect(share, 'the two plates cover each other (share of the smaller)').toBeLessThanOrEqual(0.3);
+		// Both route numbers can be read.
+		for (const p of ps) {
+			const box = p.box!;
+			const badge = badgeOf(p.sprite);
+			const px = await pixels(page, { x: box.x - 4, y: box.y - 4, w: box.w + 8, h: box.h + 8 }, `twin-plate-${p.id}.png`);
+			const counts = readable(px, badge, (x, y) => x >= 7 && y >= 7 && x < box.w + 1 && y < box.h + 1);
+			expect(counts.numerals, `numerals of plate ${badge.text}`).toBeGreaterThanOrEqual(12);
+			expect(counts.plate, `plate pixels of plate ${badge.text}`).toBeGreaterThanOrEqual(60);
+		}
+		await page.screenshot({ path: screenPath('twin-plates-z17.png') });
+
+		// Select the upper one by its plate: it's drawn last, and stands on the buses; the other makes way.
+		const upper = ps[0].box!.y < ps[1].box!.y ? ps[0] : ps[1];
+		await page.mouse.click(upper.box!.x + upper.box!.w / 2, upper.box!.y + upper.box!.h / 2);
+		await expect(page.getByRole('region', { name: 'Selected bus' })).toBeVisible();
+		await page.waitForTimeout(1500);
+		const all = await plates(page);
+		const sel = all.find((p) => p.sprite.includes(':sel'));
+		expect(sel?.id, 'the plate clicked selects its own bus').toBe(upper.id);
+		expect(all[all.length - 1].id, 'the selected plate is drawn last').toBe(upper.id);
+		const other = all.find((p) => ids.includes(p.id) && p.id !== upper.id)!;
+		expect(overlapShare(sel!.box!, other.box!)).toBeLessThanOrEqual(0.3);
+		expect(sel!.box!.y, 'the selected plate stands on the buses, the other above it').toBeGreaterThan(other.box!.y);
+		await page.screenshot({ path: screenPath('twin-plates-selected-z17.png') });
+		// Hover over the two models names the selected bus, as its plate does (a near tie goes to the selection).
+		const tip = async (x: number, y: number) => {
+			await page.mouse.move(x, y);
+			await page.waitForTimeout(400);
+			return page.evaluate(() => document.getElementById('tvt-tooltip')?.textContent?.trim() ?? null);
+		};
+		const onPlate = await tip(sel!.box!.x + sel!.box!.w / 2, sel!.box!.y + sel!.box!.h / 2);
+		const placed3d = (await transit<{ id: string; x: number; y: number }[]>(page, 'placed')).filter((p) => ids.includes(p.id));
+		expect(placed3d.length).toBe(2);
+		const onModels = await tip((placed3d[0].x + placed3d[1].x) / 2, (placed3d[0].y + placed3d[1].y) / 2);
+		console.log(`hover: on the selected plate "${onPlate}", on the two models "${onModels}"`);
+		expect(onPlate).toBeTruthy();
+		expect(onModels).toBe(onPlate);
+		await page.keyboard.press('Escape');
+	});
+
+	test('after a lost WebGL context the models, plates and ground come back', { tag: '@wp10' }, async ({ page }) => {
+		test.setTimeout(600_000);
+		await open(page, `16.5/${DOWNTOWN}/-20/50`);
+		await modelsDrawn(page);
+		await togglePause(page, 'PAUSED');
+		await page.waitForTimeout(1500);
+		await mapReady(page);
+		const shown = async () => (await plates(page)).filter((p) => p.opacity > 0 && p.box && inside(p.box.x, p.box.y)).length;
+		const models = async () => (await transit<{ id: string }[]>(page, 'placed')).length;
+		const before = { plates: await shown(), models: await models() };
+		expect(before.plates, 'plates before').toBeGreaterThan(0);
+		expect(before.models, 'models before').toBeGreaterThan(0);
+		const shotBefore = await page.screenshot({ path: screenPath('restore-app-before.png') });
+		await page.evaluate(async () => {
+			const gl = (globalThis as any).__tvt.map.getCanvas().getContext('webgl2');
+			const ext = gl.getExtension('WEBGL_lose_context');
+			ext.loseContext();
+			await new Promise((r) => setTimeout(r, 1000));
+			ext.restoreContext();
+		});
+		await page.waitForFunction(() => {
+			const map = (globalThis as any).__tvt.map;
+			return Boolean(map.getLayer('scene-3d')) && Boolean(map.getLayer('overlay'));
+		}, null, { timeout: 120_000 });
+		await mapReady(page);
+		await page.waitForFunction(() => {
+			const map = (globalThis as any).__tvt.map;
+			const t = map.getTerrain();
+			return !t || map.isSourceLoaded(t.source);
+		}, null, { timeout: 120_000 });
+		await expect.poll(shown, { timeout: 60_000 }).toBeGreaterThan(0);
+		await expect.poll(models, { timeout: 60_000 }).toBeGreaterThan(0);
+		await page.waitForTimeout(2000);
+		await mapReady(page);
+		const after = { plates: await shown(), models: await models() };
+		const shotAfter = await page.screenshot({ path: screenPath('restore-app-after.png') });
+		const changed = await changedShare(page, shotBefore, shotAfter);
+		record('restore-app.json', { before, after, changed });
+		console.log(`context restore in the app: plates ${before.plates} → ${after.plates}, models ${before.models} → ${after.models}, ${(changed * 100).toFixed(2)}% of pixels changed`);
+		expect(after.plates, 'plates after the restore').toBe(before.plates);
+		expect(after.models, 'models after the restore').toBe(before.models);
+		expect(changed, 'share of pixels changed by the lose and restore').toBeLessThan(0.03);
 	});
 
 	test('screenshots for the owner: z11 to z18.5, desktop and phone', { tag: '@wp10' }, async ({ page, request }) => {

@@ -4,6 +4,7 @@ import { AttributionControl, Map, ScaleControl, addProtocol, setWorkerUrl, type 
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
 import { Protocol } from 'pmtiles';
 import { dev } from '$app/env';
+import { errorDetail, type MapErrorLike } from './errors.js';
 import { buildStyle, loadManifest, type BasemapManifest } from './style.js';
 import './controls.css';
 
@@ -89,6 +90,11 @@ export async function createMap(container: HTMLElement, o: MapOptions = {}): Pro
 	// MapLibre's NavigationControl.
 	map.addControl(new ScaleControl({ unit: 'imperial' }), 'bottom-left');
 	map.addControl(new AttributionControl({ compact: true }), 'bottom-right');
-	map.on('error', (ev) => console.error('map error', ev.error));
+	// The console prints a bare Error as just "map error Error" (specs filter on that text): say what
+	// failed beside it, as a warning.
+	map.on('error', (ev) => {
+		console.error('map error', ev.error);
+		console.warn('map error detail:', errorDetail(ev as MapErrorLike));
+	});
 	return { map, manifest: m };
 }

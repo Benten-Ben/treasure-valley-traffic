@@ -6,6 +6,7 @@ import {
 	BUS_LENGTH_M,
 	busModel,
 	FADE_ZOOMS,
+	feedBearing,
 	ghostOf,
 	lodAt,
 	MAX_MODEL_SCALE,
@@ -19,12 +20,15 @@ import {
 	scaleAt,
 	SELECT_LIFT_M,
 	slopeAt,
+	streetBearing,
+	STREET_MAX_M,
 	turn,
 	UNKNOWN_GHOST,
 	type GroundAt,
 	LENGTH_MARGIN,
 	type ModelFrame
 } from './bus3d.js';
+import { buildTracks } from './playback.js';
 import { UNKNOWN_COLOR } from './transit.js';
 
 const LAT = 43.6;
@@ -38,7 +42,12 @@ describe('bus level of detail (§14.4 "Buses and stops")', () => {
 		expect(BUS_LENGTH_M / metresPerPx(17, LAT)).toBeCloseTo(28, 0);
 	});
 
-	it('models start about z15, where 4× real size reaches 28 px', () => {
+	it('draws models at least 42 px long, at up to 6× real size: 1.5× the first 28 px and 4× (Oct 8)', () => {
+		expect(MIN_MODEL_PX).toBe(42);
+		expect(MAX_MODEL_SCALE).toBe(6);
+	});
+
+	it('models start about z15, where 6× real size reaches 42 px', () => {
 		const zm = modelZoom(LAT);
 		expect(zm).toBeGreaterThan(14.9);
 		expect(zm).toBeLessThan(15.1);
@@ -46,14 +55,15 @@ describe('bus level of detail (§14.4 "Buses and stops")', () => {
 		expect(lengthPx(zm)).toBeCloseTo(MIN_MODEL_PX * LENGTH_MARGIN, 6);
 	});
 
-	it('a drawn model is at least 28 px long, at up to 4× real size, true scale from about z17', () => {
+	it('a drawn model is at least 42 px long, at up to 6× real size, true scale from about z17.6', () => {
 		for (let z = modelZoom(LAT); z <= 19; z += 0.05) {
 			expect(lengthPx(z), `z${z.toFixed(2)}`).toBeGreaterThanOrEqual(MIN_MODEL_PX - 1e-9);
 			expect(modelScale(z, LAT)).toBeLessThanOrEqual(MAX_MODEL_SCALE);
 			expect(modelScale(z, LAT)).toBeGreaterThanOrEqual(1);
 		}
-		expect(modelScale(16, LAT)).toBeCloseTo(2, 0);
-		expect(modelScale(17.1, LAT)).toBe(1);
+		expect(modelScale(16, LAT)).toBeCloseTo(3, 0);
+		expect(modelScale(17, LAT)).toBeCloseTo(1.5, 1);
+		expect(modelScale(17.6, LAT)).toBe(1);
 		expect(modelScale(18, LAT)).toBe(1);
 	});
 
@@ -79,13 +89,13 @@ describe('bus level of detail (§14.4 "Buses and stops")', () => {
 		expect(depthC).toBeGreaterThan(1400);
 		expect(depthC).toBeLessThan(1550);
 		expect(scaleAt(lod, 800, 800, depthC)).toBeCloseTo(lod.scale0, 9);
-		// 20 m lower: 20/1466 farther, drawn that much larger to stay 28 px long.
+		// 20 m lower: 20/1466 farther, drawn that much larger to stay 42 px long.
 		expect(scaleAt(lod, 780, 800, depthC) / lod.scale0).toBeCloseTo(1 + 20 / depthC, 9);
 		expect(scaleAt(lod, 820, 800, depthC) / lod.scale0).toBeCloseTo(1 - 20 / depthC, 9);
 		// Tilted, a height difference is only partly a depth difference.
 		const tilted = lodAt(15.5, LAT, 60, true);
 		expect(scaleAt(tilted, 780, 800, depthC) / tilted.scale0).toBeCloseTo(1 + (20 * 0.5) / depthC, 9);
-		// Never past 4× or below true size; no ground, no correction.
+		// Never past 6× or below true size; no ground, no correction.
 		expect(scaleAt(lodAt(14, LAT, 0, true), 0, 800, 3000)).toBe(MAX_MODEL_SCALE);
 		expect(scaleAt(lodAt(19, LAT, 0, true), 900, 800, 100)).toBe(1);
 		expect(scaleAt(lod, null, 800, depthC)).toBeCloseTo(lod.scale, 9);
@@ -148,6 +158,82 @@ describe('heading and slope', () => {
 			worst = Math.max(worst, Math.abs(path - model!));
 		}
 		expect(worst).toBeLessThan(10);
+	});
+
+	/** Two streets: one running east from (-116.2, 43.6), one running north-east from 50 m east of it. */
+	const lines = {
+		byRoute: new Map([
+			['9', [[-116.2, 43.6, -116.19, 43.6]]],
+			['3', [[-116.1993, 43.6, -116.1893, 43.61]]]
+		]),
+		all: [
+			[-116.2, 43.6, -116.19, 43.6],
+			[-116.1993, 43.6, -116.1893, 43.61]
+		]
+	};
+	const north = (m: number) => 43.6 + m / 111_195;
+
+	it('finds the bearing of the street a bus is on: its own route first, any route when it has none or is off it', () => {
+		// 10 m north of the east-running street, on route 9: east.
+		expect(streetBearing(lines, '9', -116.199, north(10))).toBeCloseTo(90, 1);
+		// A bus 5 m off route 3's line lies along it (north-east, about 36° at this latitude).
+		const ne = streetBearing(lines, '3', -116.1983 + 5 / 80_500, 43.601)!;
+		expect(ne).toBeGreaterThan(30);
+		expect(ne).toBeLessThan(45);
+		// No route (or one with no lines): the nearest line of any.
+		expect(streetBearing(lines, null, -116.199, north(5))).toBeCloseTo(90, 1);
+		expect(streetBearing(lines, 'nope', -116.199, north(5))).toBeCloseTo(90, 1);
+		// Off its own route (matched to 3, on route 9's street, 60 m from route 3's line): the street it's on.
+		expect(streetBearing(lines, '3', -116.1999, north(4))).toBeCloseTo(90, 1);
+		// Nothing within STREET_MAX_M.
+		expect(streetBearing(lines, '9', -116.2005, north(STREET_MAX_M + 5))).toBeNull();
+	});
+
+	it('takes the feed’s bearing at the fix being played, for a bus with no path heading', () => {
+		// Bus 722 in the replay: two straight steps, then waiting at its newest fix (bearing 44°).
+		const track = buildTracks([
+			['722', 100, 131, 'straight', -116.2006, 43.613209, 35, 2.8, null],
+			['722', 131, 160, 'straight', -116.200104, 43.613899, 36, 1.8, null],
+			['722', 160, null, null, -116.1996, 43.614208, 44, null, null]
+		]).get('722');
+		expect(feedBearing(track, 400)).toBe(44);
+		expect(feedBearing(track, 140)).toBe(36);
+		// Before its first fix, with no bearing, or no track: none.
+		expect(feedBearing(track, 50)).toBeNull();
+		expect(feedBearing(buildTracks([['9', 100, null, null, -116.2, 43.6, null, null, null]]).get('9'), 200)).toBeNull();
+		expect(feedBearing(undefined, 200)).toBeNull();
+	});
+
+	it('lays a bus with no heading yet along its stand-in (its street here), until it has one of its own', () => {
+		let looks = 0;
+		const fallback = (lng: number, lat: number, routeId: string | null, id: string) => {
+			looks++;
+			expect(id).toBe(routeId === '9' ? '7' : '8');
+			return streetBearing(lines, routeId, lng, lat);
+		};
+		const m = busModel('7', null);
+		const frame = (over: Partial<ModelFrame> = {}): ModelFrame => ({ lng: -116.199, lat: north(3), heading: null, color: '#2a78d6', opacity: 1, scale: 1, now: 1000, epoch: 1, ground: null, routeId: '9', fallback, ...over });
+		placeModel(m, frame());
+		expect(m.inst.heading).toBeCloseTo(90, 1);
+		expect(looks).toBe(1);
+		// Still there: not looked for again.
+		placeModel(m, frame({ now: 1016 }));
+		expect(looks).toBe(1);
+		// A jump of more than 5 m (a gap): looked for again.
+		placeModel(m, frame({ now: 1032, lng: -116.1985 }));
+		expect(looks).toBe(2);
+		// Its own heading arrives: it turns to that, and the stand-in is forgotten.
+		placeModel(m, frame({ now: 5000, heading: 270 }));
+		expect(m.inst.heading).toBe(270);
+		expect(m.fallback).toBeNull();
+		// Without one again later, it keeps its own.
+		placeModel(m, frame({ now: 5016 }));
+		expect(m.inst.heading).toBe(270);
+		expect(looks).toBe(2);
+		// Off every street and with no heading: north, the last resort.
+		const lost = busModel('8', null);
+		placeModel(lost, frame({ lat: north(500), routeId: '3' }));
+		expect(lost.inst.heading).toBe(0);
 	});
 
 	/** A plane rising 10 m per 100 m northward. */

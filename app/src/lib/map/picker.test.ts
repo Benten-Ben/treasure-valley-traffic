@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { PRIORITY, type Selection } from '#lib/layers/types.js';
-import { Picker, resolve, type Hit } from './picker.js';
+import { Picker, resolve, TIE_PX, type Hit } from './picker.js';
 
 const sel = (kind: Selection['kind'], id: string, extra: Partial<Selection> = {}): Selection => ({ kind, id, layer: 'test', title: `${kind} ${id}`, ...extra });
 const hit = (s: Selection, distance = 0): Hit => ({ selection: s, priority: PRIORITY[s.kind as keyof typeof PRIORITY], distance });
@@ -22,6 +22,20 @@ describe('picker', () => {
 
 	it('takes the nearest of equal priority', () => {
 		expect(resolve([hit(sel('bus', 'far'), 10), hit(sel('bus', 'near'), 3)])?.id).toBe('near');
+	});
+
+	it('gives a near tie to what is selected, never a higher priority or a clear winner', () => {
+		const a = sel('bus', 'a');
+		const b = sel('bus', 'b');
+		// Two buses at one stop: b is selected (lifted), a is 2 px nearer the pointer.
+		expect(resolve([hit(a, 1), hit(b, 3)], b)?.id).toBe('b');
+		expect(resolve([hit(a, 1), hit(b, 3)])?.id).toBe('a');
+		expect(resolve([hit(a, 1), hit(b, 1 + TIE_PX)], { ...b })?.id).toBe('b');
+		expect(resolve([hit(a, 1), hit(b, 1.5 + TIE_PX)], b)?.id).toBe('a');
+		// Priority still comes first: a selected stop doesn't win over a bus.
+		expect(resolve([hit(a, 5), hit(sel('stop', 's'), 0)], sel('stop', 's'))?.id).toBe('a');
+		// Nothing selected among the hits: the nearest.
+		expect(resolve([hit(a, 1), hit(b, 3)], sel('bus', 'c'))?.id).toBe('a');
 	});
 
 	it('lists every route where several share the street, once each, in number order', () => {

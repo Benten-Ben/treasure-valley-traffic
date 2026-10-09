@@ -61,7 +61,7 @@ describe('meshes', () => {
 		expect(m.min[1]).toBeCloseTo(-m.max[1], 6);
 	});
 
-	it('the bus marks its body faces for the route color (tint 1), and its roof, glass and wheels not', () => {
+	it('the bus marks its body faces and roof panel for the route color (tint 1), and its glass, wheels and roof rim not', () => {
 		const t = tints(meshes.bus);
 		expect(t.has(1)).toBe(true);
 		expect(t.has(0)).toBe(true);
@@ -71,11 +71,43 @@ describe('meshes', () => {
 		for (let o = 0; o < m.vertices.length; o += FLOATS_PER_VERTEX) {
 			if (m.vertices[o + 9] !== 1) continue;
 			tinted++;
-			// No upward-facing roof face takes the route color.
+			// Upward-facing route-colored faces: the roof panel and the pod's top (Oct 8: the roof in the route color).
 			if (m.vertices[o + 5] > 0.99) roofTinted++;
 		}
 		expect(tinted).toBeGreaterThan(20);
-		expect(roofTinted).toBe(0);
+		expect(roofTinted).toBe(8);
+	});
+
+	it('seen from above, the bus is its route color inside an ink rim (§14.4: the roof carries the pale colors on cream)', () => {
+		const m = meshes.bus;
+		const v = (i: number, k: number) => m.vertices[i * FLOATS_PER_VERTEX + k];
+		/** The topmost face over (x, y): its tint and color. */
+		const top = (x: number, y: number) => {
+			let best = { z: -Infinity, tint: -1, color: [0, 0, 0] };
+			for (let t = 0; t < m.indices.length; t += 3) {
+				const [a, b, c] = [m.indices[t], m.indices[t + 1], m.indices[t + 2]];
+				if (v(a, 5) <= 0.05) continue;
+				// Barycentric coordinates of (x, y) in the triangle's top-down projection.
+				const d = (v(b, 1) - v(c, 1)) * (v(a, 0) - v(c, 0)) + (v(c, 0) - v(b, 0)) * (v(a, 1) - v(c, 1));
+				if (Math.abs(d) < 1e-12) continue;
+				const l1 = ((v(b, 1) - v(c, 1)) * (x - v(c, 0)) + (v(c, 0) - v(b, 0)) * (y - v(c, 1))) / d;
+				const l2 = ((v(c, 1) - v(a, 1)) * (x - v(c, 0)) + (v(a, 0) - v(c, 0)) * (y - v(c, 1))) / d;
+				const l3 = 1 - l1 - l2;
+				if (l1 < -1e-9 || l2 < -1e-9 || l3 < -1e-9) continue;
+				const z = l1 * v(a, 2) + l2 * v(b, 2) + l3 * v(c, 2);
+				if (z > best.z) best = { z, tint: v(a, 9), color: [v(a, 6), v(a, 7), v(a, 8)] };
+			}
+			return best;
+		};
+		const ink = [0x2b / 255, 0x2a / 255, 0x33 / 255];
+		const isInk = (c: number[]) => c.every((x, i) => Math.abs(x - ink[i]) < 1e-6);
+		const W = BUS.width / 2;
+		const L = BUS.length / 2;
+		// The middle of the roof, front to back and side to side: route color.
+		for (const y of [-L + 0.6, -3, 0, 2, L - 0.6]) for (const x of [-0.8, 0, 0.8]) expect(top(x, y).tint, `(${x}, ${y})`).toBe(1);
+		// Along both sides and across both ends: ink, at least 0.25 m of it at the sides, 0.3 m at the ends.
+		for (const y of [-L + 1, 0, L - 1]) for (const x of [-W + 0.05, -W + 0.25, W - 0.25, W - 0.05]) expect(isInk(top(x, y).color), `side (${x}, ${y})`).toBe(true);
+		for (const y of [-L + 0.05, -L + 0.3, L - 0.3, L - 0.05]) expect(isInk(top(0.5, y).color), `end (0.5, ${y})`).toBe(true);
 	});
 
 	it('the stop post has four flag slots (tints 2–5) on a post about 2.9 m tall', () => {

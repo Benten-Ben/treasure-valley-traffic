@@ -34,7 +34,7 @@ import {
 import { busAt, Feed, positionAt, runningAt, sameSet, smoothAngle, trail, type BusAt, type BusState } from './playback.js';
 import { ageText, ARROW, arrowImage, CREAM, CREDIT, fallbackBusLayers, FALLBACK_LAYERS, INK, UNKNOWN_COLOR } from './transit.js';
 import type { Scene, SceneInstance } from '#lib/scene/index.js';
-import { bodyColor, busModel, BUS_LENGTH_M, lodAt, metresPerPx, modelFade, modelZoom, placeModel, plateAltitude, type BusModel, type GroundAt, type Lod } from './bus3d.js';
+import { bodyColor, busModel, BUS_LENGTH_M, feedBearing, lodAt, metresPerPx, modelFade, modelZoom, placeModel, plateAltitude, streetBearing, type BusModel, type GroundAt, type Lod, type RouteLines } from './bus3d.js';
 import { loadPlateFont, PLATE_BODY_H, PLATE_PAD, plateBodyWidth, plateKey, plateOffset, plateSize, plateSprite, type PlateLook } from './plates.js';
 import { StopPosts, STOP_NAMES, stopNameLayer } from './stops3d.js';
 
@@ -289,6 +289,27 @@ export class TransitModule implements LayerModule {
 	/** Bumped when terrain data or settings change: the models' slopes are read again. */
 	#terrainEpoch = 0;
 	#ground: GroundAt | null = null;
+	/** The paused playhead the map last drew (null: playing). */
+	#pausedT: number | null = null;
+	/** The network's lines per route, for buses with no heading yet (built the first time one needs them). */
+	#lines: RouteLines | null = null;
+	#street = (lng: number, lat: number, routeId: string | null) => {
+		const net = this.network;
+		if (!net) return null;
+		if (!this.#lines) {
+			const byRoute = new globalThis.Map<string, number[][]>();
+			for (const seg of net.segments)
+				for (const r of seg.routes) {
+					let list = byRoute.get(r);
+					if (!list) byRoute.set(r, (list = []));
+					list.push(seg.coords);
+				}
+			this.#lines = { byRoute, all: net.segments.map((seg) => seg.coords) };
+		}
+		return streetBearing(this.#lines, routeId, lng, lat);
+	};
+	/** A stand-in heading for a bus with none yet: the feed's bearing at its fix, else its street's. */
+	#fallback = (lng: number, lat: number, routeId: string | null, vid: string) => feedBearing(this.feed.tracks.get(vid), this.#frameT) ?? this.#street(lng, lat, routeId);
 
 	route(id: string | null | undefined): NetworkRoute | undefined {
 		return id ? this.#byId.get(id) : undefined;
@@ -388,7 +409,25 @@ export class TransitModule implements LayerModule {
 		const before = (map as unknown as { _missingStyleImageResolver?: MissingStyleImageResolver | null })._missingStyleImageResolver ?? null;
 		map.setMissingStyleImageResolver((id) => (this.#drawImage(map, id) ? undefined : before?.(id)));
 		scope.defer(() => map.setMissingStyleImageResolver(before));
-		addSlotted(map, [...networkLayers(), stopNameLayer(SOURCES.stops)], def.order, (l, before) => scope.addLayer(l, before));
+		// The hub pills go on top of the labels: placed first (and never hidden), so a stop name or shield
+		// they'd cross gives way instead of being drawn across the pill.
+		const layers = [...networkLayers(), stopNameLayer(SOURCES.stops)];
+		const hubs = layers.findIndex((l) => l.layer.id === L.hubs);
+		if (hubs >= 0) layers.push(...layers.splice(hubs, 1));
+		addSlotted(map, layers, def.order, (l, before) => scope.addLayer(l, before));
+		// After a lost WebGL context MapLibre rebuilds its style: our sources and layers come back, their
+		// feature state doesn't (every route would be drawn as not running). Show it again once it's loaded.
+		const restyle = () => {
+			this.#shownRunning = null;
+			this.#hovered = [];
+			if (this.#visible) this.#applyRunning();
+			if (this.spot !== null) this.spotlight(this.spot);
+		};
+		scope.on('webglcontextrestored', () => {
+			map.off('style.load', restyle);
+			map.once('style.load', restyle);
+		});
+		scope.defer(() => map.off('style.load', restyle));
 		this.#useOverlay = ctx.overlay.ok;
 		if (this.#useOverlay) {
 			const o = ctx.overlay;
@@ -397,7 +436,9 @@ export class TransitModule implements LayerModule {
 			o.set(HEADING_GROUP, [], { z: 9 });
 			o.set(BUS_GROUP, [], { z: 10, priority: PRIORITY.bus });
 			o.set(RING_GROUP, [], { z: 11 });
-			o.set(PLATE_GROUP, [], { z: 12, priority: PRIORITY.bus });
+			// Plates that would cover each other (buses at one stop) stand in a column, 2 px apart, the
+			// selected bus's (drawn last) on the buses.
+			o.set(PLATE_GROUP, [], { z: 12, priority: PRIORITY.bus, stack: { gap: 2, inset: [PLATE_PAD, PLATE_PAD, PLATE_PAD, PLATE_PAD] } });
 			scope.defer(() => {
 				for (const g of [HEADING_GROUP, BUS_GROUP, RING_GROUP, PLATE_GROUP]) o.remove(g);
 			});
@@ -429,6 +470,8 @@ export class TransitModule implements LayerModule {
 		this.#stopTick = $effect.root(() => {
 			$effect(() => {
 				void clock.tick;
+				// Pausing, playing on or seeking: at once, not at the next tick.
+				void clock.paused;
 				untrack(() => this.#second());
 			});
 		});
@@ -636,8 +679,14 @@ export class TransitModule implements LayerModule {
 			const at = positionAt(track, T, this.#at);
 			const v = this.feed.vehicles[vid];
 			buses[vid] = { vid, routeId: v?.routeId ?? null, state: at.state, fix: at.fix, kind: at.kind, stepSpeed: at.stepSpeed };
-			if (at.state === 'moving' || at.state === 'gap') moving = true;
+			// While paused, nothing on the map moves.
+			if (clock.paused === null && (at.state === 'moving' || at.state === 'gap')) moving = true;
 			if (before[vid]?.state !== at.state) changed = true;
+		}
+		// A new paused playhead (just paused, played on, or moved while paused) is drawn once.
+		if (clock.paused !== this.#pausedT) {
+			this.#pausedT = clock.paused;
+			changed = true;
 		}
 		this.buses = buses;
 		// Nothing touches the map while the layer is off or the tab is hidden: the loop stays stopped.
@@ -807,6 +856,8 @@ export class TransitModule implements LayerModule {
 		for (const p of placed) if (p.x >= 0 && p.y >= 0 && p.x <= W && p.y <= H) onScreen.add(p.id);
 		const b = placed.length ? null : map.getBounds();
 		const at = this.#at;
+		// While paused the playhead stands still, and so does every bus: no frames for them.
+		const playing = clock.paused === null;
 		let fastest = 0;
 		for (const [vid, rt] of this.#runtime) {
 			const track = this.feed.tracks.get(vid);
@@ -827,7 +878,7 @@ export class TransitModule implements LayerModule {
 			rt.heading = smoothAngle(rt.heading, at.heading, now - rt.turnedAt);
 			rt.turnedAt = now;
 			const visible = b ? b.contains([at.lon, at.lat]) : onScreen.has(vid);
-			if (at.speed > 0 && shown && visible) fastest = Math.max(fastest, at.speed);
+			if (playing && at.speed > 0 && shown && visible) fastest = Math.max(fastest, at.speed);
 		}
 		this.#fastest = fastest;
 		this.#idle = fastest === 0;
@@ -860,6 +911,7 @@ export class TransitModule implements LayerModule {
 		heads.length = 0;
 		plates.length = 0;
 		const offset = plateOffset(lod.clearance);
+		let selected: OverlayInstance | null = null;
 		for (const [vid, rt] of this.#runtime) {
 			const dim = spot !== null && rt.routeId !== spot ? DIM : 1;
 			const stale = rt.state === 'stale';
@@ -881,9 +933,12 @@ export class TransitModule implements LayerModule {
 				p.opacity = rt.shown * dim * lod.fade;
 				p.altitude = plateAltitude(lod, sel);
 				p.offset = offset;
-				plates.push(p);
+				if (sel) selected = p;
+				else plates.push(p);
 			}
 		}
+		// The selected bus's plate last: drawn on top, and the one the others make way for (the overlay's stack).
+		if (selected) plates.push(selected);
 		for (const r of this.#ring) {
 			const rt = this.#runtime.get(r.id);
 			if (!rt) continue;
@@ -934,7 +989,9 @@ export class TransitModule implements LayerModule {
 					now,
 					epoch: this.#terrainEpoch,
 					ground,
-					slope: all || onScreen.has(vid)
+					slope: all || onScreen.has(vid),
+					routeId: rt.routeId,
+					fallback: this.#fallback
 				})
 			);
 		}
@@ -1171,8 +1228,9 @@ export class TransitModule implements LayerModule {
 					const off = p.offset ?? [0, 0];
 					const { width, height } = plateSize(text);
 					// The sprite is centred on anchor + offset; the body sits PLATE_PAD in from its top left.
-					const box = a ? { x: a.x + off[0] - width / 2 + PLATE_PAD, y: a.y + off[1] - height / 2 + PLATE_PAD, w: plateBodyWidth(text), h: PLATE_BODY_H } : null;
-					return { id: p.id, sprite: p.sprite, opacity: p.opacity ?? 0, offset: off, altitude: p.altitude ?? 0, x: a?.x ?? null, y: a?.y ?? null, box };
+					// `dy`: how far the overlay's stack lifted it to clear another plate.
+					const box = a ? { x: a.x + off[0] - width / 2 + PLATE_PAD, y: a.y + off[1] - (a.dy ?? 0) - height / 2 + PLATE_PAD, w: plateBodyWidth(text), h: PLATE_BODY_H } : null;
+					return { id: p.id, sprite: p.sprite, opacity: p.opacity ?? 0, offset: off, altitude: p.altitude ?? 0, x: a?.x ?? null, y: a?.y ?? null, dy: a?.dy ?? 0, box };
 				});
 			},
 			/** The stop posts handed to the scene now: how many, their scale and fade. */
