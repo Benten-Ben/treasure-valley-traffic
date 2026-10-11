@@ -101,6 +101,16 @@
 		});
 	});
 
+	// The open credits card (map/controls.css) keeps clear of the toolbar, or a mode's banner, by its real
+	// width, which grows with the layers there are: the CSS reads it from --toolbar-width.
+	let bottomWidth = $state(0);
+	$effect(() => {
+		if (phone || !bottomWidth) return;
+		const root = document.documentElement.style;
+		root.setProperty('--toolbar-width', `${Math.ceil(bottomWidth)}px`);
+		return () => root.removeProperty('--toolbar-width');
+	});
+
 	let helpOpen = $state(false);
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	let Help = $state<Component<any> | null>(null);
@@ -178,7 +188,7 @@
 
 	<WindowLayer {app} />
 
-	<div class="bottom">
+	<div class="bottom" bind:clientWidth={bottomWidth}>
 		{#if exploring}
 			{#if phone}
 				<Sheet>

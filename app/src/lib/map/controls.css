@@ -34,11 +34,13 @@ main .maplibregl-ctrl.maplibregl-ctrl-scale {
 main .maplibregl-ctrl.maplibregl-ctrl-attrib {
 	box-sizing: border-box;
 	/* Open, it stays clear of the toolbar in the bottom centre (it wraps instead): half the
-	   screen, less half the toolbar (Base and four layers, about 190 px), a gap and the
-	   corner's 16 px margin. Measured with the padding (border-box), which the open compact
-	   card also uses below; with content-box its 52 px of padding pushed it under the
-	   toolbar (WP15's review). */
-	max-width: max(160px, calc(50vw - 230px));
+	   screen, less half the toolbar, a 24 px gap and the corner's 16 px margin. The chrome
+	   sets --toolbar-width to the toolbar's (or a mode banner's) real width, which grows
+	   with the layers: with every layer it is wider than the 380 px of Base and four, which
+	   ran the card under its right end (WP15's checklist). Measured with the padding
+	   (border-box), which the open compact card also uses below; with content-box its 52 px
+	   of padding pushed it under the toolbar (WP15's review). */
+	max-width: max(160px, calc(50vw - var(--toolbar-width, 380px) / 2 - 40px));
 	padding: 6px 12px;
 	border: 2px solid var(--panel-edge);
 	border-radius: 16px;
