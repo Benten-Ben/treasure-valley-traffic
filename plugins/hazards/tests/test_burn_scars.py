@@ -199,6 +199,11 @@ def square(lon, lat, d=0.01):
 
 BOWTIE = {"type": "Polygon", "coordinates": [[[-116.30, 43.50], [-116.28, 43.52], [-116.28, 43.50],
                                               [-116.30, 43.52], [-116.30, 43.50]]]}   # self-intersecting
+# A fire with a zero-area sliver beside its main part, as some published perimeters have (MakeValid's default method
+# gave null for two such on the server's GEOS 3.10, Oct 11, 2026).
+SLIVER = {"type": "MultiPolygon", "coordinates": [
+    square(-116.10, 43.40)["coordinates"],
+    [[[-116.05, 43.40], [-116.04, 43.40], [-116.03, 43.40], [-116.04, 43.40], [-116.05, 43.40]]]]}
 
 
 @unittest.skipUnless(DB_URL, "set TVT_TEST_DATABASE_URL to a scratch database (core 0001, 0020 and hazards/0001)")
@@ -251,18 +256,22 @@ class RefreshDatabaseTest(unittest.TestCase):
         self.add(payload(irwin="{0-C}", name="AWAY"), square(-115.80, 43.60))                  # in the ring, not the box
         self.add(payload(irwin="{0-D}", name="OLD", discovered=datetime(2025, 7, 1, tzinfo=UTC)), square(-116.5, 43.5))
         bowtie = self.add(payload(irwin="{0-E}", name="BOWTIE"), BOWTIE)
+        sliver = self.add(payload(irwin="{0-F}", name="SLIVER"), SLIVER)
         stats = self.refresh()
         self.assertEqual((stats["fires"], stats["scars"], stats["shown"], stats["written"], stats["deleted"]),
-                         (5, 3, 3, 3, 0))
+                         (6, 4, 4, 4, 0))
         self.assertEqual((stats["left out (outside the box)"], stats["left out (before the photo)"]), (1, 1))
         scars = self.scars()
-        self.assertEqual(set(scars), {inside, edge, bowtie})
+        self.assertEqual(set(scars), {inside, edge, bowtie, sliver})
+        parts = self.conn.execute("select ST_NumGeometries(geom) from hazards.burn_scar where fire_id = %s",
+                                  (sliver,)).fetchone()[0]
+        self.assertEqual(parts, 1)                                  # the sliver is nothing
         for fid, (n, f, clipped, kind, valid, valid_lo, perimeter) in scars.items():
             self.assertEqual((n, f, kind, valid, valid_lo, perimeter), (0, 1.0, "ST_MultiPolygon", True, True, "final"))
             self.assertEqual(clipped, fid == edge)
         east = self.conn.execute("select ST_XMax(geom) from hazards.burn_scar where fire_id = %s", (edge,)).fetchone()[0]
         self.assertAlmostEqual(east, bs.BOX[2], places=9)
-        self.assertEqual(self.versions()[-1][1], 3)
+        self.assertEqual(self.versions()[-1][1], 4)
         self.assertEqual(stats["version"], self.versions()[-1][0])
 
     def test_an_unchanged_refresh_writes_nothing_and_a_step_writes_a_new_version(self):

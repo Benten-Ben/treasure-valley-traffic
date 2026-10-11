@@ -224,9 +224,14 @@ def check_drops(n_delete, n_held, force=False):
 
 _ENVELOPE = "ST_MakeEnvelope(%(west)s, %(south)s, %(east)s, %(north)s, 4326)"
 
+# A perimeter made valid. MakeValid's default (linework) method gives null for some published perimeters on the
+# server's GEOS 3.10 (on Oct 11, 2026 RANGE and WILSON, multipolygons with near-zero-area slivers); the structure
+# method (GEOS 3.10+) keeps their shells and holes, and treats a sliver as nothing.
+_VALID = "coalesce(ST_MakeValid(geom, 'method=structure'), ST_MakeValid(geom))"
+
 _VERSIONS = f"""
 select source_id, version_hash, payload, first_seen, last_seen,
-       coalesce(geom && {_ENVELOPE} and ST_Intersects(ST_MakeValid(geom), {_ENVELOPE}), false)
+       coalesce(geom && {_ENVELOPE} and ST_Intersects({_VALID}, {_ENVELOPE}), false)
 from raw.record
 where source = %(source)s and removed_at is null"""
 
@@ -234,7 +239,7 @@ where source = %(source)s and removed_at is null"""
 # is empty (it only touches the box) writes nothing.
 _WRITE = f"""
 with v as (
-  select version_hash, ST_Multi(ST_CollectionExtract(ST_MakeValid(geom), 3)) as valid
+  select version_hash, ST_Multi(ST_CollectionExtract({_VALID}, 3)) as valid
   from raw.record
   where source = %(source)s and source_id = %(fire_id)s and version_hash = %(record_hash)s and geom is not null
 ), cut as (
@@ -245,7 +250,7 @@ with v as (
   select *, ST_Multi(ST_CollectionExtract(ST_MakeValid(ST_Transform(
               ST_SimplifyPreserveTopology(ST_Transform(geom, %(utm)s), %(tolerance)s), 4326)), 3)) as simple
   from cut
-  where not ST_IsEmpty(geom)
+  where geom is not null and not ST_IsEmpty(geom)
 )
 insert into hazards.burn_scar (fire_id, name, kind, burned_on, dated_by, perimeter, perimeter_at, acres, map_method,
                                seasons, fade_1_on, fade_2_on, gone_on, clipped, geom, geom_lo, record_hash,

@@ -117,6 +117,9 @@ states no license: internal and credited until IDL answers a courtesy note.
 **Known data quirks:** some outlines are invalid as published (self-
 intersecting slivers in two IDL zones, a zero-area ring in a WFIGS perimeter,
 Oct 7, 2026). They're stored as published; use `ST_MakeValid` before joins.
+On the server's GEOS 3.10, MakeValid's default method gives null for some
+perimeters with near-zero-area slivers (RANGE and WILSON, Oct 11, 2026), so
+the burn scars use `ST_MakeValid(geom, 'method=structure')`.
 
 ## Burn scars
 
