@@ -15,6 +15,6 @@
     {"name": "soils-load", "module": "ingest.load",
      "help": "load the soil survey prepared by plugins/soils/build/prepare.py (--from DIR)"}
   ],
-  "storage": "About 50-70 MB in PostGIS, almost all of it the 21,999 polygons (whole, with a 5 m simplified copy); a few thousand map units, components and horizons; under 5,000 photo-statistics rows per photo build, old builds kept. Each prepared folder ($TVT_ARCHIVE/soils/prepared/<stamp>/) is about 130 MB. Reloaded once a year at most.",
+  "storage": "About 110 MB in PostGIS (measured Oct 11), almost all of it the 21,999 polygons (2.66 M vertices, whole, plus a 5 m simplified copy and indexes); a few thousand map units, components and horizons (about 4 MB); under 5,000 photo-statistics rows per photo build, old builds kept. Each prepared folder ($TVT_ARCHIVE/soils/prepared/<stamp>/) is about 75 MB. Reloaded once a year at most.",
   "ethics": "USDA NRCS's soil survey: public domain, credited \"Soils: USDA NRCS, Soil Survey Geographic Database (SSURGO)\". Not for regulatory decisions, as NRCS says, and the card says so. Downloaded by hand with the owner's OK for each yearly refresh; no collector and no schedule. Soils, not people."
 }

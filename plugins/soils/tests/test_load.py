@@ -83,7 +83,8 @@ class LoadTest(unittest.TestCase):
         self.assertEqual(restrictions[0]["kind"], "Duripan")
         self.assertEqual([y["crop"] for y in yields], ["Alfalfa hay", "Wheat"])
 
-        b = self.one("select kind, license, republish, credit, counts, finished_at is not null from soils.build")
+        # finished_at is the wall clock's, not the transaction's start (now())
+        b = self.one("select kind, license, republish, credit, counts, finished_at > now() from soils.build")
         self.assertEqual(b[:4], ("load", "public domain", "yes",
                                  "Soils: USDA NRCS, Soil Survey Geographic Database (SSURGO)"))
         self.assertEqual((b[4]["polygons"], b[4]["ground_types"], b[4]["polygons_repaired"]), (4, 3, 0))

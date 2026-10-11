@@ -188,7 +188,7 @@ def load(conn, pkg, areas=None, force=False, now=None):
         counts["area_in_box_ha"] = float(counts["area_in_box_ha"] or 0)
         counts.update(loaded=todo, skipped=skipped, polygons_loaded=n, polygons_repaired=repaired,
                       ground_types_dropped=dropped)
-        cur.execute("update soils.build set finished_at = now(), counts = %s::jsonb where build_id = %s",
+        cur.execute("update soils.build set finished_at = clock_timestamp(), counts = %s::jsonb where build_id = %s",
                     (json.dumps(counts), bid))
 
         version = None
