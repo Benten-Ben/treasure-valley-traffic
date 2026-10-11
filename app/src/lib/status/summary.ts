@@ -51,7 +51,7 @@ const SHAPE: Record<StatusLevel, StatusChip['shape']> = { fresh: '‚óè', late: '‚
 export function span(seconds: number): string {
 	const s = Math.max(0, Math.round(seconds));
 	if (s < 90) return `${s} s`;
-	if (s < 3600) return `${Math.round(s / 60)} min`;
+	if (s < 90 * 60) return `${Math.round(s / 60)} min`;
 	if (s < 36 * 3600) return `${Math.round(s / 3600)} h`;
 	const d = Math.round(s / 86_400);
 	return `${d} day${d === 1 ? '' : 's'}`;

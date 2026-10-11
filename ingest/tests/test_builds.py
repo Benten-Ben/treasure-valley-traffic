@@ -115,7 +115,7 @@ class CommandLineTest(unittest.TestCase):
                "pending_by": ["osm_street", "achd_roads"], "pending_reason": "new extract", "last_error": None}
         line = builds.describe(row, now)
         self.assertIn("roads-build", line)
-        self.assertIn("marked since 5 h ago by osm_street, achd_roads: new extract", line)
+        self.assertIn("marked since 5 h ago (osm_street; achd_roads), newest: new extract", line)
         self.assertIn("last built 9 d ago", line)
         self.assertIn("last built never", builds.describe({**row, "last_ok_at": None}, now))
 

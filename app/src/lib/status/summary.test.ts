@@ -56,7 +56,7 @@ describe('the status chip', () => {
 		});
 		expect([stale.level, stale.shape, stale.color]).toEqual(['stale', '■', 'var(--alert)']);
 		expect(stale.headline).toBe('1 source stale · 1 source never fetched');
-		expect(stale.lines[1]).toBe('new_one: no good fetch yet (every 1 h), 1 failed try since');
+		expect(stale.lines[1]).toBe('new_one: no good fetch yet (every 60 min), 1 failed try since');
 	});
 
 	it('names waiting builds, and raises the level only after a long wait', () => {
@@ -102,8 +102,8 @@ describe('the status chip', () => {
 	});
 
 	it('spans read as people say them', () => {
-		expect([span(40), span(89), span(90), span(12 * 60), span(3600), span(5 * 3600), span(36 * 3600), span(86_400 * 3), span(-5)]).toEqual([
-			'40 s', '89 s', '2 min', '12 min', '1 h', '5 h', '2 days', '3 days', '0 s'
+		expect([span(40), span(89), span(90), span(12 * 60), span(3600), span(66 * 60), span(90 * 60), span(5 * 3600), span(36 * 3600), span(86_400 * 3), span(-5)]).toEqual([
+			'40 s', '89 s', '2 min', '12 min', '60 min', '66 min', '2 h', '5 h', '2 days', '3 days', '0 s'
 		]);
 		expect(span(30 * 3600)).toBe('30 h');
 	});

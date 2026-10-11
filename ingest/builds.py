@@ -267,8 +267,8 @@ def describe(row, now=None):
     if row["state"] == "running":
         parts.append(f"started {_ago(row['last_run_at'], now)}")
     if row["pending_since"] is not None:
-        by = ", ".join(row["pending_by"] or [])
-        parts.append(f"marked since {_ago(row['pending_since'], now)} by {by}: {row['pending_reason']}")
+        by = "; ".join(row["pending_by"] or [])
+        parts.append(f"marked since {_ago(row['pending_since'], now)} ({by}), newest: {row['pending_reason']}")
     if row["last_error"]:
         parts.append(f"last run failed: {row['last_error'][:200]}")
     parts.append(f"last built {_ago(row['last_ok_at'], now)}")
