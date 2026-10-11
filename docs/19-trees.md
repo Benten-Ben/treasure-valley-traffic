@@ -485,7 +485,7 @@ build. Three things the experiments left open:
   shrubs, and so is a piece mostly within 10 m of it (the cover's own
   cells) when its clump is mostly crop: the outer rows of a field that the
   cover's 10 m cells leave out (in the NY Canal box, 3,400 shrubs' worth,
-  nearly all within 5 m). Pieces rather than whole clumps, so the cut
+  most within 5 m). Pieces rather than whole clumps, so the cut
   follows the field's edge: a small field touching shrubland goes, and a
   hedgerow touching a field keeps all but its first 10 m. The spike's own crop rule (the even, all-green, low
   25 m blocks) runs beside it as a check, and each build says how the two
@@ -507,34 +507,39 @@ build. Three things the experiments left open:
   part out of its shrubs and its outline.
 
 **The ten boxes** (whole boxes, about 2.1 km² each, Oct 11, on the
-scratch database): 343,530 shrubs in 2,239 ha, built in 53 minutes as ten
-heavy jobs (2-12 minutes each, about 2 GB at most). The areas' own green
+scratch database): 342,861 shrubs in 2,239 ha, built in 53 minutes as ten
+heavy jobs (2-12 minutes each, about 2 GB at most; a rebuild that reuses
+the point cloud's cues takes 12 minutes for all ten). The areas' own green
 cuts came out within 0.01 of the spike's (0.04 in the deserts to 0.22 at
 Bogus Basin), and the measured photo shifts match the spike's where trees
-are plentiful (North End, Barber Pool, downtown, Bogus Basin). The domes
-cover 78-83% of the kept shrub cells, with a mean height error of
-0.23-0.46 m. Whole boxes differ from the spike's central 500 m, most at
+are plentiful (North End, Barber Pool, downtown, Bogus Basin); South
+Meridian's best (2 m) and the foothills' (0.5 m) didn't gain enough over
+none to keep. The photo gives an NDVI on 99.9% of every box's lidar cells.
+The domes cover 78-83% of the kept shrub cells, with a mean height error
+of 0.23-0.46 m. Whole boxes differ from the spike's central 500 m, most at
 Bogus Basin, where the central square has fewer shrubs than the box:
 
 | Box | Shrubs | Per hectare | Bush share | Median height | Spike, central 500 m |
 |---|---|---|---|---|---|
-| Dry Creek foothills | 88,291 | 412 | 50% | 0.9 m | 575 |
+| Dry Creek foothills | 88,355 | 413 | 49% | 0.9 m | 575 |
 | Bogus Basin | 122,135 | 571 | 97% | 0.9 m | 228 |
-| Barber Pool | 39,998 | 196 | 58% | 1.3 m | 291 |
+| Barber Pool | 39,995 | 196 | 58% | 1.3 m | 291 |
 | Silver City | 34,771 | 163 | 69% | 1.3 m | 127 |
 | Downtown (less the North End's part) | 23,079 | 70 | 62% | 1.3 m | 45 |
-| South Meridian | 13,916 | 65 | 84% | 1.4 m | 42 |
+| South Meridian | 13,597 | 64 | 85% | 1.3 m | 42 |
 | North End | 11,951 | 56 | 75% | 1.6 m | 45 |
-| NY Canal farmland | 5,112 | 24 | 89% | 0.8 m | 7 |
+| NY Canal farmland | 4,701 | 22 | 88% | 0.8 m | 7 |
 | Owyhee front | 3,012 | 14 | 55% | 1.0 m | 15-17 |
 | Initial Point desert | 1,265 | 6 | 75% | 0.6 m | 15-17 |
 
-**The crop check.** In the NY Canal box the crop cover took 19,362
-clumps (21 ha of shrub cells). The spike's rule found 267 field blocks
+**The crop check.** In the NY Canal box the crop cover took 110,068
+pieces (21 ha of shrub cells). The spike's rule found 267 field blocks
 there, and 95% of its fields lie in the crop cover (the spike: 97.5% of
-its crop cells in CSB's crop fields). 395 shrubs still stand in its
-fields, in clumps that lie mostly outside the crop cover. (With CSB's
-fields alone, before farm's crop cover was built, 1,393 did.) Over whole
+its crop cells in CSB's crop fields). 341 shrubs still stand in its
+fields, in pieces mostly outside the crop cover and its 10 m reach.
+(Whole clumps called crops when mostly in the cover left 395; pieces
+without the reach, 2,767; CSB's fields alone, before farm's crop cover
+was built, 1,393.) Over whole
 boxes the rule also fires where farm sees no crops: 2 blocks at Barber
 Pool (812 shrubs) and 5 at Bogus Basin (3,363 shrubs), even, green and
 low, not yet looked at in the photo. They stay shrubs while the rule is only
