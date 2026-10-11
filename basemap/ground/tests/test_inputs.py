@@ -131,6 +131,17 @@ class ResolveTest(unittest.TestCase):
             self.plan()
         self.assertIn("10 m", str(ctx.exception))
 
+    def test_crop_cover_bands(self):
+        write_export(self.archive, "soils", [fgb_layer("ground", ["ssurgo"])], [SSURGO])
+        cover = {"name": "crop_cover", "file": "crop_cover.tif", "format": "GeoTIFF", "crs": "EPSG:32611",
+                 "grid": {"res": 10, "west": 495920, "north": 4855750, "width": 4, "height": 4},
+                 "bands": [{"name": "group", "type": "uint8"}, {"name": "confidence", "type": "uint8"}],
+                 "inputs": ["csb"], "base": False}
+        write_export(self.archive, "farm", [cover], [CSB], extra_files=[("crop_cover.tif", b"II*\x00")])
+        with self.assertRaises(I.InputError) as ctx:
+            self.plan()
+        self.assertIn("bands", str(ctx.exception))
+
     def test_palette_schema(self):
         palette = {"name": "palette", "file": "palette.json", "format": "JSON", "schema": "soils.palette/2",
                    "inputs": ["ssurgo"], "base": False}

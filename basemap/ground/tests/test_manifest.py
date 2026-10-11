@@ -244,6 +244,19 @@ class CheckTest(unittest.TestCase):
         m["layers"][1]["bands"][0]["values"] = {"corn": 1}
         self.bad(m, "whole-number codes")
 
+    def test_odd_types_are_manifest_errors(self):
+        for path, value in ((("inputs", 0, "licence"), ["public-domain"]), (("layers", 0, "format"), {"x": 1}),
+                            (("layers", 0, "republish"), ["yes"]), (("layers", 0, "geometry"), ["Polygon"]),
+                            (("layers", 0, "inputs"), [["csb"]]), (("layers", 0, "fields"), {"id": ["int"]}),
+                            (("layers", 1, "bands"), [{"name": "group", "type": ["uint8"]}])):
+            m = valid_manifest()
+            node = m
+            for key in path[:-1]:
+                node = node[key]
+            node[path[-1]] = value
+            with self.assertRaises(M.ManifestError, msg=str(path)):
+                M.check(m)
+
     def test_json_schema_names_the_plugin(self):
         m = valid_manifest()
         m["layers"][2]["schema"] = "soils.palette/1"
@@ -359,6 +372,11 @@ class WriteReadTest(unittest.TestCase):
             with self.assertRaises(M.ManifestError) as ctx:
                 M.read(folder, hashes=False)
             self.assertIn(words, str(ctx.exception))
+
+    def test_write_without_the_file(self):
+        folder = export(self.archive, files=())
+        with self.assertRaises(M.ManifestError):
+            M.write(folder, "soils", [SSURGO], [ground_layer()])
 
     def test_missing_file(self):
         folder = export(self.archive)

@@ -94,7 +94,8 @@ class RasterizeTest(unittest.TestCase):
 
     def test_holes_and_the_array_orientation(self):
         ring = (f"POLYGON(({X0} {Y0},{X0 + 100} {Y0},{X0 + 100} {Y0 + 100},{X0} {Y0 + 100},{X0} {Y0}),"
-                f"({X0 + 40} {Y0 + 40},{X0 + 60} {Y0 + 40},{X0 + 60} {Y0 + 60},{X0 + 40} {Y0 + 60},{X0 + 40} {Y0 + 40}))")
+                f"({X0 + 40} {Y0 + 40},{X0 + 60} {Y0 + 40},{X0 + 60} {Y0 + 60},{X0 + 40} {Y0 + 60},"
+                f"{X0 + 40} {Y0 + 40}))")
         p = write_layer(self.path("ring.fgb"), 32611, [(ring, {"id": 1, "ground_type": 1}),
                                                         (square(X0, Y0 + 300, 10), {"id": 2, "ground_type": 2})])
         t = target(10.0, 10, 40)                                # rows run north to south from Y0 + 400

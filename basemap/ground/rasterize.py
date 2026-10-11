@@ -137,13 +137,12 @@ def _open(source, layer):
 
 
 def rasterize(target, source, layer=None, *, burn=1, attribute=None, where=None, all_touched=False,
-              dtype="uint8", fill=0, margin_m=0.0):
+              dtype="uint8", fill=0):
     """Burn a vector layer into the target window. Returns a NumPy array of target.shape.
 
     burn: the value for every feature (default 1), or attribute: a numeric field's value per feature; later features
     win where they overlap. where: an OGR attribute filter. all_touched: burn every cell a feature touches (default:
-    cells whose centre is inside, which is what areas want). margin_m: also read features this far outside the window
-    (they can't burn into it, but a caller may pass a padded target instead)."""
+    cells whose centre is inside, which is what areas want). fill: the value where nothing burns."""
     if dtype not in _DTYPES:
         raise ValueError(f"dtype must be one of {', '.join(_DTYPES)}")
     ds, lyr = _open(source, layer)
@@ -151,7 +150,6 @@ def rasterize(target, source, layer=None, *, burn=1, attribute=None, where=None,
     lsrs = lyr.GetSpatialRef()
     src = srs_of(lsrs) if lsrs is not None else dst
     w, s, e, n = target.bounds
-    w, s, e, n = w - margin_m, s - margin_m, e + margin_m, n + margin_m
     to_src = _transform(dst, src)
     fw, fs, fe, fn = _bounds_in((w, s, e, n), to_src) if to_src else (w, s, e, n)
     lyr.SetSpatialFilterRect(fw, fs, fe, fn)

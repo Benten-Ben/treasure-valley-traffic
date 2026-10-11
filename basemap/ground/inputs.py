@@ -72,6 +72,7 @@ class Use:
     geometry: tuple = ()                 # allowed geometry types (FlatGeobuf)
     fields: tuple = ()                   # ((field, allowed types), ...) that must be present (FlatGeobuf)
     res: float = None                    # the grid level (GeoTIFF)
+    bands: tuple = ()                    # band names, in order (GeoTIFF)
     schema: str = None                   # the JSON shape
 
     @property
@@ -92,7 +93,8 @@ USES = (
         "P2", fallback="flat colours per ground type, labelled as such", schema="soils.palette/1"),
     Use("farm", "crop_cover", "GeoTIFF", "the crop cover",
         "crop group, July state and confidence per 10 m cell (bands group, state, confidence)",
-        "P3-data", fallback="CSB 2025 fields plus CDL 2025 crop pixels (C7)", res=10.0),
+        "P3-data", fallback="CSB 2025 fields plus CDL 2025 crop pixels (C7)", res=10.0,
+        bands=("group", "state", "confidence")),
     Use("farm", "fields", "FlatGeobuf", "the crop fields",
         "crop fields with their row bearing (degrees from north), for the texture's direction",
         "P3-data", fallback="CSB 2025 polygons, with no row bearing", geometry=_AREAS,
@@ -181,6 +183,9 @@ def check_use(use, layer):
             raise InputError(f"{layer.ref} needs a field {fname!r} of type {' or '.join(types)}")
     if use.res is not None and float(layer["grid"]["res"]) != use.res:
         raise InputError(f"{layer.ref} is at {layer['grid']['res']} m; the ground reads it at {use.res:g} m")
+    if use.bands and tuple(b["name"] for b in layer["bands"]) != use.bands:
+        raise InputError(f"{layer.ref} has bands {[b['name'] for b in layer['bands']]}; the ground reads "
+                         f"{list(use.bands)}")
     if use.schema is not None and layer["schema"] != use.schema:
         raise InputError(f"{layer.ref} has schema {layer['schema']!r}; the ground reads {use.schema!r}")
 

@@ -190,7 +190,7 @@ def check(m, where="manifest", folder=None):
             bad(f"layers[{i}] must be an object")
         label = f"layer {lay.get('name')!r}" if isinstance(lay.get("name"), str) else f"layers[{i}]"
         fmt = lay.get("format")
-        if fmt not in FORMATS:
+        if not isinstance(fmt, str) or fmt not in FORMATS:
             bad(f"{label}: format must be one of {', '.join(FORMATS)}")
         required = _LAYER_COMMON | _LAYER_FORMAT[fmt]
         if missing := required - set(lay):
@@ -221,10 +221,11 @@ def check(m, where="manifest", folder=None):
 
         # licence, republish, credit: the strictest of the layer's inputs
         lin = lay["inputs"]
-        if not isinstance(lin, list) or not lin or not all(isinstance(n, str) for n in lin) or len(set(lin)) != len(lin):
+        if (not isinstance(lin, list) or not lin or not all(isinstance(n, str) for n in lin)
+                or len(set(lin)) != len(lin)):
             bad(f"{label}: inputs must be a non-empty list of input names, each once")
         for n in lin:
-            if n not in by_name:
+            if not isinstance(n, str) or n not in by_name:
                 bad(f"{label}: input {n!r} isn't in the manifest's inputs")
         used.update(lin)
         _check_licence(bad, label, lay["licence"], lay["republish"])
@@ -258,9 +259,9 @@ def check(m, where="manifest", folder=None):
 
 
 def _check_licence(bad, label, licence, republish):
-    if licence not in LICENCES:
+    if not isinstance(licence, str) or licence not in LICENCES:
         bad(f"{label}: licence {licence!r} isn't one of {', '.join(LICENCES)} (add it to LICENCES in review)")
-    if republish not in REPUBLISH:
+    if not isinstance(republish, str) or republish not in REPUBLISH:
         bad(f"{label}: republish must be one of {', '.join(REPUBLISH)}")
     if rank(republish) < rank(LICENCES[licence].loosest):
         bad(f"{label}: republish {republish!r} is looser than {licence} allows ({LICENCES[licence].loosest!r})")
@@ -269,7 +270,7 @@ def _check_licence(bad, label, licence, republish):
 def _check_vector(bad, label, lay):
     if lay["crs"] != grid.CRS:
         bad(f"{label}: crs must be {grid.CRS} (the ground grid's), not {lay['crs']!r}")
-    if lay["geometry"] not in GEOMETRIES:
+    if not isinstance(lay["geometry"], str) or lay["geometry"] not in GEOMETRIES:
         bad(f"{label}: geometry must be one of {', '.join(GEOMETRIES)}")
     if not isinstance(lay["features"], int) or isinstance(lay["features"], bool) or lay["features"] < 0:
         bad(f"{label}: features must be a whole number")
@@ -279,14 +280,14 @@ def _check_vector(bad, label, lay):
     for k, v in flds.items():
         if not _FIELD.match(k):
             bad(f"{label}: field name {k!r} must be letters, digits and '_'")
-        if v not in fgb.COLUMN_TYPES:
+        if not isinstance(v, str) or v not in fgb.COLUMN_TYPES:
             bad(f"{label}: field {k!r} has type {v!r}, not one of {', '.join(fgb.COLUMN_TYPES)}")
     for key in ("minzoom", "maxzoom"):
         if key in lay and (not isinstance(lay[key], int) or isinstance(lay[key], bool) or not 0 <= lay[key] <= 22):
             bad(f"{label}: {key} must be a zoom from 0 to 22")
     if lay.get("minzoom", 0) > lay.get("maxzoom", 22):
         bad(f"{label}: minzoom is above maxzoom")
-    if lay["base"] and flds.get("id") not in fgb.INTEGER_TYPES:
+    if lay["base"] and not (isinstance(flds.get("id"), str) and flds["id"] in fgb.INTEGER_TYPES):
         bad(f"{label}: a base layer needs an integer 'id' field (the bake's promoteId)")
 
 
@@ -315,7 +316,7 @@ def _check_raster(bad, label, lay):
         if not isinstance(b["name"], str) or not _NAME.match(b["name"]) or b["name"] in seen:
             bad(f"{label}: bands[{j}] needs a unique lower-case name")
         seen.add(b["name"])
-        if b["type"] not in RASTER_TYPES:
+        if not isinstance(b["type"], str) or b["type"] not in RASTER_TYPES:
             bad(f"{label}: band {b['name']!r} type must be one of {', '.join(RASTER_TYPES)}")
         if "nodata" in b and (not isinstance(b["nodata"], (int, float)) or isinstance(b["nodata"], bool)):
             bad(f"{label}: band {b['name']!r} nodata must be a number")
@@ -505,8 +506,11 @@ def write(folder, plugin, inputs, layers, build=None, created=None, command=None
     for spec in layers:
         lay = dict(spec)
         path = os.path.join(folder, lay["file"])
-        lay["bytes"] = os.path.getsize(path)
-        lay["sha256"] = sha256_of(path)
+        try:
+            lay["bytes"] = os.path.getsize(path)
+            lay["sha256"] = sha256_of(path)
+        except OSError as err:
+            raise ManifestError(f"layer {lay.get('name')!r}: {err}") from None
         srcs = [by_name[n] for n in lay.get("inputs", []) if n in by_name]
         if "credit" not in lay:
             lay["credit"] = list(dict.fromkeys(s["credit"] for s in srcs))

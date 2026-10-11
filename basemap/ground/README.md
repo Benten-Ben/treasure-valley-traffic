@@ -58,10 +58,12 @@ true NAD83(2011)-to-WGS 84 offset here is about 1 m ⚠️, under the painter's 
 grid-based NAD83 transform. The worker image sets `PROJ_NETWORK=ON`, so PROJ tries to download NOAA's HPGN grid from
 cdn.proj.org; offline that transform returns inf or fails (checked Oct 10 in `tvt-worker`). `rasterize.py` switches
 PROJ's network off and applies the policy: `rasterize.srs_of(crs)` for vectors, and `rasterize.warp_srs(crs)` as
-`gdal.Warp`'s `srcSRS` for rasters (P2's NAIP to the 2 m COG).
+`gdal.Warp`'s `srcSRS` for rasters (P2's NAIP to the 2 m COG). Code that uses pyproj directly calls
+`pyproj.network.set_network_enabled(False)` first: `docker run -e PROJ_NETWORK=OFF` doesn't help, because the image's
+conda activation sets it back to ON.
 
-**The ten boxes** are the land-cover spike's test areas (agreed with the owner Oct 7; [DECISIONS](../../docs/DECISIONS.md),
-Oct 8). They are in `spec.json`. Each box's
+**The ten boxes** are the land-cover spike's test areas (agreed with the owner Oct 7;
+[DECISIONS](../../docs/DECISIONS.md), Oct 8). They are in `spec.json`. Each box's
 extent is its lon/lat box projected and widened to whole metres. That is exactly the extent of the spike's 0.5 m lidar
 rasters, so every box lies on the 0.5 m class grid.
 
