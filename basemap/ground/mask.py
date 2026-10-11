@@ -20,8 +20,8 @@ manifest.write(): every raw input with its version and sha256. It writes them in
 and moves the finished folder to ground_mask/export/<build>/ in one rename (build()). A build that fails or is
 stopped removes its folder; one that's killed leaves it, and the next build sweeps it. After a whole build, only
 the newest two whole builds are kept, and never the one the ground tiles name (--tiles). A box or bounds build is
-partial: its id ends in -part, readers skip it, and the command line puts it in another archive than
-$TVT_ARCHIVE. The whole grid took 11 minutes at 474 MB (a light worker job), and about 350 MB on disk.
+partial: its id ends in -part, readers skip it, and the command line refuses to put one in $TVT_ARCHIVE. The
+whole grid takes about 11 minutes and 0.5 GB (474 MB on its first run; a light worker job), and 360 MB on disk.
 
 Consumers read it through the shared window-rasterising helper (rasterize.py):
 

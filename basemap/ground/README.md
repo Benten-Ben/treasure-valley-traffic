@@ -91,8 +91,10 @@ A plugin's export command writes its files to `$TVT_ARCHIVE/<plugin>/export/<bui
 A folder without a manifest is unfinished, and readers skip it. `<build>` is the UTC time, `20261012T031500Z`, with
 an optional `-suffix`. A build whose id ends in **`-part`** is partial: it covers only part of what the export covers
 (a quick look at one box, say). `builds()`, `latest()` and `find()` skip it, so it's never read as the newest, and
-`inputs.resolve()` refuses one handed to it; read it by its folder (`read()`, or the sheet tool's `@build`). The ground and the base bake read exports only through `manifest.read()`, `latest()` and
-`find()`, and all three check the files, not only the manifest:
+`inputs.resolve()` refuses one handed to it; read it by its folder (`read()`, or the sheet tool's `@build`).
+
+The ground and the base bake read exports only through `manifest.read()`, `latest()` and `find()`, and all three
+check the files, not only the manifest:
 - **every file:** its size and sha256;
 - **FlatGeobuf:** the header's geometry type, fields, feature count and CRS (`fgb.py`);
 - **GeoTIFF:** the size, the bands' count and sample types, the pixel corners and the EPSG code (`tif.py`, from the
@@ -293,8 +295,9 @@ time (a lock in `ground_mask/`).
   one, is refused too. Look at one with the sheet tool's `ground_mask/<layer>@<build>`, or
   `mask.latest(folder, partial=True)`.
 
-It's a light worker job (1 GB, 1 CPU). Valley-wide on Oct 11 it took **about 11 minutes, peaking at 474 MB**:
-reading the cut took about 3.5 minutes, the roofs 3 and dissolving `covered` 4. It's **354 MB on disk**. Run it
+It's a light worker job (1 GB, 1 CPU). Valley-wide on Oct 11 it took **about 11 minutes** (670 s after review; the
+first run peaked at 474 MB): reading the cut took about 3.5 minutes, the roofs 3 and dissolving `covered` 4. It's
+**360 MB on disk**, so the two builds kept take about 0.7 GB. Run it
 through the scratch wrapper with the roofs' folder mounted (`--mount <folder>:/mnt/in:ro`). The map's tiles folder
 can't be mounted, so first copy `buildings.pmtiles`, and the tiles manifest's `buildings` entry as `buildings.json`,
 into a work folder.
@@ -377,17 +380,20 @@ for core, padded in grid.windows(grid.LEVELS["painter"], 2048, halo_m=20):
 P2 reads it at NAIP's own 0.6 m windows, `mask.covered(R.target_of(naip_path, window), m)`. Vectors are carried to
 any grid, so the 1–5 m buffers hold at any cell size.
 
-**What the valley's mask holds** (Oct 11, from the Oct 5 extract):
+**What the valley's mask holds** (build `20261011T144701Z`, Oct 11, from the Oct 5 extract):
 
 | Layer | Features | MB | Of which |
 |---|---|---|---|
 | `roofs` | 364,480 | 100 | |
 | `roads` | 167,071 | 109 | 71,957 walkways, 53,738 service ways, 26,955 streets, 8,607 major roads, 5,771 paved paths, 43 paved tracks |
-| `paving` | 2,457 | 1 | 2,163 parking lots, 294 highway areas |
-| `water` | 21,633 | 26 | 7,328 streams, 5,384 canals, 4,795 pools, 2,766 lakes, 645 ditches, 390 reservoirs, 165 rivers, 160 basins |
-| `covered` | 17,038 | 118 | 648,473 buffers dissolved in 6,005 blocks |
+| `paving` | 2,464 | 1 | 2,163 parking lots, 301 highway areas (22 of them relations, such as downtown's seven plazas, 1.6 ha) |
+| `water` | 18,647 | 22 | 7,328 streams, 2,398 canals, 4,795 pools, 2,766 lakes, 645 ditches, 390 reservoirs, 165 rivers, 160 basins; 5,849 of them intermittent (4,560 of those are NHD stream lines) |
+| `covered` | 20,057 | 127 | 653,511 buffers dissolved in 8,043 blocks |
 
 Kept as separate buffers with round corners, `covered` alone was 342 MB, and the whole mask 614 MB.
+
+The share of each box that `covered` keeps out of sampling, burned at 0.5 m: c (North End) 81%, downtown 69%, d 47%,
+b 33% (water 19%), e 18%, h 9%, a 4%, j 4%, i 2% and f 0.3%.
 
 ## The rasterising helper
 
