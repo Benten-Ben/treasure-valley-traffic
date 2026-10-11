@@ -43,7 +43,8 @@ Field notes, checked Oct 11, 2026 (3,932 records):
 Each run (monthly) stores the versions in raw.record (without OBJECTID and Shape__Length; the
 lengths rounded), the current state in roads.bike_facility, the notes, and then matches the street
 records to ACHD's road segments with core's line matcher under roads' rule
-(segment_match.METHODS["buffer15_bearing20"], loops off), into roads.bike_facility_match. The
+(segment_match.METHODS["buffer15_bearing20"], loops off), dropping matches whose street names
+disagree, into roads.bike_facility_match. The
 match reruns when the records change, and when ACHD's segments have changed since the last match
 (also from achd_roads' run, through segment_match.rematch_all). roads.segment_bike_xsection gives
 P7 each matched ACHD segment's cross-section in metres, forward and backward as the segment is drawn.
@@ -385,14 +386,25 @@ def heartbeat(conn, seen_at):
 
 # --- matching to ACHD's road segments --------------------------------------------------
 
+# Roads' bearing rule (a 15 m buffer, bearings within 20 degrees, closed lines failing), and then
+# the names: a match whose street names disagree is dropped (core's names_agree; names that can't
+# be compared, a route number facing a street name, stay). The widths are for one street, and on
+# Oct 11, 2026 the 150 disagreeing matches (of 8,478) were mostly another street's segments
+# alongside or at a junction: a frontage road beside State St, Overland Rd's at Cloverdale Rd,
+# Amity Rd's at Black Cat Rd. A few were ACHD's misspellings ('Tast St' for Taft St), lost with
+# them. The name check alone (check='name') isn't used: it also takes a same-named segment the
+# line crosses or a closed one (188 on Oct 11). ACHD writes '08th St' and '02nd St': the leading
+# zeros go before the names are compared.
 RULE = linematch.Rule(**segment_match.METHODS["buffer15_bearing20"], loops=False)
-LINES_SQL = """select 'achd_bike_network' as source, object_id::text as source_id, geom, street as name
+LINES_SQL = r"""select 'achd_bike_network' as source, object_id::text as source_id, geom,
+                      regexp_replace(street, '(^|\s)0+([1-9])', '\1\2', 'g') as name
                from roads.bike_facility where active and kind = 'street' and geom is not null"""
 
 
 def match(conn):
     """Rewrite roads.bike_facility_match from the street records (the caller commits)."""
     found = linematch.match(conn, LINES_SQL, segment_match.SEGMENTS_SQL, RULE)
+    kept = [m for m in found if linematch.names_agree(m["line_name"], m["target_name"]) is not False]
     conn.execute("delete from roads.bike_facility_match")
     with conn.cursor() as cur:
         cur.executemany(
@@ -400,11 +412,12 @@ def match(conn):
                  method, confidence, matched_at)
                values (%s, %s, %s, %s, %s, %s, %s, now())""",
             [(m["target_id"], int(m["source_id"]), round(m["overlap_m"], 1), round(min(m["share"], 1.0), 3),
-              m["bearing_diff"], m["method"], m["confidence"]) for m in found])
-    s = linematch.coverage(conn, found, segment_match.NEAR_NETWORK_M).get(SOURCE["name"], {})
+              m["bearing_diff"], m["method"], m["confidence"]) for m in kept])
+    s = linematch.coverage(conn, kept, segment_match.NEAR_NETWORK_M).get(SOURCE["name"], {})
     lines = s.get("lines", 0)
     return {"street records": lines, "matched": s.get("matched lines", 0), "matches": s.get("matches", 0),
             "ACHD segments": s.get("targets", 0), "matches on the line's share": s.get("matches on the line's share", 0),
+            "dropped: street names disagree": len(found) - len(kept),
             "unmatched near ACHD": s.get("unmatched near", 0), "unmatched away from ACHD": s.get("unmatched away", 0),
             "match rate": f"{100 * s.get('matched lines', 0) / lines:.1f}%" if lines else "-"}
 

@@ -82,7 +82,7 @@ def page():
                      "AdjLaneWidth": "N/A", "LaneCt": "N/A", "PavementEdge": "Curb No Gutter", "RightTurn": "N/A",
                      "Parking": "Parallel", "ParkingWidth": "8", "PavementMarkings": "N/A",
                      "BufferType": "N/A", "BufferWidth": "N/A"},
-               TotalLanes=2, TotalPavement=36.5, TotalROW=60.0, geometry=path((1000, 0), (1300, 0))),
+               TotalLanes=2, TotalPavement=36.5, TotalROW=60.0, Street="02nd St", geometry=path((1000, 0), (1300, 0))),
         # 3: a pathway, 4: a road not built yet, 5: not field-checked (no sides), with odd words.
         record(3, FuncClass="Pathway", Street="Pathway ", ExistingType="Pathway", TotalPavement=None, TotalROW=None,
                TotalLanes=None, FieldVerified="N/A", LTS=1, geometry=path((4000, 10), (4000, 290))),
@@ -393,17 +393,18 @@ class StoreTest(unittest.TestCase):
         """Stand-ins for ACHD segments along the synthetic records (ids returned by name)."""
         c = self.conn
         ids = {}
-        for key, (one_way, pts) in {
-                "north": ("both", [(0, 0), (0, 150)]),          # along record 1, drawn northward
-                "south": ("both", [(0, 300), (0, 150)]),        # along record 1, drawn southward
-                "east1": ("forward", [(1000, 0), (1300, 0)]),   # record 2, one-way, drawn with the traffic
-                "path": ("both", [(4005, 50), (4005, 250)]),    # a road beside record 3, the pathway
-                "far": ("both", [(9000, 0), (9000, 300)])}.items():
+        for key, (name, one_way, pts) in {
+                "north": ("N Sample 1 Rd", "both", [(0, 0), (0, 150)]),      # along record 1, drawn northward
+                "south": ("S Sample 1 Rd", "both", [(0, 300), (0, 150)]),    # along record 1, drawn southward
+                "east1": ("E 2nd St", "forward", [(1000, 0), (1300, 0)]),    # record 2 ('02nd St'), one-way
+                "frontage": ("W Frontage St", "both", [(3008, 0), (3008, 300)]),   # 8 m beside record 5
+                "path": ("N Sample 3 Rd", "both", [(4005, 50), (4005, 250)]),    # a road beside the pathway
+                "far": ("N Far Rd", "both", [(9000, 0), (9000, 300)])}.items():
             wkt = "LINESTRING(" + ", ".join(f"{X0 + x} {Y0 + y}" for x, y in pts) + ")"
             ids[key] = c.execute(
                 """insert into core.road_segment (achd_perm_id, name, one_way, geom)
                    values (%s, %s, %s, ST_Multi(ST_Transform(ST_GeomFromText(%s, 32611), 4326))) returning id""",
-                (-990300 - len(ids), f"Sample {key}", one_way, wkt)).fetchone()[0]
+                (-990300 - len(ids), name, one_way, wkt)).fetchone()[0]
         return ids
 
     def test_match_and_the_cross_section_view(self):
@@ -414,7 +415,9 @@ class StoreTest(unittest.TestCase):
         with mock.patch.object(segment_match, "SEGMENTS_SQL",
                                "select id, name, geom from core.road_segment where achd_perm_id between -990399 and -990300"):
             stats = bn.match(c)
-        self.assertEqual((stats["street records"], stats["matched"]), (3, 2))   # 5 has no ACHD segment near
+        # 5 lies along another street only: its names disagree, so it isn't matched.
+        self.assertEqual((stats["street records"], stats["matched"], stats["dropped: street names disagree"]),
+                         (3, 2, 1))
         rows = dict(c.execute("select road_segment_id, object_id from roads.bike_facility_match").fetchall())
         self.assertEqual(rows, {ids["north"]: 1, ids["south"]: 1, ids["east1"]: 2})   # never the pathway
         x = {r[0]: r for r in c.execute(
