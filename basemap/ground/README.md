@@ -98,7 +98,7 @@ an optional `-suffix`. The ground and the base bake read exports only through `m
 
 The manifest's `plugin` must be its folder's (`<archive>/<plugin>/export/<build>`). The ground reads only the
 plugins and products it uses (`inputs.exports()`), so a broken export of another plugin can't hold it up. The bake
-reads every plugin's newest manifest and checks the files of the base layers only; a broken newest manifest anywhere
+reads the newest manifests that hold a base layer and checks only the base layers' files; one of those that's broken
 refuses it, rather than dropping a layer from the map ([`../landscape/`](../landscape/README.md#switching-in)).
 
 Exports are **vectors** (FlatGeobuf, in EPSG:32611). Everything that rasterises lives here, in `basemap/ground/`.

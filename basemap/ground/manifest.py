@@ -596,8 +596,8 @@ def latest(archive, plugin, verify=True, hashes=True, registry=None):
 
 def find(archive, verify=True, hashes=True, registry=None):
     """Every plugin's newest export under the archive, every file checked: {plugin: Manifest}. The ground reads only
-    its own inputs (inputs.exports()), and the base bake every plugin's newest manifest with only its base layers'
-    files checked (basemap/landscape/plan.py's exports() and resolve())."""
+    its own inputs (inputs.exports()), and the base bake only the newest exports with a base layer, checking only
+    those layers' files (basemap/landscape/plan.py's exports() and resolve())."""
     out = {}
     if not os.path.isdir(archive):
         return out

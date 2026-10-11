@@ -173,22 +173,47 @@ def plugin_visibility(folders=None):
         raise BakeError(f"can't read the plugins' manifests ({err})") from None
 
 
+class Exports(dict):
+    """{plugin: Manifest} of the exports the bake reads, with `skipped`: [(plugin, why)] for those it doesn't."""
+
+    def __init__(self):
+        super().__init__()
+        self.skipped = []
+
+
+def names_no_base(folder):
+    """Whether an export's manifest plainly holds no base layer: it parses, and every layer says "base": false.
+    Anything else (a base layer, or a manifest that isn't plain) is read and checked in full."""
+    try:
+        with open(os.path.join(folder, M.FILE), encoding="utf-8") as f:
+            m = json.load(f)
+    except (OSError, ValueError):
+        return False
+    layers = m.get("layers") if isinstance(m, dict) else None
+    return (isinstance(layers, list) and bool(layers)
+            and all(isinstance(lay, dict) and lay.get("base") is False for lay in layers))
+
+
 def exports(archive, registry=None):
-    """Every plugin's newest export under the archive, its manifest checked but its files not yet: {plugin:
-    Manifest}. The ground's own products (mask v0, the box classes) are the ground's, never baked, and aren't read.
-    A newest export that fails its checks raises ManifestError (the bake can't tell what it would hold); raises
-    BakeError when the archive folder is missing."""
+    """The newest export of each plugin that has a base layer, its manifest checked but its files not yet: an
+    Exports ({plugin: Manifest}, with .skipped). An export whose manifest plainly holds no base layer isn't the bake's
+    business and isn't checked, so a broken or private-sourced export of another plugin can't hold the bake up; any
+    other newest manifest that fails its checks raises ManifestError (the bake can't tell what it would hold). The
+    ground's own products (mask v0, the box classes) are never read. Raises BakeError when the archive folder is
+    missing."""
     if not archive or not os.path.isdir(archive):
         raise BakeError(f"no archive folder at {archive!r} (give --archive or set TVT_ARCHIVE)")
-    out = {}
+    out = Exports()
     for plugin in sorted(os.listdir(archive)):
         if plugin in ground_inputs.PRODUCTS or not plugin.isidentifier():
             continue
-        if not os.path.isdir(os.path.join(archive, plugin, "export")):
+        builds = M.builds(archive, plugin)
+        if not builds:
             continue
-        m = M.latest(archive, plugin, verify=False, registry=registry)
-        if m is not None:
-            out[plugin] = m
+        if names_no_base(M.export_dir(archive, plugin, builds[-1])):
+            out.skipped.append((plugin, f"{plugin}@{builds[-1]} has no base layer"))
+            continue
+        out[plugin] = M.latest(archive, plugin, verify=False, registry=registry)
     return out
 
 
@@ -223,7 +248,7 @@ def resolve(manifests, visibility=None, verify=True, hashes=True):
     """The bake's plan from exports(): each export's base layers, checked (check_base) and, with verify, their files
     against their manifests (size, sha256, header). visibility: {plugin: 'public' | 'private'}
     (plugin_visibility() when None and there's a base layer). Raises BakeError or ManifestError."""
-    plan = Plan()
+    plan = Plan(skipped=list(getattr(manifests, "skipped", [])))
     for plugin in sorted(manifests):
         m = manifests[plugin]
         base = [lay for lay in m.layers if lay["base"]]

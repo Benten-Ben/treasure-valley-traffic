@@ -128,9 +128,11 @@ source-layer as not built (its `suppresses` only applies once it's built).
 
 ## Switching in
 
-1. Each plugin's newest export is read. Manifests are checked, and the base layers' files with their sha256. A broken
-   newest export anywhere refuses the bake, rather than dropping a contribution from the map. Files of layers the bake
-   doesn't read are left alone.
+1. Each plugin's newest export is read. A manifest that plainly holds no base layer (it parses, and every layer says
+   `"base": false`) isn't the bake's business and isn't checked, so a broken export of another plugin, or one naming
+   a private plugin's source the bake's container can't see, doesn't hold it up. Every other manifest is checked in
+   full, and its base layers' files with their sha256: one that fails refuses the bake, rather than dropping a
+   contribution from the map.
 2. GDAL writes the tiles in a work folder. Each feature is checked as it's copied: its id, its geometry, its zoom.
    The bake also checks that the file holds as many features as the manifest says.
 3. The file is read back: gzipped MVT at z8–16, the source-layers expected, and GDAL opens it. Then it's measured

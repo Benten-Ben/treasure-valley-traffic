@@ -157,6 +157,28 @@ class ResolveTest(unittest.TestCase):
             f.write("{broken")                                    # the bake doesn't even open it
         self.assertEqual(P.exports(self.archive), {})
 
+    def test_exports_without_a_base_layer_are_not_the_bakes(self):
+        write_water(self.archive)
+        # trees' export names a source no plugin.json here lists (a private plugin's, say): not read, so no matter.
+        folder = os.path.join(self.archive, "trees", "export", "20261012T031500Z")
+        write_export(self.archive, "trees", [fgb_layer("crowns", ["osm"])], [OSM])
+        with open(os.path.join(folder, "manifest.json"), encoding="utf-8") as f:
+            m = json.load(f)
+        m["inputs"][0]["source"] = "city_trees/inventory"
+        with open(os.path.join(folder, "manifest.json"), "w", encoding="utf-8") as f:
+            json.dump(m, f)
+        with self.assertRaises(M.ManifestError):
+            M.read(folder)
+        p = self.plan()
+        self.assertEqual([b.id for b in p.bases], ["water.reaches"])
+        self.assertEqual(p.skipped, [("trees", "trees@20261012T031500Z has no base layer")])
+        # ... but a manifest that isn't plain is read in full, and refuses the bake.
+        for broken in ("{not json", json.dumps(dict(m, layers=[dict(m["layers"][0], base="no")]))):
+            with open(os.path.join(folder, "manifest.json"), "w", encoding="utf-8") as f:
+                f.write(broken)
+            with self.assertRaises(M.ManifestError):
+                self.plan()
+
     def test_files_checked_only_for_base_layers(self):
         m = write_water(self.archive)
         with open(m.layer("mask").path, "ab") as f:               # a broken non-base file: not the bake's
