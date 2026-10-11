@@ -48,9 +48,10 @@ from the land-cover spike's experiments on the ten test areas (Oct 8).
   - **The photo** is moved onto the lidar by a shift measured on the area (where its green best meets the lidar's
     trees), and read in the lidar's frame: NAIP's NAD83 and the lidar's NAD83(2011) differ by well under a metre
     here, which the shift takes up, and doing it properly needs grids PROJ would fetch.
-  - **Crops** come from farm's fields (decision 15, Oct 8); until they are built, from CSB 2025's crop fields (CDL
-    codes 1-61, 66-77 and 204-254; plan C7). A clump with half its cells or more in a crop field is a crop. The
-    spike's own crop-field rule runs as a check: `crop_check` in `build.json` says how its fields and farm's agree.
+  - **Crops** come from farm's crop cover (decision 15, Oct 8: its export's `crop_cover.tif`, band 1 the crop group;
+    `--crop` also takes a vector of crop fields). A clump with half its cells or more in it is a crop. The credits in
+    the export's manifest join the build's. The spike's own crop-field rule runs as a check: `crop_check` in
+    `build.json` says how its fields and farm's agree, and `rule_shrubs` how many shrubs stand in its fields.
   - **Overlapping areas**: `--skip-rect` leaves another area's part out (downtown's box overlaps the North End's).
   - A stopped build picks up where it was: the point cloud's finished chunks are kept in the build folder's `work/`.
 - `python3 -m ingest shrubs-load --build DIR` loads a build: the area's shrubs are replaced, the build recorded.
@@ -63,8 +64,9 @@ from the land-cover spike's experiments on the ten test areas (Oct 8).
   (each build: its outline `geom`, `params` and `counts`) and the view `trees.shrub_area` (each area's current build,
   outline and shrub count: where shrubs are built).
 
-Licence: our own data, from public inputs only (USGS 3DEP lidar, USDA NAIP, USDA NASS CSB and CDL): republishable,
-credited to the U.S. Geological Survey's 3D Elevation Program and USDA NAIP. Nothing here reads a tree catalogue.
+Licence: our own data, from public inputs only (USGS 3DEP lidar, USDA NAIP, and farm's crop cover: USDA NASS CSB and
+CDL, and Sentinel-2): republishable, credited to the U.S. Geological Survey's 3D Elevation Program and USDA NAIP, plus
+the crop cover's credits (each build's `params.credit`). Nothing here reads a tree catalogue.
 
 ## Tests
 

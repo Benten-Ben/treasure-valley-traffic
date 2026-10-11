@@ -471,12 +471,11 @@ chunk so any area fits in memory) and the summer photo, and
 `shrubs-load` loads what it writes. Three things the experiments left
 open:
 
-- **Crops** come from farm's fields, as the landscape's crop class does
-  (decision 15, Oct 8): a clump with half its cells or more in a crop
-  field is a crop, not shrubs. Until farm's fields are built, the crop
-  fields of USDA's 2025 Crop Sequence Boundaries stand in. The spike's own
-  crop rule (the even, all-green, low 25 m blocks) runs beside it as a
-  check, and each build says how the two agree.
+- **Crops** come from farm's crop cover, as the landscape's crop class
+  does (decision 15, Oct 8: crops in any state; pasture isn't crop): a
+  clump with half its cells or more in it is a crop, not shrubs. The
+  spike's own crop rule (the even, all-green, low 25 m blocks) runs beside
+  it as a check, and each build says how the two agree.
 - **The photo** sits a little off the lidar, by a shift each build
   measures where the photo's green best meets the lidar's trees (up to 6 m
   each way, in whole 0.5 m cells; none where trees are too few to tell).
@@ -489,7 +488,7 @@ open:
   part out of its shrubs and its outline.
 
 **The ten boxes** (whole boxes, about 2.1 km² each, Oct 11, on the
-scratch database): 343,700 shrubs in 2,239 ha, built in 53 minutes as ten
+scratch database): 343,530 shrubs in 2,239 ha, built in 53 minutes as ten
 heavy jobs (2-12 minutes each, about 2 GB at most). The areas' own green
 cuts came out within 0.01 of the spike's (0.04 in the deserts to 0.22 at
 Bogus Basin), and the measured photo shifts match the spike's where trees
@@ -502,23 +501,24 @@ Bogus Basin, where the central square has fewer shrubs than the box:
 |---|---|---|---|---|---|
 | Dry Creek foothills | 88,291 | 412 | 50% | 0.9 m | 575 |
 | Bogus Basin | 122,135 | 571 | 97% | 0.9 m | 228 |
-| Barber Pool | 40,014 | 196 | 58% | 1.3 m | 291 |
+| Barber Pool | 39,998 | 196 | 58% | 1.3 m | 291 |
 | Silver City | 34,771 | 163 | 69% | 1.3 m | 127 |
 | Downtown (less the North End's part) | 23,079 | 70 | 62% | 1.3 m | 45 |
-| South Meridian | 14,005 | 66 | 84% | 1.4 m | 42 |
+| South Meridian | 13,916 | 65 | 84% | 1.4 m | 42 |
 | North End | 11,951 | 56 | 75% | 1.6 m | 45 |
-| NY Canal farmland | 5,177 | 25 | 89% | 0.7 m | 7 |
+| NY Canal farmland | 5,112 | 24 | 89% | 0.8 m | 7 |
 | Owyhee front | 3,012 | 14 | 55% | 1.0 m | 15-17 |
 | Initial Point desert | 1,265 | 6 | 75% | 0.6 m | 15-17 |
 
-**The crop check.** In the NY Canal box the crop fields took 20,020
+**The crop check.** In the NY Canal box the crop cover took 19,362
 clumps (21 ha of shrub cells). The spike's rule found 267 field blocks
-there, and 97% of its fields lie in CSB's crop fields, as in the spike.
-1,393 shrubs still stand in its fields, in clumps that lie mostly outside
-CSB's crop fields (whose edges can be 5-15 m off). Over whole boxes the
-rule also fires where there are no farm fields: 2 blocks at Barber Pool
-(813 shrubs) and 5 at Bogus Basin (3,363 shrubs), even, green and low,
-not yet looked at in the photo. They stay shrubs while the rule is only
+there, and 95% of its fields lie in the crop cover (the spike: 97.5% of
+its crop cells in CSB's crop fields). 395 shrubs still stand in its
+fields, in clumps that lie mostly outside the crop cover. (With CSB's
+fields alone, before farm's crop cover was built, 1,393 did.) Over whole
+boxes the rule also fires where farm sees no crops: 2 blocks at Barber
+Pool (812 shrubs) and 5 at Bogus Basin (3,363 shrubs), even, green and
+low, not yet looked at in the photo. They stay shrubs while the rule is only
 a check; whether they should go is for the owner's look at the sheets.
 
 **The hedge check** (plan C14). OpenStreetMap maps 28 hedges in Idaho; 8

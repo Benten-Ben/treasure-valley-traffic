@@ -1,6 +1,6 @@
 -- Shrubs (docs/19 §19.8): woody plants 0.3-2.4 m tall found in the lidar, one row per shrub, from the same lidar
 -- products as the trees plus the summer photo's near-infrared. Our own data, from public sources only (USGS 3DEP lidar,
--- USDA NAIP; crop fields from farm, or USDA's CSB until farm's are built): nothing here comes from a tree catalogue.
+-- USDA NAIP; farm's crop cover to leave crops alone): nothing here comes from a tree catalogue.
 
 -- One build of one area: where it looked (its lidar, less any part left to another area), its settings and counts
 -- (the crop check, the score). Builds stay as the area's history; an area's newest loaded build is its current one.
