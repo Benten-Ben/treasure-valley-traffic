@@ -22,9 +22,12 @@ dict (or JSON) with these keys:
 - `dates`: {"start": ..., "end": ...}, a one-off window. A date is a local
   day, its whole day included ("2026-04-06" to "2026-10-15"); a date and
   time is a moment ("2026-04-06T10:15" in Boise time, or with Z or an
-  offset), the end excluded. Either end may be left out (open). On a rule
-  that also recurs, it bounds the recurrence: occurrences are cut at its
-  ends. Python dates and datetimes work too (naive is Boise time).
+  offset), the end excluded. Only those two ISO forms are read, so a
+  compact "20261015" or a week date is refused rather than quietly read as
+  a midnight. Either end may be left out (open). Python dates and datetimes
+  work too (naive is Boise time). On a rule that also recurs, the dates
+  say which occurrences happen, by when they start: an occurrence counts,
+  whole, when it starts within them (see RFC 5545 below).
 - `yearly`: {"start": "MM-DD", "end": "MM-DD"}, every year from the start
   day through the end day. An end before the start wraps past New Year
   ("11-16" to "04-30"). A window that starts or ends on Feb 29 simply has
@@ -51,7 +54,14 @@ BYDAY, `monthdays` BYMONTHDAY, `hours` an occurrence's start time and
 duration, and `dates` DTSTART and UNTIL. As in RFC 5545, an occurrence
 starts on a day that passes every filter (the yearly window, the weekdays,
 the monthdays) and runs for its hours, so "FR 22:00-02:00" covers early
-Saturday and "Oct 31, 22:00-02:00" covers early Nov 1.
+Saturday and "Oct 31, 22:00-02:00" covers early Nov 1. The dates, like
+DTSTART and UNTIL, bound when occurrences start and never cut one short:
+nightly 22:00-02:00 with dates "2026-06-20" to "2026-06-26" runs from the
+night of June 20 (not the early hours of June 20, which belong to the
+night before) through the night of June 26, to 02:00 on June 27, as the
+last day of a yearly window does. An occurrence that starts before a
+dates start given as a moment doesn't count at all; to start or stop
+part-way through one, add a stronger rule for that stretch.
 
 **Time.** Everything is evaluated in America/Boise. A local time that a
 daylight-saving change skips or repeats is read with the offset in force
@@ -87,6 +97,10 @@ DAY = 24 * 60
 _MONTH_DAY = re.compile(r"^(\d{2})-(\d{2})$")
 _CLOCK = re.compile(r"^(\d{2}):(\d{2})$")
 _DAY_ONLY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+# A date and time in ISO 8601's extended form only: Python reads '20260407' and '2026-W15-1'
+# as midnight moments too, which would quietly drop an end day. No hour 24 either, which
+# Python 3.14 reads as the next midnight and 3.12 refuses.
+_DATE_TIME = re.compile(r"^\d{4}-\d{2}-\d{2}[T ]([01]\d|2[0-3]):\d{2}(:\d{2}(\.\d{1,6})?)?(Z|[+-]\d{2}:\d{2})?$")
 _MONTH_LENGTHS = (31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31)    # Feb 29 is a valid yearly day
 
 
@@ -148,16 +162,22 @@ def _local(day, minutes=0):
 def moment(value, end=False):
     """A moment as a UTC datetime, from a datetime (naive is Boise time), a date (its local
     midnight; with end=True the midnight after, so the day is included) or ISO text of
-    either ('2026-04-06', '2026-04-06T10:15', '2026-04-06T16:15Z')."""
+    either: 'YYYY-MM-DD', or a date and time with T or a space, minutes, and optionally
+    seconds and Z or an offset ('2026-04-06T10:15', '2026-04-06 16:15:30Z',
+    '2026-04-06T10:15-06:00'). Other ISO forms ('20260406', '2026-W15-1', '2026-04-06T10',
+    hour 24) are refused."""
     if isinstance(value, str):
         text = value.strip()
-        if _DAY_ONLY.match(text):
-            value = date.fromisoformat(text)
-        else:
-            try:
+        try:
+            if _DAY_ONLY.match(text):
+                value = date.fromisoformat(text)
+            elif _DATE_TIME.match(text):
                 value = datetime.fromisoformat(text[:-1] + "+00:00" if text.endswith("Z") else text)
-            except ValueError:
-                raise ValueError(f"not a date or a date and time: {value!r}") from None
+            else:
+                raise ValueError
+        except ValueError:
+            raise ValueError(f"not a date (YYYY-MM-DD) or a date and time (YYYY-MM-DDTHH:MM, then optionally "
+                             f":SS and Z or an offset): {value!r}") from None
     if isinstance(value, datetime):
         if value.tzinfo is None:
             value = value.replace(tzinfo=TZ)
@@ -289,25 +309,35 @@ def _clip(a, b, lo, hi):
     return (a, b) if a < b else None
 
 
+def _starts_within(r, t):
+    return (r.start is None or r.start <= t) and (r.end is None or t < r.end)
+
+
 def intervals(r, start, end):
     """The UTC intervals in [start, end) when one rule (a Rule or its dict) is in force,
-    in order, with adjacent occurrences left separate. start and end are anything
-    moment() reads."""
+    in order, with adjacent occurrences left separate and cut only at start and end.
+    start and end are anything moment() reads."""
     r = rule(r)
-    whole = _clip(moment(start), moment(end), r.start, r.end)
-    if whole is None:
-        return []
+    lo, hi = moment(start), moment(end)
     if not r.recurs:
-        return [whole]
-    lo, hi = whole
-    # An occurrence can start up to a day (plus its hours) before it shows.
+        whole = _clip(lo, hi, r.start, r.end)
+        return [] if whole is None else [whole]
+    if hi <= lo:
+        return []
+    # An occurrence can start up to a day (plus its hours) before it shows; none starts
+    # on a local day before the dates' start day or after their end day.
     span_days = (r.hours[1] // DAY + 1) if r.hours is not None else 1
     day = lo.astimezone(TZ).date() - timedelta(days=span_days)
     last = hi.astimezone(TZ).date()
+    if r.start is not None:
+        day = max(day, r.start.astimezone(TZ).date())
+    if r.end is not None:
+        last = min(last, r.end.astimezone(TZ).date())
     out = []
     while day <= last:
         if _day_passes(r, day):
-            got = _clip(*_occurrence(r, day), lo, hi)
+            a, b = _occurrence(r, day)
+            got = _clip(a, b, lo, hi) if _starts_within(r, a) else None
             if got:
                 out.append(got)
         day += timedelta(days=1)

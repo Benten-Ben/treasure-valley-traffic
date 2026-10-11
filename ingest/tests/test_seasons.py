@@ -78,8 +78,12 @@ class InputTest(unittest.TestCase):
         self.assertEqual(S.moment(datetime(2026, 1, 4, 10, 15)), datetime(2026, 1, 4, 17, 15, tzinfo=utc))
         self.assertEqual(S.moment(datetime(2026, 1, 4, 10, 15, tzinfo=utc)), datetime(2026, 1, 4, 10, 15, tzinfo=utc))
         self.assertEqual(S.moment("2026-01-04T10:15", end=True), S.moment("2026-01-04T10:15"))   # a moment is a moment
-        with self.assertRaises(ValueError):
-            S.moment("Jan 4")
+        self.assertEqual(S.moment("2026-01-04 10:15:30.5-07:00"), datetime(2026, 1, 4, 17, 15, 30, 500000, tzinfo=utc))
+        for text in ("Jan 4", "20260104", "2026-W01-7", "2026-01-04T10", "2026-01-04T1015", "20260104T101500",
+                     "2026-01-04T10:15+0700", "2026-1-4", "2026-13-01", "2026-01-04T25:00",
+                     "2026-01-04T24:00"):
+            with self.subTest(text), self.assertRaisesRegex(ValueError, "not a date"):
+                S.moment(text)
         with self.assertRaises(TypeError):
             S.moment(20260104)
 
