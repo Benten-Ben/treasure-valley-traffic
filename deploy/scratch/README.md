@@ -22,8 +22,9 @@ runbook, and its loads run as `tvt_build` too.
   so it writes little: `wal_level=minimal`, `synchronous_commit=off`.
   Timescale's telemetry is off.
 - Network `tvt-scratch`, **internal**: no host port, and the database can't
-  reach out. Production's database is on the Compose network, which the scratch
-  network can't reach.
+  reach out. Jobs also join `tvt-scratch-out`, a plain bridge network of their
+  own, for downloads. Production's database is only on the Compose network,
+  which neither reaches: a scratch job can't even resolve its name.
 - Volume `tvt-scratch-db-data`; database `tvt`, about 0.7 GB.
 - Secrets: random passwords made by `setup.sh` in
   `/srv/tvt/work/scratch/secrets/` (mode 600), never shown.
@@ -87,9 +88,10 @@ mounted.
 **Light or heavy.** Light caps are 2 GB and 2 CPUs for `ingest` and `python`,
 1 GB and 1 CPU for `worker` (plan §4.1: worker jobs over 1 GB or 1 CPU are
 heavy). Over them a job is **heavy**: it needs `--heavy '<who and what>'
---deadline HH:MM --runtime MIN [--peak-gb N]`, waits for
-`/srv/tvt/work/heavy.lock` (through `/srv/tvt/work/bin/heavy`), and is stopped
-at its deadline.
+--deadline HH:MM --runtime MIN [--peak-gb N]`, and runs under F7's
+`/srv/tvt/work/bin/heavy` (`--deadline --runtime --peak`): it waits for
+`heavy.lock` (60 minutes at most), and `heavy` stops it and its container at
+the deadline.
 
 **The rules `run.sh` applies** (plan §4.4 and the lead's wave-1 rule):
 
@@ -160,7 +162,7 @@ run` has no memory cap option, so it's a plain `docker run` of the deployed
 ingest image on the Compose network:
 
 ```bash
-/srv/tvt/work/bin/heavy "<load> (deploy)" \
+/srv/tvt/work/bin/heavy --deadline HH:MM --runtime MIN --peak 0 "<load> (deploy)" \
   docker run --rm --memory 2g --memory-swap 2g --cpus 2 --network tvt_default \
     --env-file /srv/tvt/private/secrets/tvt_build.env \
     -e TVT_ARCHIVE=/srv/archive -v /srv/tvt/archive:/srv/archive \
@@ -175,7 +177,8 @@ docker exec -i tvt-db-1 psql -X -v ON_ERROR_STOP=1 -U tvt -d tvt -f - < /srv/tvt
 
 ## Refreshing
 
-By hand, under the heavy lock, in a day window or overnight once the camera
+By hand, under the heavy lock (it runs itself under `heavy --deadline
+--runtime --peak 3 --cold 1`), in a day window or overnight once the camera
 roll-up has finished:
 
 ```bash

@@ -137,7 +137,10 @@ check_rules
 if [ $heavy_job = 1 ] && [ -z "${SCRATCH_IN_HEAVY:-}" ]; then
 	[ -x "$HEAVY" ] || die "no $HEAVY"
 	say "heavy job '$label': waiting for $WORK/heavy.lock if it's busy"
-	exec "$HEAVY" -w 60 "$label (scratch $name)" env SCRATCH_IN_HEAVY=1 "$0" "${ARGV[@]}"
+	# heavy (F7) checks the window, the disk and a planned restart, waits for the lock, and stops
+	# the job and its labelled containers at the deadline.
+	exec "$HEAVY" --deadline "$deadline" --runtime "$runtime" --peak "$peak" -w 60 "$label (scratch $name)" \
+		env SCRATCH_IN_HEAVY=1 "$0" "${ARGV[@]}"
 fi
 [ -n "${SCRATCH_IN_HEAVY:-}" ] && check_rules       # time may have passed while it waited
 
@@ -185,7 +188,7 @@ echo "$name $mode (pid $$, since $(boise '+%F %T'))" > "$SCRATCH_ROOT/slots/$slo
 # holds more than 1 GB (quiet hours: the camera roll-up starts at 00:05).
 now=$(date +%s)
 if [ $heavy_job = 1 ]; then
-	stop_at=$(timeq deadline "$deadline")
+	stop_at=${HEAVY_DEADLINE_EPOCH:-$(timeq deadline "$deadline")}
 else
 	stop_at=$((now + limit * 60))
 	if [ "$mem_mb" -gt 1024 ] && ! quiet; then
@@ -208,6 +211,7 @@ args=(run --rm --init --name "$ctr" --label tvt.scratch=job --label "tvt.scratch
 	-v "$tree":/repo -v "$SCRATCH_ROOT/archive":/srv/archive -v "$PROD_ARCHIVE":/srv/archive-prod:ro
 	-v "$WORK/sources":/srv/sources:ro -w /repo)
 [ $offline = 1 ] || args+=(--network "$SCRATCH_OUT_NET")
+[ -n "${HEAVY_LABEL:-}" ] && args+=(--label "$HEAVY_LABEL")       # so heavy's deadline stops it too
 if [ -n "$COLD_MOUNT" ] && [ -n "$COLD_MARKER" ] && [ -e "$COLD_MARKER" ]; then
 	args+=(-v "$COLD_MOUNT:$COLD_MOUNT:ro" -e "TVT_COLD=$COLD_MOUNT")
 fi

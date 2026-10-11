@@ -70,7 +70,10 @@ check() {
 check
 if [ -z "${SCRATCH_IN_HEAVY:-}" ]; then
 	say "waiting for $WORK/heavy.lock if it's busy"
-	exec "$HEAVY" -w 60 "scratch refresh (F6, $db)" env SCRATCH_IN_HEAVY=1 "$0" "${ARGV[@]}"
+	# heavy (F7) checks the window and the disk again, waits for the lock, and stops this
+	# script (SIGTERM: it ends our database sessions) at the deadline.
+	exec "$HEAVY" --deadline "$deadline" --runtime "$runtime" --peak 3 --cold "$( [ -n "$from" ] && echo 0 || echo 1 )" -w 60 \
+		"scratch refresh (F6, $db)" env SCRATCH_IN_HEAVY=1 "$0" "${ARGV[@]}"
 fi
 check
 [ "$(docker inspect -f '{{.State.Running}}' "$SCRATCH_DB" 2>/dev/null)" = true ] || die "the scratch database isn't running (setup.sh)"
@@ -91,7 +94,7 @@ fi
 
 # The deadline: a watchdog ends our sessions on both servers (so the clients inside the
 # containers stop too), then this script.
-stop_at=$(timeq deadline "$deadline")
+stop_at=${HEAVY_DEADLINE_EPOCH:-$(timeq deadline "$deadline")}
 cancel() {
 	local q="select count(pg_terminate_backend(pid)) from pg_stat_activity where application_name = '$APP' and pid <> pg_backend_pid()"
 	docker exec "$PROD_DB_CONTAINER" psql -X -U tvt -d postgres -Atc "$q" >/dev/null 2>&1 || true
