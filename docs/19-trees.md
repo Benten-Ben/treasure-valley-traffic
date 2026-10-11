@@ -50,10 +50,10 @@ How wide a crown can be for its height and type, and the shape of its top.
   the owner's labelled trees the width fit's narrow and conifer calls were
   mostly wrong. So whether a placed tree is narrow comes from how fast its
   crown falls away from its top (the narrow rule, §19.3), and whether it is
-  a conifer from a spring Sentinel-2 image where that can tell (over the
-  mountains' April snow, §19.3); the width curve sizes and shapes the
-  crown, and elsewhere for now still makes the conifer call (pending,
-  §19.3). In the mountains, narrow means conifer. In the valley it is its
+  a conifer from a spring Sentinel-2 image where that can tell and its
+  calls have been checked (over Bogus Basin's April snow so far, §19.3);
+  the width curve sizes and shapes the crown, and elsewhere for now still
+  makes the conifer call (pending, §19.3). In the mountains, narrow means conifer. In the valley it is its
   own type ("narrow": spruce, young street trees, poplars) unless a
   catalogue says otherwise. Only about 1% of the North End's street trees
   are conifers.
@@ -145,9 +145,9 @@ of a bigger tree and 6 not a tree. What that showed:
   and a lone mountain conifer up to about 16 m, so a lone yard spruce or an
   open-stand conifer below those heights isn't called narrow either: in the
   windows, 166 of the 3,418 trees with their own top of 8.3 m or more.
-  These trees are conifer where the spring image sees an evergreen crown
-  or, for now, where the conifer curve sized them, else broadleaf (the next
-  points). Letting the width fit's narrow call stand for crowns that
+  These trees are conifer where the spring image types them (Bogus Basin
+  so far) or, for now, where the conifer curve sized them, else broadleaf
+  (the next points). Letting the width fit's narrow call stand for crowns that
   end within 3 m was tried: on the labels it typed no more trees rightly
   and called two more conifers narrow, so it isn't used.
 - **Conifers from a spring image (Oct 11).** Evergreen crowns are green in
@@ -164,40 +164,69 @@ of a bigger tree and 6 not a tree. What that showed:
   conifers (NDVI 0.54), and 16 keep at least as much of their July
   greenness (69%); unmixing each cell's canopy share, from the lidar,
   didn't separate them either. Over snow it can: the ground reads white,
-  so only evergreen foliage is green. So a crown is a conifer when at
+  so only evergreen foliage is green. So a crown reads evergreen when at
   least half the clear April views within 50 m of it were snow, it is at
   least half a 10 m cell (50 m², so the cells' colour is mostly its own),
-  and its April NDVI is 0.2 or more, after the narrow rule. A crown that
-  reads dark over snow may still be a conifer (laden with snow, or a few
-  metres off the image's cells: two labelled conifers do), so the cue says
-  nothing about it. July's greenness is kept with each tree but doesn't
-  enter the call: over snow it added nothing on the labels.
+  and its April NDVI is 0.2 or more. Where the cue's calls have been
+  checked (below), that makes it a conifer, after the narrow rule. A crown
+  that reads dark over snow may still be a conifer (laden with snow, or a
+  few metres off the image's cells: two labelled conifers do), so the cue
+  says nothing about it. July's greenness is kept with each tree but
+  doesn't enter the call: over snow it added nothing on the labels.
 - **How well it does.** On the eight labelled areas (the placement
-  unchanged), the cue calls 9 of the 20 labelled conifers conifer, all
-  in Bogus Basin, and none of the 53 other real trees (one crown labelled
-  part of a bigger tree reads evergreen too); the build types 60 of the 73
-  real trees it finds rightly with the width fit's conifer call dropped
-  (51 before), 59 with it kept. It misses the 4 valley conifers (no snow,
-  and crowns of 12–40 m²), 5 small Bogus Basin conifers and the 2 dark
-  ones. These scores are in-sample, and the snow-only rule and the half-
-  cell floor were settled while looking at them. Choosing the NDVI floor
-  (0.1–0.3) and the crown floor (none to 79 m²) on 72 of the real labelled
-  trees and typing the one left out, in turn, gives the same 9 and none
-  wrong: a rough guide, because only 10 of the labelled trees that aren't
-  conifers stand in snow (all in Silver City, all under 50 m²). In the
-  windows the cue types 163 of Bogus Basin's 1,315 trees conifer and 103
-  of Silver City's 3,669, and none in the valley.
+  unchanged), the cue catches 9 of the 20 labelled conifers, all in Bogus
+  Basin; the build types 60 of the 73 real trees it finds rightly with the
+  width fit's conifer call dropped (51 before), 59 with it kept. It misses
+  the 4 valley conifers (no snow, and crowns of 12–40 m²), 5 small Bogus
+  Basin conifers and the 2 that read dark over snow. These scores are in-sample: the
+  snow-only rule and the half-cell floor were settled while looking at
+  them.
+- **Its false calls over snow are untested.** No labelled broadleaf or
+  narrow tree over snow has a crown of 50 m² or more: every real tree the
+  owner labelled in Bogus Basin is a conifer (from a draw that took the old
+  build's broadleaf and conifer calls alike), and Silver City's 5
+  broadleaf and 5 narrow trees are 8–36 m². So none of the 53 other real
+  trees could have been called conifer, and that none was (nor in a
+  leave-one-out over the two floors) says nothing about false calls. What
+  the Silver City labels do show is against the NDVI floor: over snow its
+  5 broadleaf trees read 0.055, 0.182, 0.199, 0.221 and 0.295, and the two
+  over 0.2 are as green as 4 of the 9 conifers caught in Bogus Basin
+  (0.201–0.246; the others 0.343–0.55). Only the crown floor kept them
+  out, and 47 of the 103 crowns
+  (not narrow) the cue sees evergreen in Silver City's window read
+  0.20–0.30 (Bogus Basin: 56 of 163). In the Owyhees some evergreen trees
+  aren't conifers (curl-leaf mountain mahogany keeps its leaves ⚠️).
+- **Where it types trees: Bogus Basin, for now (Oct 11).** The cue types
+  trees only in an area where its calls were checked against the owner's
+  labels (`SPRING_CHECKED_AREAS` in the build): so far Bogus Basin, where
+  its 10 calls among the labelled crowns were 9 conifers and one part of a
+  bigger tree. Even there a broadleaf crown green over the snow would be
+  called conifer, but none was labelled. In Silver City, and in any area
+  not yet checked, the cue is kept with each tree but types nothing, until
+  the owner labels a sample of that area's large crowns that read green
+  over the snow ([DECISIONS](DECISIONS.md#pending-owner-to-decide)). In the
+  windows it types 163 of Bogus Basin's 1,315 trees conifer; it sees 114
+  of Silver City's 3,669 evergreen but types none; and none in the valley.
 - **Where the spring image can't tell.** Anywhere without April snow,
   which in 2025 means the whole valley and the foothills below about the
   snow line; crowns under 50 m² (a lone tree under about 8 m wide); and
-  trees whose cells read dark over snow. In the Owyhees some evergreen
-  trees aren't conifers (curl-leaf mountain mahogany keeps its leaves ⚠️),
-  so a green crown in Silver City may be called a conifer wrongly; no
-  labelled tree tests it. Those trees are narrow, broadleaf, or conifer
-  where the conifer curve sized them (next point).
+  trees whose cells read dark over snow. Those trees are narrow,
+  broadleaf, or conifer where the conifer curve sized them (next points).
+- **In the mountains most trees stay broadleaf.** Over snow, a crown the
+  cue can't type falls back as a valley tree does. In Bogus Basin's window
+  it can tell for 337 of the 1,315 trees and sees 177 evergreen; 1,055
+  trees stay broadleaf without the width fit's conifer call and 980 with
+  it, though every real tree the owner labelled there is a conifer, and the
+  7 labelled conifers the cue misses stay broadleaf either way. A default
+  of "over snow, conifer unless the cue reads the crown dark" would catch
+  14 of Bogus Basin's 16 labelled conifers and type 1,087 of its window's
+  trees conifer, but it would also make all 5 of Silver City's labelled
+  broadleaf trees conifers (and 3,313 of that window's 3,669 trees). So it
+  would need checked areas too. Whether to have it, or more labels first,
+  is the owner's call ([DECISIONS](DECISIONS.md#pending-owner-to-decide)).
 - **The width fit's conifer call: pending (Oct 11).** Where the spring
-  cue can't tell, a placed tree the narrow rule doesn't call narrow keeps
-  the width fit's conifer call until the owner decides
+  cue doesn't type a tree, a placed tree the narrow rule doesn't call
+  narrow keeps the width fit's conifer call until the owner decides
   ([DECISIONS](DECISIONS.md#pending-owner-to-decide)). That call is weak:
   of the 14 labelled trees the Oct 8 build called conifer, one was (ten
   weren't trees of their own). It puts cones on 7–8% of the North End's
@@ -217,8 +246,9 @@ lidar-derived data:
   explains the surface, the width curve that sized it and its width
   against that curve's typical one, how its crown falls from its top, and
   its spring cue: its April and July NDVI, the April snow around it, its
-  crown area and whether it read evergreen; or how far it sits from its
-  trunk point), and the build it came from.
+  crown area, whether it read evergreen and whether the cue types trees in
+  its area; or how far it sits from its trunk point), and the build it
+  came from.
 - `trees.tree_log`: what we know about each tree over time, one entry per
   event: measured by the 2023 lidar, matched to the catalogue, placed with
   a fit, and later a 2005 Forest Service measurement or a removal seen in
