@@ -440,6 +440,37 @@ test.describe('layers', () => {
 		expect(roads.urls, 'road tiles fetched again by the toggles').toEqual([]);
 		test.info().annotations.push({ type: 'streets drawn again (ms after the click, SwiftShader)', description: drawnMs.join(', ') });
 
+		// Off with a road selected: hiding Streets closes the road's card, and the map's padding gives the card's
+		// column back with a jumpTo that keeps the picture still. That isn't a move, so the keeper holds on.
+		// Flat for this step, where that jump leaves every point where it was (§14.3 "Regions").
+		await page.evaluate(() => (globalThis as any).__tvt.map.jumpTo({ pitch: 0 }));
+		await mapReady(page);
+		const padRight = () => page.evaluate(() => (globalThis as any).__tvt.map.getPadding().right as number);
+		const road = await page.evaluate(() => {
+			const map = (globalThis as any).__tvt.map;
+			for (let y = 160; y <= 640; y += 40)
+				for (let x = 360; x <= 860; x += 20) if (map.queryRenderedFeatures([[x - 1, y - 1], [x + 1, y + 1]], { layers: ['streets-speed'] }).length) return { x, y };
+			return null;
+		});
+		expect(road, 'a road in the free middle').toBeTruthy();
+		await page.mouse.click(road!.x, road!.y);
+		await expect(page.getByRole('region', { name: 'Selected road' })).toBeVisible();
+		await expect.poll(padRight, { message: 'the padding takes the card\'s column' }).toBe(392);
+		await mapReady(page);
+		const afterCard = countRoadTiles(page);
+		await button.click();
+		await expect(button).toHaveAttribute('aria-pressed', 'false');
+		await expect(page.getByRole('region', { name: 'Selected road' })).toHaveCount(0);
+		await expect.poll(padRight, { message: 'and gives it back when the card closes' }).toBe(72);
+		expect.soft(await vis('streets-keep'), 'the card closing moved nothing: the keeper holds on').toBe('visible');
+		await button.click();
+		await mapReady(page);
+		expect(await streetsDrawn(page), 'drawn again after the card closed').toBeGreaterThan(0);
+		afterCard.stop();
+		expect(afterCard.urls, 'road tiles fetched again after the card closed').toEqual([]);
+		// (What the flat view fetched while Streets was on isn't the move's below.)
+		roads.urls.length = 0;
+
 		// Off, then a move: the keeper lets go, and the new view fetches no road tile while Streets is off.
 		await button.click();
 		await expect(button).toHaveAttribute('aria-pressed', 'false');

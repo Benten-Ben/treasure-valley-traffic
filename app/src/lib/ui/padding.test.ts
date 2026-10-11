@@ -1,5 +1,6 @@
+import type { Map, PaddingOptions } from 'maplibre-gl';
 import { describe, expect, it } from 'vitest';
-import { chromePadding, MIN_VISIBLE, paddedCentre, samePadding, WIDGET_COLUMN } from './padding.js';
+import { applyPadding, chromePadding, isPaddingMove, MIN_VISIBLE, paddedCentre, samePadding, WIDGET_COLUMN } from './padding.js';
 
 describe('the map padding follows the open columns (§14.3 "Regions")', () => {
 	it('desktop: the bars, the legend column, and the widget or the open inspect card', () => {
@@ -25,5 +26,33 @@ describe('the map padding follows the open columns (§14.3 "Regions")', () => {
 		expect(paddedCentre(1280, 800, { top: 76, right: 72, bottom: 104, left: 312 })).toEqual([760, 386]);
 		expect(samePadding({ top: 1, right: 2, bottom: 3, left: 4 }, { top: 1.2, right: 2, bottom: 3, left: 4 })).toBe(true);
 		expect(samePadding({ top: 1 }, { top: 2 })).toBe(false);
+	});
+
+	it('its own moves are tagged, so a listener can tell them from real ones (Streets\' keeper)', () => {
+		const events: unknown[] = [];
+		let padding: PaddingOptions = { top: 0, right: 0, bottom: 0, left: 0 };
+		const map = {
+			getPadding: () => padding,
+			setPadding: (p: PaddingOptions, e?: unknown) => {
+				padding = p;
+				events.push(e);
+			},
+			jumpTo: (o: { padding?: PaddingOptions }, e?: unknown) => {
+				if (o.padding) padding = o.padding;
+				events.push(e);
+			},
+			getContainer: () => ({ clientWidth: 1280, clientHeight: 800 }),
+			unproject: () => ({ lng: -116.2, lat: 43.6 })
+		} as unknown as Map;
+		const closed = chromePadding({ layout: 'desktop', width: 1280, height: 800, inspect: false });
+		const open = chromePadding({ layout: 'desktop', width: 1280, height: 800, inspect: true });
+		expect(applyPadding(map, closed)).toBe(true);
+		expect(applyPadding(map, closed)).toBe(false);
+		expect(applyPadding(map, open)).toBe(true);
+		expect(applyPadding(map, closed)).toBe(true);
+		expect(events).toHaveLength(3);
+		expect(events.every(isPaddingMove)).toBe(true);
+		expect(isPaddingMove({ type: 'movestart' })).toBe(false);
+		expect(isPaddingMove(undefined)).toBe(false);
 	});
 });

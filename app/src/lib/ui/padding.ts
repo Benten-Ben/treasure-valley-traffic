@@ -91,6 +91,21 @@ export function paddedCentre(width: number, height: number, p: PaddingOptions): 
 const padded = new WeakSet<Map>();
 
 /**
+ * Event data on the padding's own camera moves. MapLibre's `jumpTo` fires
+ * `movestart` and `moveend` even when the picture doesn't change, so a
+ * listener that lets something go when the view moves (Streets' keeper)
+ * checks for it and ignores these. A layer checks `tvtPadding` through this
+ * type (`import type`), so its chunk takes no code from the chrome's.
+ */
+export type PaddingMove = { readonly tvtPadding: true };
+export const PADDING_MOVE: PaddingMove = Object.freeze({ tvtPadding: true });
+
+/** Whether a map movement event came from `applyPadding`. */
+export function isPaddingMove(e: unknown): e is PaddingMove {
+	return typeof e === 'object' && e !== null && (e as Partial<PaddingMove>).tvtPadding === true;
+}
+
+/**
  * Give the map a padding.
  *
  * - The first time for a map, the centre stays the same place: a link's or
@@ -101,7 +116,8 @@ const padded = new WeakSet<Map>();
  *   sideways): the centre becomes the place now drawn where the new
  *   padding's centre is.
  *
- * Returns whether the padding changed.
+ * Its moves carry PADDING_MOVE, so a listener can tell them from real
+ * ones. Returns whether the padding changed.
  */
 export function applyPadding(map: Map, p: Padding): boolean {
 	const first = !padded.has(map);
@@ -109,13 +125,13 @@ export function applyPadding(map: Map, p: Padding): boolean {
 	const from = map.getPadding();
 	if (samePadding(from, p)) return false;
 	if (first) {
-		map.setPadding(p);
+		map.setPadding(p, PADDING_MOVE);
 		return true;
 	}
 	const el = map.getContainer();
 	const [x, y] = paddedCentre(el.clientWidth, el.clientHeight, p);
 	const at = map.unproject([x, y]);
-	if (!Number.isFinite(at.lng) || !Number.isFinite(at.lat)) map.setPadding(p);
-	else map.jumpTo({ center: at, padding: p });
+	if (!Number.isFinite(at.lng) || !Number.isFinite(at.lat)) map.setPadding(p, PADDING_MOVE);
+	else map.jumpTo({ center: at, padding: p }, PADDING_MOVE);
 	return true;
 }

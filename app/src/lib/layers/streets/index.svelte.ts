@@ -3,6 +3,7 @@ import { untrack } from 'svelte';
 import { MapScope } from '#lib/app/cleanup.js';
 import type { AppCtx } from '#lib/app/context.js';
 import { addSlotted } from '#lib/map/order.js';
+import type { PaddingMove } from '#lib/ui/padding.js';
 import { PRIORITY, type Interactive, type LayerModule, type LayerStatus, type Selection } from '../types.js';
 import Card from './Card.svelte';
 import def from './def.js';
@@ -21,7 +22,8 @@ export const SOURCE = 'ACHD road centerlines';
  *
  * Turning Streets off and on again in the same view fetches no tile either:
  * the keeper layer (KEEPER in streets.ts) holds the road tiles while Streets
- * is hidden, until the map moves.
+ * is hidden, until the map moves (the padding's own jumps don't count:
+ * PADDING_MOVE in ui/padding.ts).
  */
 export class StreetsModule implements LayerModule {
 	status = $state<LayerStatus>('loading');
@@ -76,9 +78,10 @@ export class StreetsModule implements LayerModule {
 			this.status = 'stale';
 			this.error = `Some road tiles failed to load: ${e.error?.message ?? 'unknown error'}`;
 		});
-		// Hidden and moving: let the tiles go, so a hidden Streets fetches nothing for the new view.
-		scope.on('movestart', () => {
-			if (this.#visible || !this.#keeping) return;
+		// Hidden and moving: let the tiles go, so a hidden Streets fetches nothing for the new view. The map's
+		// padding following the inspect card isn't a move (its jumpTo fires movestart all the same).
+		scope.on('movestart', (e) => {
+			if (this.#visible || !this.#keeping || (e as Partial<PaddingMove>).tvtPadding === true) return;
 			this.#keeping = false;
 			this.#show();
 		});
