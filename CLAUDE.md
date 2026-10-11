@@ -150,6 +150,7 @@ python3 -m ingest segment-match           # rematch lane sources and OSM to ACHD
 python3 -m ingest -h                      # every command, the plugins' included
 python3 -m unittest discover -s ingest/tests -t .   # ingest core (set TVT_TEST_DATABASE_URL for the database tests)
 python3 -m unittest discover -s plugins -t .        # every plugin's tests
+python3 -m unittest discover -s basemap/ground -t . # the ground's contract (worker tests skip; run them in tvt-worker)
 python3 tools/check_public.py              # nothing private in what would be pushed
 ```
 

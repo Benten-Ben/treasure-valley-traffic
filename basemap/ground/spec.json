@@ -32,7 +32,7 @@
     {"id": "j", "name": "Owyhee Mountains near Silver City", "county": "Owyhee",
      "lonlat": [-116.739, 43.024, -116.721, 43.037], "utm": [521260, 4763513, 522732, 4764962]}
   ],
-  "boxes_about": "The ten land-cover test boxes (docs/18 §18.3, agreed Oct 7). utm is [west, south, east, north] in the grid's metres: the envelope of lonlat (densified) widened to whole metres, which is exactly the extent of the spike's 0.5 m lidar rasters, so it lies on the 0.5 m class grid. The downtown row is the 2 x 2 km square of four 1 km lidar tiles, so it has no lon/lat definition.",
+  "boxes_about": "The land-cover spike's ten test boxes (agreed with the owner Oct 7). utm is [west, south, east, north] in the grid's metres: the envelope of lonlat (densified) widened to whole metres, which is exactly the extent of the spike's 0.5 m lidar rasters, so it lies on the 0.5 m class grid. The downtown row is the 2 x 2 km square of four 1 km lidar tiles, so it has no lon/lat definition.",
   "tiles": {
     "scheme": "xyz",
     "crs": "EPSG:3857",

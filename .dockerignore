@@ -3,6 +3,8 @@
 !ingest/
 !db/
 !plugins/
+!basemap/ground/
 **/__pycache__
 ingest/tests
 plugins/*/tests
+basemap/ground/tests

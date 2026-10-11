@@ -21,6 +21,11 @@ The contract is `BasemapManifest` in
 
 Background on all of these: [docs/09](../docs/09-base-map-data.md).
 
+**The ground** (the painted base of the Valley look, landscape sprint): its contract is in
+[`ground/`](ground/README.md): the grid every ground raster shares, the export manifests plugins write for it,
+what it reads (public inputs only), the flat fallback, and the tile spec with its first-load budget. The
+painter and its tiles come next; until then the map's ground is flat, as it is today.
+
 ## Build
 
 ```bash
