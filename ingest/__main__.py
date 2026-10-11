@@ -5,11 +5,12 @@ match-intersections, rollup, osm-load); `python3 -m ingest -h` lists them.
 """
 
 import argparse
+import os
 import sys
 import time
 import traceback
 
-from . import db
+from . import builds, db
 from .sources import COMMANDS, SOURCES, STREAMS, command
 
 BUILTINS = ("sources", "run", "serve", "stream", "backfill")
@@ -36,7 +37,10 @@ def run_one(conn, name):
 
 def serve(check_every_s):
     """Run scheduled sources when they're due. One-off and by-request sources
-    have no schedule (the database refuses one), so they never run here."""
+    have no schedule (the database refuses one), so they never run here. Nor do
+    builds: a source marks a build out of date (ingest/builds.py), and builds.Run
+    refuses to start in this process or anything it starts."""
+    os.environ[builds.SERVE_ENV] = "1"
     print(f"ingest serve: checking every {check_every_s} s", flush=True)
     while True:
         try:
