@@ -1,0 +1,163 @@
+#!/usr/bin/env python3
+"""worker-test: run a checkout's worker tests in the worker image, where a skip is a failure.
+
+  worker-test [-C DIR] [--image IMAGE] [--timeout MIN] [--wait MIN] [--] <unittest args...>
+
+  worker-test -C /srv/tvt/work/worker-test/s5a discover -s basemap/ground -t .
+  worker-test -C ~/repo plugins.soils.tests.test_prepare
+
+  -C DIR         the checkout (default: the current folder), mounted read-only at /repo
+  --image IMAGE  default tvt-worker
+  --timeout MIN  stop the container after MIN minutes (default 30; exit 124)
+  --wait MIN     wait at most MIN minutes for a free slot (default 30; exit 75)
+
+The arguments are python -m unittest's. It runs
+
+  docker run --rm --init --memory 1g --memory-swap 1g --cpus 1 --network none --read-only
+    --tmpfs /tmp (256 MB) -v DIR:/repo:ro -w /repo --user <you> tvt-worker python -c <runner> ARGS
+
+and the runner fails the run when any test is skipped, when no tests ran, or on an
+unexpected success: in the worker image every dependency is there, so a skip means a test
+didn't run. The container is light (1 GB, 1 CPU, no network), so it isn't a heavy job and
+may run at any hour, the nightly roll-up's included. At most two run at once (2 GB in all):
+each holds one of the slot files in /srv/tvt/work/worker-test.slots/, and a third waits.
+
+Exit: 0 every test ran and passed; 1 a failure, an error, a skip or no tests; 2 usage;
+75 no slot came free in time; 124 timed out; 125 docker couldn't start the container.
+
+Source: deploy/bin/worker-test in the repo; installed in /srv/tvt/work/bin.
+"""
+import fcntl
+import os
+import subprocess
+import sys
+import time
+
+IMAGE = "tvt-worker"
+MEMORY = "1g"
+CPUS = "1"
+TMP_MB = 256
+SLOTS = 2
+SLOT_DIR = "/srv/tvt/work/worker-test.slots"
+
+# Runs inside the container as `python -c RUNNER <unittest args>`: python -m unittest,
+# where skips, expected failures that pass and empty runs fail the run.
+RUNNER = r'''
+import sys, unittest
+prog = unittest.main(module=None, argv=["python -m unittest"] + sys.argv[1:], exit=False)
+r = prog.result
+bad = []
+for test, reason in r.skipped:
+    bad.append(f"SKIPPED (a failure here): {test.id()}: {reason}")
+for test in r.unexpectedSuccesses:
+    bad.append(f"UNEXPECTED SUCCESS: {test.id()}")
+if r.testsRun == 0:
+    bad.append("no tests ran: check the module names or the discover path")
+for line in bad:
+    print("worker-test: " + line, file=sys.stderr)
+ok = r.wasSuccessful() and not bad
+print(f"worker-test: {r.testsRun} tests, {len(r.failures)} failures, {len(r.errors)} errors, "
+      f"{len(r.skipped)} skipped: {'OK' if ok else 'FAILED'}", file=sys.stderr)
+sys.exit(0 if ok else 1)
+'''
+
+
+def command(repo, args, image=IMAGE, uid=None, gid=None, name=None):
+    """The docker run for these unittest args on the checkout at repo."""
+    uid = os.getuid() if uid is None else uid
+    gid = os.getgid() if gid is None else gid
+    name = name or f"worker-test-{os.getpid()}"
+    return ["docker", "run", "--rm", "--init", "--name", name, "--label", "tvt.worker-test=1",
+            "--memory", MEMORY, "--memory-swap", MEMORY, "--cpus", CPUS, "--cpu-shares", "256",
+            "--pids-limit", "512", "--network", "none", "--read-only",
+            "--tmpfs", f"/tmp:rw,exec,nosuid,nodev,size={TMP_MB}m",
+            "--user", f"{uid}:{gid}",
+            "-e", "HOME=/tmp", "-e", "PYTHONDONTWRITEBYTECODE=1", "-e", "PYTHONPATH=/repo",
+            "-e", "MPLCONFIGDIR=/tmp", "-e", "TZ=America/Boise",
+            "-v", f"{os.path.abspath(repo)}:/repo:ro", "-w", "/repo",
+            image, "python", "-c", RUNNER, *args]
+
+
+def take_slot(label, wait_s, folder=SLOT_DIR, slots=SLOTS, poll_s=2.0):
+    """Hold one of the slot files (an exclusive flock, kept until this process ends), so at
+    most `slots` runs go at once. Waits up to wait_s seconds; returns the open fd, or None."""
+    os.makedirs(folder, mode=0o775, exist_ok=True)
+    end, said = time.monotonic() + wait_s, False
+    while True:
+        holders = []
+        for n in range(1, slots + 1):
+            fd = os.open(os.path.join(folder, str(n)), os.O_RDWR | os.O_CREAT, 0o664)
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                holders.append(os.read(fd, 300).decode(errors="replace").strip() or "?")
+                os.close(fd)
+                continue
+            os.ftruncate(fd, 0)
+            os.write(fd, f"{label}\n".encode())
+            return fd
+        if time.monotonic() >= end:
+            return None
+        if not said:
+            print(f"worker-test: {slots} runs going ({'; '.join(holders)}); waiting for one to end",
+                  file=sys.stderr)
+            said = True
+        time.sleep(poll_s)
+
+
+def main(argv):
+    repo, image, timeout, wait, i = ".", IMAGE, 30.0, 30.0, 0
+    try:
+        while i < len(argv):
+            a = argv[i]
+            if a in ("-h", "--help"):
+                print(__doc__.strip())
+                return 0
+            if a == "-C":
+                repo, i = argv[i + 1], i + 2
+            elif a == "--image":
+                image, i = argv[i + 1], i + 2
+            elif a == "--timeout":
+                timeout, i = float(argv[i + 1]), i + 2
+            elif a == "--wait":
+                wait, i = float(argv[i + 1]), i + 2
+            elif a == "--":
+                i += 1
+                break
+            else:
+                break
+    except (IndexError, ValueError):
+        print("worker-test: -C, --image, --timeout and --wait each take a value (worker-test -h)", file=sys.stderr)
+        return 2
+    args = argv[i:]
+    if not args:
+        print("worker-test: say which tests, e.g. discover -s basemap/ground -t . (worker-test -h)",
+              file=sys.stderr)
+        return 2
+    if not os.path.isdir(repo):
+        print(f"worker-test: no such folder: {repo}", file=sys.stderr)
+        return 2
+    name = f"worker-test-{os.getpid()}"
+    try:
+        slot = take_slot(f"{name}: {os.path.abspath(repo)} (since {time.strftime('%H:%M:%S %Z')})", wait * 60)
+    except KeyboardInterrupt:
+        return 130
+    if slot is None:
+        print(f"worker-test: no slot came free in {wait:g} min; try again later", file=sys.stderr)
+        return 75
+    proc = subprocess.Popen(command(repo, args, image, name=name))
+    try:
+        return proc.wait(timeout=timeout * 60)
+    except subprocess.TimeoutExpired:
+        print(f"worker-test: over {timeout:g} min; stopping {name}", file=sys.stderr)
+        subprocess.run(["docker", "stop", "-t", "10", name], stdout=subprocess.DEVNULL)
+        proc.wait()
+        return 124
+    except KeyboardInterrupt:
+        subprocess.run(["docker", "stop", "-t", "5", name], stdout=subprocess.DEVNULL)
+        proc.wait()
+        return 130
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
