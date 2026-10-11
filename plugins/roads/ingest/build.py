@@ -1162,9 +1162,9 @@ def inputs(conn, md5, developed_build):
             ("itd_hpms", "roads/itd_hpms", "Idaho Transportation Department")):
         out.append({"name": name, "source": source, "licence": "none-stated", "republish": "internal",
                     "credit": credit, "version": last_fetch(name)})
-    out.append({"name": "compass_zones", "source": "development/compass_taz", "licence": "none-stated",
-                "republish": "yes", "credit": "COMPASS (Community Planning Association of Southwest Idaho)",
-                "version": last_fetch("compass_taz"), "note": "core.taz: which county a piece is in"})
+    out.append({"name": "compass_zones", "source": "development/compass_growth", "licence": "none-stated",
+                "republish": "yes", "credit": "COMPASS and COMPASS member agencies",
+                "version": last_fetch("compass_growth"), "note": "core.taz: which county a piece is in"})
     if developed_build:
         out.append({"name": "cdl", "source": "roads/cdl_developed", "licence": "public-domain", "republish": "yes",
                     "credit": developed_build["credit"],
