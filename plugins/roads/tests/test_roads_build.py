@@ -307,5 +307,26 @@ class BuildTest(unittest.TestCase):
         self.assertGreater(self.one("select count(*) from roads.surface where geom_z15 is not null")[0], 0)
 
 
+    def test_the_export_is_a_bakeable_internal_base(self):
+        import tempfile
+        from basemap.landscape import plan as LP
+        from plugins.roads.ingest import export as E
+        with tempfile.TemporaryDirectory() as archive:
+            m = E.export(self.conn, archive, build="20261011T000000Z")
+            names = [lay.name for lay in m.layers]
+            self.assertEqual(names, ["lines", "surfaces_z15", "surfaces", "edges", "markings", "crosswalks"])
+            self.assertEqual(m.republish, "internal")
+            for lay in m.layers:
+                self.assertTrue(lay["base"])
+                self.assertEqual((lay["licence"], lay["republish"]), ("ODbL-1.0", "internal"))
+                self.assertIn("id", lay["fields"])
+            lines = next(lay for lay in m.layers if lay.name == "lines")
+            self.assertEqual(lines["features"], self.one("select count(*) from roads.piece")[0])
+            self.assertIn("minzoom", lines["fields"])
+            plan = LP.resolve({"roads": m})
+            self.assertTrue(plan.roads)
+            self.assertEqual(plan.republish, "internal")
+
+
 if __name__ == "__main__":
     unittest.main()

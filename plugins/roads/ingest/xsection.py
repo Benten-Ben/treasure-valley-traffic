@@ -13,8 +13,8 @@ width_right_m = total / 2, except where a parallel sidewalk caps one side (below
 2. in Ada, the ACHD segment the piece lies along: core.segment_lanes' choice (HPMS on state routes, the Master
    Street Map on arterials, OpenStreetMap or COMPASS elsewhere, else 1+1 'default'), turned onto the piece by
    their bearings; a one-way piece (a divided road's carriageway) takes its own direction's count;
-3. where no segment gives one (Canyon, the rest of the box), ITD's HPMS through lanes along the piece
-   ('itd_hpms');
+3. where no segment gives one (Canyon, the rest of the box), ITD's HPMS through lanes along the piece, on
+   interstate, US and state routes only, as the lanes rule takes them ('itd_hpms');
 4. 1+1, or 1 on a one-way piece ('default'; 2 on a motorway).
 COMPASS's lanes for Canyon are left out (cut first, plan §0). Where the way's own count and the segment's
 rule differ by more than a lane, the piece is flagged 'conflict' and goes on the review list; the segment's
@@ -175,10 +175,21 @@ def segment_lanes(seg, lanes, way):
     return ({"fwd": n, "bwd": 0} if way == 1 else {"fwd": 0, "bwd": n}) | {"centre": False}, flags, reviews
 
 
+STATE_SYSTEMS = ("IN", "US", "SH")
+
+
+def state_route(row):
+    """An HPMS row on an interstate, US or state route (its route id's system: '01990ASH055' is SH-55). Off them
+    HPMS's lane counts look like defaults, so the lanes rule doesn't count them (docs/09 §9.3, Oct 6)."""
+    rid = str(row.get("route_id") or "")
+    return rid[6:8] in STATE_SYSTEMS
+
+
 def hpms_lanes(rows, way):
-    """ITD HPMS through lanes along the piece (outside Ada): rows of {direction ('A', 'D' or None),
-    through_lanes, lanes_ascending, lanes_descending, same_way, overlap}, best first. Ascending runs the way the
-    A route is drawn. Returns {fwd, bwd, centre} or None."""
+    """ITD HPMS through lanes along the piece (where no ACHD segment gives a count): rows of {direction ('A', 'D'
+    or None), through_lanes, lanes_ascending, lanes_descending, same_way, route_id}, best first; only state routes'
+    count. Ascending runs the way the A route is drawn. Returns {fwd, bwd, centre} or None."""
+    rows = [r for r in rows if state_route(r)]
     a = next((r for r in rows if r.get("direction") != "D"), None)
     d = next((r for r in rows if r.get("direction") == "D"), None)
 

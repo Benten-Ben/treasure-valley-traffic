@@ -43,7 +43,9 @@
     {"name": "roads-developed-load", "module": "ingest.developed",
      "help": "load developed land made in the worker image from the CDL (--build DIR) and measure the paving again"},
     {"name": "roads-build", "module": "ingest.build",
-     "help": "build the real-width roads (pieces, cross-sections, surfaces, junctions, markings) from OpenStreetMap and the lane and width sources [--dry-run] [--calibrate]"}
+     "help": "build the real-width roads (pieces, cross-sections, surfaces, junctions, markings) from OpenStreetMap and the lane and width sources [--dry-run] [--calibrate]"},
+    {"name": "roads-export", "module": "ingest.export",
+     "help": "export the current real-width roads build's base layers for the landscape bake (internal: ACHD and ITD widths)"}
   ],
   "osm_consumers": [
     {"source": "osm_valley",

@@ -110,6 +110,10 @@ def _log(out, t0, text):
     out(f"  {time.monotonic() - t0:6.1f} s  {text}")
 
 
+def say(text):
+    print(text, flush=True)
+
+
 # ---- 1. pieces -------------------------------------------------------------------------------------
 
 _WAYS = """
@@ -201,8 +205,8 @@ def pieces(conn):
 
 _COUNTY = """
 create temp table rb_county on commit drop as
-select county, ST_Subdivide(ST_Transform(ST_Union(geom), %(srid)s), 256) as g
-from core.taz where active and county in ('Ada', 'Canyon') group by county;
+select county, ST_Subdivide(ST_CollectionExtract(ST_MakeValid(ST_Transform(geom, %(srid)s)), 3), 256) as g
+from core.taz where active and county in ('Ada', 'Canyon');
 create index on rb_county using gist (g);
 update roads.piece p set county = c.county
 from rb_county c where ST_Intersects(c.g, ST_LineInterpolatePoint(p.geom, 0.5));
@@ -336,27 +340,43 @@ def developed(conn):
 
 # ---- 3. cross-sections -----------------------------------------------------------------------------
 
+_INPUT_TABLES = """
+create temp table rb_lanes on commit drop as
+select l.* from core.segment_lanes l
+where l.road_segment_id in (select road_segment_id from roads.piece where road_segment_id is not null);
+create index on rb_lanes (road_segment_id);
+create temp table rb_bike on commit drop as
+select b.* from roads.segment_bike_xsection b
+where b.road_segment_id in (select road_segment_id from roads.piece where road_segment_id is not null);
+create index on rb_bike (road_segment_id);
+create temp table rb_hpms_piece on commit drop as
+select h.piece_id,
+       jsonb_agg(jsonb_build_object('kind', h.kind, 'direction', hs.direction, 'through_lanes', hs.through_lanes,
+                                    'lanes_ascending', hs.lanes_ascending, 'lanes_descending', hs.lanes_descending,
+                                    'lane_width_ft', hs.lane_width_ft, 'shoulder_type', hs.shoulder_type,
+                                    'shoulder_left_ft', hs.shoulder_width_left_ft,
+                                    'shoulder_right_ft', hs.shoulder_width_right_ft,
+                                    'median_type', hs.median_type, 'median_width_ft', hs.median_width_ft,
+                                    'same_way', h.same_way, 'source_id', h.source_id, 'route_id', hs.route_id)
+                 order by h.confidence desc, h.overlap_m desc) as hpms
+from rb_hpms h join core.hpms_section hs on hs.kind = h.kind and hs.source_id = h.source_id
+group by h.piece_id;
+create index on rb_hpms_piece (piece_id);
+analyze rb_lanes;
+analyze rb_bike;
+analyze rb_hpms_piece
+"""
+
 _INPUTS = """
 select p.id, p.highway, p.service, w.oneway, p.roundabout, p.county, w.tags,
        p.road_segment_id, s.functional_class, s.one_way, p.seg_same_way, p.seg_confidence,
-       to_jsonb(l) as lanes, to_jsonb(b) as bike, k.left_m, k.right_m, d.share,
-       (select jsonb_agg(jsonb_build_object('kind', h.kind, 'direction', hs.direction,
-                                            'through_lanes', hs.through_lanes,
-                                            'lanes_ascending', hs.lanes_ascending,
-                                            'lanes_descending', hs.lanes_descending,
-                                            'lane_width_ft', hs.lane_width_ft, 'shoulder_type', hs.shoulder_type,
-                                            'shoulder_left_ft', hs.shoulder_width_left_ft,
-                                            'shoulder_right_ft', hs.shoulder_width_right_ft,
-                                            'median_type', hs.median_type, 'median_width_ft', hs.median_width_ft,
-                                            'same_way', h.same_way, 'source_id', h.source_id)
-                         order by h.confidence desc, h.overlap_m desc)
-        from rb_hpms h join core.hpms_section hs on hs.kind = h.kind and hs.source_id = h.source_id
-        where h.piece_id = p.id) as hpms
+       to_jsonb(l) as lanes, to_jsonb(b) as bike, k.left_m, k.right_m, d.share, h.hpms
 from roads.piece p
 join rb_way w using (osm_id)
 left join core.road_segment s on s.id = p.road_segment_id
 left join rb_lanes l on l.road_segment_id = p.road_segment_id
-left join roads.segment_bike_xsection b on b.road_segment_id = p.road_segment_id
+left join rb_bike b on b.road_segment_id = p.road_segment_id
+left join rb_hpms_piece h on h.piece_id = p.id
 left join rb_walk k on k.piece_id = p.id
 left join rb_dev d on d.piece_id = p.id
 order by p.id
@@ -402,9 +422,7 @@ XS_COLUMNS = ("piece_id", "lanes_fwd", "lanes_bwd", "centre_turn", "turn_fwd", "
 
 def cross_sections(conn):
     """Compute and store every piece's cross-section. Returns (stats, {piece id: (xs, way, highway)}, reviews)."""
-    conn.execute("create temp table rb_lanes on commit drop as select l.* from core.segment_lanes l "
-                 "where l.road_segment_id in (select road_segment_id from roads.piece where road_segment_id is not null)")
-    conn.execute("create index on rb_lanes (road_segment_id)")
+    run_sql(conn, _INPUT_TABLES)
     out, reviews, tiers, sources = {}, [], {}, {}
     with conn.cursor() as cur:
         cur.execute(_INPUTS)
@@ -1178,7 +1196,7 @@ def clear(conn):
         conn.execute(f"delete from {t}")
 
 
-def make(conn, md5, out=print, now=None):
+def make(conn, md5, out=say, now=None):
     """The whole build on conn, without committing. Returns its stats."""
     if missing := ready(conn):
         raise BuildError(f"missing: {', '.join(missing)} (apply the migrations: python3 db/migrate.py)")
@@ -1236,7 +1254,7 @@ def make(conn, md5, out=print, now=None):
     return stats
 
 
-def run(conn, out=print, check=True):
+def run(conn, out=say, check=True):
     """roads-build as a build run: the partition checked, the build made, its marks cleared and roads-export
     marked in one commit."""
     with builds.Run(conn, BUILD, then=THEN) as r:

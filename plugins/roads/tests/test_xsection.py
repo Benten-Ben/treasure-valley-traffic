@@ -165,18 +165,23 @@ class Lanes(unittest.TestCase):
 
     def test_canyon_falls_back_on_hpms_then_the_default(self):
         hp = {"through": [{"direction": "A", "lanes_ascending": 2, "lanes_descending": 2, "through_lanes": 4,
-                           "same_way": False}]}
+                           "same_way": False, "route_id": "01990ASH055"}]}
         xs = X.cross_section(piece("trunk", county="Canyon", hpms=hp))
         self.assertEqual((xs["lanes_fwd"], xs["lanes_bwd"], xs["lanes_source"]), (2, 2, "itd_hpms"))
         self.assertEqual(xs["republish"], "internal")
         # A divided highway's A row runs one way; the D row is the other carriageway.
-        hp = {"through": [{"direction": "A", "lanes_ascending": 2, "lanes_descending": 0, "same_way": True},
-                          {"direction": "D", "lanes_descending": 3, "same_way": False}]}
+        hp = {"through": [{"direction": "A", "lanes_ascending": 2, "lanes_descending": 0, "same_way": True,
+                           "route_id": "00010AIN084"},
+                          {"direction": "D", "lanes_descending": 3, "same_way": False, "route_id": "00010DIN084"}]}
         self.assertEqual(X.cross_section(piece("motorway", oneway="yes", county="Canyon", hpms=hp))["lanes_fwd"], 2)
         hp["through"][0]["same_way"] = False
         self.assertEqual(X.cross_section(piece("motorway", oneway="yes", county="Canyon", hpms=hp))["lanes_fwd"], 3)
         xs = X.cross_section(piece("trunk", county="Canyon"))
         self.assertEqual((xs["lanes_source"], xs["lanes_fwd"], xs["markings"]), ("default", 1, False))
+        # Off the state routes HPMS's counts are defaults: not taken.
+        hp = {"through": [{"direction": "A", "lanes_ascending": 1, "lanes_descending": 1, "same_way": True,
+                           "route_id": "27000ALOCAL1"}]}
+        self.assertEqual(X.cross_section(piece("residential", county="Canyon", hpms=hp))["lanes_source"], "default")
 
     def test_turn_lanes_and_arrows(self):
         tags = {"lanes": "3", "oneway": "yes", "turn:lanes": "left|through|through;right"}
