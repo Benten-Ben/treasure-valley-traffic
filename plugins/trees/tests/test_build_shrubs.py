@@ -147,6 +147,7 @@ class BuildTest(unittest.TestCase):
         self.assertGreater(chk["shrub_cells_called_crop"], 1000)
         self.assertGreaterEqual(chk["rule_field_blocks"], 1)
         self.assertEqual(chk["rule_shrub_cells_left_by_crop"], 0)
+        self.assertEqual(chk["rule_shrubs"], 0)
         import shrubs as S
         with rasterio.open(os.path.join(self.out, "why.tif")) as ds:
             why = ds.read(1)

@@ -384,7 +384,9 @@ def main(argv=None):
         X, Y = tf @ (cols + 0.5, rows + 0.5)
         keep = ~in_rects(np.asarray(X), np.asarray(Y), a.skip_rect)
         found = [dict(s, x=float(x), y=float(y)) for s, x, y, k in zip(found, X, Y, keep) if k]
-    log(f"split: {len(found):,} shrubs; dropped pieces {dropped}")
+    in_field = sum(1 for s in found if field[min(int(s["row"]), shape[0] - 1), min(int(s["col"]), shape[1] - 1)])
+    crop_check["rule_shrubs"] = in_field          # shrubs the spike's rule would have called a field
+    log(f"split: {len(found):,} shrubs ({in_field:,} in the field rule's fields); dropped pieces {dropped}")
 
     geom, area_ha = outline(bad, tf, crs, a.skip_rect)
     out_feats, seen = [], {}
