@@ -34,7 +34,9 @@ A load:
   4. runs each consumer in plugin order, each in its own transaction with its
      own ops.fetch row. osm_valley runs its own unchanged pipeline over the cut
      (its complete_ways cut of the smart cut is the same as of the whole
-     extract). The others get their features from `Run.features()`;
+     extract). The others get their features from `Run.features()`: osmium
+     export of the cut, then their expressions, the box and the partition,
+     applied here;
   5. archives the file (the last two extracts are kept) if any consumer loaded it.
 A consumer that fails is logged in ops.fetch and the others go on; rerun it
 with `--only`. The command exits 1 if any failed.
@@ -45,7 +47,8 @@ alleys (osm_street); then sidewalks, crossings and the other service ways
 (osm_paving); then paths, tracks and footways (osm_paths). The consumers so
 named get only the highway ways the partition gives them, so no way is drawn
 twice. The 12 lane-tagged cycleways, tracks and pedestrian ways osm_valley
-already keeps are the named exception: they stay osm_valley's.
+already keeps are the named exception (`named_exception()`): they stay
+osm_valley's, and trails reads them through a view.
 
 Versioning (plan C2). osm_valley keeps raw.record versions as before. The new
 consumers make no raw.record copies: their typed tables keep osm_version,
@@ -158,9 +161,10 @@ def unowned_reason(tags):
 
 
 def named_exception(tags):
-    """One of the lane-tagged non-road ways osm_valley keeps (a cycleway, track or pedestrian way
-    with lanes tags): the partition's named exception, read by trails through a view."""
-    return owner(tags) == "osm_valley" and tags.get("highway") not in ROADS
+    """The partition's named exception: a path-class way (a cycleway, track, pedestrian way, ...)
+    tagged with lanes, which osm_valley keeps and osm_paths would otherwise get. Trails reads them
+    through a view (12 in the Oct 5 extract: 7 cycleways, 4 tracks, 1 pedestrian way)."""
+    return keep_way(tags) and tags.get("highway") in PATH_CLASSES
 
 
 # ---- the archive -----------------------------------------------------------
@@ -325,9 +329,9 @@ def select(all_consumers, only):
 # ---- tag expressions -------------------------------------------------------
 
 class TagFilter:
-    """A consumer's osmium tags-filter expressions, applied again in Python. osmium's tags-filter
-    also passes on the objects a match refers to (a multipolygon's member ways, a route's ways and
-    their nodes), which osmium export then writes too when they have tags; this drops them."""
+    """A consumer's tags-filter expressions (osmium's syntax), applied in Python to what osmium
+    export writes from the cut: export can't select objects by their tags (it writes every tagged
+    node and open way), so this is where a consumer's objects are picked."""
 
     def __init__(self, expressions):
         self.rules = []
@@ -337,6 +341,7 @@ class TagFilter:
                 raise ValueError(f"not a tags-filter expression we take: {e!r}")
             values = frozenset(m["values"].split(",")) if m["values"] else None
             self.rules.append((frozenset(m["types"]), m["key"], values))
+        self.keys = sorted({key for _, key, _ in self.rules})
 
     def matches(self, kind, tags, area=False):
         """kind: 'n', 'w' or 'r'; area: a closed way or a multipolygon (what osmium's a/ means)."""
@@ -346,6 +351,19 @@ class TagFilter:
                 if v is not None and (values is None or v in values):
                     return True
         return False
+
+    def may_match(self, line):
+        """A cheap first look at a GeoJSON line: could one of the keys be among its tags?"""
+        return any(f'"{key}"' in line for key in self.keys)
+
+    def export_tags(self, types):
+        """The expressions for osmium export's linear_tags (types 'w') or area_tags (types 'a'),
+        one 'key' or 'key=value' each: they decide whether a closed way is a line or an area."""
+        out = []
+        for t, key, values in self.rules:
+            if t & set(types):
+                out += [f"{key}={v}" for v in sorted(values)] if values else [key]
+        return out
 
 
 def relation_expressions(expressions):
@@ -374,24 +392,35 @@ def cut_command(src, out):
             "--overwrite", "--output-format", "pbf", "--output", out, src]
 
 
+def export_config(consumer):
+    """osmium export's settings for a consumer: the attributes we read, and which closed ways are
+    lines (its w/ expressions) and which are areas (its a/ expressions; multipolygons too)."""
+    tag_filter = TagFilter(consumer.tags)
+    return {"attributes": {"type": True, "id": True, "version": True, "timestamp": True, "way_nodes": True},
+            "linear_tags": tag_filter.export_tags("w") or False,
+            "area_tags": tag_filter.export_tags("a") or False}
+
+
 def consumer_commands(cut, work, consumer):
-    """A consumer's osmium steps over the cut, and the files they leave in work:
-    (commands, GeoJSON-lines file or None, OSM XML file of its relations or None)."""
-    filtered = os.path.join(work, "filtered.osm.pbf")
-    cmds = [["osmium", "tags-filter", "--no-progress", "--overwrite", "--output", filtered, cut, *consumer.tags]]
+    """A consumer's osmium steps over the cut, and the files they leave in work: (commands, its
+    export settings' file, GeoJSON-lines file or None, OSM XML file of the cut's relations or None).
+
+    No tags-filter: on Idaho's node ids it needs about 1.9 GB even on the cut (a bitmap over every
+    id), where an export of the cut needs tens of MB. So osmium export writes the cut's tagged
+    objects in the consumer's geometry types, and Run.features picks the consumer's own."""
+    config = os.path.join(work, "export.json")
     shapes = [g for g in consumer.geometry if g != "relation"]
-    lines = rels = None
+    cmds, lines, rels = [], None, None
     if shapes:
         lines = os.path.join(work, "features.geojsonseq")
-        cmds.append(["osmium", "export", "--output-format", "geojsonseq", "--format-option",
+        cmds.append(["osmium", "export", "--config", config, "--output-format", "geojsonseq", "--format-option",
                      "print_record_separator=false", "--geometry-types", ",".join(shapes),
-                     "--attributes", "type,id,version,timestamp,way_nodes", "--add-unique-id", "type_id",
-                     "--no-progress", "--overwrite", "--output", lines, filtered])
+                     "--add-unique-id", "type_id", "--no-progress", "--overwrite", "--output", lines, cut])
     if "relation" in consumer.geometry:
         rels = os.path.join(work, "relations.osm")
-        cmds.append(["osmium", "tags-filter", "--omit-referenced", "--no-progress", "--overwrite",
-                     "--output-format", "xml", "--output", rels, cut, *relation_expressions(consumer.tags)])
-    return cmds, lines, rels
+        cmds.append(["osmium", "cat", "--object-type", "relation", "--no-progress", "--overwrite",
+                     "--output-format", "xml", "--output", rels, cut])
+    return cmds, config, lines, rels
 
 
 def data_timestamp(src):
@@ -527,7 +556,7 @@ def closed(geom):
 
 
 def select_features(features, consumer, counts):
-    """A consumer's features: its own expressions again, the box, and the partition."""
+    """A consumer's features: its own expressions, the box, and the partition."""
     tag_filter = TagFilter(consumer.tags)
     partitioned = consumer.name in OWNERS
     for f in features:
@@ -535,8 +564,7 @@ def select_features(features, consumer, counts):
             continue
         area = f["geometry"] == "polygon" or closed(f["geom"])
         if not tag_filter.matches(f["type"], f["tags"], area):
-            counts["dropped: brought along by a match (a member or a node)"] += 1
-            continue
+            continue                                       # another consumer's (export writes every tagged object)
         if f["geometry"] in ("point", "linestring") or (f["geometry"] == "polygon" and f["type"] == "w"):
             if not in_box(f["geom"]["coordinates"]):
                 counts["dropped: outside the box (completing a multipolygon)"] += 1
@@ -567,18 +595,22 @@ class Run:
     counts: Counter = field(default_factory=Counter)
 
     def features(self):
-        """This consumer's objects from the cut: osmium's tags-filter with its expressions, then
-        osmium export of its geometry types (and its relations with their members), then its
-        expressions again, the box and the partition (select_features). A generator."""
-        cmds, lines, rels = consumer_commands(self.cut, self.work, self.consumer)
+        """This consumer's objects from the cut: osmium export of its geometry types (and the
+        cut's relations, with their members, if it takes relations), then its expressions, the
+        box and the partition (select_features). A closed way comes as a line if a w/ expression
+        matches it and as an area if an a/ one does. A generator."""
+        cmds, config, lines, rels = consumer_commands(self.cut, self.work, self.consumer)
+        write_json(config, export_config(self.consumer))
         for cmd in cmds:
             osmium(cmd)
+        tag_filter = TagFilter(self.consumer.tags)
 
         def raw():
             if lines:
                 with open(lines, encoding="utf-8") as f:
                     for line in f:
-                        yield parse_export_line(line)
+                        if tag_filter.may_match(line):
+                            yield parse_export_line(line)
             if rels:
                 yield from parse_relations(rels)
 
@@ -659,19 +691,20 @@ def db_state(conn, consumer_id):
     if not state_table_ready(conn):
         return {}
     row = conn.execute(
-        """select md5, extract, data_as_of, loaded_at, fetch_id, objects, counts
+        """select md5, extract_file, data_as_of, loaded_at, fetch_id, objects, counts
            from ops.osm_consumer where consumer = %s""", (consumer_id,)).fetchone()
     if not row:
         return {}
-    return dict(zip(("md5", "extract", "data_as_of", "loaded_at", "fetch_id", "objects", "counts"), row))
+    return dict(zip(("md5", "extract_file", "data_as_of", "loaded_at", "fetch_id", "objects", "counts"), row))
 
 
 def set_db_state(conn, consumer, md5, extract_name, data_as_of, fetch_id, objects, counts):
     conn.execute(
-        """insert into ops.osm_consumer (consumer, source, md5, extract, data_as_of, loaded_at, fetch_id, objects, counts)
+        """insert into ops.osm_consumer (consumer, source, md5, extract_file, data_as_of, loaded_at, fetch_id, objects,
+             counts)
            values (%s, %s, %s, %s, %s, now(), %s, %s, %s::jsonb)
            on conflict (consumer) do update set source = excluded.source, md5 = excluded.md5,
-             extract = excluded.extract, data_as_of = excluded.data_as_of, loaded_at = excluded.loaded_at,
+             extract_file = excluded.extract_file, data_as_of = excluded.data_as_of, loaded_at = excluded.loaded_at,
              fetch_id = excluded.fetch_id, objects = excluded.objects, counts = excluded.counts""",
         (consumer.id, consumer.name, md5, extract_name, data_as_of, fetch_id, objects,
          json.dumps(counts, default=str)))
@@ -801,7 +834,8 @@ def main(argv=None):
     which = ap.add_mutually_exclusive_group()
     which.add_argument("--inbox", action="store_true", help="the newest extract in $TVT_ARCHIVE/osm/inbox/")
     which.add_argument("--file", help="this .osm.pbf or OSM XML file (copied into the archive)")
-    which.add_argument("--archived", action="store_true", help="the newest extract in the archive (the default with --only)")
+    which.add_argument("--archived", action="store_true",
+                       help="the newest extract in the archive (the default with --only)")
     ap.add_argument("--only", action="append", metavar="CONSUMER",
                     help="just this consumer ('roads.osm_street' or 'osm_street'); repeat for more")
     ap.add_argument("--force", action="store_true", help="load it even into consumers that already have it")

@@ -323,22 +323,56 @@ The steps (Builder D's first-run notes, Oct 6):
    [Geofabrik's Idaho page](https://download.geofabrik.de/north-america/us/idaho.html)
    in a browser, and puts both in `${ARCHIVE_DIR:-/srv/tvt/archive}/osm/inbox/`,
    owned by uid 1000.
-4. Load: `docker compose -f deploy/docker-compose.yml exec ingest python3 -m ingest osm-load --inbox`
-   (the old `python3 -m ingest.osm_load` still works). `--file PATH` loads a
-   file from anywhere instead.
+4. Load: `python3 -m ingest osm-load --inbox` (core's loader since the
+   landscape sprint, [ingest/osm_extract.py](../ingest/osm_extract.py); the
+   old `python3 -m ingest.osm_load` still works). `--file PATH` loads a file
+   from anywhere instead; `--only CONSUMER` loads one consumer on the extract
+   we hold (`--archived`), `--list` says what each loaded last. Since Oct 11
+   it's a **heavy job** in its own capped container, never `exec` in the
+   ingest service: the smart cut and osm_valley's own cut each peak at about
+   3.9 GB (osmium keeps a bitmap over every node id, and Idaho's run to about
+   13 billion), so give it 5 GB; `compose.load.yml`'s 2 GB is too little for
+   it. A consumer run on a cut already made peaks at about 0.2 GB. From the
+   server, with `DATABASE_URL` set in the shell (never on the command line,
+   which heavy's log records):
+
+   ```bash
+   /srv/tvt/work/bin/heavy --deadline HH:MM --runtime 10 --peak 1 "osm-load (deploy)" \
+     docker run --rm --memory 5g --memory-swap 5g --cpus 2 --network tvt_default -e DATABASE_URL \
+       -e TVT_ARCHIVE=/srv/archive -v /srv/tvt/archive:/srv/archive \
+       tvt-ingest:latest python3 -m ingest osm-load --inbox
+   ```
+
+   Which role: osm_valley writes `core.osm_way` and friends, which
+   `tvt_build` can't ([scratch/README.md](scratch/README.md)), so a load
+   that includes osm_valley (a new extract) runs as the database owner, as
+   its loads always have, until the runbook decides otherwise. The new
+   consumers alone (`--only roads.osm_street`) run as `tvt_build`.
 
 What a load does:
 
 - It takes the newest file in the inbox and checks it against the `.md5`
   beside it.
-- An extract with the same MD5 as last time is skipped, unless `--force`.
-- Afterwards the file moves to `$TVT_ARCHIVE/osm/` (renamed with the date
-  and the start of its MD5) and the last two extracts are kept. Pruning
-  never removes the file just loaded, and reloading an archived file
-  refreshes its time, so it counts as the newest.
-- **Shrink guard:** when 1,000 or more ways are active, a load that brings
-  fewer than half of them refuses to retire the rest. Check the file, or
-  pass `--allow-shrink`.
+- Each consumer (`osm_consumers` in the plugins' manifests: `roads.osm_valley`
+  first, then `roads.osm_street`, and later paving, paths, water and
+  barriers) keeps its own MD5 gate, and one that already has this extract is
+  skipped, unless `--force`. Gates: `ops.osm_consumer`, and osm_valley's own
+  `$TVT_ARCHIVE/osm/last-loaded.json`.
+- It cuts the valley box out of the extract once (osmium's `smart` strategy)
+  into `$TVT_ARCHIVE/osm/cut/valley.osm.pbf`, with `valley.json` naming the
+  extract; every consumer reads the cut, and the ground's mask reads it too.
+- Each consumer runs in its own transaction with its own `ops.fetch` row; one
+  that fails is logged and the others go on (rerun it with `--only`).
+- Afterwards, if any consumer loaded it, the file moves to
+  `$TVT_ARCHIVE/osm/` (renamed with the date and the start of its MD5) and
+  the last two extracts are kept. Pruning never removes the file just
+  loaded, and reloading an archived file refreshes its time, so it counts as
+  the newest.
+- **Shrink guard:** when 1,000 or more ways (or a consumer's objects) are
+  active, a load that brings fewer than half of them refuses to retire the
+  rest. Check the file, or pass `--allow-shrink`.
+- Then the refresh cascade (plan §6): the builds that read the new tables
+  (`roads-build`, `water-build`, `trails-match`), the exports, the bake.
 
 Timing at server scale, estimated Oct 6:
 
@@ -366,6 +400,12 @@ differ, the Oct 7 load is the fact; the Oct 6 numbers were sizing guesses.
 | `core.osm_node` | about 2,800 (752 intersection signals, about 1,709 crossing signals, 342 level crossings, less overlaps) | 767 signals, 1,742 crossing signals, 345 level crossings |
 | `core.segment_match` | about 6,000–9,000 | 14,054 ACHD segments matched, plus 2,222 turn-bay matches |
 | `raw.record` | about 16,300 rows (5–8 MB) on the first load, then about 150–500 new versions (60–200 KB) a week | not recorded |
+
+The other streets and alleys (`roads.osm_street`, the `osm_street`
+consumer), loaded on scratch from the same extract on Oct 11: 22,785 ways
+(20,815 residential, 1,003 alleys, 948 unclassified, 17 living streets, 2
+roads; about 5,600 km), 11 MB with indexes, in 16 s on the cut. The valley
+cut is 32 MB.
 
 ## Unmerged code and builds: the scratch database and tvt_build
 

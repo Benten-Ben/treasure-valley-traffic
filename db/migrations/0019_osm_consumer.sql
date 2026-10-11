@@ -14,15 +14,15 @@
 -- Each load is also an ops.fetch row under the consumer's source name (fetch_id is the last).
 
 create table ops.osm_consumer (
-  consumer   text primary key check (consumer ~ '^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$'),  -- '<plugin>.<source>'
-  source     text not null references ops.source,     -- its ops.source row (the consumer's source name)
-  md5        text not null check (md5 ~ '^[0-9a-f]{32}$'),
-  extract    text not null,                           -- the extract's name in $TVT_ARCHIVE/osm/
-  data_as_of text,                                    -- the extract's own timestamp (Geofabrik's header), if any
-  loaded_at  timestamptz not null default now(),
-  fetch_id   bigint references ops.fetch,
-  objects    bigint check (objects >= 0),             -- objects in that load
-  counts     jsonb not null default '{}'              -- what the load did: new, changed, retired, dropped ...
+  consumer     text primary key check (consumer ~ '^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$'),  -- '<plugin>.<source>'
+  source       text not null references ops.source,   -- its ops.source row (the consumer's source name)
+  md5          text not null check (md5 ~ '^[0-9a-f]{32}$'),
+  extract_file text not null,                         -- the extract's name in $TVT_ARCHIVE/osm/
+  data_as_of   text,                                  -- the extract's own timestamp (Geofabrik's header), if any
+  loaded_at    timestamptz not null default now(),
+  fetch_id     bigint references ops.fetch,
+  objects      bigint check (objects >= 0),           -- objects in that load
+  counts       jsonb not null default '{}'            -- what the load did: new, changed, retired, dropped ...
 );
 
 comment on table ops.osm_consumer is

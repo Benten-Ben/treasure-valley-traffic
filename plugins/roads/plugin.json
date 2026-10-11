@@ -40,6 +40,6 @@
      "geometry": ["linestring"],
      "tables": ["roads.osm_street"]}
   ],
-  "storage": "Small: reference layers re-read weekly or monthly; raw.record grows only by changed versions (osm_valley). roads.osm_street: about 30k ways, roughly 20 MB with its index, versioned in place (no raw.record copies). The last two OpenStreetMap extracts are kept in $TVT_ARCHIVE/osm/, and the valley cut of the newest in $TVT_ARCHIVE/osm/cut/ (about 40 MB).",
+  "storage": "Small: reference layers re-read weekly or monthly; raw.record grows only by changed versions (osm_valley). roads.osm_street: about 23k ways, 11 MB with its indexes, versioned in place (no raw.record copies). The last two OpenStreetMap extracts are kept in $TVT_ARCHIVE/osm/ (about 130 MB each), and the valley cut of the newest in $TVT_ARCHIVE/osm/cut/ (about 32 MB).",
   "ethics": "OpenStreetMap is ODbL: credit \"© OpenStreetMap contributors\", and anything published from it stays ODbL. Geofabrik's robots.txt disallows scripted downloads, so extracts are downloaded by hand and there is no download code. ACHD's and ITD's layers state no license: used internally, credited."
 }

@@ -146,7 +146,8 @@ python3 -m ingest stream itd_wzdx         # ITD work zones every 5 min (needs TV
 python3 -m ingest stream idaho511_api     # the 511 API (needs TVT_ARCHIVE and IDAHO511_API_KEY)
 python3 -m ingest rollup --day 2026-10-05  # daily camera videos by hand (normally automatic)
 python3 -m ingest match-intersections --dry-run   # rebuild intersections from the signal sources
-python3 -m ingest osm-load --inbox         # OSM extract downloaded by hand (needs TVT_ARCHIVE, osmium)
+python3 -m ingest osm-load --inbox         # OSM extract downloaded by hand, into every consumer (needs TVT_ARCHIVE, osmium)
+python3 -m ingest osm-load --only roads.osm_street   # one OSM consumer, on the extract we hold
 python3 -m ingest segment-match           # rematch lane sources and OSM to ACHD segments by hand
 python3 -m ingest -h                      # every command, the plugins' included
 python3 -m unittest discover -s ingest/tests -t .   # ingest core (set TVT_TEST_DATABASE_URL for the database tests)

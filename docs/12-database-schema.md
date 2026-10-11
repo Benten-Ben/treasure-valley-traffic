@@ -448,6 +448,52 @@ estimate):
 | Major ways (motorway to tertiary) | 7,823: `lanes` on 5,632 (72%), `lanes:forward`/`backward` on 1,177 (15%), any `turn:lanes` on 1,460 (19%), `width` on 6 |
 | Residential, unclassified and service ways | 79,611: `lanes` on 5,176 (6.5%) |
 
+**One extract, several consumers (landscape sprint, Oct 2026; migrations
+0019 and roads 0001).** The extract's handling moved to core
+([ingest/osm_extract.py](../ingest/osm_extract.py), `python3 -m ingest
+osm-load`): one MD5 check, one archive, and one cut of the valley box with
+osmium's `smart` strategy (multipolygons that cross the edge come whole),
+read by each plugin's consumers (`osm_consumers` in its manifest). Every
+highway way has one owner, decided by its tags alone: osm_valley's keep rule
+above, unchanged, then the other streets and alleys (`roads.osm_street`),
+then sidewalks, crossings and the other service ways (`roads.osm_paving`,
+later), then paths (`trails.osm_paths`, later). On the Oct 5 extract that's
+13,917 / 22,785 / 124,582 / 22,263 of the box's 185,358 highway ways; 1,811
+are nobody's (1,369 proposed, 350 under construction, 65 indoor corridors,
+...). The 12 lane-tagged cycleways, tracks and pedestrian ways osm_valley
+keeps are the named exception.
+
+```sql
+-- Each consumer's gate: the extract it loaded last (osm_valley's stays in its file).
+create table ops.osm_consumer (
+  consumer     text primary key,      -- '<plugin>.<source>', e.g. 'roads.osm_street'
+  source       text not null references ops.source,
+  md5          text not null,
+  extract_file text not null,         -- its name in $TVT_ARCHIVE/osm/
+  data_as_of   text,                  -- Geofabrik's header time
+  loaded_at    timestamptz not null default now(),
+  fetch_id     bigint references ops.fetch,
+  objects      bigint,
+  counts       jsonb not null default '{}'
+);
+
+-- roads 0001: the other streets and alleys, versioned in place (no raw.record copies).
+create table roads.osm_street (
+  osm_id bigint primary key, highway text not null, service text,    -- service = 'alley' on alleys
+  name text, ref text, oneway text, width_m real, surface text, access text, maxspeed text,
+  layer smallint, bridge boolean not null, tunnel boolean not null, tags jsonb not null,
+  geom geometry(LineString, 4326) not null, osm_version int, osm_timestamp timestamptz,
+  active boolean not null, first_seen timestamptz not null, last_seen timestamptz not null
+);
+```
+
+The new consumers' tables keep OpenStreetMap's version and timestamp, the
+loads that first and last saw each object, and `active`; an object missing
+from a load is retired, never deleted, and the archive keeps the last two
+extracts (an exception to the Oct 5 rule for these tables only, owner Oct 8).
+Their license is ODbL, republish yes, recorded in the table's comment and the
+manifest. `roads.osm_street` held 22,785 ways (11 MB) on scratch on Oct 11.
+
 **COMPASS (built Oct 6, 2026, migration 0012).** Crashes are `obs.crash`,
 one row per ITD serial number. `crashed_at` is the reported local time, so
 the key is serial number plus time; with TimescaleDB it's a hypertable in

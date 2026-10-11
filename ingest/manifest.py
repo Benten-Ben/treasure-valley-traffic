@@ -23,11 +23,12 @@ A manifest:
     osm_consumers   optional: what it reads from the OpenStreetMap extract that
                     `python3 -m ingest osm-load` loads (ingest/osm_extract.py):
                     {"source" (one of its "manual" sources: name, module,
-                    license, credit and republish live there), "tags" (osmium
-                    tags-filter expressions, e.g. "w/highway=residential,road"),
-                    "geometry" (what it gets: "point", "linestring", "polygon",
-                    "relation"), "tables" (the tables it writes, from its own
-                    tables)}
+                    license, credit and republish live there), "tags" (in
+                    osmium's tags-filter syntax, e.g. "w/highway=residential,road";
+                    n/ nodes, w/ ways as lines, a/ closed ways and multipolygons
+                    as areas, r/ relations), "geometry" (what it gets: "point",
+                    "linestring", "polygon", "relation"), "tables" (the tables it
+                    writes, from its own tables)}
     storage, ethics short notes
 
 Kinds: "source" (run by `run` and `serve`), "stream" (run continuously by

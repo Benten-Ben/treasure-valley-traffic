@@ -155,11 +155,13 @@ BEGIN
     EXECUTE format('GRANT %s ON TABLE %s TO tvt_build', shared_writes[2 * i], rel);
     shared := shared || rel;
     shared_privs := shared_privs || shared_writes[2 * i];
+    -- pg_get_serial_sequence takes the column's name as it is, not quoted (quoting a keyword
+    -- or a mixed-case name would make it look for a column that doesn't exist).
     FOR seq IN
-      SELECT pg_get_serial_sequence(rel::text, quote_ident(a.attname))
+      SELECT pg_get_serial_sequence(rel::text, a.attname)
         FROM pg_attribute a
        WHERE a.attrelid = rel AND a.attnum > 0 AND NOT a.attisdropped
-         AND pg_get_serial_sequence(rel::text, quote_ident(a.attname)) IS NOT NULL
+         AND pg_get_serial_sequence(rel::text, a.attname) IS NOT NULL
     LOOP
       EXECUTE format('GRANT USAGE ON SEQUENCE %s TO tvt_build', seq);
     END LOOP;

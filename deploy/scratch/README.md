@@ -193,8 +193,13 @@ What counts as load state in an archive folder: its `state/` folder and the
 `*.json` files at its top (`deploy/scratch/seedarchive.py`). Everything else at
 its top is a held file (an extract, its `.md5`); `inbox/` starts empty, and
 other folders (a loader's temporary work) aren't copied. A loader that keeps
-its gate in a file (S1's consumers, if they don't keep it in the database) puts
-it there; state kept in the database follows the database by itself.
+its gate in a file puts it there; state kept in the database follows the
+database by itself. The OpenStreetMap loader's consumers (S1,
+`ingest/osm_extract.py`) keep theirs in `ops.osm_consumer`, all but
+`osm_valley`, whose gate stays `osm/last-loaded.json`. The loader's valley cut
+(`osm/cut/valley.osm.pbf` and `valley.json`) is derived, so it isn't copied
+either: after a refresh, the next `osm-load` (or `osm-load --cut-only`, a heavy
+job of about 3 GB) makes it again.
 
 If you undo a load by hand (drop a plugin's tables, restore one table), its
 state still says it's loaded: pass `--force` to the next load, or delete the

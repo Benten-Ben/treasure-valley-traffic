@@ -93,7 +93,7 @@ CREATE TABLE raw.record (source text, first_fetch bigint);
 CREATE TABLE ops.source (name text PRIMARY KEY);
 CREATE TABLE ops.fetch (id bigserial PRIMARY KEY, source text);
 CREATE TABLE ops.layer_signature (layer text PRIMARY KEY);
-CREATE TABLE ops.osm_consumer (consumer text PRIMARY KEY);
+CREATE TABLE ops.osm_consumer (consumer text PRIMARY KEY, "user" text, "Mixed Case" text, "extract" text);
 CREATE TABLE ops.schema_migration (name text PRIMARY KEY);
 CREATE TABLE ops.build_run (id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, build text);
 CREATE TABLE ops.build_pending (id bigint GENERATED ALWAYS AS IDENTITY, build text, marked_by text,

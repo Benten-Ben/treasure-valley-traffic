@@ -13,7 +13,9 @@ projection (`utm.py`), the line matcher that places one network's lines on
 another (`linematch.py`; roads uses it, trails will), the rules-by-date
 evaluator for seasons, closures and other recurring rules (`seasons.py`),
 build marks and build runs (`builds.py`, [below](#builds-marked-by-sources-run-by-hand)),
-and the plugin loader (`manifest.py` reads and orders the manifests;
+the OpenStreetMap loader that reads one hand-downloaded extract into every
+plugin's consumers (`osm_extract.py`, the `osm-load` command; below), and
+the plugin loader (`manifest.py` reads and orders the manifests;
 `sources/__init__.py` builds `SOURCES`, `STREAMS` and the plugin commands
 from them). Each subject's sources live in its plugin,
 `plugins/<name>/`, with a `plugin.json` (sources, licenses, whether we may
@@ -24,7 +26,7 @@ names didn't change, so `ops.source` and `ops.fetch` carry on:
 |---|---|---|
 | [cameras](../plugins/cameras) | `achd_cameras`, `idaho511_views_oneoff`; stream `idaho511_frames` | `rollup` |
 | [transit](../plugins/transit) | `vrt_gtfs`; stream `vrt_realtime` | `match-routes`, `transit-progress`, `transit-ribbons`, `route-colors` |
-| [roads](../plugins/roads) | `achd_roads`, `itd_hpms`, `achd_msm`, `compass_centerline`; by hand `osm_valley` | `osm-load`, `segment-match` |
+| [roads](../plugins/roads) | `achd_roads`, `itd_hpms`, `achd_msm`, `compass_centerline`; by hand (OpenStreetMap consumers) `osm_valley`, `osm_street` | `segment-match` |
 | [conditions](../plugins/conditions) | streams `itd_wzdx`, `idaho511_api` | |
 | [intersections](../plugins/intersections) | `fra_crossings`, `achd_signal_points`, `compass_signals`, `compass_regional_signals`, `intersections` | `match-intersections` |
 | [safety](../plugins/safety) | `compass_crashes` | |
@@ -46,6 +48,49 @@ same way. The old module entry points (`python3 -m ingest.osm_load`,
 `ingest.segment_match`, `ingest.transit_progress`, `ingest.transit_ribbons`)
 still work and name the new commands.
 
+**OpenStreetMap** (landscape sprint, Oct 2026; plan C1, C2, C10). Geofabrik's
+robots.txt disallows scripted downloads, so the owner downloads the Idaho
+extract in a browser into `$TVT_ARCHIVE/osm/inbox/`, and `python3 -m ingest
+osm-load` (`osm_extract.py`) reads it into each plugin's **consumers**, listed
+in its `plugin.json` (`osm_consumers`: one of its by-hand sources, the osmium
+tags-filter expressions it wants, the geometry it gets, the tables it writes).
+A load checks the MD5, cuts the valley box **once** with osmium's `smart`
+strategy (ways with a node in the box whole, multipolygons with a member in it
+whole; kept as `$TVT_ARCHIVE/osm/cut/valley.osm.pbf` with `valley.json`, which
+the ground's mask reads), runs each consumer whose own MD5 gate says it hasn't
+loaded this extract, each with its own `ops.fetch` row, then archives the file
+(the last two are kept). Gates: `ops.osm_consumer` (migration 0019), except
+`osm_valley`'s, which stays `$TVT_ARCHIVE/osm/last-loaded.json`. Highway ways
+are split between consumers by tags alone (`owner()`): osm_valley's keep rule,
+unchanged, then streets and alleys (`osm_street`), sidewalks, crossings and
+other service ways (`osm_paving`), then paths (`osm_paths`); the lane-tagged
+cycleways, tracks and pedestrian ways osm_valley already keeps are the named
+exception. The new consumers' tables are versioned in place (`store_objects`:
+OpenStreetMap's version and timestamp, first and last seen, active), with no
+`raw.record` copies.
+
+| Consumer | Tags | Writes |
+|---|---|---|
+| `roads.osm_valley` | highway ways; signal, crossing-signal and level-crossing nodes | as below (unchanged; its own pipeline over the cut) |
+| `roads.osm_street` | residential, unclassified, living_street, road, busway and alleys that osm_valley doesn't keep | `roads.osm_street` |
+
+```bash
+python3 -m ingest osm-load --inbox                  # a new extract: every consumer (a heavy job: see below)
+python3 -m ingest osm-load --only roads.osm_street  # one consumer, on the extract we hold
+python3 -m ingest osm-load --archived [--force]     # every consumer due, on the extract we hold
+python3 -m ingest osm-load --cut-only               # just the valley cut
+python3 -m ingest osm-load --list                   # the consumers and what each loaded last
+```
+
+**Memory** (measured Oct 11 on the Oct 5 extract, 129 MB). osmium keeps a
+bitmap over every node id, and Idaho's run to about 13 billion, so the smart
+cut and osm_valley's own `complete_ways` cut each peak at about 3.9 GB for
+about 15 s; a load that makes a cut, or runs osm_valley, is a heavy job (give
+it 5 GB: [deploy/README.md](../deploy/README.md)). The other consumers don't
+use osmium's tags-filter, which would need 1.9 GB even on the 32 MB cut: they
+export the cut's tagged objects (about 140 MB) and pick theirs in Python, so a
+consumer on a cut already made is light (`osm_street`: 16 s, under 0.2 GB).
+
 **Status:** camera sources (for the calibrator), Valley Regional Transit (buses), ITD's work zones and the 511 Idaho API.
 
 | Source | Access | Schedule | Writes |
@@ -65,7 +110,7 @@ still work and name the new commands.
 | `compass_signals` | open (COMPASS on ArcGIS Online; no license, "meant only for reference": internal until COMPASS answers) | weekly | `raw.record` (`synchro:<id>`, else `loc:<operator>:<location>`), `core.signal_device` (585 signalized intersections with operator, coordination and per-approach lanes, phasing and modelled volumes) |
 | `compass_regional_signals` | open (COMPASS on swidrdc.org; internal until COMPASS answers) | weekly | `raw.record`, `core.signal_device` (1,076 devices: 586 traffic signals, the rest pedestrian signals, flashers and fire signals) |
 | `intersections` | derived (fetches nothing; by hand: `python3 -m ingest match-intersections [--dry-run]`) | daily | `core.intersection` (633 after the Oct 7 OpenStreetMap load: 585 active, 43 candidates, 5 retired by review in `plugins/intersections/ingest/intersection_reviews.json`; 42 of the candidates are new, from OSM signal nodes with no COMPASS match, and need review. Before the load it was 591 with 1 candidate), `core.approach` (2,276), `core.signal_device.intersection_id`, camera and OSM links in `core.source_link` (199 cameras, 3 of them to interchanges; 711 OSM nodes), `core.rail_crossing.intersection_id` (nearest active signal within 300 m; 56 crossings). Since OSM nodes now confirm and create intersections, `core.intersection` is an ODbL derivative database: credit "© OpenStreetMap contributors", and anything published from it stays ODbL ([docs/12 §12.5](../docs/12-database-schema.md#125-core-our-entities)) |
-| `osm_valley` | open (OpenStreetMap, ODbL; credit "© OpenStreetMap contributors"); by hand only: Geofabrik's robots.txt disallows scripted downloads (Oct 6), so the owner downloads the Idaho extract in a browser into `$TVT_ARCHIVE/osm/inbox/`. Not a scheduled source; no download code | by hand, weekly (`python3 -m ingest osm-load --inbox`) | `raw.record` (`w<id>`/`n<id>`: tags and a geometry hash), `core.osm_way` (major ways and every way with lanes), `core.osm_lane`, `core.osm_node` (intersection signals, crossing signals, level crossings), `core.segment_match` (ACHD segments, by the shared matcher: `buffer15_bearing20`, and `way_in_buffer15_bearing20` for turn-bay ways); extracts archived in `$TVT_ARCHIVE/osm/` (last two) |
+| `osm_valley` | open (OpenStreetMap, ODbL; credit "© OpenStreetMap contributors"); by hand only: Geofabrik's robots.txt disallows scripted downloads (Oct 6), so the owner downloads the Idaho extract in a browser into `$TVT_ARCHIVE/osm/inbox/`. Not a scheduled source; no download code. A consumer of `osm-load` (above), first | by hand, weekly (`python3 -m ingest osm-load --inbox`) | `raw.record` (`w<id>`/`n<id>`: tags and a geometry hash), `core.osm_way` (major ways and every way with lanes), `core.osm_lane`, `core.osm_node` (intersection signals, crossing signals, level crossings), `core.segment_match` (ACHD segments, by the shared matcher: `buffer15_bearing20`, and `way_in_buffer15_bearing20` for turn-bay ways); extracts archived in `$TVT_ARCHIVE/osm/` (last two) |
 | `compass_crashes` | open (COMPASS hub, disclaimer only; swidrdc.org has no robots.txt) | monthly (unchanged layers skipped; 6 h back-off) | `raw.record`, `obs.crash` (174,038 crashes 2008-2025: local time, KABCO severity, pm_id/int_id, unit types), `restricted.crash_unit` (345,152 people: age group, Idaho resident or not, coded citations; no sex; never in `raw.record`; aggregates only), `core.hin_junction` (1,924), `core.hin_segment` (14,487) |
 | `compass_counts` | open (COMPASS hub) | monthly | `raw.record`, `obs.traffic_count` (latest short count on 4,387 segments from every agency; 115 permanent counters; earlier counts kept) |
 | `compass_growth` | open (COMPASS hub) | monthly (unchanged layers skipped) | `raw.record`, `core.taz` (2,498 zones), `obs.taz_demographic` (2020 Census, estimates 2022-26, forecasts 2030-55), `obs.building_permit` (174,244 since 2000; no addresses, parcels or comments) |
@@ -84,6 +129,7 @@ TVT_ARCHIVE=data/archive IDAHO511_API_KEY=... python3 -m ingest stream idaho511_
 python3 -m ingest backfill itd_wzdx data/archive/wzdx                     # load snapshots the database missed
 python3 -m ingest match-intersections --dry-run                         # rebuild core.intersection from the signal sources
 TVT_ARCHIVE=data/archive python3 -m ingest osm-load --inbox             # OSM extract downloaded by hand (needs osmium-tool)
+TVT_ARCHIVE=data/archive python3 -m ingest osm-load --only osm_street   # one consumer, on the extract we hold
 TVT_COMPASS_MAX_PAGES=3 python3 -m ingest run compass_crashes          # dev only: at most 3 pages per layer, logged as failed
 TVT_COMPASS_FORCE=1 python3 -m ingest run compass_growth               # skip the freshness and change checks
 python3 -m ingest segment-match [itd_hpms achd_msm compass_centerline osm_valley]   # rematch to ACHD segments by hand

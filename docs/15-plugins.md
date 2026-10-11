@@ -88,7 +88,12 @@ The base map's streets (for drawing) are core; the road network as data
 matcher moved from `roads` to core in the landscape sprint
 (`ingest/linematch.py`), once trails needed it too: roads matches its lane
 sources and OpenStreetMap to ACHD's segments with it, and trails will link
-the agencies' trail lines to OpenStreetMap's paths.
+the agencies' trail lines to OpenStreetMap's paths. The OpenStreetMap
+extract's handling moved to core in the same sprint (`ingest/osm_extract.py`,
+`python3 -m ingest osm-load`), once roads, trails, water and fences all read
+it: one hand download, one MD5 check, one archive and one cut of the valley
+box, read by each plugin's consumers (`osm_consumers` in its manifest), with a
+partition that gives each highway way to one of them.
 
 ## 15.2 What a plugin is
 
@@ -114,7 +119,8 @@ The manifest says:
 | `order` | where its sources run among plugins it doesn't depend on (lower first) |
 | `sources` | each source's name, module, kind (`source`, `stream`, or `manual` for by-hand loads), license, credit, and `republish`: `yes`, `aggregates`, `internal` or `no` |
 | `tables` | the tables it owns (for exports and backups) |
-| `commands` | its own `python3 -m ingest` subcommands (e.g. `osm-load`) |
+| `commands` | its own `python3 -m ingest` subcommands (e.g. `match-intersections`) |
+| `osm_consumers` | what it reads from the OpenStreetMap extract (landscape sprint, Oct 2026): for one of its by-hand sources, the osmium tags-filter expressions, the geometry it gets (points, lines, polygons, relations) and the tables it writes. Core's `python3 -m ingest osm-load` ([ingest/osm_extract.py](../ingest/osm_extract.py)) cuts the valley box once and runs every consumer, each with its own MD5 gate; highway ways go to one consumer each, by tags |
 | `storage` | expected growth per day, so the disk plan can add them up |
 | `ethics` | anything special (e.g. "no plate or face recognition") |
 

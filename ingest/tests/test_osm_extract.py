@@ -119,8 +119,11 @@ class PartitionTest(unittest.TestCase):
     def test_the_named_exception(self):
         self.assertTrue(ox.named_exception({"highway": "cycleway", "lanes": "1"}))
         self.assertTrue(ox.named_exception({"highway": "track", "lanes": "2"}))
+        self.assertTrue(ox.named_exception({"highway": "pedestrian", "turn:lanes": "through"}))
         self.assertFalse(ox.named_exception({"highway": "service", "lanes": "1"}))      # a road class
-        self.assertFalse(ox.named_exception({"highway": "cycleway"}))
+        self.assertFalse(ox.named_exception({"highway": "raceway", "lanes": "2"}))      # osm_valley's, but no path
+        self.assertFalse(ox.named_exception({"highway": "cycleway"}))                   # osm_paths'
+        self.assertFalse(ox.named_exception({"highway": "proposed", "proposed": "cycleway", "lanes": "1"}))
 
     def test_the_fixture_partition_by_tags(self):
         ways = fixture_highway_ways_in_box()
@@ -162,6 +165,16 @@ class TagFilterTest(unittest.TestCase):
         self.assertTrue(f.matches("r", {"type": "multipolygon", "natural": "water"}, area=True))
         self.assertTrue(f.matches("r", {"amenity": "parking"}))
         self.assertFalse(f.matches("w", {}))
+
+    def test_a_first_look_and_osmium_export_s_settings(self):
+        f = ox.TagFilter(["w/highway=residential,road", "a/natural=water", "nwr/amenity=parking", "r/route=hiking"])
+        self.assertTrue(f.may_match('{"properties":{"highway":"primary"}}'))
+        self.assertFalse(f.may_match('{"properties":{"building":"yes"}}'))
+        self.assertEqual(f.export_tags("w"), ["highway=residential", "highway=road", "amenity=parking"])
+        self.assertEqual(f.export_tags("a"), ["natural=water"])
+        config = ox.export_config(consumer(S, ["w/highway=road", "n/crossing"], ["point", "linestring"]))
+        self.assertEqual((config["linear_tags"], config["area_tags"]), (["highway=road"], False))
+        self.assertTrue(all(config["attributes"][a] for a in ("type", "id", "version", "timestamp", "way_nodes")))
 
     def test_relation_expressions(self):
         self.assertEqual(ox.relation_expressions(["w/highway=path", "r/route=hiking,mtb", "nwr/x"]),
@@ -230,17 +243,17 @@ class OsmiumOutputTest(unittest.TestCase):
                           "--set-bounds", "--no-progress", "--overwrite", "--output-format", "pbf", "--output",
                           "/c/x.part", "/a/idaho.osm.pbf"])
         paths = consumer(T, ["w/highway=path,track", "r/route=hiking"], ["linestring", "relation"])
-        cmds, lines, rels = ox.consumer_commands("/c/valley.osm.pbf", "/w", paths)
-        self.assertEqual((lines, rels), ("/w/features.geojsonseq", "/w/relations.osm"))
-        self.assertEqual(cmds[0], ["osmium", "tags-filter", "--no-progress", "--overwrite", "--output",
-                                   "/w/filtered.osm.pbf", "/c/valley.osm.pbf", "w/highway=path,track", "r/route=hiking"])
-        self.assertEqual(cmds[1][cmds[1].index("--geometry-types") + 1], "linestring")
-        self.assertIn("type,id,version,timestamp,way_nodes", cmds[1])
-        self.assertEqual(cmds[2], ["osmium", "tags-filter", "--omit-referenced", "--no-progress", "--overwrite",
-                                   "--output-format", "xml", "--output", "/w/relations.osm", "/c/valley.osm.pbf",
-                                   "r/route=hiking"])
-        cmds, lines, rels = ox.consumer_commands("/c/v", "/w", consumer(S, ["w/highway=road"], ["linestring"]))
-        self.assertEqual((len(cmds), rels), (2, None))
+        cmds, config, lines, rels = ox.consumer_commands("/c/valley.osm.pbf", "/w", paths)
+        self.assertEqual((config, lines, rels), ("/w/export.json", "/w/features.geojsonseq", "/w/relations.osm"))
+        self.assertEqual(cmds[0], ["osmium", "export", "--config", "/w/export.json", "--output-format", "geojsonseq",
+                                   "--format-option", "print_record_separator=false", "--geometry-types", "linestring",
+                                   "--add-unique-id", "type_id", "--no-progress", "--overwrite", "--output",
+                                   "/w/features.geojsonseq", "/c/valley.osm.pbf"])
+        self.assertEqual(cmds[1], ["osmium", "cat", "--object-type", "relation", "--no-progress", "--overwrite",
+                                   "--output-format", "xml", "--output", "/w/relations.osm", "/c/valley.osm.pbf"])
+        self.assertFalse(any("tags-filter" in c for c in cmds))       # its id bitmap costs 1.9 GB on Idaho's ids
+        cmds, _, _, rels = ox.consumer_commands("/c/v", "/w", consumer(S, ["w/highway=road"], ["linestring"]))
+        self.assertEqual((len(cmds), rels), (1, None))
 
 
 class ConsumersTest(unittest.TestCase):
@@ -346,15 +359,15 @@ class FakeConn:
         self.result = None
         if s.startswith("select to_regclass"):
             self.result = (self.state_table,)
-        elif s.startswith("select md5, extract"):
+        elif s.startswith("select md5, extract_file"):
             st = self.states.get(params[0])
-            self.result = st and (st["md5"], st["extract"], None, None, st["fetch_id"], st["objects"], {})
+            self.result = st and (st["md5"], st["extract_file"], None, None, st["fetch_id"], st["objects"], {})
         elif s.startswith("insert into ops.fetch"):
             self.fetches += 1
             self.result = (self.fetches,)
         elif s.startswith("insert into ops.osm_consumer"):
-            cid, source, md5, extract, _, fetch_id, objects, _ = params
-            self.states[cid] = {"md5": md5, "extract": extract, "fetch_id": fetch_id, "objects": objects}
+            cid, source, md5, extract_file, _, fetch_id, objects, _ = params
+            self.states[cid] = {"md5": md5, "extract_file": extract_file, "fetch_id": fetch_id, "objects": objects}
         return self
 
     def fetchone(self):
@@ -454,7 +467,7 @@ class LoadTest(unittest.TestCase):
         self.assertFalse(os.path.exists(src))
         self.assertEqual(self.cuts, kept)                                         # the cut knows the archived name
         self.assertEqual(conn.states["roads.osm_street"]["md5"], md5)              # the database gate
-        self.assertEqual(conn.states["roads.osm_street"]["extract"], kept[0])
+        self.assertEqual(conn.states["roads.osm_street"]["extract_file"], kept[0])
         self.assertNotIn("roads.osm_valley", conn.states)                         # osm_valley keeps its own file
         self.assertEqual(FakeConsumer.modules[V].marked, kept)
         runs = FakeConsumer.modules[V].runs + FakeConsumer.modules[S].runs
@@ -590,8 +603,8 @@ class PipelineTest(unittest.TestCase):
     def test_the_cut_holds_the_lake_across_the_edge(self):
         got, _ = self.features(consumer("osm_waterways", ["a/natural=water", "w/waterway"], ["linestring", "polygon"]))
         shapes = {(f["type"], f["osm_id"], f["geometry"]) for f in got}
-        self.assertEqual(shapes, {("r", 401, "polygon"), ("w", 301, "polygon"), ("w", 301, "linestring"),
-                                  ("w", 302, "linestring")})
+        # The pond is closed and only an a/ expression takes it: an area, not a line.
+        self.assertEqual(shapes, {("r", 401, "polygon"), ("w", 301, "polygon"), ("w", 302, "linestring")})
         lake = next(f for f in got if f["osm_id"] == 401)
         self.assertEqual(lake["tags"]["name"], "Fixture Lake")
         self.assertEqual(lake["osm_version"], 3)
@@ -613,10 +626,8 @@ class PipelineTest(unittest.TestCase):
     def test_paving_points_lines_and_lots(self):
         got, _ = self.features(consumer(P, ["w/highway=service,footway,path,cycleway", "a/amenity=parking",
                                             "n/highway=crossing"], ["point", "linestring", "polygon"]))
-        # A closed way comes as a line and as a polygon (the lot's outline and its area); the
-        # consumer takes the shape it wants.
         self.assertEqual({f["osm_id"] for f in got if f["geometry"] == "linestring"},
-                         {209, 210, 211, 212, 213, 229, 231, 232, 701})
+                         {209, 210, 211, 212, 213, 229, 231, 232})
         self.assertEqual({(f["type"], f["osm_id"]) for f in got if f["geometry"] == "polygon"}, {("w", 701)})
         self.assertEqual({f["osm_id"] for f in got if f["geometry"] == "point"}, {801})
         crossing = next(f for f in got if f["osm_id"] == 212)
@@ -726,7 +737,7 @@ class StoreTest(unittest.TestCase):
         self.assertEqual(ox.db_state(self.conn, street.id)["md5"], "c" * 32)
         ox.set_db_state(self.conn, street, "d" * 32, "idaho-y.osm.pbf", "2026-10-05T20:21:07Z", None, 6, {})
         st = ox.db_state(self.conn, street.id)
-        self.assertEqual((st["md5"], st["extract"], st["objects"], st["data_as_of"]),
+        self.assertEqual((st["md5"], st["extract_file"], st["objects"], st["data_as_of"]),
                          ("d" * 32, "idaho-y.osm.pbf", 6, "2026-10-05T20:21:07Z"))
         self.assertIsInstance(before, dict)
 
