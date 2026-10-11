@@ -12,6 +12,7 @@
 # The container: production's db image (timescaledb-ha), --memory 2g --cpus 2, half the
 # services' CPU weight, on its own internal Docker network (no host port, no way out), its own
 # volume. A throwaway server, so it writes little: wal_level minimal, synchronous_commit off.
+# A query whose client has gone (a job stopped) ends within 10 s (client_connection_check_interval).
 set -euo pipefail
 SCRIPT=scratch-setup
 HERE=$(cd "$(dirname "$0")" && pwd -P)
@@ -21,16 +22,18 @@ HERE=$(cd "$(dirname "$0")" && pwd -P)
 recreate=0
 case ${1:-} in --recreate) recreate=1 ;; "") ;; *) sed -n '2,15p' "$0" >&2; exit 2 ;; esac
 
-mkdir -p "$SCRATCH_ROOT"/{bin,trees,runs,slots,archive,logs}
-install -m 755 "$HERE"/lib.sh "$HERE"/setup.sh "$HERE"/run.sh "$HERE"/refresh.sh "$SCRATCH_ROOT/bin/"
+mkdir -p "$SCRATCH_ROOT"/{bin,trees,runs,slots,archive,logs,locks}
+install -m 755 "$HERE"/lib.sh "$HERE"/setup.sh "$HERE"/run.sh "$HERE"/refresh.sh "$HERE"/scratchq.py "$SCRATCH_ROOT/bin/"
 install -m 644 "$HERE/../tvt_build.sql" "$SCRATCH_ROOT/bin/tvt_build.sql"
+install -m 644 "$HERE/grant-checks.sql" "$SCRATCH_ROOT/bin/grant-checks.sql"
 install -m 644 "$HERE/README.md" "$SCRATCH_ROOT/bin/README-repo.md"
-# The scratch archive's OpenStreetMap folder starts as a copy of production's (the held extracts
-# and their load state), so loaders see what production has seen; jobs never write production's.
-if [ ! -d "$SCRATCH_ROOT/archive/osm" ] && [ -d "$PROD_ARCHIVE/osm" ]; then
-	mkdir -p "$SCRATCH_ROOT/archive/osm/inbox"
-	find "$PROD_ARCHIVE/osm" -maxdepth 1 -type f \( -name '*.osm.pbf' -o -name '*.md5' -o -name 'last-loaded.json' \) \
-		-exec cp -p {} "$SCRATCH_ROOT/archive/osm/" \;
+rm -f "$SCRATCH_ROOT/refresh.lock"                # before Oct 11's fixes: one lock for every database
+# Each database's archive is archive/<db>/ (refresh.sh seeds it from production's). Before Oct
+# 11's fixes there was one, shared: it was tvt's.
+if [ -d "$SCRATCH_ROOT/archive/osm" ] && [ ! -e "$SCRATCH_ROOT/archive/tvt" ]; then
+	mkdir -p "$SCRATCH_ROOT/archive/tvt"
+	find "$SCRATCH_ROOT/archive" -mindepth 1 -maxdepth 1 ! -name tvt ! -name '.*' -exec mv {} "$SCRATCH_ROOT/archive/tvt/" \;
+	say "moved the shared archive to $SCRATCH_ROOT/archive/tvt (each database has its own now)"
 fi
 
 # Secrets: the scratch server's own random passwords, made here, never shown.
@@ -80,6 +83,7 @@ if ! docker container inspect "$SCRATCH_DB" >/dev/null 2>&1; then
 		-c timescaledb.telemetry_level=off -c jit=off -c random_page_cost=1.1 \
 		-c wal_level=minimal -c max_wal_senders=0 -c archive_mode=off -c synchronous_commit=off \
 		-c max_wal_size=256MB -c min_wal_size=64MB -c checkpoint_timeout=15min \
+		-c client_connection_check_interval=10s \
 		-c log_temp_files=100MB -c log_min_duration_statement=-1 >/dev/null
 fi
 [ "$(docker inspect -f '{{.State.Running}}' "$SCRATCH_DB")" = true ] || docker start "$SCRATCH_DB" >/dev/null
