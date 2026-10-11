@@ -433,6 +433,18 @@ itself; the source's own row says internal, the strictest. The canal
 season is never in the base bake (`basemap/landscape/plan.py` refuses
 `water/canal_season`): it's drawn as feature-state.
 
+On scratch (Oct 11, water build 10, the readings the copy holds up to
+07:15 UTC that morning), a run took 4 s: 559 canals gave 2,017
+lifecycles (about 1.4 MB). 188 canals never switch off, 365 follow IDWR's
+window (on at the time: 3/1 to 11/15 at their heads), 5 have neither, and
+the New York Canal reads on from BSEI1's first reading (Sep 7) and **off
+since Sep 28, 07:45 Boise time**, its first reading with no flow (3.79
+ft). The next run wrote nothing. As of Oct 13, 07:15 UTC, 48 hours after
+the copy's last reading, the off span closes and "unknown" begins; a
+minute earlier nothing changes. A trial dates entry for the Ridenbaugh
+Canal with `branches` (a dry run, not loaded) selected 42 canals, 33 of
+them laterals.
+
 ### Commands
 
 ```bash
