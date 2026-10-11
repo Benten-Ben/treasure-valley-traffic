@@ -63,3 +63,27 @@ def interval_s(text):
     """A Postgres interval like '30 minutes' or '1 hour' in seconds (the forms the sources use)."""
     n, unit = re.fullmatch(r"(\d+) (minute|hour|day)s?", text).groups()
     return int(n) * {"minute": 60, "hour": 3600, "day": 86400}[unit]
+
+
+class Nested:
+    """A database connection for code that commits (a poll, a relink after it, a build): its
+    commits and rollbacks are savepoints inside one transaction the test rolls back, so nothing
+    it writes outlives the test, on a shared scratch database too. Counts its commits."""
+
+    def __init__(self, conn):
+        self.conn, self.commits = conn, 0
+        conn.execute("savepoint nested")
+
+    def execute(self, *args, **kw):
+        return self.conn.execute(*args, **kw)
+
+    def cursor(self, *args, **kw):
+        return self.conn.cursor(*args, **kw)
+
+    def commit(self):
+        self.conn.execute("release savepoint nested")
+        self.conn.execute("savepoint nested")
+        self.commits += 1
+
+    def rollback(self):
+        self.conn.execute("rollback to savepoint nested")

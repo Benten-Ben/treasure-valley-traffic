@@ -33,7 +33,7 @@ from zoneinfo import ZoneInfo
 
 from ingest import arcgis, db, events
 
-from .. import layers
+from .. import layers, match
 
 LAYER = ("https://services1.arcgis.com/WHM6qC35aMtyAAlN/ArcGIS/rest/services/"
          "Ridge_to_Rivers_Trails_Assessment_Map_WFL1/FeatureServer/2")
@@ -182,6 +182,13 @@ def store(conn, fetch_id, seen_at, records, rows):
 
 
 def run(conn, get=layers.get, sleep=time.sleep):
+    """One poll; then, once it's committed, the trails whose lines changed are relinked to
+    OpenStreetMap's paths (match.after_poll: its own fetch row, and never a failed poll)."""
+    stats = poll(conn, get, sleep)
+    return {**stats, **match.after_poll(conn, SOURCE["name"], match.changed(stats))}
+
+
+def poll(conn, get=layers.get, sleep=time.sleep):
     db.ensure_source(conn, SOURCE)
     name = SOURCE["name"]
     with db.Fetch(conn, name) as f:

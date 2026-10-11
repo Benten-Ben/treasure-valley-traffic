@@ -81,6 +81,7 @@ class RegistryTest(unittest.TestCase):
         self.assertEqual([e["name"] for _, e in registry.MANUAL if _.name == "soils"], ["ssurgo"])
         self.assertEqual([e["name"] for _, e in registry.MANUAL if _.name == "hazards"],
                          ["nifc_wfigs_perimeters_backfill"])
+        self.assertEqual([e["name"] for _, e in registry.MANUAL if _.name == "trails"], ["osm_paths", "trails_match"])
 
     def test_the_plugins(self):
         self.assertEqual(sorted(p.name for p in ours()),
@@ -115,7 +116,8 @@ class RegistryTest(unittest.TestCase):
                          ["burn-scars", "farm-cdl-load", "farm-csb-load", "farm-derive", "farm-export",
                           "farm-fields-load", "match-intersections", "match-routes", "roads-developed-load", "rollup",
                           "route-colors", "segment-match", "shrubs-hedge-check", "shrubs-load", "soils-export",
-                          "soils-load", "transit-progress", "transit-ribbons", "trees-load", "wfigs-backfill"])
+                          "soils-load", "trails-match", "transit-progress", "transit-ribbons", "trees-load",
+                          "wfigs-backfill"])
         self.assertFalse(set(registry.COMMANDS) & (set(BUILTINS) | set(CORE_COMMANDS)))
         for name in registry.COMMANDS:
             self.assertTrue(callable(registry.command(name)), name)

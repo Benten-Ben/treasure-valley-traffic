@@ -954,6 +954,26 @@ class StoreTest(unittest.TestCase):
         self.conn.execute("update roads.osm_street set active = false")
         self.assertEqual(self.store([], T0.replace(hour=14))["objects"], 0)    # nothing active: nothing to lose
 
+    def test_objects_without_geometry(self):
+        """Route relations: their members, no geometry (trails.osm_route)."""
+        self.conn.execute("""create temp table osm_fixture_route (osm_id bigint primary key, name text,
+                               way_ids bigint[], active boolean, first_seen timestamptz, last_seen timestamptz)""")
+        columns = [("osm_id", "bigint"), ("name", "text"), ("way_ids", "bigint[]")]
+
+        def store(rows, seen):
+            return ox.store_objects(self.conn, "pg_temp.osm_fixture_route", columns, rows, seen, geometry=None)
+
+        self.assertEqual(store([(1, "Loop", [5, 6]), (2, "Ride", [7])], T0)["new"], 2)
+        stats = store([(1, "Loop", [5, 6, 8])], T0.replace(hour=13))
+        self.assertEqual((stats["changed"], stats["unchanged"], stats["retired"]), (1, 0, 1))
+        self.assertEqual(self.conn.execute("select way_ids, active, first_seen from osm_fixture_route where osm_id = 1")
+                         .fetchone(), ([5, 6, 8], True, T0))
+        self.conn.execute("create temp table osm_fixture_keys (osm_id bigint primary key, active boolean, "
+                          "first_seen timestamptz, last_seen timestamptz)")
+        stats = ox.store_objects(self.conn, "pg_temp.osm_fixture_keys", [("osm_id", "bigint")], [(1,), (2,)], T0,
+                                 geometry=None)                       # nothing but the key: nothing can change
+        self.assertEqual((stats["new"], stats["changed"]), (2, 0))
+
     def test_state_rows(self):
         street = next(c for c in ox.consumers() if c.name == S)
         ox.db.ensure_source(self.conn, street.module().SOURCE)

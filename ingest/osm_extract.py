@@ -665,22 +665,24 @@ def store_objects(conn, table, columns, rows, seen_at, key=("osm_id",), geometry
     and active; one missing from the load becomes inactive (it's never deleted). No raw.record copy.
 
     columns: [(name, SQL type)] staged as given, the geometry column left out; rows: tuples in that
-    order, then the geometry as GeoJSON text (geometry_sql turns it into the column's type). The
-    table needs active, first_seen and last_seen, and a unique key. Refuses to retire when the load
-    has fewer than half the active objects (SHRINK_GUARD, at any size), unless allow_shrink, and
-    refuses an empty load whenever anything is active, even then (like db.check_snapshot): a broken
-    export or a wrong filter looks like that. Doesn't commit.
+    order, then the geometry as GeoJSON text (geometry_sql turns it into the column's type). With
+    geometry=None (objects without one: route relations and their members), rows hold the columns
+    only. The table needs active, first_seen and last_seen, and a unique key. Refuses to retire when
+    the load has fewer than half the active objects (SHRINK_GUARD, at any size), unless
+    allow_shrink, and refuses an empty load whenever anything is active, even then (like
+    db.check_snapshot): a broken export or a wrong filter looks like that. Doesn't commit.
     Returns {objects, new, changed, unchanged, reactivated, retired}."""
-    table, geometry = _ident(table), _ident(geometry)
+    table = _ident(table)
+    geometry = _ident(geometry) if geometry is not None else None
     names = [_ident(c) for c, _ in columns]
     key = [_ident(k) for k in key]
     stage = _ident("osm_stage_" + table.replace(".", "_"))
-    geom_expr = geometry_sql.format(f"s.{geometry}")
+    staged = names + ([geometry] if geometry else [])
+    defs = [f"{c} {t}" for c, t in columns] + ([f"{geometry} text"] if geometry else [])
     conn.execute(f"drop table if exists pg_temp.{stage}")
-    conn.execute(f"create temp table {stage} ({', '.join(f'{c} {t}' for c, t in columns)}, {geometry} text) "
-                 "on commit drop")
+    conn.execute(f"create temp table {stage} ({', '.join(defs)}) on commit drop")
     with conn.cursor() as cur:
-        with cur.copy(f"copy {stage} ({', '.join(names)}, {geometry}) from stdin") as cp:
+        with cur.copy(f"copy {stage} ({', '.join(staged)}) from stdin") as cp:
             for r in rows:
                 cp.write_row(r)
     keys = ", ".join(key)
@@ -696,19 +698,24 @@ def store_objects(conn, table, columns, rows, seen_at, key=("osm_id",), geometry
                            "the rest (check the file, or load it with --allow-shrink)")
     join = " and ".join(f"t.{k} = s.{k}" for k in key)
     rest = [c for c in names if c not in key]
-    differs = " or ".join([f"t.{c} is distinct from s.{c}" for c in rest]
-                          + [f"ST_AsBinary(t.{geometry}) is distinct from ST_AsBinary({geom_expr})"])
+    values = [f"s.{c}" for c in names]
+    differs = [f"t.{c} is distinct from s.{c}" for c in rest]
+    updates = [f"{c} = excluded.{c}" for c in rest]
+    if geometry:
+        geom_expr = geometry_sql.format(f"s.{geometry}")
+        values.append(geom_expr)
+        differs.append(f"ST_AsBinary(t.{geometry}) is distinct from ST_AsBinary({geom_expr})")
+        updates.append(f"{geometry} = excluded.{geometry}")
     new, reactivated, changed = conn.execute(
         f"""select count(*) filter (where t.{key[0]} is null),
                    count(*) filter (where t.{key[0]} is not null and not t.active),
-                   count(*) filter (where t.{key[0]} is not null and t.active and ({differs}))
+                   count(*) filter (where t.{key[0]} is not null and t.active and ({' or '.join(differs) or 'false'}))
             from {stage} s left join {table} t on {join}""").fetchone()
-    updates = ", ".join([f"{c} = excluded.{c}" for c in rest]
-                        + [f"{geometry} = excluded.{geometry}", "active = true", "last_seen = excluded.last_seen"])
+    updates += ["active = true", "last_seen = excluded.last_seen"]
     conn.execute(
-        f"""insert into {table} ({', '.join(names)}, {geometry}, active, first_seen, last_seen)
-            select {', '.join(f's.{c}' for c in names)}, {geom_expr}, true, %(seen)s, %(seen)s from {stage} s
-            on conflict ({keys}) do update set {updates}""", {"seen": seen_at})
+        f"""insert into {table} ({', '.join(staged)}, active, first_seen, last_seen)
+            select {', '.join(values)}, true, %(seen)s, %(seen)s from {stage} s
+            on conflict ({keys}) do update set {', '.join(updates)}""", {"seen": seen_at})
     retired = conn.execute(f"update {table} set active = false where active and last_seen < %s", (seen_at,)).rowcount
     conn.execute(f"drop table pg_temp.{stage}")
     return {"objects": n, "new": new, "changed": changed, "unchanged": n - new - reactivated - changed,

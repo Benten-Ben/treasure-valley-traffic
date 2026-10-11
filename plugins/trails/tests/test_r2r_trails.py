@@ -272,7 +272,8 @@ class ManifestTest(unittest.TestCase):
         self.assertEqual(r2r.SOURCE["access"], "open")
         self.assertEqual(interval_s(r2r.SOURCE["schedule"]), 30 * 60)
         self.assertGreaterEqual(interval_s(r2r.SOURCE["schedule"]), 600)
-        self.assertEqual(plugin.manifest["tables"], [])        # raw.record and evt.event are core's
+        # raw.record and evt.event are core's: the plugin's own tables are trails.* (OpenStreetMap and the links)
+        self.assertTrue(all(t.startswith("trails.") for t in plugin.manifest["tables"]))
 
 
 DB_URL = os.environ.get("TVT_TEST_DATABASE_URL")
