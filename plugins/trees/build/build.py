@@ -11,7 +11,8 @@ Then `python3 -m ingest trees-load --build <dir>` loads it.
    within 2.5 m of the trunk point where it best explains the lidar, sized from the crown model for its height and type
    (the genus says conifer or broadleaf). It is fixed: the placer builds around it. Otherwise it is an estimated tree,
    sized from Boise's measured trees of its genus (Urban Tree Database) by trunk diameter.
-2. The placer fills the rest (place.py), then repairs.
+2. The placer fills the rest (place.py), then repairs. Each placed crown's size and shape come from the width curve that
+   explains the lidar best; its type comes from the narrow rule (narrow_rule below), not from that curve.
 3. Writes trees.geojson (WGS84 points with the tree's fields), log.jsonl (one event per line) and build.json.
 
 The area's inputs for the pilot are the land-cover spike's lidar products (0.5 m DSM and DTM in UTM 11N) and its
@@ -31,13 +32,20 @@ CONIFER_GENERA = {"abies", "calocedrus", "cedrus", "chamaecyparis", "cryptomeria
                   "metasequoia", "picea", "pinus", "pseudotsuga", "sequoia", "sequoiadendron", "taxodium", "taxus",
                   "thuja", "tsuga"}
 TRUNK_H_CELLS, TRUNK_REACH_CELLS = 3, 5   # crown top within 1.5 m of the trunk point; centre within 2.5 m
+# The narrow rule (docs/19 §19.3), from the owner's 100 labelled trees (Oct 8): a narrow crown falls 45% of its height
+# within 3 m of its top, but not all the way to the ground (a crown that ends within 3 m is too small for the cue to
+# tell), from an even top (where the heights within 1 m of the top vary by a fifth of its height, the top is a broken
+# crown edge or sits between crowns, and the fall measured from it isn't the crown's shape).
+NARROW_DROP_3M = (0.45, 0.95)
+NARROW_ROUGH_MAX = 0.2
 
 
 def model_for(cm):
-    """One rule everywhere (owner, Oct 8: no classification by place): every tree tries the three types, each with its
-    own width-for-height curve from the lone trees, and keeps the one that explains its crown best. Broadleaf takes the
-    valley broadleaf curve (which includes the small trees), conifer the mountain conifers' (pointed, narrow crowns),
-    narrow the valley conifers' and columnar trees'. Conifers and narrow trees share the narrow top shape."""
+    """One rule everywhere (owner, Oct 8: no classification by place): every tree tries the three width curves from the
+    lone trees and keeps the one that explains its crown best. Broadleaf takes the valley broadleaf curve (which includes
+    the small trees), conifer the mountain conifers' (pointed, narrow crowns), narrow the valley conifers' and columnar
+    trees'. Conifers and narrow trees share the narrow top shape. The curve sets the crown's size and shape only: a
+    placed tree's type comes from the narrow rule (crown_profile, narrow_rule)."""
     W, Sh = cm["width"], cm["shape"]
     crowded = cm["crowded_shape_a"]
     narrow_shapes = [(Sh["narrow"]["a"], Sh["narrow"]["n"]), (crowded["narrow"], Sh["narrow"]["n"])]
@@ -47,6 +55,58 @@ def model_for(cm):
               "conifer": (W["mountain conifer"]["a"], W["mountain conifer"]["b"]),
               "narrow": (W["valley conifer"]["a"], W["valley conifer"]["b"])}
     return Model(widths, shapes, W["valley broadleaf + small"]["sd_log"], ["broadleaf", "conifer", "narrow"])
+
+
+PROFILE_ANGLES = np.linspace(0, 2 * np.pi, 16, endpoint=False)
+
+
+def crown_profile(h, y, x, reach):
+    """How a crown falls away from its top: the cues the owner's labelled trees were measured with (Oct 8).
+
+    h: heights above ground on the 0.5 m grid (not smoothed, buildings left in). The top is the highest cell within
+    `reach` cells of (y, x). drop_1m, drop_2m and drop_3m: the median fall from the top over 16 directions 1, 2 and 3 m
+    out, as a share of the top's height. rough: the spread (sd) of the heights 0.5-1 m from the top, as a share.
+    None when the top or its 3 m ring runs off the grid."""
+    rows, cols = h.shape
+    yi, xi, r = int(round(y)), int(round(x)), max(2, int(round(reach)))
+    if not (0 <= yi < rows and 0 <= xi < cols):
+        return None
+    win = h[max(0, yi - r):yi + r + 1, max(0, xi - r):xi + r + 1]
+    ty, tx = np.unravel_index(int(np.argmax(win)), win.shape)
+    ty, tx = ty + max(0, yi - r), tx + max(0, xi - r)
+    top = float(h[ty, tx])
+    if not (6 <= ty < rows - 6 and 6 <= tx < cols - 6):
+        return None
+    out = {"top_m": round(top, 2)}
+    for m in (1, 2, 3):
+        yy = np.rint(ty + m / PX * np.sin(PROFILE_ANGLES)).astype(int)
+        xx = np.rint(tx + m / PX * np.cos(PROFILE_ANGLES)).astype(int)
+        out[f"drop_{m}m"] = round(float(np.median(top - h[yy, xx])) / max(top, 1.0), 3)
+    d = np.hypot(*np.mgrid[-2:3, -2:3]) * PX
+    near = (d > 0.25) & (d <= 1.0)                                    # the 12 cells 0.5-1 m from the top
+    out["rough"] = round(float(np.std(h[ty - 2:ty + 3, tx - 2:tx + 3][near])) / max(top, 1.0), 3)
+    return out
+
+
+def narrow_rule(p):
+    """True when a crown's profile (crown_profile) says narrow: it falls 45% of its height within 3 m of its top, still
+    stands above the ground there, and its top is even. Scored on the owner's 100 labelled trees (docs/19 §19.3)."""
+    if p is None:
+        return False
+    lo, hi = NARROW_DROP_3M
+    return lo <= p["drop_3m"] < hi and p["rough"] < NARROW_ROUGH_MAX
+
+
+def type_placed(h, t, model):
+    """A placed tree's type and fit. Narrow when its profile passes the narrow rule, else broadleaf: the width curve
+    that fitted its crown isn't a cue to its type (Oct 8: it called most of the owner's conifers broadleaf and put
+    narrow and conifer crowns on broadleaf trees). Conifers come from a catalogue's genus for now (spring Sentinel-2
+    next, docs/19 §19.3). The fit keeps the curve and the profile; its width is compared with the type's typical one."""
+    prof = crown_profile(h, t["y"], t["x"], 0.6 * t["R"])
+    typ = "narrow" if narrow_rule(prof) else "broadleaf"
+    z = math.log(t["R"] / model.radius_cells(t["H"], typ)) / model.sd
+    crowded = t["a"] < 0.6 if t["type"] == "broadleaf" else t["a"] < 0.8      # the curve's crowded top shape
+    return typ, {"width_vs_typical_sd": round(z, 2), "crowded": crowded, "width_curve": t["type"], "profile": prof}
 
 
 def utd_size(utd, genus, dbh_in, conifer):
@@ -186,10 +246,9 @@ def main(argv=None):
                                    "trunk_to_crown_m": round(off, 2)}})
         else:
             tid = f"{a.area}-{int(round(x_m))}-{int(round(y_m))}"
-            typ = t["type"]
-            z = math.log(t["R"] / model.radius_cells(t["H"], t["type"])) / model.sd
+            typ, fit = type_placed(h, t, model)
             out_trees.append({"id": tid, "kind": "placed", "type": typ, **common, "catalogue": None, "catalogue_id": None,
-                              "fit": {"width_vs_typical_sd": round(z, 2), "crowded": t["a"] < 0.6 if t["type"] == "broadleaf" else t["a"] < 0.8}})
+                              "fit": fit})
             log.append({"tree_id": tid, "at": flight_at, "event": "placed",
                         "detail": {"lidar": a.lidar, "height_m": round(t["H"], 2), "crown_width_m": round(2 * t["R"] * PX, 2),
                                    "theta": a.theta}})
@@ -215,8 +274,10 @@ def main(argv=None):
     build = {"build_id": os.path.basename(os.path.normpath(a.out)), "area": a.area, "started_at": started.isoformat(),
              "finished_at": dt.datetime.now(dt.timezone.utc).isoformat(),
              "params": {"theta": a.theta, "lam": a.lam, "sweeps": a.sweeps, "lidar": a.lidar, "lidar_date": a.lidar_date,
-                        "window": a.window, "model": cm["source"][:200]},
+                        "window": a.window, "model": cm["source"][:200],
+                        "narrow_rule": {"drop_3m": list(NARROW_DROP_3M), "rough_max": NARROW_ROUGH_MAX}},
              "counts": {"trees": len(out_trees), "catalogued": n_cat, "estimated": n_est, "placed": n_placed,
+                        "types": {k: sum(1 for tr in out_trees if tr["type"] == k) for k in ("broadleaf", "conifer", "narrow")},
                         "surface_mae_m": round(float(err.mean()), 3) if err.size else None,
                         "surface_within_1_5m": round(float((err <= 1.5).mean()), 3) if err.size else None,
                         "seconds": round(time.time() - t0)}}
