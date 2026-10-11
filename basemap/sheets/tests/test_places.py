@@ -114,6 +114,11 @@ class SelectTest(unittest.TestCase):
         for bad in ("at:-116.2", "at:x,43", "at:-120,43.5", "at:-116.2,43.61,300,0.3"):
             with self.assertRaises(ValueError, msg=bad):
                 P.select([bad])
+        # in a comma list, an at: selector keeps the numbers after it (map-sheets.mjs passes --places whole)
+        self.assertEqual(P.split_selection("cameras,at:-116.2,43.61,300"), ["cameras", "at:-116.2,43.61,300"])
+        self.assertEqual(P.split_selection("at:-116.2,43.61,300,0.5,600"), ["at:-116.2,43.61,300,0.5", "600"])
+        ids = [f.id for f in P.select(["cam-752,at:-116.2,43.61,300,0.5,airport"])]
+        self.assertEqual(ids, ["cam-752", "at-43.61000n-116.20000w", "airport"])
 
     def test_unknown(self):
         with self.assertRaisesRegex(P.PlaceError, "no place 'nowhere'"):

@@ -10,9 +10,9 @@
  *
  * Options:
  *   --url ORIGIN        the preview (default $TVT_SHEETS_URL); its address isn't in the repo
- *   --places SEL        basemap/sheets places: sets, ids or at:LON,LAT[,SIZE_M] (default
- *                       boxes,cameras,spots; comma-separated), read through
- *                       `python3 -m basemap.sheets.places --json`
+ *   --places SEL        basemap/sheets places: sets, ids or at:LON,LAT[,SIZE_M[,RES_M]]
+ *                       (default boxes,cameras,spots; comma-separated, an at: keeping the
+ *                       numbers after it), read through `python3 -m basemap.sheets.places --json`
  *   --looks LIST        valley, clay, auto, aerial (Valley with the photo) (default valley)
  *   --layers SET        one layer set per --layers, ids joined by +, `none` for none
  *                       (default none), e.g. --layers none --layers trees+lanes
@@ -70,7 +70,8 @@ function hashOf({ zoom, lat, lng, bearing = 0, pitch = 0, layers = [] }) {
 
 /** The frames (python3 -m basemap.sheets.places --json). */
 function frames(sel) {
-	const out = execFileSync('python3', ['-m', 'basemap.sheets.places', '--json', ...sel.split(',').filter(Boolean)], {
+	// passed whole: places.py splits the commas itself, keeping an at:LON,LAT[,SIZE_M[,RES_M]] together
+	const out = execFileSync('python3', ['-m', 'basemap.sheets.places', '--json', sel], {
 		cwd: REPO,
 		encoding: 'utf8'
 	});

@@ -12,6 +12,7 @@ import os
 import shutil
 import tempfile
 import unittest
+from unittest import mock
 
 try:
     import numpy as np
@@ -152,6 +153,8 @@ class SheetTest(unittest.TestCase):
         with open(os.path.join(self.out, folder, "index.json")) as f:
             index = json.load(f)
         self.assertEqual(index["failed"], [])
+        self.assertTrue(index["complete"])
+        self.assertEqual(index["republish"], "yes")
         [ground, crops] = index["overlays"]
         self.assertEqual(ground["ref"], f"soils/ground@{BUILD}")
         self.assertEqual(ground["files"][0]["sha256"], M.sha256_of(os.path.join(
@@ -233,6 +236,26 @@ class SheetTest(unittest.TestCase):
         rows = S.legend_rows([ov3], {ov3.ref: st3})
         self.assertEqual([r[0] for r in rows], ["head", "ramp"])
         self.assertEqual(rows[1][2], "10 to 30, clear outside")
+        # a float raster with NaN and no nodata tag (canopy height, NDVI): NaN cells are clear, the rest ramp
+        path = os.path.join(self.tmp, "ndvi.tif")
+        ds = gdal.GetDriverByName("GTiff").Create(path, 100, 100, 1, gdal.GDT_Float32)
+        ds.SetGeoTransform((BOX.utm[0], 5, 0, BOX.utm[3], 0, -5))
+        ref = osr.SpatialReference()
+        ref.ImportFromEPSG(32611)
+        ds.SetProjection(ref.ExportToWkt())
+        arr = np.tile(np.linspace(-1, 1, 100, dtype=np.float32), (100, 1))
+        arr[:20, :20] = np.nan
+        ds.GetRasterBand(1).WriteArray(arr)
+        ds = None
+        for style in ("", ",min=-1,max=1", ",min=0,max=1,clip=1"):
+            ov4 = S.file_overlay(path + style, "raster", "#ffffff")
+            img4, st4 = S.draw_raster(ov4, frame)
+            a4 = np.asarray(img4)
+            self.assertEqual(a4[5, 5, 3], 0, style)                         # NaN: clear
+            self.assertGreater(a4[200, 200, 3], 0, style)                    # 0.6: drawn
+            self.assertGreater(st4["cells"], 0, style)
+        self.assertEqual(st4["ramp"], [0.0, 1.0])
+        self.assertTrue(np.array_equal(S.RAMP_LUT[0], S.RAMP[0]) and np.array_equal(S.RAMP_LUT[-1], S.RAMP[-1]))
 
     def test_photo_from_the_imagery_tiles(self):
         frame = P.select(["at:-116.33447,43.66286,600,1"])[0]
@@ -332,7 +355,10 @@ class SheetTest(unittest.TestCase):
                            (["--vector", "/no/such.fgb"], "no such file"),
                            (["--layer", "soils/ground", "--layer", "soils/ground"], "named twice"),
                            (["--panels", "map"], "--panels"),
-                           (["--res", "0.25", "--size", "1500"], "over 4000 pixels a side")):
+                           (["--layer", "soils/ground,republish=yes"], "come from the export's manifest"),
+                           (["--raster", os.path.join(self.naip, "naip2025", "c.tif") + ",republish=maybe"],
+                            "republish='maybe'"),
+                           (["--res", "0.25", "--size", "1000"], "over 3000 pixels a side")):
             code, _out, err = run(args + extra)
             self.assertIn(code, (1, 2), extra)
             if code == 1:                                             # failed in a frame: recorded, not fatal
@@ -356,6 +382,100 @@ class SheetTest(unittest.TestCase):
         self.assertIn("sha256", err)
         code, _out, err = run(args + ["--no-verify"])
         self.assertEqual(code, 0, err)
+
+    def test_a_file_without_republish_is_unstated_and_strictest(self):
+        path = os.path.join(self.tmp, "chm.tif")
+        ds = gdal.GetDriverByName("GTiff").Create(path, 50, 50, 1, gdal.GDT_Float32)
+        ds.SetGeoTransform((BOX.utm[0], 10, 0, BOX.utm[3], 0, -10))
+        ref = osr.SpatialReference()
+        ref.ImportFromEPSG(32611)
+        ds.SetProjection(ref.ExportToWkt())
+        ds.GetRasterBand(1).WriteArray(np.ones((50, 50), np.float32))
+        ds = None
+        args = ["draw", "--places", "c", "--res", "5", "--archive", self.archive, "--naip", self.naip,
+                "--out", self.out, "--layer", "soils/ground"]
+        code, _out, err = run(args + ["--raster", f"{path},credit=USGS 3DEP", "--label", "unstated"])
+        self.assertEqual(code, 0, err)
+        index = self.index("unstated")
+        self.assertEqual(index["republish"], "unstated")
+        self.assertEqual([o["republish"] for o in index["overlays"]], ["yes", "unstated"])
+        self.assertEqual(index["overlays"][1]["licence"], "unstated")
+        ov = S.file_overlay(path, "raster", "#ffffff")
+        self.assertIn("strictest republish drawn here: unstated", S.credit_line([ov], {}))
+        # stated by hand: licence= gives its loosest, republish= may be stricter, not looser
+        self.assertEqual(S.file_overlay(f"{path},licence=public-domain", "raster", "#ffffff").republish, "yes")
+        self.assertIsNone(S.file_overlay(f"{path},licence=none-stated", "raster", "#ffffff").republish)
+        ov = S.file_overlay(f"{path},licence=none-stated,republish=internal", "raster", "#ffffff")
+        self.assertEqual((ov.licence, ov.republish), ("none-stated", "internal"))
+        with self.assertRaisesRegex(S.SheetError, "looser than restricted allows"):
+            S.file_overlay(f"{path},licence=restricted,republish=yes", "raster", "#ffffff")
+        code, _out, err = run(args + ["--raster", f"{path},licence=none-stated,republish=internal", "--label", "int"])
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.index("int")["republish"], "internal")
+        self.assertEqual(S.strictest_drawn([]), "yes")
+
+    def index(self, label):
+        [folder] = [d for d in os.listdir(self.out) if d.endswith("-" + label)]
+        with open(os.path.join(self.out, folder, "index.json")) as f:
+            return json.load(f)
+
+    def test_one_bad_frame_is_recorded_and_the_run_goes_on(self):
+        real = S.draw_frame
+
+        def flaky(frame, *a, **kw):
+            if frame.id == "box-c":
+                raise KeyError("something unexpected")
+            return real(frame, *a, **kw)
+        with mock.patch.object(S, "draw_frame", flaky):
+            code, _out, err = run(["draw", "--places", "c", "d", "--res", "10", "--naip", self.naip, "--out",
+                                   self.out, "--label", "flaky"])
+        self.assertEqual(code, 1, err)
+        index = self.index("flaky")
+        self.assertEqual(index["failed"], ["box-c"])
+        self.assertIn("KeyError", index["frames"][0]["error"])
+        self.assertEqual(index["frames"][1]["file"], "box-d.png")
+        self.assertEqual(index["contact_sheets"][0]["file"], "contact-boxes.png")
+
+    def test_disk_bound_and_floor(self):
+        args = ["draw", "--places", "c", "d", "--res", "10", "--naip", self.naip, "--out", self.out]
+        code, _out, err = run(args + ["--min-free-gb", "1e9"])
+        self.assertEqual(code, 2)
+        self.assertIn("could take up to", err)
+        self.assertEqual(os.listdir(self.out), [])
+        frames = P.select(["c", "d"], res=10)
+        self.assertGreater(S.bound_bytes(frames, {"photo", "overlay"}, "png", ["x"]),
+                           S.bound_bytes(frames, {"overlay"}, "jpg", ["x"]))
+        # free space falls under the floor after the first frame: the rest aren't drawn, the index is written
+        frees = iter([100.0, 100.0, 5.0])
+        saved = []
+        real = S.save_index
+
+        def spy(folder, index):
+            saved.append((len(index["frames"]), index["complete"]))
+            real(folder, index)
+        with mock.patch.object(S, "free_gb", lambda _p: next(frees, 5.0)), mock.patch.object(S, "save_index", spy):
+            code, _out, err = run(args + ["--min-free-gb", "11", "--label", "low"])
+        self.assertEqual(saved, [(1, False), (2, True)])        # after the frame drawn, then complete
+        self.assertEqual(code, 1, err)
+        index = self.index("low")
+        self.assertEqual(index["failed"], ["box-d"])
+        self.assertIn("not drawn: stopped drawing: 5.0 GB free, under 11 GB", index["frames"][1]["error"])
+
+    def test_contact_sheets_carry_the_overlays_credits(self):
+        seen = []
+        real = S.credit_line
+
+        def spy(overlays, info):
+            text = real(overlays, info)
+            seen.append(text)
+            return text
+        with mock.patch.object(S, "credit_line", spy):
+            code, _out, err = run(["draw", "--places", "c", "--res", "10", "--archive", self.archive, "--naip",
+                                   self.naip, "--out", self.out, "--layer", "farm/crop_cover", "--panels", "overlay"])
+        self.assertEqual(code, 0, err)
+        self.assertEqual(len(seen), 2)                                  # the frame's and the contact sheet's
+        self.assertIn("USDA NASS Crop Sequence Boundaries", seen[1])
+        self.assertIn("strictest republish drawn here: yes", seen[1])
 
     def test_style_parsing(self):
         self.assertEqual(S.parse_spec("roads/x,by=kind,where=a = 1 and b in (1, 2),fill=0"),

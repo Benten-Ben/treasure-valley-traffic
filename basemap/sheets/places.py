@@ -190,6 +190,28 @@ def at(spec, res=None, size=None):
     return Frame(fid, "at", "at", name, square((x, y), sz, r), "an ad-hoc frame")
 
 
+def _number(text):
+    try:
+        float(text)
+        return True
+    except ValueError:
+        return False
+
+
+def split_selection(raw):
+    """A comma-separated selection as its selectors: an at: selector keeps the numbers after it, up to its four
+    (`cameras,at:-116.2,43.61,300` is two)."""
+    out = []
+    for tok in (t.strip() for t in raw.split(",")):
+        if not tok:
+            continue
+        if out and out[-1].startswith("at:") and out[-1].count(",") < 3 and _number(tok):
+            out[-1] += "," + tok
+        else:
+            out.append(tok)
+    return out
+
+
 def select(tokens, places=None, cameras=None, res=None, size=None):
     """The frames a selection names, in order, each once. Raises PlaceError on a name it doesn't know."""
     sets = all_frames(places, cameras, res=res, size=size)
@@ -207,8 +229,7 @@ def select(tokens, places=None, cameras=None, res=None, size=None):
                 out.append(f)
 
     for raw in tokens:
-        toks = [raw.strip()] if raw.strip().startswith("at:") else [t.strip() for t in raw.split(",") if t.strip()]
-        for tok in toks:
+        for tok in split_selection(raw):
             if tok == "all":
                 add(f for s in SETS for f in sets[s])
             elif tok in sets:

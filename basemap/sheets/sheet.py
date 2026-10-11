@@ -13,7 +13,8 @@ What it reads:
 - **export layers** (`--layer plugin/layer[@build]`, or `plugin/*` for all of an export's layers as one overlay) from
   $TVT_ARCHIVE through basemap/ground/manifest.py, so their files are checked and their credit, licence and
   republish travel with them; FlatGeobuf layers draw as vectors, GeoTIFF layers as rasters;
-- **any vector or raster file** (`--vector PATH`, `--raster PATH`), with `credit=` given by hand.
+- **any vector or raster file** (`--vector PATH`, `--raster PATH`), with `credit=`, `licence=` and `republish=` given
+  by hand; a file without `republish=` counts as "unstated", the strictest, on every sheet that draws it.
 
 Each frame gives `<frame id>.png`: the photo beside the photo with the overlays (or the photo alone without any), a
 scale bar, a legend with what each overlay drew in the frame, and the credits. Each group of frames gives a contact
@@ -30,6 +31,9 @@ Style options follow a layer, comma-separated (`--layer roads/surfaces,by=materi
   layer=NAME   the layer of a multi-layer vector file   band=N    a raster's band (default 1)
   kind=cat|ramp, min=, max=, clip=1 (clear outside min-max), alpha=0..1 (rasters; default 0.6)
   credit=TEXT  the credit of a file outside an export
+  licence=L    its licence class (basemap/ground/manifest.py's LICENCES; republish defaults to the loosest it allows,
+               except none-stated)
+  republish=R  what may be published from it: yes, aggregates, internal or no (default: unstated)
 """
 
 import argparse
@@ -45,7 +49,7 @@ import sys
 import time
 
 import numpy as np
-from osgeo import gdal, ogr, osr
+from osgeo import gdal, gdal_array, ogr, osr
 from PIL import Image, ImageDraw, ImageFont
 
 from basemap.ground import grid, manifest
@@ -55,7 +59,7 @@ from basemap.sheets import pmtiles as PM
 
 gdal.UseExceptions()
 ogr.UseExceptions()
-gdal.SetCacheMax(256 * 2**20)
+gdal.SetCacheMax(128 * 2**20)
 
 VERSION = 1
 INK = (20, 24, 32)
@@ -69,12 +73,32 @@ CATEGORY = ["#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#
             "#4477AA", "#66CCEE", "#228833", "#CCBB44", "#EE6677", "#AA3377", "#BBBBBB", "#77AADD",
             "#EE8866", "#EEDD88", "#FFAABB", "#99DDFF"]
 RAMP = np.array([(68, 1, 84), (59, 81, 139), (33, 144, 141), (92, 200, 99), (253, 231, 37)], float)   # viridis
+
+
+def _ramp_lut(n=256):
+    """(n, 3) uint8: the ramp sampled at n steps (a raster's cells index it, so no full-size float temporaries)."""
+    t = np.linspace(0, len(RAMP) - 1, n)
+    i = np.minimum(t.astype(int), len(RAMP) - 2)
+    f = (t - i)[:, None]
+    return (RAMP[i] * (1 - f) + RAMP[i + 1] * f).round().astype(np.uint8)
+
+
+RAMP_LUT = _ramp_lut()
 STYLE_KEYS = {"by", "color", "fill", "width", "size", "label", "where", "name", "layer", "band", "kind", "min",
-              "max", "clip", "alpha", "credit"}
+              "max", "clip", "alpha", "credit", "licence", "republish"}
+FILE_ONLY = {"credit", "licence", "republish"}      # an export's come from its manifest
+UNSTATED = "unstated"                              # a file overlay's republish when none is given: the strictest
 MAX_LABELS = 300
-MAX_SIDE = 4000                                   # pixels: a frame's photo, overlays and sheet stay well under 1 GB
+# Pixels a side. Measured in the capped container (1 GB, no swap; Oct 11), both panels: before the photo was blended
+# in place, 4,000 px over the imagery tiles peaked at about 1,035 MiB; now 3,000 px peaks at 422 MiB over the tiles
+# with a vector overlay, and 610 MiB over a NAIP crop with a vector and a raster overlay (601 with three rasters: they
+# don't add up). 4,000 px: 658 and 974 MiB, too close to the cap.
+MAX_SIDE = 3000
 MAX_FEATURES = 250_000
 THUMB = 360
+# Bytes a sheet's pixel may take at most, for the disk bound (an RGB PNG compresses to under 3 bytes a pixel; the
+# VM's frames were 0.5-1.8; JPEG at quality 92 under 1).
+BOUND_BPP = {"png": 3.0, "jpg": 1.0}
 
 
 class SheetError(ValueError):
@@ -150,16 +174,29 @@ def scale_bar(img, res):
 # --- the photo -----------------------------------------------------------------------------------------------------
 
 def _mem(arr, transform, srs):
-    """A MEM dataset from a (bands, rows, cols) uint8 array, the last band alpha when there are 4."""
-    bands, rows, cols = arr.shape
-    ds = gdal.GetDriverByName("MEM").Create("", cols, rows, bands, gdal.GDT_Byte)
+    """A MEM dataset over a (bands, rows, cols) uint8 array, without copying it (keep the array while the dataset is
+    used); the last band alpha when there are 4."""
+    ds = gdal_array.OpenArray(np.ascontiguousarray(arr))
     ds.SetGeoTransform(transform)
-    ds.SetProjection(srs)
-    for b in range(bands):
-        ds.GetRasterBand(b + 1).WriteArray(arr[b])
-    if bands == 4:
+    ref = osr.SpatialReference()
+    ref.SetFromUserInput(srs)
+    ds.SetProjection(ref.ExportToWkt())
+    if arr.shape[0] == 4:
         ds.GetRasterBand(4).SetColorInterpretation(gdal.GCI_AlphaBand)
     return ds
+
+
+def _blend(out, arr, cover):
+    """Lay arr ((4, rows, cols) uint8, the last band alpha) over out ((3, rows, cols) float32) in place, a band at a
+    time (no full-size RGB temporaries), and raise cover to its alpha."""
+    a = arr[3].astype(np.float32)
+    a *= 1 / 255
+    tmp = np.empty_like(a)
+    for b in range(3):
+        np.subtract(arr[b], out[b], out=tmp)
+        tmp *= a
+        out[b] += tmp
+    np.maximum(cover, a, out=cover)
 
 
 def _warp_rgba(src, frame, src_srs=None, resample="bilinear"):
@@ -256,8 +293,8 @@ class Photos:
     def render(self, frame):
         """((rows, cols, 3) uint8, info) for the frame."""
         w = frame.window
-        out = np.empty((w.height, w.width, 3), np.float32)
-        out[:] = FLAT
+        out = np.empty((3, w.height, w.width), np.float32)          # planar, blended in place
+        out[:] = np.array(FLAT, np.float32)[:, None, None]
         cover = np.zeros((w.height, w.width), np.float32)
         info = {"sources": []}
         crop, share = self.crop_for(frame)
@@ -267,9 +304,9 @@ class Photos:
             src = gdal.Translate("", crop["path"], format="VRT", bandList=[1, 2, 3], maskBand="mask")
             resample = "average" if frame.res >= 2 * crop["res"] else "bilinear"
             arr = _warp_rgba(src, frame, src_srs=R.warp_srs(crop["crs"]), resample=resample)
-            a = arr[3].astype(np.float32) / 255
-            out[:] = out * (1 - a[..., None]) + arr[:3].transpose(1, 2, 0) * a[..., None]
-            cover = np.maximum(cover, a)
+            src = None
+            _blend(out, arr, cover)
+            del arr
             when = f", flown {', '.join(crop['dates'])}" if crop["dates"] else ""
             info["sources"].insert(0, {"kind": "naip-crop", "file": os.path.relpath(crop["path"], self.naip_dir),
                                        "res": round(crop["res"], 3), "share": round(share, 4)})
@@ -283,7 +320,13 @@ class Photos:
             info["photo"] = "no photo here (flat ground colour)"
             info["credit"] = ""
         info["covered"] = round(float(cover.mean()), 4)
-        return out.round().clip(0, 255).astype(np.uint8), info
+        del cover
+        img = np.empty((w.height, w.width, 3), np.uint8)
+        for b in range(3):
+            np.clip(out[b], 0, 255, out=out[b])
+            np.rint(out[b], out=out[b])
+            img[..., b] = out[b]
+        return img, info
 
     def _tiles(self, frame, out, cover, info):
         if not self.levels:
@@ -343,9 +386,8 @@ class Photos:
         src = _mem(mosaic, (tw, px, 0, tn, 0, -px), "EPSG:3857")
         resample = "average" if frame.res >= 2 * PM.pixel_m(z, lat, size) else "bilinear"
         arr = _warp_rgba(src, frame, src_srs="EPSG:3857", resample=resample)
-        a = arr[3].astype(np.float32) / 255
-        out[:] = out * (1 - a[..., None]) + arr[:3].transpose(1, 2, 0) * a[..., None]
-        np.maximum(cover, a, out=cover)
+        src = mosaic = None                                   # the mosaic goes before the blend
+        _blend(out, arr, cover)
         return used
 
     def close(self):
@@ -395,6 +437,7 @@ class Overlay:
         self.kind, self.ref, self.parts, self.style = kind, ref, parts, style
         self.color = rgb(style["color"]) if "color" in style else rgb(color)
         self.credit, self.licence, self.republish, self.inputs = list(credit), licence, republish, inputs or []
+        # republish None: nothing says what may be published from it, so it counts as the strictest (UNSTATED)
         self.name = style.get("name") or ref
         self.categories = {}                            # value -> colour, in order of first appearance
         self.labels = {}                                # value -> label (a raster's manifest "values")
@@ -421,7 +464,15 @@ class Overlay:
     def describe(self):
         return {"ref": self.ref, "kind": self.kind, "name": self.name, "style": self.style,
                 "color": "#%02x%02x%02x" % self.color, "files": [p["describe"] for p in self.parts],
-                "credit": self.credit, "licence": self.licence, "republish": self.republish}
+                "credit": self.credit, "licence": self.licence or UNSTATED, "republish": self.republish or UNSTATED}
+
+
+def strictest_drawn(overlays):
+    """The strictest republish of what's drawn: UNSTATED when any overlay states none (a file without republish=),
+    else manifest.strictest of theirs ("yes" for the photo alone: NAIP is public domain)."""
+    if any(not ov.republish for ov in overlays):
+        return UNSTATED
+    return manifest.strictest(ov.republish for ov in overlays)
 
 
 def _hsv(h, s, v):
@@ -434,6 +485,10 @@ def _hsv(h, s, v):
 def export_overlays(spec, archive, color, verify=True):
     """Overlays for '--layer plugin/layer[@build]' or 'plugin/*[@build]'."""
     ref, style = parse_spec(spec)
+    given = sorted(FILE_ONLY & set(style))
+    if given:
+        raise SheetError(f"--layer {ref}: {', '.join(given)} come from the export's manifest (for --vector and "
+                         "--raster only)")
     m = re.fullmatch(r"([a-z][a-z0-9_]*)/([A-Za-z0-9_.*-]+)(?:@([0-9TZ]+(?:-[a-z0-9-]+)?))?", ref)
     if not m:
         raise SheetError(f"--layer {ref!r}: give plugin/layer, plugin/layer@build or plugin/*")
@@ -503,8 +558,26 @@ def file_overlay(spec, kind, color):
     except RuntimeError as err:
         raise SheetError(f"--{kind} {path}: {err}") from None
     credit = [style["credit"]] if style.get("credit") else []
+    licence, republish = file_rights(f"--{kind} {path}", style)
     return Overlay(kind, path, [{"path": path, "layer": style.get("layer"), "spec": {}, "describe": describe}],
-                   style, color, credit=credit)
+                   style, color, credit=credit, licence=licence, republish=republish)
+
+
+def file_rights(where, style):
+    """(licence, republish) a file overlay's style states: republish= as given (no looser than licence= allows), or the
+    loosest its licence allows, or None (unstated) without either, or with a per-source licence (none-stated)."""
+    licence, republish = style.get("licence") or None, style.get("republish") or None
+    if licence is not None and licence not in manifest.LICENCES:
+        raise SheetError(f"{where}: licence={licence!r}: one of {', '.join(manifest.LICENCES)}")
+    if republish is not None and republish not in manifest.REPUBLISH:
+        raise SheetError(f"{where}: republish={republish!r}: one of {', '.join(manifest.REPUBLISH)}")
+    if licence is not None:
+        lic = manifest.LICENCES[licence]
+        if republish is None and not lic.per_source:
+            republish = lic.loosest
+        elif republish is not None and manifest.rank(republish) < manifest.rank(lic.loosest):
+            raise SheetError(f"{where}: republish={republish} is looser than {licence} allows ({lic.loosest})")
+    return licence, republish
 
 
 # --- drawing vectors -----------------------------------------------------------------------------------------------
@@ -687,12 +760,16 @@ def draw_raster(ov, frame):
                 lo = float(p2) if lo is None else lo
                 hi = float(p98) if hi is None else hi
             if ov.style.get("clip"):
-                valid &= (arr >= lo) & (arr <= hi)
-            t = np.clip((arr.astype(np.float64) - lo) / ((hi - lo) or 1), 0, 1) * (len(RAMP) - 1)
-            i = np.minimum(t.astype(int), len(RAMP) - 2)
-            f = (t - i)[..., None]
-            col = RAMP[i] * (1 - f) + RAMP[i + 1] * f
-            rgba[valid, :3] = col[valid].round().astype(np.uint8)
+                with np.errstate(invalid="ignore"):
+                    valid &= (arr >= lo) & (arr <= hi)
+            # Only valid cells are coloured: an undeclared NaN never reaches the integer cast (on x86-64 NaN casts to
+            # the most negative int64, which indexed the ramp out of bounds).
+            t = arr[valid].astype(np.float32)
+            t -= lo
+            t *= (len(RAMP_LUT) - 1) / ((hi - lo) or 1)
+            np.clip(t, 0, len(RAMP_LUT) - 1, out=t)
+            t += 0.5
+            rgba[valid, :3] = RAMP_LUT[t.astype(np.uint8)]
             rgba[valid, 3] = round(ov.alpha * 255)
             stats["ramp"] = [round(lo, 4), round(hi, 4)]
         stats["cells"] += int(valid.sum())
@@ -812,8 +889,9 @@ def credit_line(overlays, info):
     if seen:
         parts.append("Overlays: " + "; ".join(seen) + ".")
     parts.append("Places: © OpenStreetMap contributors.")
-    worst = manifest.strictest([ov.republish for ov in overlays if ov.republish] or ["yes"])
-    parts.append(f"A private review sheet, not for publication (the strictest republish drawn here: {worst}).")
+    worst = strictest_drawn(overlays)
+    stated = "" if worst != UNSTATED else ", as a file drawn here doesn't say what may be published"
+    parts.append(f"A private review sheet, not for publication (the strictest republish drawn here: {worst}{stated}).")
     return " ".join(parts)
 
 
@@ -855,8 +933,11 @@ def contact_sheet(group, items, overlays, run):
     names = [f"{ov.name} ({'#%02x%02x%02x' % ov.color})" for ov in overlays]
     sub = f"run {run['run']}; " + ("overlays: " + "; ".join(names) if names else "the photo only")
     sub_lines = wrap(scratch, sub, font(14), width - 2 * m)
+    # the frames' credits: the photo (NAIP crops or the map's NAIP tiles), every overlay's, the strictest republish
+    foot = credit_line(overlays, {"credit": "Photo: USDA NAIP (public domain)"})
+    foot_lines = wrap(scratch, foot, font(13), width - 2 * m)
     head = m + 34 + 19 * len(sub_lines) + 8
-    height = head + rows * (THUMB + cap + gap) + 30 + m
+    height = head + rows * (THUMB + cap + gap) + 12 + 18 * len(foot_lines) + m
     sheet = Image.new("RGB", (width, height), BG)
     d = ImageDraw.Draw(sheet)
     d.text((m, m), title, font=font(24), fill=INK)
@@ -877,16 +958,28 @@ def contact_sheet(group, items, overlays, run):
         name = frame.name if d.textlength(frame.name, font=font(13)) < THUMB else frame.name[:44] + "..."
         d.text((x, y + THUMB + 3), frame.id, font=font(14), fill=INK)
         d.text((x, y + THUMB + 20), name, font=font(13), fill=MUTED)
-    d.text((m, height - m - 18), "A private review sheet, not for publication. Photo: USDA NAIP (public domain). "
-           "Places: © OpenStreetMap contributors.", font=font(13), fill=MUTED)
+    y = height - m - 18 * len(foot_lines)
+    for line in foot_lines:
+        d.text((m, y), line, font=font(13), fill=MUTED)
+        y += 18
     return sheet
+
+
+def save_index(folder, index):
+    """Write index.json (by rename): after every frame, so a run that's stopped or killed still says what it drew."""
+    tmp = os.path.join(folder, ".index.json.tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(index, f, indent=1, ensure_ascii=False)
+        f.write("\n")
+    os.replace(tmp, os.path.join(folder, "index.json"))
 
 
 def write_html(folder, index):
     rows = []
     for g in index["contact_sheets"]:
-        rows.append(f'<h2>{html.escape(g["group"])}</h2><p><a href="{html.escape(g["file"])}">'
-                    f'<img src="{html.escape(g["file"])}" style="max-width:100%"></a></p><ul>')
+        rows.append(f'<h2>{html.escape(g["group"])}</h2>' + (
+            f'<p><a href="{html.escape(g["file"])}"><img src="{html.escape(g["file"])}" style="max-width:100%"></a>'
+            "</p><ul>" if g.get("file") else f"<p>(its contact sheet failed: {html.escape(g.get('error', ''))})</p><ul>"))
         for fr in index["frames"]:
             if fr["group"] == g["group"]:
                 link = (f'<a href="{html.escape(fr["file"])}">{html.escape(fr["id"])}</a>' if fr.get("file")
@@ -899,10 +992,28 @@ def write_html(folder, index):
     page = (f"<!doctype html><meta charset=utf-8><title>Sheets {html.escape(index['run'])}</title>"
             f"<style>body{{font:15px/1.4 system-ui,sans-serif;margin:24px;background:#faf8f4;color:#141820}}</style>"
             f"<h1>{html.escape(index.get('title') or 'Sheets')}</h1><p>Run {html.escape(index['run'])}, "
-            f"{len(index['frames'])} frames. A private review sheet, not for publication.</p>"
+            f"{len(index['frames'])} frames. A private review sheet, not for publication (the strictest republish "
+            f"drawn: {html.escape(index['republish'])}).</p>"
             f"<ul>{ovs or '<li>the photo only</li>'}</ul>" + "".join(rows))
     with open(os.path.join(folder, "index.html"), "w", encoding="utf-8") as f:
         f.write(page)
+
+
+def free_gb(where):
+    st = os.statvfs(where)
+    return st.f_bavail * st.f_frsize / 2**30
+
+
+def bound_bytes(frames, panels, fmt, overlays):
+    """At most how many bytes a run writes: each sheet at BOUND_BPP of its pixels (the panels plus the header,
+    legend and credits around them), and the contact sheets."""
+    n = len(panels) if overlays else 1
+    total = 0
+    for f in frames:
+        w, h = f.window.width, f.window.height
+        total += (max(n * w + (n - 1) * 16 + 32, 900)) * (h + 600) * BOUND_BPP[fmt]
+    total += math.ceil(len(frames) / 6) * 6 * (THUMB + 62) ** 2 * 3 + 2e6          # contact sheets, index
+    return int(total)
 
 
 def run_id(label=None, when=None):
@@ -935,14 +1046,21 @@ def draw(args):
     frames = P.select(args.places, res=args.res, size=args.size)
     big = [f.id for f in frames if max(f.window.width, f.window.height) > MAX_SIDE]
     if big:
-        raise SheetError(f"{', '.join(big[:5])}: over {MAX_SIDE} pixels a side (the run is capped at 1 GB); give a "
-                         "coarser --res or a smaller --size")
+        raise SheetError(f"{', '.join(big[:5])}: over {MAX_SIDE} pixels a side (the run is capped at 1 GB of "
+                         "memory); give a coarser --res or a smaller --size")
     if args.max_frames and len(frames) > args.max_frames:
         raise SheetError(f"{len(frames)} frames, over --max-frames {args.max_frames}")
     overlays = build_overlays(args)
     panels = set(args.panels.split(","))
     if not panels <= {"photo", "overlay"}:
         raise SheetError("--panels takes photo, overlay or photo,overlay")
+    if args.out and args.min_free_gb and not args.list:
+        need = bound_bytes(frames, panels, args.format, overlays) / 2**30
+        have = free_gb(args.out)
+        if have - need < args.min_free_gb + 1:
+            raise SheetError(f"{len(frames)} frames could take up to {need:.1f} GB, and {have:.1f} GB is free: a run "
+                             f"starts with {args.min_free_gb:g} + 1 GB left after it. Draw fewer places, or use "
+                             "--panels overlay or --format jpg")
     with Photos(args.tiles, args.naip) as photos:
         return _draw(args, frames, overlays, panels, photos)
 
@@ -956,7 +1074,7 @@ def _draw(args, frames, overlays, panels, photos):
             print(f"{f.id:16} {f.window.width:5} x {f.window.height:<5} px at {f.res:g} m  {src:28} {f.name}")
         for ov in overlays:
             print(f"overlay {ov.ref}: {ov.kind}, {len(ov.parts)} file(s), {ov.licence or 'licence unstated'}, "
-                  f"republish {ov.republish or 'unstated'}")
+                  f"republish {ov.republish or UNSTATED}")
         print(f"{len(frames)} frames; photo: {len(photos.crops)} NAIP crops, "
               f"{'imagery tiles' if photos.levels else 'no imagery tiles'}", file=sys.stderr)
         return 0
@@ -975,11 +1093,24 @@ def _draw(args, frames, overlays, panels, photos):
              "photo": {"tiles": photos.tiles_note, "naip_crops": [os.path.relpath(c["path"], args.naip)
                                                                    for c in photos.crops]},
              "overlays": [ov.describe() for ov in overlays],
-             "republish": manifest.strictest([ov.republish for ov in overlays if ov.republish] or ["yes"]),
-             "frames": [], "contact_sheets": [], "failed": []}
+             "republish": strictest_drawn(overlays),
+             "frames": [], "contact_sheets": [], "failed": [], "complete": False}
     groups = {}
     t0 = time.monotonic()
+    low = None
     for i, frame in enumerate(frames, 1):
+        if low is None and args.min_free_gb:
+            have = free_gb(folder)
+            if have < args.min_free_gb:
+                low = f"stopped drawing: {have:.1f} GB free, under {args.min_free_gb:g} GB"
+                print(f"sheets: {low}", file=sys.stderr, flush=True)
+        if low is not None:
+            record = dict(frame.describe())
+            record["error"] = f"not drawn: {low}"
+            index["failed"].append(frame.id)
+            groups.setdefault(frame.group, []).append((frame, None))
+            index["frames"].append(record)
+            continue
         try:
             sheet, panel, record = draw_frame(frame, photos, overlays, run, panels)
             name = f"{frame.id}.{args.format}"
@@ -991,26 +1122,34 @@ def _draw(args, frames, overlays, panels, photos):
             record["bytes"] = os.path.getsize(os.path.join(folder, name))
             thumb = panel.convert("RGB")
             thumb.thumbnail((THUMB, THUMB), Image.LANCZOS)
+            sheet = panel = None                       # freed before the next frame is drawn
             groups.setdefault(frame.group, []).append((frame, thumb))
             print(f"sheets: {i}/{len(frames)} {frame.id}: {record['photo']}; {record['seconds']} s", flush=True)
-        except (SheetError, RuntimeError, OSError, ValueError, MemoryError) as err:
+        except Exception as err:                       # noqa: BLE001 - one bad frame is recorded; the run goes on
             record = dict(frame.describe())
             record["error"] = f"{type(err).__name__}: {err}"
             index["failed"].append(frame.id)
             groups.setdefault(frame.group, []).append((frame, None))
             print(f"sheets: {i}/{len(frames)} {frame.id}: FAILED: {err}", file=sys.stderr, flush=True)
         index["frames"].append(record)
+        save_index(folder, index)
     for group, items in groups.items():
         name = f"contact-{group}.png"
-        contact_sheet(group, items, overlays, run).save(os.path.join(folder, name))
-        index["contact_sheets"].append({"group": group, "file": name, "frames": len(items)})
+        try:
+            contact_sheet(group, items, overlays, run).save(os.path.join(folder, name))
+            index["contact_sheets"].append({"group": group, "file": name, "frames": len(items)})
+        except Exception as err:                       # noqa: BLE001 - the index is still written
+            index["contact_sheets"].append({"group": group, "file": None, "frames": len(items),
+                                            "error": f"{type(err).__name__}: {err}"})
+            index["failed"].append(f"contact-{group}")
+            print(f"sheets: contact sheet {group}: FAILED: {err}", file=sys.stderr, flush=True)
     index["seconds"] = round(time.monotonic() - t0, 1)
     index["bytes"] = sum(os.path.getsize(os.path.join(folder, f)) for f in os.listdir(folder))
+    index["complete"] = True
+    save_index(folder, index)
     write_html(folder, index)
-    with open(os.path.join(folder, "index.json"), "w", encoding="utf-8") as f:
-        json.dump(index, f, indent=1, ensure_ascii=False)
-        f.write("\n")
-    print(f"sheets: {len(frames) - len(index['failed'])} of {len(frames)} frames in {folder} "
+    drawn = sum(1 for r in index["frames"] if r.get("file"))
+    print(f"sheets: {drawn} of {len(frames)} frames in {folder} "
           f"({index['bytes'] / 1e6:.1f} MB, {index['seconds']} s)")
     return 1 if index["failed"] else 0
 
@@ -1039,7 +1178,11 @@ def parser():
     d.add_argument("--panels", default="photo,overlay", help="photo,overlay (default), overlay or photo")
     d.add_argument("--format", choices=("png", "jpg"), default="png",
                    help="the frames' format (default png; jpg, at quality 92, is about a fifth of the size)")
-    d.add_argument("--max-frames", type=int, default=200, help="refuse a run of more frames (default 200)")
+    d.add_argument("--max-frames", type=int, default=120, help="refuse a run of more frames (default 120; all the "
+                   "places are 94)")
+    d.add_argument("--min-free-gb", type=float, default=float(os.environ.get("TVT_SHEETS_MIN_FREE_GB") or 0),
+                   help="refuse a run unless this + 1 GB stays free after its frames' bound, and stop drawing under "
+                   "it ($TVT_SHEETS_MIN_FREE_GB; the VM's runner sets heavy's 11)")
     d.add_argument("--no-verify", action="store_true", help="skip the exports' file checks (sizes, sha256)")
     d.add_argument("--list", action="store_true", help="list the frames, their photo and the overlays; draw nothing")
     return p

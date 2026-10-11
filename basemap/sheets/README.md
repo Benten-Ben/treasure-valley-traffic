@@ -14,9 +14,15 @@ painted ground, each drawn over the aerial photo at the same places every time, 
 
 **Sheets are private.** They show places at full resolution and may draw internal layers (the base bake's ACHD
 widths), so they go to the VM's private files, `/srv/tvt/private/sheets/<package>/<run>/`, and are never committed or
-published. Each says so in its footer, with the strictest `republish` of what it draws. The City of Boise's tree
-data is never read for them: the VM's runner won't mount it, nor production's trees archive, which holds rows derived
-from it. The tests use synthetic data only.
+published. Each says so in its footer (the frames' and the contact sheets'), with the strictest `republish` of what it
+draws. The tests use synthetic data only.
+
+**The City of Boise's tree data is never read for them.** The VM's runner mounts an archive one plugin's `export/`
+folder at a time, never production's `trees/` (its builds carry the City's inventory), and refuses any folder that
+holds it (production's archive root as `--in`, say). Of the land-cover spike's folder it mounts only `lidar/` and the
+NAIP crops: the spike's trees runs, experiments and `trees-out/` were matched against the City's inventory. The private
+files and secrets are never mounted. A scratch database's archive is the sprint's own work (P12b's trees never read
+the City's catalogue), so its `trees/` exports are drawn like any other.
 
 ## The places
 
@@ -41,10 +47,15 @@ python3 -m basemap.sheets.places cameras eagle-rd   # some sets or places
   intersection itself is `cam-655`.
 - The industrial area is the Amalgamated Sugar Company in Nampa (Canyon County), so the spots have a Canyon frame
   too. Another is one line in `places.json`.
-- An ad-hoc frame: `at:LON,LAT[,SIZE_M[,RES_M]]`, default 500 m at 0.5 m.
+- An ad-hoc frame: `at:LON,LAT[,SIZE_M[,RES_M]]`, default 500 m at 0.5 m. In a comma list it keeps the numbers
+  after it (`cameras,at:-116.2,43.61,300` is two selectors), so put a camera's bare image id before it, not after.
 - `--res` and `--size` override every frame's. A resolution must be a level of the ground grid (it divides 10 m or
   is a multiple of it: 0.25, 0.5, 1, 2, 2.5, 5, 10 ...), so every frame lies on the grid, and exports on the grid
   (`crop_cover.tif`, the box classes) draw cell for cell.
+- A frame is at most 3,000 pixels a side (750 m at 0.25 m), so a run stays in its 1 GB. Measured on the VM in the
+  capped container, both panels: 422 MiB over the imagery tiles with a vector overlay, 610 MiB over a NAIP crop with
+  a vector and a raster overlay, and no more with three rasters. At 4,000 px that was 974 MiB. Every default frame
+  is 2,000 px or less.
 
 ## The photo
 
@@ -68,7 +79,8 @@ Credit: USDA NAIP (public domain).
 --layer roads/surfaces@20261020T031500Z      # a given build
 --layer ground_classes/*,kind=cat            # every layer of one export, as one overlay (the box classes)
 --vector /in/f8/check.fgb,by=kind,where=n > 1
---raster /in/lidar-c/chm.tif,min=2,max=25,clip=1,credit=USGS 3DEP
+--raster /in/lidar-c/chm.tif,min=2,max=25,clip=1,credit=USGS 3DEP,licence=public-domain
+--raster /in/s5a/widths.tif,credit=ACHD,licence=none-stated,republish=internal
 ```
 
 - **Exports** are read through the ground's contract ([`../ground/README.md`](../ground/README.md)): `manifest.read()`
@@ -77,12 +89,16 @@ Credit: USDA NAIP (public domain).
   for a quick look at an export being written. FlatGeobuf layers draw as vectors, GeoTIFFs as rasters; JSON tables
   (soils' `palette.json`) aren't maps and are refused.
 - **Any file** GDAL reads, in any CRS: NAD83 is read with the ground's null datum shift (`rasterize.srs_of`). Give its
-  credit with `credit=`.
+  credit with `credit=`, and what may be published from it with `licence=` (a class from the ground's `LICENCES`;
+  `republish` then defaults to the loosest it allows) or `republish=` (no looser than the licence). A file with
+  neither is **unstated**, which counts as the strictest: the sheets and `index.json` say "the strictest republish
+  drawn here: unstated" until it's given. (An export's licence and republish come from its manifest.)
 - Vectors draw polygons as a fill (holes cut) with an outline, lines, and points as dots, supersampled two times.
   `by=FIELD` colours by value, with the same colour for a value on every frame of the run. `label=FIELD` writes
   values (at most 300 a frame, no overlaps).
 - Rasters with value labels in their manifest (`bands[].values`), or of an integer type, are categorical; others get a
   viridis ramp from `min` to `max` (default: the frame's 2nd to 98th percentile), `clip=1` clears values outside it.
+  Nodata, and NaN whether it's declared or not, stays clear.
 - Colours: Okabe-Ito first, never red against green alone, and every colour is named in the legend.
 
 The style options are in `python -m basemap.sheets.sheet draw -h`.
@@ -93,21 +109,30 @@ The style options are in `python -m basemap.sheets.sheet draw -h`.
 - `<frame id>.png` (or `.jpg` with `--format jpg`): the title, the photo beside the photo with the overlays
   (`--panels overlay` for the second alone), a scale bar and north mark, the legend with what each overlay drew in
   that frame, and the credits;
-- `contact-<group>.png`: every frame of a set (or corridor) as a thumbnail;
-- `index.json`: the arguments, every overlay's files with their sha256, builds, licences and credits, and per frame
-  its bounds, photo source (crop or tile zooms), counts and seconds; a frame that failed has its error and the run
-  exits 1;
+- `contact-<group>.png`: every frame of a set (or corridor) as a thumbnail, with the overlays' credits and the
+  strictest republish under them;
+- `index.json`: the arguments, every overlay's files with their sha256, builds, licences, republish and credits, and
+  per frame its bounds, photo source (crop or tile zooms), counts and seconds. It's written after every frame
+  (`"complete": false` until the end), so a run that's stopped still says what it drew. A frame that fails, for any
+  reason, has its error and the run goes on, then exits 1;
 - `index.html`, linking the lot.
 
 Sizes and times, measured on the VM Oct 11: a camera frame with both panels is about 1.2 MB, a box about 9 MB; all
 94 frames with one panel each took 2.3 minutes and 0.23 GB. The VM's disk is tight: draw the sets a review needs,
-use `--panels overlay` or `--format jpg` for wide runs, and delete runs once reviewed.
+use `--panels overlay` or `--format jpg` for wide runs, and delete runs once reviewed (nothing prunes them).
+
+On disk, `--min-free-gb N` (the runner sets heavy's 11) refuses a run unless N + 1 GB stays free after a bound on what
+its frames could take (3 bytes a pixel for PNG, 1 for JPEG: two to four times what they do take), and stops drawing
+under N GB free, recording the frames it didn't draw. `--max-frames` (default 120; all the places are 94) caps a run.
 
 ## Running it
 
 On the VM, through `/srv/tvt/work/bin/sheets` ([deploy/README.md](../../deploy/README.md#review-sheets-on-the-vm)):
 light (1 GB, 1 CPU, no network, the checkout read-only), the exports of a scratch database's archive at
-`$TVT_ARCHIVE`, other inputs read-only under `/in/`, and the sheets written to the private files.
+`$TVT_ARCHIVE` (`--db`, or `--archive` for another), other inputs read-only under `/in/`, and the sheets written to
+the private files. It keeps the quiet hours (from 23:15 until the camera roll-up has finished, and while a roll-up
+runs late), cuts a day run's `--timeout` to end by 23:15, starts only with 12 + 1 GB free on `/` and 1 + 3 GB of
+memory available, and stops the container under 11 GB free.
 
 ```bash
 /srv/tvt/work/bin/sheets -C <checkout> --pkg p7 -- --places cameras corridors \
