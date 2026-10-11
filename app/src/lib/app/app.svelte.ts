@@ -46,8 +46,11 @@ export class App implements AppCtx {
 
 	readonly view: ViewManager;
 	readonly modes: Modes;
-	readonly styleReady: Promise<Map>;
 
+	/** Pending again while the WebGL context is lost (see `styleReady` in context.ts). */
+	#styleReady!: Promise<Map>;
+	/** The current `#styleReady` has resolved. */
+	#styled = false;
 	#resolveStyle!: (m: Map) => void;
 	#rejectStyle!: (e: Error) => void;
 	#pending = new Set<Promise<unknown>>();
@@ -60,16 +63,29 @@ export class App implements AppCtx {
 		this.#o = o;
 		this.view = new ViewManager({ write: o.writeHash, canWrite: o.canWriteHash });
 		this.modes = new Modes(this.view);
-		this.styleReady = new Promise<Map>((resolve, reject) => {
-			this.#resolveStyle = resolve;
-			this.#rejectStyle = reject;
-		});
-		this.styleReady.catch(() => {});
+		this.#armStyle();
 		this.view.register('aerial', {
 			save: () => this.aerial,
 			restore: (on) => void this.setAerial(Boolean(on))
 		});
 		void boot.meta.then((m) => (this.meta = m));
+	}
+
+	get styleReady(): Promise<Map> {
+		return this.#styleReady;
+	}
+
+	/** A new pending `styleReady`. */
+	#armStyle(): void {
+		this.#styled = false;
+		this.#styleReady = new Promise<Map>((resolve, reject) => {
+			this.#resolveStyle = (m) => {
+				this.#styled = true;
+				resolve(m);
+			};
+			this.#rejectStyle = reject;
+		});
+		this.#styleReady.catch(() => {});
 	}
 
 	dataUrl(path: string, version?: keyof DataMeta['versions']): Promise<string> {
@@ -105,14 +121,22 @@ export class App implements AppCtx {
 		map.once('render', () => performance.mark('tvt:first-frame'));
 		map.once('load', () => performance.mark('tvt:load'));
 		map.once('idle', () => performance.mark('tvt:idle'));
-		const lost = () => (this.paused = true);
-		// The style is reloaded after a restore (asynchronously): then redrape the terrain.
+		// A lost context takes the style with it (MapLibre 6.12 destroys it) until the restore loads it again.
+		// Meanwhile `styleReady` waits: a layer still mounting would otherwise add its source to the bare map,
+		// and MapLibre would start an empty style for it, with no basemap, no terrain, and a painter that's gone.
+		const lost = () => {
+			this.paused = true;
+			if (this.#styled) this.#armStyle();
+		};
+		// The style is reloaded after a restore (asynchronously): then redrape the terrain, and let the waiting
+		// layers add their parts to it.
 		const redrape = () => {
 			try {
 				redrapeTerrain(map);
 			} catch (e) {
 				console.warn('terrain after a context restore:', e);
 			}
+			this.#resolveStyle(map);
 		};
 		const restored = () => {
 			this.paused = false;

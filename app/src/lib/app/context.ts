@@ -30,7 +30,12 @@ export interface AppCtx {
 	readonly status: AppStatus;
 	/** Why the map is unavailable or failed, in words. */
 	readonly problem: string | null;
-	/** Resolves on the style's `style.load` (not the full `load`); rejects when the map is unavailable. */
+	/**
+	 * Resolves on the style's `style.load` (not the full `load`); rejects when
+	 * the map is unavailable. While the WebGL context is lost (`paused`) the map
+	 * has no style: this is a new promise then, resolved once the restore's
+	 * style has loaded, so read it at the moment of use rather than keeping it.
+	 */
 	readonly styleReady: Promise<Map>;
 	/** Data versions from /api/meta; null until (or unless) it answers. */
 	readonly meta: DataMeta | null;

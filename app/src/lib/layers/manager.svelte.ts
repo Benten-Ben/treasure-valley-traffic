@@ -163,6 +163,20 @@ export class LayerManager {
 				if (this.#destroyed) return;
 				this.#map = map;
 				this.#applyAll();
+				// A lost WebGL context takes the style with it: leave the map alone until the restore's style has
+				// loaded (ctx.styleReady resolves again), then put the base and the layers back as they are by then.
+				const lost = () => {
+					this.#map = null;
+					void ctx.styleReady
+						.then((m) => {
+							if (this.#destroyed || this.#map) return;
+							this.#map = m;
+							this.#applyAll();
+						})
+						.catch(() => {});
+				};
+				map.on('webglcontextlost', lost);
+				this.#cleanup.push(() => map.off('webglcontextlost', lost));
 				const prefetch = () => {
 					if (this.#destroyed) return;
 					for (const d of this.defs) if (!this.set.has(d.id)) void this.#ensure(d.id);
@@ -332,7 +346,8 @@ export class LayerManager {
 
 	#apply(id: LayerId) {
 		const m = this.modules[id];
-		if (!m || this.#status[id] !== 'ready') return;
+		// No map (no style yet, or the WebGL context is lost): applied when it's back.
+		if (!m || this.#status[id] !== 'ready' || !this.#map) return;
 		const on = this.#visible(id);
 		if (on) this.#shown.add(id);
 		else this.#shown.delete(id);

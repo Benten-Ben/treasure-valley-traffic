@@ -371,4 +371,50 @@ test.describe('persistent', () => {
 		await page.evaluate(() => (globalThis as any).__lose.restoreContext());
 		await expect(page.getByRole('alert').filter({ hasText: 'Map paused' })).toHaveCount(0);
 	});
+
+	test('a layer that finishes loading while the WebGL context is lost waits for the restored style', { tag: '@wp1' }, async ({ page }) => {
+		// The context lost while a layer is still mounting: the first idle's prefetch, held here at Trees' areas
+		// request. MapLibre has no style then, and a source added to the bare map would start an empty one (no
+		// basemap, no terrain, a painter that's gone): the page used to fall over to the error page that way.
+		const pageErrors: string[] = [];
+		page.on('pageerror', (e) => pageErrors.push(e.message));
+		let asked!: () => void;
+		const held = new Promise<void>((r) => (asked = r));
+		let release!: () => void;
+		const go = new Promise<void>((r) => (release = r));
+		await page.route('**/api/trees/areas*', async (r) => {
+			asked();
+			await go;
+			await r.continue();
+		});
+		await page.goto('/');
+		await mapReady(page);
+		await held;
+		await page.evaluate(() => {
+			const gl = (globalThis as any).__tvt.map.getCanvas().getContext('webgl2');
+			(globalThis as any).__lose = gl.getExtension('WEBGL_lose_context');
+			(globalThis as any).__lose.loseContext();
+		});
+		const paused = page.getByRole('alert').filter({ hasText: 'Map paused' });
+		await expect(paused).toBeVisible();
+		const answered = page.waitForResponse('**/api/trees/areas*');
+		release();
+		await answered;
+		await page.waitForTimeout(1500);
+		await expect(paused).toBeVisible();
+		expect(await page.evaluate(() => Boolean((globalThis as any).__tvt.map.style)), 'no empty style started on the bare map').toBe(false);
+		await page.evaluate(() => (globalThis as any).__lose.restoreContext());
+		await expect(paused).toHaveCount(0);
+		await mapReady(page);
+		await expect
+			.poll(() => page.evaluate(() => Boolean((globalThis as any).__tvt.map.getSource('trees'))), { message: 'Trees added its source to the restored style' })
+			.toBe(true);
+		const after = await page.evaluate(() => {
+			const m = (globalThis as any).__tvt.map;
+			return { terrain: m.getTerrain()?.source ?? null, basemap: Boolean(m.getSource('protomaps')) };
+		});
+		expect(after).toEqual({ terrain: 'terrain', basemap: true });
+		await page.screenshot({ path: screenPath('persistent-restored-after-a-layer-loaded.png') });
+		expect(pageErrors).toEqual([]);
+	});
 });
