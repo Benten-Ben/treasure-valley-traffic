@@ -1,0 +1,20 @@
+{
+  "name": "soils",
+  "title": "Soils: the NRCS soil survey, the soil card and the ground's soil types",
+  "depends": [],
+  "visibility": "public",
+  "order": 68,
+  "sources": [
+    {"name": "ssurgo", "module": "ingest.sources.ssurgo", "kind": "manual",
+     "license": "public domain", "credit": "Soils: USDA NRCS, Soil Survey Geographic Database (SSURGO)",
+     "republish": "yes"}
+  ],
+  "tables": ["soils.build", "soils.survey_area", "soils.ground_type", "soils.map_unit", "soils.component",
+             "soils.horizon", "soils.polygon", "soils.photo_stats", "soils.ground_colour"],
+  "commands": [
+    {"name": "soils-load", "module": "ingest.load",
+     "help": "load the soil survey prepared by plugins/soils/build/prepare.py (--from DIR)"}
+  ],
+  "storage": "About 50-70 MB in PostGIS, almost all of it the 21,999 polygons (whole, with a 5 m simplified copy); a few thousand map units, components and horizons; under 5,000 photo-statistics rows per photo build, old builds kept. Each prepared folder ($TVT_ARCHIVE/soils/prepared/<stamp>/) is about 130 MB. Reloaded once a year at most.",
+  "ethics": "USDA NRCS's soil survey: public domain, credited \"Soils: USDA NRCS, Soil Survey Geographic Database (SSURGO)\". Not for regulatory decisions, as NRCS says, and the card says so. Downloaded by hand with the owner's OK for each yearly refresh; no collector and no schedule. Soils, not people."
+}
