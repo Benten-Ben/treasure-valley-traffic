@@ -2,8 +2,9 @@
 are drawn, the fade over three growing seasons, and the refresh against a database.
 
 Every record here is synthetic: made-up fires with WFIGS's field names, no real perimeter. The database tests run
-only with TVT_TEST_DATABASE_URL set to a scratch database with core's migrations (0001, 0020) and hazards/0001,
-inside a transaction that's rolled back, under a test-only source and layer name.
+only with TVT_TEST_DATABASE_URL set to a scratch database with core's migrations (0001, 0020; 0021 for the build's
+marks and runs) and hazards/0001, inside a transaction that's rolled back (the build's commits become savepoints),
+under a test-only source, layer and build name.
 
 Run: python3 -m unittest discover -s plugins/hazards/tests -t .
 """
@@ -14,7 +15,7 @@ import unittest
 from datetime import date, datetime, timedelta, timezone
 from unittest import mock
 
-from ingest import manifest, seasons
+from ingest import builds, manifest, seasons
 from ingest.db import version_hash
 from plugins.hazards.ingest import burn_scars as bs
 from plugins.hazards.ingest.sources import nifc_wfigs_perimeters as per
@@ -51,10 +52,26 @@ class ManifestTest(unittest.TestCase):
         hazards = next(p for p in manifest.find() if p.name == "hazards")
         entries = {e["name"]: e for e in hazards.manifest["sources"]}
         self.assertEqual(bs.REPUBLISH, entries["nifc_wfigs_perimeters"]["republish"])
-        self.assertEqual(entries["burn_scars"]["republish"], bs.REPUBLISH)
         self.assertEqual((bs.LICENSE, bs.CREDIT), (per.SOURCE["license"], per.SOURCE["credit"]))
-        self.assertEqual(bs.SOURCE["schedule"], "1 hour")
-        self.assertIn("burn_scars", [e["name"] for e in hazards.manifest["sources"]])
+
+    def test_it_is_a_build_run_by_hand_never_a_scheduled_source(self):
+        # Plan §0 item 27 (M1): builds never run inside `ingest serve`; the poller marks this one.
+        hazards = next(p for p in manifest.find() if p.name == "hazards")
+        self.assertNotIn("burn_scars", [e["name"] for e in hazards.manifest["sources"]])
+        self.assertFalse(hasattr(bs, "SOURCE") or hasattr(bs, "run"))
+        commands = {c["name"]: c["module"] for c in hazards.manifest["commands"]}
+        self.assertEqual((bs.BUILD, commands[bs.BUILD]), ("burn-scars", "ingest.burn_scars"))
+        builds.check_name(bs.BUILD)
+        with mock.patch.dict(os.environ, {builds.SERVE_ENV: "1"}):
+            with self.assertRaisesRegex(RuntimeError, "never run inside `ingest serve`"):
+                bs.build(object())                     # refused before it touches a database
+
+    def test_a_runs_note_says_what_it_did_and_what_it_left_out(self):
+        stats = {"as of": "2026-10-11", "fires": 3, "scars": 2, "shown": 2, "written": 1, "deleted": 0,
+                 "unchanged": 1, "version": "v1", "left out (geometry error)": 1, "problems": "X ({0-X}): boom"}
+        self.assertEqual(bs.note_of(stats), "as of 2026-10-11, scars 2, shown 2, written 1, deleted 0, version v1, "
+                                            "left out (geometry error) 1, problems X ({0-X}): boom")
+        self.assertEqual(len(bs.note_of({**stats, "problems": "x" * 5000})), bs.NOTE_MAX)
 
     def test_box_is_the_grounds(self):
         with open(os.path.join(os.path.dirname(__file__), "..", "..", "..", "basemap", "ground", "spec.json")) as f:
@@ -207,10 +224,33 @@ SLIVER = {"type": "MultiPolygon", "coordinates": [
     [[[-116.05, 43.40], [-116.04, 43.40], [-116.03, 43.40], [-116.04, 43.40], [-116.05, 43.40]]]]}
 
 
+class Tx:
+    """A connection whose commit() and rollback() stay inside the test's transaction, as savepoints (as in
+    ingest/tests/test_builds.py), so a build run, which commits, leaves nothing behind."""
+
+    def __init__(self, conn):
+        self.conn = conn
+        conn.execute("savepoint tvt_test")
+
+    def execute(self, sql, params=None):
+        return self.conn.execute(sql, params)
+
+    def transaction(self):
+        return self.conn.transaction()
+
+    def commit(self):
+        self.conn.execute("release savepoint tvt_test")
+        self.conn.execute("savepoint tvt_test")
+
+    def rollback(self):
+        self.conn.execute("rollback to savepoint tvt_test")
+
+
 @unittest.skipUnless(DB_URL, "set TVT_TEST_DATABASE_URL to a scratch database (core 0001, 0020 and hazards/0001)")
 class RefreshDatabaseTest(unittest.TestCase):
     SOURCE = "test_nifc_wfigs_perimeters"
     LAYER = "hazards.test_burn_scars"
+    BUILD = "test-burn-scars"
 
     def setUp(self):
         import psycopg
@@ -250,6 +290,78 @@ class RefreshDatabaseTest(unittest.TestCase):
     def versions(self):
         return self.conn.execute("select version, features from core.layer_version where layer = %s order by id",
                                  (self.LAYER,)).fetchall()
+
+    def tx(self):
+        """The connection for a build run (its commits as savepoints); skips without migration 0021."""
+        if bs.ready(self.conn, build=True):
+            self.skipTest("ops.build_run is missing: apply migration 0021")
+        return Tx(self.conn)
+
+    def pending(self):
+        return {r[0]: r[1:] for r in self.conn.execute(
+            "select marked_by, marks, reason from ops.build_pending where build = %s", (self.BUILD,)).fetchall()}
+
+    def runs(self):
+        return self.conn.execute("select ok, note, error from ops.build_run where build = %s order by id",
+                                 (self.BUILD,)).fetchall()
+
+    def build(self, conn, today=TODAY, **kw):
+        return bs.build(conn, name=self.BUILD, today=today, now=T0, source=self.SOURCE, layer=self.LAYER, **kw)
+
+    def test_new_versions_and_a_step_that_has_come_mark_the_build(self):
+        self.tx()
+        self.add(payload(irwin="{0-A}"), square(-116.40, 43.60))
+        self.refresh()                                                     # seasons 0, as of TODAY
+        self.assertEqual(bs.mark(self.conn, "test_poller", now=T0, name=self.BUILD), {})
+        key = f"{self.BUILD} marked"
+        self.assertEqual(bs.mark(self.conn, "test_poller", new=2, now=T0, name=self.BUILD),
+                         {key: "2 new perimeter versions"})
+        self.assertEqual(self.pending(), {"test_poller": (1, "2 new perimeter versions")})
+        self.conn.execute("delete from ops.build_pending where build = %s", (self.BUILD,))
+        step = datetime(2027, 11, 1, 18, tzinfo=UTC)                       # the scar's first step has come
+        self.assertEqual(bs.mark(self.conn, "test_poller", now=step, name=self.BUILD),
+                         {key: "1 scar due a fade step as of 2027-11-01"})
+        self.assertEqual(bs.mark(self.conn, "test_poller", now=step, name=self.BUILD), {})   # once, while marked
+        self.assertEqual(bs.mark(self.conn, "test_poller", new=1, now=step, name=self.BUILD),
+                         {key: "1 new perimeter version; 1 scar due a fade step as of 2027-11-01"})
+        self.assertEqual(self.pending()["test_poller"][0], 2)               # new data still counts
+
+    def test_the_build_runs_by_hand_logs_its_run_and_clears_its_marks(self):
+        tx = self.tx()
+        self.add(payload(irwin="{0-A}"), square(-116.40, 43.60))
+        builds.mark(tx, self.BUILD, by="test_poller", reason="1 new perimeter version")
+        stats = self.build(tx)
+        self.assertEqual((stats["written"], stats["scars"]), (1, 1))
+        self.assertEqual(self.pending(), {})
+        (ok, note, error), = self.runs()
+        self.assertEqual((ok, error), (True, None))
+        self.assertTrue(note.startswith(f"as of {TODAY}, scars 1, shown 1, written 1, deleted 0, version "), note)
+
+    def test_a_build_out_of_time_marks_itself_for_the_rest(self):
+        tx = self.tx()
+        self.add(payload(irwin="{0-A}"), square(-116.40, 43.60))
+        builds.mark(tx, self.BUILD, by="test_poller", reason="1 new perimeter version")
+        stats = self.build(tx, budget_s=0)
+        self.assertEqual((stats["written"], stats[bs.DEFERRED]), (0, 1))
+        self.assertEqual(self.pending(), {self.BUILD: (1, "1 scar left for the next run (out of time)")})
+        self.assertIn(f"{bs.DEFERRED} 1", self.runs()[-1][1])
+        self.assertEqual(self.build(tx)["written"], 1)                     # the next run takes the rest
+        self.assertEqual(self.pending(), {})
+
+    def test_a_failed_build_keeps_its_marks_and_its_scars(self):
+        tx = self.tx()
+        for i in range(12):
+            self.add(payload(irwin=f"{{0-{i:02d}}}"), square(-116.6 + i * 0.02, 43.6))
+        self.build(tx)
+        self.conn.execute("update raw.record set removed_at = %s where source = %s and source_id <> %s",
+                          (T0, self.SOURCE, "{0-00}"))
+        builds.mark(tx, self.BUILD, by="test_poller", reason="11 fires removed")
+        with self.assertRaises(RuntimeError):
+            self.build(tx)                                                 # most scars would go: refused
+        self.assertEqual(self.pending(), {"test_poller": (1, "11 fires removed")})
+        self.assertEqual(self.runs()[-1][0], False)
+        self.assertIn("refused", self.runs()[-1][2])
+        self.assertEqual(len(self.scars()), 12)
 
     def test_a_refresh_draws_the_box_s_fires_after_the_photo_and_records_a_version(self):
         inside = self.add(payload(irwin="{0-A}"), square(-116.40, 43.60))

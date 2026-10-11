@@ -211,6 +211,7 @@ class FetchTest(unittest.TestCase):
 @unittest.skipUnless(DB_URL, "set TVT_TEST_DATABASE_URL to a scratch database (core migration 0001)")
 class LoadDatabaseTest(unittest.TestCase):
     SOURCE = "test_nifc_wfigs_perimeters"
+    BUILD = "test-burn-scars"
 
     def setUp(self):
         import psycopg
@@ -219,6 +220,9 @@ class LoadDatabaseTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         db.ensure_source(self.conn, {**per.SOURCE, "name": self.SOURCE, "schedule": None})
+        self.marks = self.conn.execute("select to_regclass('ops.build_pending') is not null").fetchone()[0]
+        if self.conn.execute("select to_regclass('hazards.burn_scar') is not null").fetchone()[0]:
+            self.conn.execute("delete from hazards.burn_scar")      # no real scar's step marks (rolled back)
         self.folder, _ = wb.fetch(self.tmp.name, get=FakeServer(IN_WINDOW + OUTSIDE), sleep=lambda s: None,
                                   now=READ_AT)
 
@@ -228,9 +232,13 @@ class LoadDatabaseTest(unittest.TestCase):
             self.conn.close()
 
     def test_load_once_with_provenance_then_nothing_new(self):
-        stats = wb.load(self.conn, self.folder, source=self.SOURCE)
+        stats = wb.load(self.conn, self.folder, source=self.SOURCE, build=self.BUILD)
         self.assertEqual((stats["fires"], stats["record versions new"], stats["already held"], stats["fetch logged"]),
                          (2, 2, 0, "now"))
+        if self.marks:                                               # the new versions mark the burn-scars build
+            self.assertEqual(stats[f"{self.BUILD} marked"], "2 new perimeter versions")
+            self.assertEqual(self.conn.execute("select marked_by, marks from ops.build_pending where build = %s",
+                                               (self.BUILD,)).fetchall(), [(wb.SOURCE["name"], 1)])
         fetch = self.conn.execute(
             """select f.source, f.started_at, f.ok, f.robots, f.http_status, f.records, s.access, s.schedule
                from ops.fetch f join ops.source s on s.name = f.source where f.id = %s""",
@@ -239,9 +247,10 @@ class LoadDatabaseTest(unittest.TestCase):
         rows = self.conn.execute("""select first_fetch, first_seen, last_seen from raw.record where source = %s""",
                                  (self.SOURCE,)).fetchall()
         self.assertEqual(set(rows), {(stats["fetch"], READ_AT, READ_AT)})
-        again = wb.load(self.conn, self.folder, source=self.SOURCE)
+        again = wb.load(self.conn, self.folder, source=self.SOURCE, build=self.BUILD)
         self.assertEqual((again["fetch"], again["fetch logged"], again["record versions new"], again["already held"]),
                          (stats["fetch"], "before", 0, 2))
+        self.assertNotIn(f"{self.BUILD} marked", again)
 
     def test_a_version_the_poller_holds_is_left_as_it_is(self):
         from ingest import db
@@ -249,7 +258,7 @@ class LoadDatabaseTest(unittest.TestCase):
         sid, (payload, geom) = sorted(parsed.items())[0]
         later = datetime(2026, 10, 12, tzinfo=UTC)
         db.upsert_records(self.conn, self.SOURCE, [(sid, payload, geom)], None, later, complete=False)
-        stats = wb.load(self.conn, self.folder, source=self.SOURCE)
+        stats = wb.load(self.conn, self.folder, source=self.SOURCE, build=self.BUILD)
         self.assertEqual((stats["record versions new"], stats["already held"]), (1, 1))
         seen = self.conn.execute("select first_seen, last_seen, first_fetch from raw.record where source = %s "
                                  "and source_id = %s", (self.SOURCE, sid)).fetchone()

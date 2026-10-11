@@ -26,8 +26,8 @@ database loads that folder with `--load`, and `--fetch` refuses to read the wind
    is. The read is logged once per database as a fetch of the one-off source nifc_wfigs_perimeters_backfill, with
    the read's own times, status and robots result, and every version it adds points at that fetch
    (raw.record.first_fetch): that's the provenance in the database. Loading the same read again adds nothing.
-   No lifecycles (evt.event): these fires are long out, and the poller keeps a fire first seen already out in
-   raw.record only.
+   The versions it adds mark the burn-scars build (burn_scars.mark), which then runs by hand. No lifecycles
+   (evt.event): these fires are long out, and the poller keeps a fire first seen already out in raw.record only.
 
 The windows are the approvals', fixed here rather than options (WINDOWS). A fire discovered from Jul 25 to Jul 31,
 2025 is after the photo but outside the approved window: it's drawn only if the poller holds it (the RANGE fire,
@@ -51,7 +51,7 @@ from datetime import date, datetime, timezone
 from zoneinfo import ZoneInfo
 
 from ingest import USER_AGENT, arcgis, db, http
-from . import common
+from . import burn_scars, common
 from .sources import nifc_wfigs_perimeters as perimeters
 
 BOISE = ZoneInfo("America/Boise")
@@ -261,8 +261,9 @@ def fetch_row(conn, provenance):
          provenance.get("robots"), provenance.get("features"), provenance.get("bytes_read"))).fetchone()[0], True
 
 
-def store(conn, provenance, parsed, source=perimeters.SOURCE["name"]):
-    """Add the read's versions to raw.record (as the poller's source); a version already held is left as it is."""
+def store(conn, provenance, parsed, source=perimeters.SOURCE["name"], build=burn_scars.BUILD):
+    """Add the read's versions to raw.record (as the poller's source); a version already held is left as it is.
+    New versions mark the burn-scars build."""
     fetch_id, logged = fetch_row(conn, provenance)
     seen = common.parse_time(provenance["started_at"])
     new = 0
@@ -276,14 +277,14 @@ def store(conn, provenance, parsed, source=perimeters.SOURCE["name"]):
              fetch_id)).fetchone()
         new += 1 if row else 0
     return {"fetch": fetch_id, "fetch logged": "now" if logged else "before", "record versions new": new,
-            "already held": len(parsed) - new}
+            "already held": len(parsed) - new, **burn_scars.mark(conn, SOURCE["name"], new=new, name=build)}
 
 
-def load(conn, folder, source=perimeters.SOURCE["name"]):
+def load(conn, folder, source=perimeters.SOURCE["name"], build=burn_scars.BUILD):
     provenance, features, window = read(folder)
     parsed, stats = prepare(features, window)
     stats = {"window": window_name(window), **stats}
-    stats.update(store(conn, provenance, parsed, source))
+    stats.update(store(conn, provenance, parsed, source, build))
     return stats
 
 

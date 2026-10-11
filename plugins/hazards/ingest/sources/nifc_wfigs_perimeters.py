@@ -16,6 +16,9 @@ take up to 15 minutes to display", hence the schedule.
   one, then the newer poly_DateCurrent.
 - evt.event: the fire's current perimeter as a lifecycle, with the incidents' rules
   (common.update_lifecycles): open until out, withdrawn or quiet.
+- ops.build_pending: marks the burn-scars build (burn_scars.mark) with its data when it
+  stores new versions, or when a held scar's fade step has come. The build runs by hand,
+  never here (plan §0 item 27).
 
 Multipart polygons are kept as MultiPolygons (common.polygon_geojson). Disclaimer only;
 credit NIFC/WFIGS and the IRWIN agencies. robots.txt: 403, no rules.
@@ -145,12 +148,14 @@ def row_of(sid, p, geom, at):
 
 
 def store(conn, fetch_id, seen_at, parsed):
+    from .. import burn_scars          # here, not at the top: burn_scars imports this module
     new, unchanged, _ = db.upsert_records(conn, SOURCE["name"], ((sid, p, g) for sid, (p, g) in parsed.items()),
                                           fetch_id, seen_at, complete=False)
     stats = {"read": len(parsed), "record versions new": new, "unchanged": unchanged}
     stats.update(common.update_lifecycles(conn, SOURCE["name"], parsed, seen_at, row_of))
     stats["active perimeters"] = conn.execute("select count(*) from evt.event where source = %s and active",
                                               (SOURCE["name"],)).fetchone()[0]
+    stats.update(burn_scars.mark(conn, SOURCE["name"], new=new, now=seen_at))
     return stats
 
 

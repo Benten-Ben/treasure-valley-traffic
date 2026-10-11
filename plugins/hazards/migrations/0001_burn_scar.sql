@@ -3,16 +3,17 @@
 -- Fires that burned after the ground's photo (NAIP 2025, whose last flight day in the map box was
 -- Jul 24, 2025), drawn on the painted ground in Valley only, in a neutral char tone with a stipple,
 -- fading over three growing seasons. Not clickable in v1. One row per fire, refreshed from
--- raw.record's perimeter versions (source nifc_wfigs_perimeters) by the derived source `burn_scars`
--- (hourly in `ingest serve`) and by hand with `python3 -m ingest burn-scars`
--- (plugins/hazards/ingest/burn_scars.py, which explains every rule). The refresh replaces what
--- changed in one transaction and, when anything did, records a new version of the tile layer
--- 'hazards.burn_scars' in core.layer_version (migration 0020).
+-- raw.record's perimeter versions (source nifc_wfigs_perimeters) by the build `burn-scars`,
+-- `python3 -m ingest burn-scars` (plugins/hazards/ingest/burn_scars.py, which explains every rule),
+-- run by hand when the perimeter poller has marked it (ops.build_pending, migration 0021), never
+-- inside `ingest serve`. The build replaces what changed in one transaction and, when anything did,
+-- records a new version of the tile layer 'hazards.burn_scars' in core.layer_version (migration 0020).
 --
 -- The fade is data, not a client rule: `seasons` counts the whole growing seasons that have passed
--- since the fire, as of the refresh, and `fade` follows from it (1, 2/3, 1/3, then 0). The three
+-- since the fire, as of the build, and `fade` follows from it (1, 2/3, 1/3, then 0). The three
 -- days it steps down are kept with it (fade_1_on, fade_2_on, gone_on), so a time bar can show any
--- date without the rule. A scar that's gone stays in the table; burn_scar_shown leaves it out.
+-- date without the rule; a step's day marks the build. A scar that's gone stays in the table;
+-- burn_scar_shown leaves it out.
 --
 -- Licence (plan C3): WFIGS states none (NIFC disclaimer only), republish yes, credit "National
 -- Interagency Fire Center (WFIGS), from IRWIN"; the same in each core.layer_version row.

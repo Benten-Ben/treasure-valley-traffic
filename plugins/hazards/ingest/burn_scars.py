@@ -4,13 +4,17 @@
 Fires that burned after the ground's photo are drawn on the painted ground, in Valley only, in a neutral char
 tone with a stipple (never red), fading over three growing seasons. They aren't clickable in v1. This module
 keeps hazards.burn_scar (hazards/0001) in step with the WFIGS perimeters the poller stores in raw.record
-(source nifc_wfigs_perimeters). It fetches nothing. It runs as the derived source `burn_scars`, hourly in
-`ingest serve` and logged in ops.fetch like any source (as the daily intersections build does), and by hand. It's
-light: about a hundred record versions in, a few dozen rows out, about 2 s when nothing changed. It runs on a
-schedule because the scars follow the poller (plan C4: they change with it, so they aren't baked) and the fade's
-steps fall on dates. That makes it a second exception to plan item 27 ("builds never run inside ingest serve"),
-which the lead rules on; so that it can never hold up the sources after it in serve's loop, each statement has a
-limit (STATEMENT_TIMEOUT_S) and the writes stop after BUDGET_S, the rest waiting for the next run.
+(source nifc_wfigs_perimeters). It fetches nothing.
+
+It's a build, `burn-scars`, and like every build it never runs inside `ingest serve` (plan §0 item 27, M1):
+sources mark it, and it runs by hand. The perimeter poller marks it, in the same transaction as its data
+(`mark`), when it stores new perimeter versions, and when a held scar's fade step has come since the last build
+(a count on this small table; no GEOS); the backfill's load marks it too. `python3 -m ingest.builds` and the VM's
+bin/status show it marked, and `python3 -m ingest burn-scars` runs it inside builds.Run, which logs the run in
+ops.build_run (its note says what changed and names any fire left out) and clears the marks it saw. It's light:
+about a hundred record versions in, a few dozen rows out, about 2 s when nothing changed and 4 s to rewrite every
+scar. Each statement has a limit (STATEMENT_TIMEOUT_S; production's login has none), and the writes stop after
+BUDGET_S, the build marking itself again for the rest.
 
 Rules, per fire (one source_id in raw.record):
 
@@ -30,24 +34,25 @@ Rules, per fire (one source_id in raw.record):
    after its fire (growing_season.json, read by core's ingest/seasons.py: April through October, an estimate
    ⚠️). A season the fire burned in doesn't count, even on its first day: a fire on Mar 31 first steps down
    seven months later, one on Apr 1 nineteen months later. Its fade is 1 until then, then 2/3, 1/3, and 0
-   (gone). `seasons` (0-3) and `fade` are as of the refresh's day in Boise; the three step days are stored with
-   them.
+   (gone). `seasons` (0-3) and `fade` are as of the build's day in Boise, and the three step days are stored with
+   them; a step's day marks the build, so a scar steps down when the build next runs.
 5. **Geometry:** made valid and cut to the map box, the ground's extent (`clipped` says when it was cut), plus a
    copy simplified at 10 m for low zooms. Acres stay the whole fire's, as published. Each fire's geometry is
    worked in a savepoint of its own: one that PostGIS can't make usable (nothing left once made valid, or GEOS
-   throws, or it runs out of time) is left out and named in the refresh's output, and is tried again on the
+   throws, or it runs out of time) is left out and named in the run's output and note, and is tried again on the
    next run; the rest of the layer goes on. A fire already drawn keeps its last good scar, still stepping down
    on its stored days.
 
 A refresh rewrites only rows whose content changed (content_hash), deletes fires that no longer qualify, and,
 when anything changed or the layer has no version yet, records a new version of the tile layer
 'hazards.burn_scars' (core.layer_version), in the same transaction. A fade step changes the content, so the
-hourly run records each step as its day comes. A gone scar stays in the table (hazards.burn_scar_shown leaves
+first build on or after a step's day records it. A gone scar stays in the table (hazards.burn_scar_shown leaves
 it out), so fading never deletes. raw.record keeps every version, so a refresh that would delete more than half
 of the held scars (and more than MAX_DROP_FLOOR) means something upstream is wrong: it's refused unless
 --force.
 
-    python3 -m ingest burn-scars                              # refresh now
+    python3 -m ingest.builds                                  # is burn-scars marked? (state, marks, age)
+    python3 -m ingest burn-scars                              # run the build: logged, clears its marks
     python3 -m ingest burn-scars --dry-run --list             # what would change, each scar; nothing written
     python3 -m ingest burn-scars --dry-run --on 2027-11-01    # the fade on another day (dry runs only)
 
@@ -59,6 +64,7 @@ import functools
 import hashlib
 import json
 import os
+import sys
 import time
 from collections import Counter, namedtuple
 from datetime import date
@@ -66,11 +72,12 @@ from zoneinfo import ZoneInfo
 
 import psycopg
 
-from ingest import arcgis, db, layer_version, seasons
+from ingest import arcgis, builds, db, layer_version, seasons
 from .sources import nifc_wfigs_perimeters as perimeters
 
 BOISE = ZoneInfo("America/Boise")
 PERIMETERS = perimeters.SOURCE["name"]
+BUILD = "burn-scars"                             # the build (ops.build_run, ops.build_pending): this command
 LAYER = "hazards.burn_scars"                     # the tile layer: /api/hazards/tiles/burn_scars
 BOX = (-117.05, 43.00, -115.95, 43.85)           # west, south, east, north: the map box, the ground's extent
 PHOTO_LAST_DAY = date(2025, 7, 24)               # NAIP 2025's last flight day in the box (docs/09)
@@ -81,9 +88,11 @@ UTM = 32611
 GROWING_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "growing_season.json")
 MAX_DROP_SHARE = 0.5
 MAX_DROP_FLOOR = 5
-# Bounds, since serve runs every scheduled source in turn and production's login has no statement_timeout:
+# Bounds, as production's login has no statement_timeout and GEOS can stall on a bad outline:
 STATEMENT_TIMEOUT_S = 60     # each statement in a refresh (one fire's geometry is one statement)
-BUDGET_S = 300               # the writes stop after this; the rest wait for the next run
+BUDGET_S = 300               # the writes stop after this; the rest wait for the next run, and the build stays marked
+DEFERRED = "left for the next run (out of time)"     # the stats' key for them
+NOTE_MAX = 1000              # a run's note in ops.build_run
 # Errors that are one fire's geometry, not the refresh's: GEOS or PostGIS throwing (XX000), or a statement out of
 # time. Anything else (a missing column, a lost connection) still fails the refresh.
 GEOMETRY_ERRORS = (psycopg.errors.InternalError_, psycopg.errors.QueryCanceled)
@@ -96,19 +105,6 @@ REPUBLISH = "yes"
 # What the geometry is made with: part of every row's content hash, so a change here rewrites every scar.
 GEOMETRY_RULE = f"valid; cut to {BOX}; geom_lo simplified at {SIMPLIFY_M} m in EPSG:{UTM}"
 
-SOURCE = {
-    "name": "burn_scars",
-    "title": "Burn scars (derived from the WFIGS perimeters)",
-    "url": "https://github.com/Benten-Ben/treasure-valley-traffic/blob/main/plugins/hazards/ingest/burn_scars.py",
-    "access": "open",
-    "schedule": "1 hour",
-    "license": "derived",
-    "credit": CREDIT,
-    "notes": "Derived, fetches nothing: hazards.burn_scar refreshed from raw.record's nifc_wfigs_perimeters versions "
-             "(fires in the map box after the ground's photo, Jul 24, 2025), with their fade over three growing "
-             "seasons; a new version of the tile layer hazards.burn_scars when anything changed.",
-}
-
 # near: the version's outline has a bounding box that overlaps the map box (no GEOS needed); whether the outline
 # itself reaches into the box is settled when it's cut (_WRITE).
 Version = namedtuple("Version", "source_id version_hash payload first_seen last_seen near")
@@ -118,8 +114,8 @@ Version = namedtuple("Version", "source_id version_hash payload first_seen last_
 
 @functools.lru_cache(maxsize=None)
 def growing(path=GROWING_FILE):
-    """The growing season's rules, read when first needed (a broken file fails the refresh, not the import that
-    `ingest serve` makes of every source at start)."""
+    """The growing season's rules, read when first needed (a broken file fails the build, not the perimeter
+    poller, which imports this module to mark the build)."""
     return seasons.load(path)
 
 
@@ -327,12 +323,14 @@ def write_scar(conn, row, source, now):
                                  **_box()}).fetchone()
 
 
-def ready(conn):
-    """Why a refresh can't run here yet (a missing migration), or None."""
-    if conn.execute("select to_regclass('hazards.burn_scar')").fetchone()[0] is None:
-        return "hazards/0001_burn_scar.sql isn't applied"
-    if conn.execute("select to_regclass('core.layer_version')").fetchone()[0] is None:
-        return "core.layer_version (migration 0020) isn't applied"
+def ready(conn, build=False):
+    """Why a refresh (with build: a logged run of the build) can't run here yet (a missing migration), or None."""
+    needs = [("hazards.burn_scar", "hazards/0001_burn_scar.sql"), ("core.layer_version", "migration 0020")]
+    if build:
+        needs.append(("ops.build_run", "migration 0021"))
+    for table, migration in needs:
+        if conn.execute("select to_regclass(%s)", (table,)).fetchone()[0] is None:
+            return f"{table} is missing: {migration} isn't applied"
     return None
 
 
@@ -414,20 +412,66 @@ def refresh(conn, today=None, now=None, source=PERIMETERS, layer=LAYER, force=Fa
         stats["kept from an older version"] = kept
         stats["stepped"] = stepped
     if deferred:
-        stats["left for the next run (out of time)"] = deferred
+        stats[DEFERRED] = deferred
     stats.update({f"left out ({why})": n for why, n in sorted(left_out.items())})
     if problems:
         stats["problems"] = "; ".join(problems)
     return stats
 
 
-def run(conn):
-    """The scheduled derived source: refresh, logged in ops.fetch like any other source."""
-    db.ensure_source(conn, SOURCE)
-    with db.Fetch(conn, SOURCE["name"]) as f:
-        stats = refresh(conn, now=f.started_at)
-        f.records = stats.get("scars")
+def note_of(stats):
+    """A run's note in ops.build_run: what it did, and any fire left out for its geometry."""
+    keys = ("as of", "scars", "shown", "written", "deleted", "version", "kept from an older version", DEFERRED,
+            "left out (geometry unusable)", "left out (geometry error)", "problems")
+    return ", ".join(f"{k} {stats[k]}" for k in keys if k in stats)[:NOTE_MAX]
+
+
+def build(conn, force=False, name=BUILD, **kw):
+    """Run the build by hand: refresh inside builds.Run, which refuses inside `ingest serve`, logs the run in
+    ops.build_run and, once the refresh commits, clears the marks it saw. A run out of time (BUDGET_S) marks the
+    build again for what it left. kw goes to refresh(). Returns the refresh's stats."""
+    with builds.Run(conn, name) as run:
+        missing = ready(conn)
+        if missing:
+            raise RuntimeError(f"{name}: {missing}")
+        stats = refresh(conn, force=force, **kw)
+        left = stats.get(DEFERRED)
+        if left:
+            builds.mark(conn, name, by=name, reason=f"{left} scar{'' if left == 1 else 's'} left for the next run "
+                                                    "(out of time)")
+        run.note = note_of(stats)
     return stats
+
+
+# A held scar whose fade step has come since the build last wrote it. The build stores `seasons` as of its own day.
+_DUE = f"select count(*) from hazards.burn_scar where seasons < {STEPS} and seasons <> {_SEASONS_ON}"
+
+
+def mark(conn, by, new=0, now=None, name=BUILD):
+    """Mark the build (builds.mark) for what a source brought or what the date did: `new` perimeter versions
+    stored, or a held scar's fade step that has come since the last build. The perimeter poller and the
+    backfill's load call it in their store step, so the mark commits with their data. Cheap: a count on
+    hazards.burn_scar, no GEOS. Does nothing before migration 0021 (ops.build_pending). A step that has come marks
+    once, not again on each poll while the build is still marked by `by`. -> {'<build> marked': reason} or {}."""
+    marks, table = conn.execute("select to_regclass('ops.build_pending') is not null, "
+                                "to_regclass('hazards.burn_scar') is not null").fetchone()
+    if not marks:
+        return {}
+    today = (now or db.now()).astimezone(BOISE).date()
+    due = conn.execute(_DUE, {"today": today}).fetchone()[0] if table else 0
+    if due and not new and conn.execute("select 1 from ops.build_pending where build = %s and marked_by = %s",
+                                        (name, by)).fetchone():
+        due = 0
+    reasons = []
+    if new:
+        reasons.append(f"{new} new perimeter version{'' if new == 1 else 's'}")
+    if due:
+        reasons.append(f"{due} scar{'' if due == 1 else 's'} due a fade step as of {today}")
+    if not reasons:
+        return {}
+    reason = "; ".join(reasons)
+    builds.mark(conn, name, by=by, reason=reason)
+    return {f"{name} marked": reason}
 
 
 def report(conn, stats, listing=False, out=print):
@@ -448,9 +492,10 @@ def report(conn, stats, listing=False, out=print):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="python3 -m ingest burn-scars",
-                                 description="Refresh hazards.burn_scar from the WFIGS perimeters in raw.record "
-                                             "(the 'burn_scars' source does this hourly).")
-    ap.add_argument("--dry-run", action="store_true", help="refresh and report, then roll back")
+                                 description="Build hazards.burn_scar from the WFIGS perimeters in raw.record, by hand "
+                                             "(the perimeter poller marks the build; `python3 -m ingest.builds` "
+                                             "shows it). Never inside `ingest serve`.")
+    ap.add_argument("--dry-run", action="store_true", help="refresh and report, then roll back (no run logged)")
     ap.add_argument("--on", type=date.fromisoformat, metavar="YYYY-MM-DD",
                     help="the day to work the fade out for (with --dry-run only; default: today in Boise)")
     ap.add_argument("--list", action="store_true", help="print each scar")
@@ -465,10 +510,11 @@ def main(argv=None):
             conn.rollback()
             print("(dry run: nothing written)", flush=True)
             return 0
-        db.ensure_source(conn, SOURCE)
-        with db.Fetch(conn, SOURCE["name"]) as f:
-            stats = refresh(conn, now=f.started_at, force=args.force)
-            f.records = stats.get("scars")
+        missing = ready(conn, build=True)
+        if missing:
+            print(f"burn scars: {missing}", file=sys.stderr, flush=True)
+            return 1
+        stats = build(conn, force=args.force)
         report(conn, stats, args.list)
     return 0
 

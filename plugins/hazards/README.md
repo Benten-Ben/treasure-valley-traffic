@@ -100,8 +100,9 @@ USGS week feed, cut to the ring before storing.
 
 ```bash
 python3 -m ingest run idl_fire_restrictions nifc_wfigs_incidents nifc_wfigs_perimeters nasa_firms nws_wwa usgs_quakes
-python3 -m ingest serve                      # runs them on their schedules with everything else (burn_scars hourly)
-python3 -m ingest burn-scars [--dry-run] [--list] [--on YYYY-MM-DD]   # refresh the burn scars by hand
+python3 -m ingest serve                      # runs them on their schedules with everything else
+python3 -m ingest.builds                     # is the burn-scars build marked? (the perimeter poller marks it)
+python3 -m ingest burn-scars [--list]        # run the build by hand (never in serve); --dry-run [--on YYYY-MM-DD] to look
 python3 -m ingest wfigs-backfill --load DIR/<UTC time> [--dry-run]    # load the kept Aug-Dec 2025 read into raw.record
 python3 -m unittest discover -s plugins/hazards/tests -t .   # with TVT_TEST_DATABASE_URL, the database tests too
 ```
@@ -131,15 +132,21 @@ contracts (S3a).
 
 **`hazards.burn_scar`** (`migrations/0001_burn_scar.sql`): one row per fire,
 refreshed from `raw.record`'s `nifc_wfigs_perimeters` versions by
-[`ingest/burn_scars.py`](ingest/burn_scars.py), which fetches nothing. It runs
-as the derived source `burn_scars`, hourly in `ingest serve` and logged in
-`ops.fetch` (like the daily intersection build), and by hand with
-`python3 -m ingest burn-scars`. That makes it a second exception to the
-sprint's rule that builds never run inside `ingest serve`, for the lead to
-rule on: the scars follow the poller, and the fade steps fall on dates. So
-that it can never hold up the sources after it in serve's loop, each of its
-statements stops after 60 s and its writes stop after 5 minutes (the rest
-wait for the next run); with nothing new it takes about 2 s. The rules:
+[`ingest/burn_scars.py`](ingest/burn_scars.py), which fetches nothing. It's
+the build `burn-scars`, and like every build it never runs inside
+`ingest serve` (plan §0 item 27; [`ingest/README.md`](../../ingest/README.md#builds-marked-by-sources-run-by-hand)).
+The perimeter poller marks it in `ops.build_pending`, with its data, when it
+stores new perimeter versions, and when a held scar's fade step has come
+since the last build (a count on this small table, no GEOS; once, not on
+every poll); the backfill's load marks it too. `python3 -m ingest.builds` and
+the VM's `bin/status` show it marked, and `python3 -m ingest burn-scars`
+runs it inside `builds.Run`, which logs the run in `ops.build_run` and clears
+the marks it saw (so it's run plainly, never under `python3 -m ingest.builds
+run`). So the scars follow the poller as often as someone runs
+the build: about 2 s with nothing new, 4 s to rewrite every scar. Each
+statement stops after 60 s (production's login has no limit), and the
+writes stop after 5 minutes, the build marking itself again for the rest.
+The rules:
 
 - **The version:** a fire's newest final perimeter, else its newest version.
   So a fire with no final perimeter yet is drawn from its newest daily one
@@ -169,14 +176,14 @@ wait for the next run); with nothing new it takes about 2 s. The rules:
   (`clipped`), plus `geom_lo`, simplified at 10 m for low zooms. `acres` is
   the whole fire's, as published. Each fire is worked in a savepoint of its
   own: one PostGIS can't use (nothing left once made valid, GEOS throwing,
-  or out of time) is left out, named in the run's output (`problems`, in
-  serve's log), and tried again on the next run, while the rest of the layer
-  carries on. A scar already drawn keeps its last good outline and still
-  steps down on its stored days.
-- **Versions:** a refresh rewrites only what changed, and then records a new
+  or out of time) is left out, named in the run's output and its note in
+  `ops.build_run` (`problems`), and tried again on the next run, while the
+  rest of the layer carries on. A scar already drawn keeps its last good
+  outline and still steps down on its stored days.
+- **Versions:** a build rewrites only what changed, and then records a new
   version of the tile layer `hazards.burn_scars` in `core.layer_version`
   (licence and credit as the perimeters'; republish yes). A fade step is a
-  change, so the hourly run records each step as its day comes. A gone scar
+  change, so the first build on or after a step's day records it. A gone scar
   stays in the table; the view **`hazards.burn_scar_shown`** (what the map
   draws) leaves it out. A refresh that would delete more than half the scars
   (and more than five) is refused without `--force`: `raw.record` keeps every
@@ -187,7 +194,7 @@ in `raw.record` touched the box, the earliest the RANGE fire (discovered
 Jul 31, 2025, about 27,000 acres). The backfill read brought 27 more fires
 (Aug–Dec 2025, in the ring), 21 of them in the box: 84 scars in all, 22 from
 2025, 5 cut at the box's edge, about 59,000 acres in the box, under 1 MB with
-the low-zoom copy. A refresh with nothing new takes about 2 s.
+the low-zoom copy. A build with nothing new takes about 2 s.
 
 **The 2025 backfill** ([`ingest/wfigs_backfill.py`](ingest/wfigs_backfill.py)).
 The poller started on Oct 7, 2026, and its first run read what had changed in
@@ -228,9 +235,12 @@ the Aug–Dec read still loads as it is.
 The read's folder is kept on the server with the other downloaded sources
 (`/srv/tvt/work/sources/nifc-wfigs-backfill/`), outside this repository.
 
-**Deploying.** The ingest service applies `0001` at start, and `burn_scars`
-then runs within the hour. The deploy runbook adds one step after the grants:
-load the read into production as `tvt_build`, in a capped container with the
-read's folder mounted read-only (`wfigs-backfill --load <folder>`), then
-`burn-scars --list` to see the scars. A scratch refresh replaces the scratch
-copy's `raw.record`, so the read is loaded there again after each refresh.
+**Deploying.** The ingest service applies `0001` at start. The deploy
+runbook adds one step after the grants: load the read into production as
+`tvt_build`, in a capped container with the read's folder mounted read-only
+(`wfigs-backfill --load <folder>`, which marks the build), then run the build
+the same way (`burn-scars --list`, light: a 1 GB container, a few seconds),
+which logs its run and shows the scars. After that, run it whenever
+`bin/status` shows `burn-scars` marked. A scratch refresh replaces the scratch
+copy's `raw.record`, so the read is loaded there again after each refresh,
+and the build run after it.

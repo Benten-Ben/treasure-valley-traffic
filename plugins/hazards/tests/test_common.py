@@ -236,8 +236,7 @@ class ManifestTest(unittest.TestCase):
                 self.assertTrue(callable(m.run))
             names.append(entry["name"])
         self.assertEqual(names, ["idl_fire_restrictions", "nifc_wfigs_incidents", "nifc_wfigs_perimeters",
-                                 "burn_scars", "nifc_wfigs_perimeters_backfill", "nasa_firms", "nws_wwa",
-                                 "usgs_quakes"])
+                                 "nifc_wfigs_perimeters_backfill", "nasa_firms", "nws_wwa", "usgs_quakes"])
 
     def test_schedules_are_ten_minutes_or_more(self):
         units = {"minute": 1, "minutes": 1, "hour": 60, "hours": 60, "day": 1440, "days": 1440}

@@ -29,9 +29,8 @@ SOURCES_BEFORE = ["achd_cameras", "idaho511_views_oneoff", "idaho511_rwis_sites_
                   "fra_crossings",
                   "achd_signal_points", "compass_signals", "compass_regional_signals", "intersections",
                   # ch. 17 Wave A (Oct 7): hazards (order 60) runs before safety's crashes, the rest after
-                  "idl_fire_restrictions", "nifc_wfigs_incidents", "nifc_wfigs_perimeters",
-                  "burn_scars",  # landscape sprint P13 (Oct 11): derived from the perimeters, right after them
-                  "nasa_firms", "nws_wwa", "usgs_quakes", "compass_crashes", "noaa_hms_smoke", "nwps_gauges", "nrcs_snotel", "boise_ecoli",
+                  "idl_fire_restrictions", "nifc_wfigs_incidents", "nifc_wfigs_perimeters", "nasa_firms", "nws_wwa",
+                  "usgs_quakes", "compass_crashes", "noaa_hms_smoke", "nwps_gauges", "nrcs_snotel", "boise_ecoli",
                   "boise_river_hazards", "usdm_drought", "r2r_trails", "boise_greenbelt_closures", "usfs_r4_orders",
                   "idpr_route_closures", "idpr_area_restrictions", "awc_metar", "idfg_roadkill", "agrimet_et",
                   "swpc_ovation", "swpc_kp_1m", "compass_counts", "compass_growth", "compass_plats", "compass_congestion"]
@@ -39,7 +38,7 @@ STREAMS_BEFORE = ["vrt_realtime", "idaho511_frames", "itd_wzdx", "idaho511_api"]
 
 WHERE = {  # source: plugin (docs/15 §15.4)
     "idl_fire_restrictions": "hazards", "nifc_wfigs_incidents": "hazards", "nifc_wfigs_perimeters": "hazards",
-    "burn_scars": "hazards", "nasa_firms": "hazards", "nws_wwa": "hazards", "usgs_quakes": "hazards", "noaa_hms_smoke": "air",
+    "nasa_firms": "hazards", "nws_wwa": "hazards", "usgs_quakes": "hazards", "noaa_hms_smoke": "air",
     "nwps_gauges": "water", "nrcs_snotel": "water", "boise_ecoli": "water", "boise_river_hazards": "water",
     "usdm_drought": "water", "r2r_trails": "trails", "boise_greenbelt_closures": "trails",
     "usfs_r4_orders": "lands", "idpr_route_closures": "lands", "idpr_area_restrictions": "lands",
