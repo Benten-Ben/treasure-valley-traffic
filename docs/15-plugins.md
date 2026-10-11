@@ -66,7 +66,10 @@ Chapter 17's research added six more core pieces, decided Oct 7
   clouds, smoke, model forecasts) with valid and issue times, kept as files
   with an index in the database.
 - **Recurring lifecycles** and one rules-by-date evaluator (seasons,
-  weekdays, hours, overrides), in Python and TypeScript.
+  weekdays, hours, overrides). Built in Python in the landscape sprint
+  (`ingest/seasons.py`, Oct 2026). The TypeScript twin was dropped from v1,
+  since the app reads the lifecycles the plugins write; the shared cases
+  (`ingest/tests/seasons_cases.json`) are there for a twin if one is needed.
 - **The sun and moon ephemeris** and lighting state, in Python and
   TypeScript.
 - **Surface-model (nDSM) tiles** in the base map: heights of buildings and
@@ -81,7 +84,11 @@ backcountry (the Boise National Forest and the Owyhee wilderness) and a
 weather context of about 300 km.
 
 The base map's streets (for drawing) are core; the road network as data
-(ACHD's segments, lanes) is the `roads` plugin.
+(ACHD's segments, lanes) is the `roads` plugin. The buffer-and-bearing line
+matcher moved from `roads` to core in the landscape sprint
+(`ingest/linematch.py`), once trails needed it too: roads matches its lane
+sources and OpenStreetMap to ACHD's segments with it, and trails will link
+the agencies' trail lines to OpenStreetMap's paths.
 
 ## 15.2 What a plugin is
 
@@ -175,7 +182,7 @@ sampler.
 
 | Plugin | What's in it today | Depends on | Visibility |
 |---|---|---|---|
-| `roads` | ACHD's road segments and the road tiles (`/api/tiles/roads`, the Streets layer's data), the lane inventories (ITD HPMS, ACHD's Master Street Map, COMPASS's centerline), OpenStreetMap's ways, lanes and signal nodes, the shared segment matcher, `core.segment_lanes`, and the coming Lanes layer | — | public (OSM parts ODbL) |
+| `roads` | ACHD's road segments and the road tiles (`/api/tiles/roads`, the Streets layer's data), the lane inventories (ITD HPMS, ACHD's Master Street Map, COMPASS's centerline), OpenStreetMap's ways, lanes and signal nodes, their matches to ACHD's segments (on core's line matcher), `core.segment_lanes`, and the coming Lanes layer | — | public (OSM parts ODbL) |
 | `intersections` | Everywhere traffic streams meet and are controlled: COMPASS's signals and Regional_Signals, ACHD's 2022 signal points (signals, beacons, school and fire signals), the intersection build and its reviews, FRA rail crossings and their links; later roundabouts | `roads`, `cameras` | public, internal until COMPASS answers |
 | `cameras` | ACHD's camera list, 511's views, the key-camera and road-weather frame streams, daily videos, the video library, calibration | — | public (images not republished) |
 | `transit` | VRT's GTFS and live positions, route matching, ribbons, progress, tracks | — | public |

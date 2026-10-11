@@ -9,7 +9,10 @@ core every subject shares: the CLI (`__main__.py`), polite HTTP with the
 robots.txt parser (`http.py`), sources, fetch logs and record versions
 (`db.py`), event lifecycles (`events.py`), the shared readers for ArcGIS
 layers (`arcgis.py`) and COMPASS's layers (`compass_layer.py`), the UTM
-projection (`utm.py`), and the plugin loader (`manifest.py` reads and orders
+projection (`utm.py`), the line matcher that places one network's lines on
+another (`linematch.py`; roads uses it, trails will), the rules-by-date
+evaluator for seasons, closures and other recurring rules (`seasons.py`),
+and the plugin loader (`manifest.py` reads and orders
 the manifests; `sources/__init__.py` builds `SOURCES`, `STREAMS` and the
 plugin commands from them). Each subject's sources live in its plugin,
 `plugins/<name>/`, with a `plugin.json` (sources, licenses, whether we may

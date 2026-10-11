@@ -473,7 +473,8 @@ existing, funded and planned lanes, counting the whole cross-section) and
 by globalid; `pm_id` names a travel-model link of several pieces and stays as
 the join to COMPASS's other data). `core.segment_match` records which ACHD
 segments each of their lines, and each OpenStreetMap way, lies along, by one
-shared matcher (`plugins/roads/ingest/segment_match.py`, in UTM 11N): at least 60% of the
+shared matcher (core's `ingest/linematch.py` since the landscape sprint, through
+roads' `plugins/roads/ingest/segment_match.py`, in UTM 11N): at least 60% of the
 segment within the line's buffer (15 m; 10 m with a street-name check for
 the Master Street Map), or else at least 60% of a line of 20 m or more within
 the segment's buffer (methods `way_in_…`), with bearings within 20°. `share`

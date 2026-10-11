@@ -3,8 +3,8 @@
 The road network as data ([docs/15 §15.4](../../docs/15-plugins.md#154-the-plugins-we-already-have)):
 ACHD's road segments (the Streets layer's data), the lane inventories, and
 OpenStreetMap's ways, lanes and signal nodes, all matched to ACHD's segments
-by the shared segment matcher. The base map's streets (for drawing) stay in
-core (`basemap/`).
+by core's line matcher ([ingest/linematch.py](../../ingest/linematch.py)). The
+base map's streets (for drawing) stay in core (`basemap/`).
 
 | Source | Runs | License | Credit | Republish |
 |---|---|---|---|---|
@@ -23,8 +23,9 @@ map. Details of each source: [ingest/README.md](../../ingest/README.md).
 `core.osm_node`, and the `core.segment_lanes` view with its four per-source
 views (migrations 0004, 0011, 0016–0018 in `db/migrations/`).
 
-**Code:** `ingest/sources/` (the sources), `ingest/segment_match.py` (the
-shared matcher), `ingest/streets.py` (street names made comparable; the
+**Code:** `ingest/sources/` (the sources), `ingest/segment_match.py`
+(matching to ACHD's segments with core's line matcher, and
+`core.segment_match`), `ingest/streets.py` (street names made comparable; the
 intersections plugin uses it too), `ingest/osm_load.py`.
 
 **Commands:**

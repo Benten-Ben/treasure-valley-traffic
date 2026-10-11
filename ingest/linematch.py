@@ -3,9 +3,9 @@
 Core since the landscape sprint (Oct 2026), by docs/15's rule that a piece
 becomes core once two plugins need it: `roads` matches its lane sources and
 OpenStreetMap to ACHD's segments with it (plugins/roads/ingest/segment_match.py,
-which writes core.segment_match), `trails` links Ridge to Rivers' and the
-Greenbelt's lines to OpenStreetMap's paths, and `water` will link NHD's lines
-to OpenStreetMap's waterways.
+which writes core.segment_match), `trails` will link Ridge to Rivers' and the
+Greenbelt's lines to OpenStreetMap's paths, and `water` NHD's lines to
+OpenStreetMap's waterways.
 
 Two sets of lines go in: the **targets**, the network being matched to (ACHD's
 segments, OSM's paths), and the **lines**, a source's lines to place on it.
