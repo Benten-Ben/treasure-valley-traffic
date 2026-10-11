@@ -155,6 +155,93 @@ To serve tiles from a new plugin's schema, add it to the file's
 `tile_schemas` list; the app's unit tests check the list against the
 registered layers.
 
+## Heavy jobs and worker tests on the VM
+
+Two small tools from [`bin/`](bin), installed in `/srv/tvt/work/bin` on the
+VM (Python 3, standard library; tests in [`tests/`](tests), run on the VM
+with `python3 -m unittest discover -s deploy/tests`). After a change, copy
+them in by rename, so a job already running keeps its copy:
+`install -m 755 deploy/bin/heavy /srv/tvt/work/bin/.heavy.new && mv -f /srv/tvt/work/bin/.heavy.new /srv/tvt/work/bin/heavy`
+(the same for `worker-test`).
+
+**`heavy`** runs a heavy job: a worker container over 1 GB or 1 CPU, any
+production load, an image build, a `pg_dump`, a tile, imagery or lidar
+build. It came out of the landscape sprint's plan (v3 §4.4) after an
+uncapped build stalled the VM during the nightly camera roll-up on Oct 7.
+
+```bash
+/srv/tvt/work/bin/heavy --deadline 22:30 --runtime 90 --peak 3 "P2 decode (B2)" \
+  docker run --rm --memory 3g --memory-swap 3g --cpus 3 -v ... tvt-worker python ...
+/srv/tvt/work/bin/heavy --status      # the lock, the window, the roll-up, free disk, recent jobs
+```
+
+- **One at a time.** It takes `/srv/tvt/work/heavy.lock` exclusively and
+  waits while another heavy job or a browser-spec run (which holds it
+  shared) is going; while it waits, no new browser run starts. `-n` doesn't
+  wait, `-w MIN` waits at most that long, also for a closed window to open.
+- **Windows** (Boise time; the VM's clock is UTC): 06:00–23:15, and at
+  night only once the camera roll-up (from 00:05) has finished, as both
+  capture services' status files show, until 05:45. Nothing from 23:15
+  until then: the roll-up needs the memory. A roll-up still going after
+  06:00 holds day jobs too.
+- **The deadline is enforced.** The job doesn't start past its deadline or
+  when its stated runtime doesn't fit before it. At the deadline it gets
+  SIGTERM (its whole process group, and every container labelled
+  `tvt.heavy=<id>`), then SIGKILL a minute later. `heavy` adds the label to
+  `docker run` and `docker compose run`; scripts that start containers
+  themselves pass `--label "$HEAVY_LABEL"`.
+- **What the deadline can't reach:** a command run with `docker exec`
+  inside another container (a `pg_dump` in the database's). Killing the
+  `docker exec` client leaves it running there, so it has to stop itself,
+  for example under `timeout`, which the database image has:
+
+  ```bash
+  /srv/tvt/work/bin/heavy --deadline 17:00 --runtime 20 --peak 0 --cold 1 "pg_dump (deploy)" sh -c \
+    'docker exec tvt-db-1 timeout -k 60 $((HEAVY_DEADLINE_EPOCH - $(date +%s))) pg_dump ...'
+  ```
+- **A planned VM restart.** The lead writes it in `/srv/tvt/work/MAINTENANCE`,
+  on a line of its own: `restart: 2026-10-12 23:30` (Boise; a bare `23:30`
+  means the next one). The deadline moves to 10 minutes before it. A note
+  with no time, or with several and no `restart:` line, refuses every job.
+- **Disk.** It starts only with 12 GB plus the job's stated peak free on
+  `/` (an image build's peak is the image plus its build cache), and stops
+  the job if `/` falls under 11 GB (the camera capture pauses under 10); it
+  checks every 2 seconds. `--cold GB` is for a job that writes to the cold
+  drive: it must be mounted, with room to spare (its mount is in the VM's
+  `/srv/tvt/work/heavy.conf`, not here).
+- **Caps.** A `docker run` without `--memory` is refused. `docker compose
+  run` can't take a cap, so the service it runs needs `mem_limit` in the
+  compose files the command reads; `heavy` checks with `docker compose
+  config` and refuses one without. A production load at a deploy adds
+  [`compose.load.yml`](compose.load.yml) (2 GB, 2 CPUs) on the command line:
+
+  ```bash
+  cd /srv/tvt/repo/deploy && /srv/tvt/work/bin/heavy --deadline 17:00 --runtime 30 --peak 1 \
+    "roads load (deploy)" \
+    docker compose -f docker-compose.yml -f compose.private.yml -f compose.load.yml \
+      run --rm --no-deps -e DATABASE_URL ingest python3 -m ingest ...
+  ```
+
+  (`DATABASE_URL`, the load's role, comes from the shell: `heavy.log`
+  records the command.) A `heavy` inside a heavy job runs at once, under
+  that job's lock and deadline, with its caps still checked.
+- Exit codes: the command's; 73 not enough disk; 75 not now; 123 stopped
+  for disk; 124 stopped at the deadline (`heavy -h` has the rest).
+
+**`worker-test`** runs unit tests in the worker image
+([`ingest/Dockerfile.worker`](../ingest/Dockerfile.worker)), capped at
+1 GB and 1 CPU with no network and the checkout read-only, and fails the
+run when any test is skipped or none ran: in that image every dependency is
+there, so a skip means a test didn't run. It's light, so it may run at any
+hour, but at most two at once: a third waits for a slot.
+
+```bash
+/srv/tvt/work/bin/worker-test -C <checkout on the VM> discover -s basemap/ground -t .
+```
+
+The job table (each job's caps and window this sprint) and the work area's
+disk notes are in the VM's `/srv/tvt/work/README.md`.
+
 ## Loading an OpenStreetMap extract (by hand)
 
 Geofabrik's robots.txt disallows scripted downloads, so OpenStreetMap comes

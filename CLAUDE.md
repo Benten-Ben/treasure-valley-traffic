@@ -115,7 +115,7 @@ ingest/                 the ingest core: CLI, polite HTTP, database helpers, sha
 plugins/                one folder per subject (roads, intersections, cameras, transit, conditions, safety, flow,
                         development): plugin.json, README, ingest code, migrations, tests (docs/15). Private
                         plugins live on the server (TVT_PLUGIN_PATH), never here
-deploy/                 Docker Compose + Caddy for the server VM
+deploy/                 Docker Compose + Caddy for the server VM, and the VM's heavy and worker-test tools (deploy/bin)
 tools/                  standalone research scripts (GPS run analysis, etc.)
 tvt/                    THROWAWAY PROTOTYPE ingestion package; lessons only, not the foundation
 tests/                  tests for tvt/
@@ -152,6 +152,8 @@ python3 -m unittest discover -s ingest/tests -t .   # ingest core (set TVT_TEST_
 python3 -m unittest discover -s plugins -t .        # every plugin's tests
 python3 -m unittest discover -s basemap/ground -t . # the ground's contract (worker tests skip; run them in tvt-worker)
 python3 tools/check_public.py              # nothing private in what would be pushed
+/srv/tvt/work/bin/heavy --deadline HH:MM --runtime MIN --peak GB "<label>" <command>   # a heavy job on the VM (deploy/README.md)
+/srv/tvt/work/bin/worker-test -C <checkout> discover -s <dir> -t .   # worker-image tests on the VM; a skip fails
 ```
 
 Front-end environment (app/README.md): `TVT_FRAME_SOURCE=fixture` serves

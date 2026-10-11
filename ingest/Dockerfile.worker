@@ -9,10 +9,16 @@
 # (no AVX2); PDAL 2.10 from conda-forge runs there.
 #
 # It's a toolbox, not a service: the code is mounted at run time. Run heavy
-# jobs with a hard memory cap and outside the nightly camera roll-up, e.g.
-#   docker build -f ingest/Dockerfile.worker -t tvt-worker .
-#   docker run --rm --memory 6g --memory-swap 6g --user 1000:1000 \
-#     -v "$PWD":/repo -v /srv/tvt/work:/work -w /repo tvt-worker python basemap/<script>.py ...
+# jobs with a hard memory cap, under the VM's heavy (its deadline keeps them clear
+# of the nightly camera roll-up; deploy/README.md). An image build's --peak is the
+# image (about 2.8 GB) plus its build cache, e.g.
+#   /srv/tvt/work/bin/heavy --deadline 22:00 --runtime 60 --peak 4 "image" \
+#     docker build -f ingest/Dockerfile.worker -t tvt-worker .
+#   /srv/tvt/work/bin/heavy --deadline 22:00 --runtime 90 --peak 2 "trees build" \
+#     docker run --rm --memory 6g --memory-swap 6g --cpus 4 --user 1000:1000 -v "$PWD":/repo \
+#     -v /srv/tvt/work:/work -w /repo tvt-worker python basemap/<script>.py ...
+# Its unit tests run under /srv/tvt/work/bin/worker-test (1 GB, 1 CPU, no network;
+# a skipped test fails the run).
 FROM mambaorg/micromamba:2-debian12-slim
 RUN micromamba install -y -n base -c conda-forge \
       python=3.12 pdal=2.10 python-pdal gdal rasterio numpy scipy \
