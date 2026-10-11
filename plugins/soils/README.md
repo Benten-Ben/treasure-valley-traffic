@@ -315,7 +315,21 @@ coding, grid, colour, sources, credits, sha256), and
 
 `status` is `measured`, `series`, `texture`, `albedo` (borrowed: a flat type colour, labelled) or `none` (no colour:
 paint it flat and say so). Every type in `soils.ground_type` is listed. The numbers are as measured, never styled: the
-ground's look is the ground's job.
+ground's look is the ground's job. The colours are on the June 18 flight's scale when the build had the colour gains
+(`builds[].flight_days.gains_applied`).
+
+**Licence.** The palette was measured through mask v0 (OpenStreetMap, Overture), farm's crop cover and fields (CSB,
+CDL, Sentinel-2) and Sentinel-2's July median, NDVI curves and colour gains. A photo build carries every input of
+each export layer it reads, whole (`photo_stats.inputs_of`), so the palette's licence is the share-alike one,
+ODbL-1.0, and it credits all of them; an input that may not be republished would make `soils-export` refuse it.
+`soils.build` records the same licence for the build (`photo_load.licence_of`, the ground's export rule), and
+plugin.json lists the photo statistics as a derived source, `naip_photo`. (Migration 0001's header still says
+photo_stats adds only NAIP's licence; it's applied, so the comment is left for a later migration.)
+
+**On production** (the deploy runbook): run the pass there, on production's soils export, mask v0 and farm export,
+rather than copying a scratch build: a build names the exports it read (`stats.json` `soils_export`, its inputs'
+notes, `soils.build.params`), and its polygon outliers use `soils.polygon` gids, which are new whenever an area is
+reloaded. Then `soils-photo-load` as tvt_build, and `soils-export`.
 
 ## Still to come
 

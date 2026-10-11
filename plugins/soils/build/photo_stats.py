@@ -170,8 +170,10 @@ class Mosaic:
 
 
 class SidMosaic(Mosaic):
-    """A county mosaic (MrSID MG4: red, green, blue, near-infrared and the county mask), read with the SDK's
-    mrsiddecode at scale 1 (0.6 m). The SDK runs from --dsdk, with its own libraries."""
+    """A county mosaic (MrSID MG4: red, green, blue, near-infrared and the mosaic's mask), read with the SDK's
+    mrsiddecode at scale 1 (0.6 m). The mask is the county plus a buffer of a few kilometres, not the county (Ada's
+    covers about 3,630 km2, the county 2,747): Context.serves splits the overlap on the county line. The SDK runs
+    from --dsdk, with its own libraries."""
 
     def __init__(self, name, path, dsdk, tmp, cache=None):
         self.path, self.dsdk, self.tmp, self.cache = path, dsdk, tmp, cache
@@ -228,7 +230,7 @@ class SidMosaic(Mosaic):
         return arr
 
     def covers(self, bounds):
-        """Whether the county mask has any pixel in bounds (from the mosaic decoded at 1/32, 9.6 m)."""
+        """Whether the mosaic's mask has any pixel in bounds (from the mosaic decoded at 1/32, 9.6 m)."""
         if self._overview is None:
             path = os.path.join(self.cache, f"overview-{self.name}.npz") if self.cache else None
             if path and os.path.exists(path):
@@ -841,9 +843,10 @@ def cmd_run(args):
         write_json(run_path, run)
     owner_grid(read_soils(cfg["soils"], hashes=False), mosaics, cache=out)   # computed once, before the workers
     todo = [w for w in windows if not os.path.exists(os.path.join(out, "windows", f"{w.key}.npz"))]
+    before = len(windows) - len(todo)
     if args.limit:
         todo = todo[:args.limit]
-    log(f"{len(windows)} windows, {len(windows) - len(todo)} done before, {len(todo)} to do, {args.workers} workers")
+    log(f"{len(windows)} windows, {before} done before, {len(todo)} to do now, {args.workers} workers")
     jobs = [(w.key, w.col, w.row, w.width, w.height, out, args.cog) for w in todo]
     t0 = time.time()
     done = 0
