@@ -4,7 +4,8 @@ import { join, resolve } from 'node:path';
 import type postgres from 'postgres';
 import { DATABASE_URL } from '$app/env/private';
 import { db } from './db.js';
-import { META_CONTRACT, type DataMeta, type LayerBuild } from '#lib/contracts/meta.js';
+import { readStatus } from './status.js';
+import { META_CONTRACT, type DataMeta, type DataStatus, type LayerBuild } from '#lib/contracts/meta.js';
 
 /**
  * Data versions for GET /api/meta (docs/14 §14.8, "Boot"). Each layer's data
@@ -12,7 +13,9 @@ import { META_CONTRACT, type DataMeta, type LayerBuild } from '#lib/contracts/me
  * actually changes. Tables that don't exist yet (migrations 0006, 0007 and
  * 0020) are checked with to_regclass and read as "none", so this works before
  * and after them. Toggled layers' versions (`versions.layers`) are written by
- * their builds into core.layer_version (#lib/server/mvt).
+ * their builds into core.layer_version (#lib/server/mvt). `status` (scheduled
+ * sources' freshness and builds' states, migration 0021) comes from
+ * #lib/server/status; if its views fail, only `status` is null.
  */
 
 const TTL_MS = 15_000;
@@ -27,6 +30,8 @@ export type DbPart = Pick<DataMeta, 'gtfs' | 'ribbons' | 'progress' | 'roads' | 
 	inputs: { roads: unknown[] | null; cameras: string | null; calibrations: unknown[] | null };
 	/** Toggled layers' current builds from core.layer_version (migration 0020), as written by their builds. */
 	layers?: Record<string, LayerBuild & { version: string }>;
+	/** ops.source_status and ops.build_status (migration 0021); null before it, or if they failed. */
+	status?: DataStatus | null;
 };
 
 const num = (v: unknown) => (v === null || v === undefined ? null : Number(v));
@@ -41,9 +46,17 @@ export async function readDatabase(sql: postgres.Sql): Promise<DbPart> {
 		       to_regclass('core.camera') is not null as cameras,
 		       to_regclass('core.camera_view') is not null as views,
 		       to_regclass('core.camera_calibration') is not null as calibrations,
-		       to_regclass('core.layer_version') is not null as layer_versions`;
+		       to_regclass('core.layer_version') is not null as layer_versions,
+		       to_regclass('ops.source_status') is not null and to_regclass('ops.build_status') is not null as status`;
 	const none = Promise.resolve([] as postgres.Row[]);
-	const [gtfs, ribbons, roads, cameras, views, calibrations, layers] = await Promise.all([
+	// The status views are a nicety: if they fail, /api/meta still answers with everything else.
+	const status: Promise<DataStatus | null> = has.status
+		? readStatus(sql).catch((e) => {
+				console.error('/api/meta: the status views failed:', e);
+				return null;
+			})
+		: Promise.resolve(null);
+	const [gtfs, ribbons, roads, cameras, views, calibrations, layers, statusPart] = await Promise.all([
 		has.routes
 			? sql`select (select feed_version from core.transit_route where active
 			              order by updated_at desc limit 1) as feed_version,
@@ -81,7 +94,8 @@ export async function readDatabase(sql: postgres.Sql): Promise<DbPart> {
 			? sql`select distinct on (layer) layer, version, extract(epoch from built_at)::float8 as built_at,
 			             license, republish, credit
 			      from core.layer_version order by layer, id desc`
-			: none
+			: none,
+		status
 	]);
 	const g = gtfs[0];
 	const r = ribbons[0];
@@ -102,6 +116,7 @@ export async function readDatabase(sql: postgres.Sql): Promise<DbPart> {
 				{ version: String(l.version), builtAt: Number(l.built_at), license: String(l.license), republish: l.republish, credit: String(l.credit) }
 			])
 		),
+		status: statusPart,
 		inputs: {
 			roads: rd && rd.total > 0 ? [rd.segments, rd.total, rd.max_id, num(rd.last_seen)] : null,
 			cameras: c && v ? `${c.content}/${v.content}` : null,
@@ -174,7 +189,8 @@ export function assembleMeta(
 		cameras: part?.cameras ?? null,
 		calibrations: part?.calibrations ?? null,
 		tiles,
-		layers: Object.fromEntries(Object.entries(part?.layers ?? {}).map(([id, { version: _, ...build }]) => [id, build]))
+		layers: Object.fromEntries(Object.entries(part?.layers ?? {}).map(([id, { version: _, ...build }]) => [id, build])),
+		status: part?.status ?? null
 	};
 }
 

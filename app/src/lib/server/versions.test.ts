@@ -80,13 +80,13 @@ describe('/api/meta', () => {
 		await rm(dir, { recursive: true, force: true });
 	});
 
-	it('stays contract 1: the versions as before, plus the optional layers', () => {
+	it('stays contract 1: the versions as before, plus the optional layers and status', () => {
 		const m = assembleMeta(1, 'ok', part(), null);
 		expect(META_CONTRACT).toBe(1);
 		expect(m.contract).toBe(1);
 		expect(Object.keys(m.versions).sort()).toEqual(['calibrations', 'cameras', 'gtfs', 'layers', 'ribbons', 'roads', 'tiles']);
 		expect(Object.keys(m).sort()).toEqual(
-			['calibrations', 'cameras', 'contract', 'database', 'generatedAt', 'gtfs', 'layers', 'progress', 'ribbons', 'roads', 'tiles', 'versions']
+			['calibrations', 'cameras', 'contract', 'database', 'generatedAt', 'gtfs', 'layers', 'progress', 'ribbons', 'roads', 'status', 'tiles', 'versions']
 		);
 		// Layer versions and builds change nothing a client written before them reads.
 		const { layers, ...before } = m.versions;
@@ -149,5 +149,52 @@ describe('/api/meta', () => {
 		expect(seen.some((t) => t.includes('from core.layer_version'))).toBe(false);
 		expect(assembleMeta(1, 'ok', before, null).versions.layers).toEqual({});
 		expect(assembleMeta(1, 'ok', before, null).layers).toEqual({});
+	});
+
+	it('carries the status views (migration 0021), changing no version', () => {
+		const status = {
+			sources: { fresh: 41, late: 1, stale: 0, never: 0, failing: 0 },
+			attention: [{ source: 'achd_roads', state: 'late' as const, lastOkAt: 1_759_000_000, everyS: 604_800, failures: 0 }],
+			builds: [{ build: 'roads-build', state: 'pending' as const, lastOkAt: null, pendingSince: 1_760_000_000, lastRunAt: null }]
+		};
+		const m = assembleMeta(1, 'ok', part({ status }), null);
+		expect(m.status).toEqual(status);
+		expect(m.versions).toEqual(assembleMeta(1, 'ok', part(), null).versions);
+		expect(assembleMeta(1, 'ok', part(), null).status).toBeNull();
+		expect(assembleMeta(1, 'error', null, null).status).toBeNull();
+	});
+
+	it('reads the status views once they exist, and answers without them if they fail', async () => {
+		const run = async (views: boolean, fail: boolean) => {
+			const seen: string[] = [];
+			const fake = (async (strings: TemplateStringsArray) => {
+				const text = strings.join('$').replace(/\s+/g, ' ');
+				seen.push(text);
+				if (text.includes('to_regclass')) return [{ layer_versions: true, status: views, roads: true }];
+				if (text.includes('from ops.source_status')) {
+					if (fail) throw new Error('view broken');
+					return [{ source: 'awc_metar', state: 'fresh', last_ok_at: 1_760_000_000, every_s: 600, failures: 0 }];
+				}
+				if (text.includes('from ops.build_status')) return [];
+				if (text.includes('from core.road_segment')) return [{ segments: 3, total: 3, max_id: '3', last_seen: 1 }];
+				return [];
+			}) as unknown as Parameters<typeof readDatabase>[0];
+			return { part: await readDatabase(fake), seen };
+		};
+		const quiet = vi.spyOn(console, 'error').mockImplementation(() => {});
+		try {
+			const ok = await run(true, false);
+			expect(ok.part.status?.sources).toEqual({ fresh: 1, late: 0, stale: 0, never: 0, failing: 0 });
+			expect(ok.seen[0]).toContain("to_regclass('ops.source_status') is not null and to_regclass('ops.build_status') is not null as status");
+			const before = await run(false, false);
+			expect(before.part.status).toBeNull();
+			expect(before.seen.some((t) => t.includes('from ops.source_status'))).toBe(false);
+			const broken = await run(true, true);
+			expect(broken.part.status).toBeNull();
+			expect(broken.part.roads).toEqual({ segments: 3, lastSeen: 1 });
+			expect(quiet).toHaveBeenCalledOnce();
+		} finally {
+			quiet.mockRestore();
+		}
 	});
 });
