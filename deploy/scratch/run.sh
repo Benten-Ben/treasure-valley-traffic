@@ -58,7 +58,7 @@ while [ $# -gt 0 ]; do
 		--deadline) deadline=${2:?}; shift 2 ;;
 		--peak-gb) peak=${2:?}; shift 2 ;;
 		--) shift; break ;;
-		-h|--help) sed -n '2,38p' "$0"; exit 0 ;;
+		-h|--help) sed -n '2,36p' "$0"; exit 0 ;;
 		-*) die "unknown option $1" ;;
 		*) break ;;
 	esac
@@ -95,7 +95,7 @@ case ${1:-} in
 		exec docker exec -i "${t[@]}" -e PGAPPNAME=scratch-psql "$SCRATCH_DB" psql -X -U "$user" -d "$db" "$@" ;;
 esac
 
-[ $# -ge 2 ] || { sed -n '2,38p' "$0" >&2; exit 2; }
+[ $# -ge 2 ] || { sed -n '2,36p' "$0" >&2; exit 2; }
 name=$1 mode=$2
 shift 2
 [[ $name =~ ^[a-z0-9][a-z0-9._-]{0,47}$ ]] || die "the name must be 1-48 of a-z 0-9 . _ - (got '$name')"
@@ -191,9 +191,12 @@ if [ $mode = grants ]; then
 fi
 
 # A slot (at most $MAX_JOBS jobs at once), within the jobs' memory budget, and room in memory:
-# wait up to SCRATCH_WAIT_MIN minutes.
+# wait up to SCRATCH_WAIT_MIN minutes. One admission at a time (slots/.admit), so two jobs
+# starting together can't both fit in the same room.
 waited=0 slot=
 until [ -n "$slot" ]; do
+	exec 5>"$SCRATCH_ROOT/slots/.admit"
+	flock -w 60 5 || die "another job's admission is stuck (slots/.admit)"
 	for n in $(seq "$MAX_JOBS"); do
 		exec 6>"$SCRATCH_ROOT/slots/$n.lock"
 		if flock -n 6; then slot=$n; break; fi
@@ -213,6 +216,7 @@ until [ -n "$slot" ]; do
 		why="all $MAX_JOBS slots busy"
 	fi
 	if [ -z "$slot" ]; then
+		exec 5>&-
 		[ "$waited" -lt "${SCRATCH_WAIT_MIN:-15}" ] || die "gave up waiting: $why"
 		[ "$waited" = 0 ] && say "waiting ($why)"
 		[ $heavy_job = 0 ] || [ $(( $(date +%s) + 60 + runtime * 60 )) -le "$stop_at" ] || die "gave up waiting before the deadline: $why"
@@ -221,6 +225,7 @@ until [ -n "$slot" ]; do
 done
 printf 'name=%s mode=%s mem_mb=%s kind=%s pid=%s since=%s\n' "$name" "$mode" "$mem_mb" \
 	"$( [ $heavy_job = 1 ] && echo heavy || echo light )" "$$" "$(boise '+%FT%T')" > "$SCRATCH_ROOT/slots/$slot.owner"
+exec 5>&-
 
 # The container. The tree is the code (/repo); TVT_ARCHIVE is this database's scratch archive
 # (exports, inboxes and load state: it follows the database, a refresh replaces it); production's
@@ -240,7 +245,7 @@ args=(run --rm --init --name "$ctr" --label tvt.scratch=job --label "tvt.scratch
 if [ -n "$COLD_MOUNT" ] && [ -n "$COLD_MARKER" ] && [ -e "$COLD_MARKER" ]; then
 	args+=(-v "$COLD_MOUNT:$COLD_MOUNT:ro" -e "TVT_COLD=$COLD_MOUNT")
 	# The scratch dumps are production's data: hidden under an empty read-only tmpfs.
-	[ -n "$DUMP_ROOT" ] && [ -d "$DUMP_ROOT" ] && args+=(--mount "type=tmpfs,destination=$DUMP_ROOT,tmpfs-size=1m,tmpfs-mode=0500")
+	[ -n "$DUMP_ROOT" ] && [ -d "$DUMP_ROOT" ] && args+=(--mount "type=tmpfs,destination=$DUMP_ROOT,tmpfs-size=1m,tmpfs-mode=0555")
 fi
 args+=(${extra[@]+"${extra[@]}"} "$image" "${cmd[@]}")
 
@@ -282,7 +287,7 @@ pid=$!
 # signals this script, holds none of the locks, and its sleep goes with it.
 light=$(( 1 - heavy_job ))
 (
-	exec 6>&- 7>&- 8>&- 9>&-
+	exec 5>&- 6>&- 7>&- 8>&- 9>&-
 	s=
 	trap '[ -z "$s" ] || kill "$s" 2>/dev/null; exit 0' TERM
 	floor=$(gib "$STOP_FLOOR_GB") next_m=$(( $(date +%s) + 60 ))

@@ -56,7 +56,7 @@ while [ $# -gt 0 ]; do
 		--db) db=${2:?}; shift 2 ;;
 		--keep) keep=${2:?}; shift 2 ;;
 		--drop) drop=${2:?}; shift 2 ;;
-		-h|--help) sed -n '2,37p' "$0"; exit 0 ;;
+		-h|--help) sed -n '2,35p' "$0"; exit 0 ;;
 		*) die "unknown argument $1 (--help)" ;;
 	esac
 done
@@ -244,12 +244,13 @@ fi
 S -d postgres -c "alter database $new rename to $db" >/dev/null
 mkdir -p "$ARCHIVES/.before-refresh"
 rm -rf "$ARCHIVES/.before-refresh/$db"
-[ ! -d "$ARCHIVES/$db" ] || mv "$ARCHIVES/$db" "$ARCHIVES/.before-refresh/$db"
+old_archive="no archive before"
+if [ -d "$ARCHIVES/$db" ]; then mv "$ARCHIVES/$db" "$ARCHIVES/.before-refresh/$db"; old_archive="the old one in archive/.before-refresh/$db"; fi
 mv "$staged" "$ARCHIVES/$db"; staged=
 S -d "$db" -c "select timescaledb_post_restore()" >/dev/null
 S -d "$db" -c "analyze" >/dev/null
 S -d "$db" -v conn_limit="$SCRATCH_CONN_LIMIT" -f - < "$SCRATCH_ROOT/bin/tvt_build.sql" >/dev/null
-say "swapped in as $db ($(S -d postgres -c "select pg_size_pretty(pg_database_size('$db'))")), with a fresh archive ($ARCHIVES/$db; the old one is in .before-refresh/)"
+say "swapped in as $db ($(S -d postgres -c "select pg_size_pretty(pg_database_size('$db'))")), with a fresh archive ($ARCHIVES/$db; $old_archive)"
 
 # 4. Row counts: every table builders can read, production (now) against the copy. Tables
 # that grew since the dump (the collectors keep running) show a difference; nothing else should.
