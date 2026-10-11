@@ -233,6 +233,16 @@ def in_rects(x, y, rects):
     return out
 
 
+def skip_mask(tf, shape, rects):
+    """Cells whose centres fall in any of the rectangles."""
+    xs = tf.c + (np.arange(shape[1]) + 0.5) * tf.a
+    ys = tf.f + (np.arange(shape[0]) + 0.5) * tf.e
+    out = np.zeros(shape, bool)
+    for x0, y0, x1, y1 in rects:
+        out |= ((ys >= y0) & (ys < y1))[:, None] & ((xs >= x0) & (xs < x1))[None, :]
+    return out
+
+
 def outline(bad, tf, crs, skip):
     """The area's outline in WGS84 (a GeoJSON MultiPolygon): 5 m blocks with any lidar, less the skipped rectangles.
     Returns (geometry, hectares)."""
@@ -244,9 +254,7 @@ def outline(bad, tf, crs, skip):
     has = ~pad.reshape(nr, B, nc, B).all(axis=(1, 3))
     btf = tf @ Affine.scale(B)
     if skip:
-        cy, cx = np.mgrid[0:nr, 0:nc]
-        X, Y = btf @ (cx + 0.5, cy + 0.5)
-        has &= ~in_rects(X, Y, skip)
+        has &= ~skip_mask(btf, has.shape, skip)
     to_ll = Transformer.from_crs(crs, 4326, always_xy=True)
     polys = []
     for geom, v in rfeatures.shapes(has.astype(np.uint8), mask=has, transform=btf, connectivity=4):
@@ -256,11 +264,7 @@ def outline(bad, tf, crs, skip):
             lon, lat = to_ll.transform(xs, ys)
             rings.append([[round(a, 7), round(b, 7)] for a, b in zip(lon, lat)])
         polys.append(rings)
-    valid = ~bad
-    if skip:
-        yy, xx = np.mgrid[0:rows, 0:cols]
-        X, Y = tf @ (xx + 0.5, yy + 0.5)
-        valid &= ~in_rects(X, Y, skip)
+    valid = ~bad & ~skip_mask(tf, bad.shape, skip)
     return {"type": "MultiPolygon", "coordinates": polys}, float(valid.sum()) * S.PX * S.PX / 1e4
 
 
@@ -384,10 +388,7 @@ def main(argv=None):
                                          "ground_m": None if bad[gy, gx] else round(float(dtm[gy, gx]), 2),
                                          "fit": {"cells": s["cells"], "green": s["green"], "split": s["split"],
                                                  "model_width_m": s["model_width_m"]}}})
-    if a.skip_rect:                       # the score covers the area's own part only
-        yy, xx = np.mgrid[0:shape[0], 0:shape[1]]
-        X, Y = tf @ (xx + 0.5, yy + 0.5)
-        kept = kept & ~in_rects(X, Y, a.skip_rect)
+    kept &= ~skip_mask(tf, shape, a.skip_rect)   # the score covers the area's own part only
     sc = S.score(h, kept, found, model)
     counts = S.summarise(found, area_ha)
     counts.update({"area_ha": round(area_ha, 2), "band_cells": int(band.sum()), "shrub_cells": int(shrub.sum()),

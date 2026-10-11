@@ -59,8 +59,8 @@ def synthetic_cloud(seed=3):
     return pts
 
 
-def write_las(path, pts):
-    p = pdal.Pipeline(json.dumps([{"type": "writers.las", "filename": path, "a_srs": "EPSG:6340",
+def write_las(path, pts, srs="EPSG:6340"):
+    p = pdal.Pipeline(json.dumps([{"type": "writers.las", "filename": path, "a_srs": srs,
                                    "scale_x": 0.001, "scale_y": 0.001, "scale_z": 0.001,
                                    "offset_x": "auto", "offset_y": "auto", "offset_z": "auto"}]), arrays=[pts])
     p.execute()
@@ -73,17 +73,35 @@ class CuesTest(unittest.TestCase):
         cls.tmp = tempfile.mkdtemp(dir="/tmp")
         cls.las = os.path.join(cls.tmp, "cloud.las")
         write_las(cls.las, synthetic_cloud())
+        from pyproj import Transformer
+        albers = synthetic_cloud()                     # the same cloud in NAD83(2011) Conus Albers
+        albers["X"], albers["Y"] = Transformer.from_crs(6340, 6350, always_xy=True).transform(albers["X"], albers["Y"])
+        cls.albers = os.path.join(cls.tmp, "albers.las")
+        write_las(cls.albers, albers, "EPSG:6350")
 
     @classmethod
     def tearDownClass(cls):
         shutil.rmtree(cls.tmp, ignore_errors=True)
 
-    def cues(self, work, chunk_m=10.0, **kw):
+    def cues(self, work, chunk_m=10.0, source=None, **kw):
         import cloud
         grid = cloud.Grid(X0, Y1, PX, N, N)
         dtm = np.full((N, N), GROUND, np.float32)
-        return cloud.cues([self.las], grid, "EPSG:6340", dtm, np.ones((N, N), bool), os.path.join(self.tmp, work),
-                          chunk_m=chunk_m, pad_m=2.0, log=lambda m: None, **kw)
+        return cloud.cues([source or self.las], grid, "EPSG:6340", dtm, np.ones((N, N), bool),
+                          os.path.join(self.tmp, work), chunk_m=chunk_m, pad_m=2.0, log=lambda m: None, **kw)
+
+    def test_a_cloud_in_another_crs_is_reprojected(self):
+        import cloud
+        self.assertTrue(cloud._las_frame(self.las, "EPSG:6340")[0])
+        self.assertFalse(cloud._las_frame(self.albers, "EPSG:6340")[0])
+        a, sa, st_a = self.cues("e")
+        b, sb, st_b = self.cues("f", source=self.albers)
+        self.assertEqual(st_a["above_ground"], st_b["above_ground"])
+        self.assertEqual(int(a.sum()), int(b.sum()))
+        # The roof's 0.2 m grid of points puts whole rows on cell edges, where a millimetre moves them next door.
+        self.assertLess(int((a != b).sum()), 0.03 * a.size)
+        self.assertLess(float(np.nanmax(sb[52:60, 52:60])), 0.1)
+        self.assertTrue((b[19:21, 19:21] >= 3).all())
 
     def test_a_shrub_scatters_and_a_roof_doesnt(self):
         n_ag, scat, stats = self.cues("a")

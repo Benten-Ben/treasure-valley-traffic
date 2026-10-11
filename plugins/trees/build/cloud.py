@@ -104,6 +104,21 @@ def _ept_bounds(path, rect, out_crs, in_srs):
     return (float(np.min(X)) - m, float(np.min(Y)) - m, float(np.max(X)) + m, float(np.max(Y)) + m)
 
 
+def _las_frame(path, out_crs):
+    """(whether a LAS/LAZ file's horizontal CRS is out_crs, its bounds) from its header. Such a file is cropped
+    without reprojecting it: the same points, quicker (a reprojection to a 2-D CRS leaves the heights as they are)."""
+    import pdal
+    from pyproj import CRS
+    qi = pdal.Reader.las(filename=path).pipeline().quickinfo["readers.las"]
+    srs = qi.get("srs") or {}
+    wkt = srs.get("horizontal") or srs.get("wkt")
+    try:
+        same = bool(wkt) and CRS.from_user_input(wkt).equals(CRS.from_user_input(out_crs), ignore_axis_order=True)
+    except Exception:  # noqa: BLE001 - an unreadable CRS: reproject, which says what's wrong
+        same = False
+    return same, qi.get("bounds") or {}
+
+
 def read(sources, rect, out_crs, in_srs=None, batch=1_000_000):
     """Yield arrays of the points inside rect (out_crs), reprojected to out_crs, from LAS/LAZ files (streamed) or EPTs
     (read in parts of EPT_PART_M, each point once)."""
@@ -113,8 +128,15 @@ def read(sources, rect, out_crs, in_srs=None, batch=1_000_000):
         reproject["in_srs"] = in_srs
     for path in sources:
         if source_kind(path) == "las":
-            stages = [{"type": "readers.las", "filename": path}, reproject,
-                      {"type": "filters.crop", "bounds": _bounds(rect)}]
+            same, b = _las_frame(path, out_crs)
+            crop = {"type": "filters.crop", "bounds": _bounds(rect)}
+            if same and not in_srs:
+                x0, y0, x1, y1 = rect
+                if b["maxx"] < x0 or b["minx"] > x1 or b["maxy"] < y0 or b["miny"] > y1:
+                    continue                   # the tile doesn't reach the area
+                stages = [{"type": "readers.las", "filename": path}, crop]
+            else:
+                stages = [{"type": "readers.las", "filename": path}, reproject, crop]
             for arr in pdal.Pipeline(json.dumps(stages)).iterator(chunk_size=batch):
                 if len(arr):
                     yield arr
