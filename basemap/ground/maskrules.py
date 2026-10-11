@@ -6,11 +6,14 @@ HU4 1705; Overture's roofs, as the map's buildings.pmtiles holds them at z15; an
 rule mask.py applies, as plain functions of a feature's tags or fields, so they're tested without GDAL:
 
 - road(tags): an OSM highway way's kind, surface class and width, when it covers the ground;
-- paving_area(tags), water_area(tags), other_area(tags): an OSM area (a closed way or a multipolygon);
-- waterway(tags), other_line(tags): OSM waterways, railways, runways and taxiways;
+- paving_area(tags, relation), water_area(tags), other_area(tags): an OSM area (a closed way or a multipolygon);
+- waterway(tags): OSM waterways;
 - nhd_waterbody(), nhd_area(), nhd_flowline(): NHD's features, from their fields;
 - CDL_DEVELOPED: the CDL classes counted as developed (123 and 124, medium and high intensity);
 - SAMPLE_BUFFER: how far each kind is grown for sampling (C6: roads and paving +2 m, roofs +1 m, water +5 m).
+
+The OSM tags read are decision 2's (highways, parking, water) and the soils design's (rail and aeroway areas, kept
+out of sampling). Railway tracks, runways and taxiways drawn as lines aren't read: no approval names them yet.
 
 Widths are OpenStreetMap's own: a `width` tag, else `lanes` x 3.6 m + 2 m, else the class's default below. They are
 estimates ⚠️ until the ten windows calibrate them. The roads build's measured widths come from ACHD and ITD
@@ -19,9 +22,10 @@ roads: it's what covers the ground, for the soil sampler and the painter.
 
 The layers mask.py writes (FlatGeobuf, EPSG:32611, MultiPolygon), named in LAYERS:
 - exact, for painting: `roofs`, `roads` (centrelines grown to half their width), `paving` (lots and highway areas),
-  `water` (bodies, and waterways grown to half their width; `intermittent` says which may be dry);
+  `water` (bodies, and waterways grown to half their width; `intermittent` says which may be dry, and a painter
+  filters on it);
 - buffered, for sampling: `covered`, everything that isn't uncovered ground, each grown by its SAMPLE_BUFFER:
-  roofs, roads, paving, perennial water, runways and aprons, railway beds and yards, and CDL's developed land,
+  roofs, roads, paving, water (intermittent too, as C6 says), aeroway and railway areas, and CDL's developed land,
   dissolved by `what` in 1 km blocks of the grid (COVER_BLOCK_M).
 """
 
@@ -40,19 +44,22 @@ LAYERS = {
                ("width", "double"), ("width_from", "string"), ("bridge", "bool"))),
     "paving": ("paint", "OSM parking lots and highway areas (plazas, service areas)",
                (("id", "int"), ("ref", "string"), ("kind", "string"), ("surface", "string"))),
-    "water": ("paint", "NHD and OSM water: bodies, and rivers, streams, canals and ditches grown to half their width; "
-                       "intermittent water flagged",
+    "water": ("paint", "NHD and OSM water: bodies, and rivers, streams, canals and ditches grown to half their width "
+                       "(NHD's canal and ditch lines aren't painted). intermittent marks water that may be dry: "
+                       "painters filter on it (intermittent = 0)",
               (("id", "int"), ("source", "string"), ("ref", "string"), ("kind", "string"), ("intermittent", "bool"),
                ("width", "double"))),
     "covered": ("sample", "everything that isn't uncovered ground, grown for sampling (roofs +1 m, roads and paving "
-                          "+2 m, perennial water +5 m, aeroway and railway +2 m, CDL developed land as it is), "
-                          "dissolved by what in 1 km blocks of the grid",
+                          "+2 m, water +5 m, intermittent too, aeroway and railway areas +2 m, CDL developed land as "
+                          "it is), dissolved by what in 1 km blocks of the grid",
                 (("id", "int"), ("what", "string"), ("buffer", "double"))),
 }
 PAINT_LAYERS = tuple(n for n, (use, _, _) in LAYERS.items() if use == "paint")
 SAMPLE_LAYER = "covered"
 
-# `covered`'s `what` -> metres each is grown for sampling (C6). Road and runway buffers are added to half the width.
+# `covered`'s `what` -> metres each is grown for sampling (C6). A line's buffer is added to half its width. Water
+# is every water, intermittent too: C6 and the soils design put no condition on it, and a pond that holds water in
+# the June photo mustn't be sampled as soil (over-covering only costs samples).
 SAMPLE_BUFFER = {"roof": 1.0, "road": 2.0, "paving": 2.0, "water": 5.0, "aeroway": 2.0, "rail": 2.0,
                  "developed": 0.0}
 
@@ -235,18 +242,21 @@ HIGHWAY_AREAS = {"pedestrian", "footway", "service", "residential", "unclassifie
 NOT_SURFACE_PARKING = {"underground", "multi-storey", "rooftop", "carports"}
 
 
-def paving_area(tags):
-    """For an OSM area, (kind, surface class) when it's mapped paving, else None:
+def paving_area(tags, relation=False):
+    """For an OSM area, (kind, surface class) when it's mapped paving, else None. relation: it's a multipolygon
+    relation (an area by definition, which seldom says area=yes); otherwise a closed way.
       parking       amenity=parking at ground level (not underground, multi-storey, rooftop or carports, which
                     roofs or the ground hide), whatever its surface
-      highway_area  a highway drawn as an area (area=yes) or area:highway=*, unless tagged unpaved"""
+      highway_area  a highway drawn as an area (a closed way with area=yes, or a multipolygon relation such as a
+                    pedestrian plaza) or area:highway=*, unless tagged unpaved"""
     if tags.get("building") not in (None, "no") or below_ground(tags):
         return None
     surf = surface_class(tags)
     if tags.get("amenity") == "parking" and tags.get("parking") not in NOT_SURFACE_PARKING:
         return "parking", surf
-    if tags.get("area:highway") not in (None, "no") or (tags.get("highway") in HIGHWAY_AREAS
-                                                         and tags.get("area") == "yes"):
+    is_area = relation or tags.get("type") == "multipolygon" or tags.get("area") == "yes"
+    if tags.get("area:highway") not in (None, "no") or (tags.get("highway") in HIGHWAY_AREAS and is_area
+                                                         and tags.get("area") != "no"):
         return ("highway_area", surf) if surf != "unpaved" else None
     return None
 
@@ -293,8 +303,8 @@ AEROWAY_AREAS = {"apron", "runway", "taxiway", "helipad"}
 
 def other_area(tags):
     """For an OSM area, (what, kind) when it covers the ground for sampling only: an aeroway apron, runway, taxiway or
-    helipad ('aeroway'), or a railway yard, landuse=railway ('rail'). Not painted: the map doesn't draw them as
-    surfaces, so the photo shows them."""
+    helipad ('aeroway'), or a railway yard, landuse=railway ('rail'); the soils design's "rail and aeroway areas".
+    Not painted: the map doesn't draw them as surfaces, so the photo shows them."""
     if below_ground(tags):
         return None
     if tags.get("aeroway") in AEROWAY_AREAS:
@@ -318,26 +328,6 @@ def waterway(tags):
         return None
     w = _width_tag(tags, 0.3, 500.0)
     return WATER_KIND[ww], intermittent(tags), (w if w is not None else WATERWAY_WIDTH[ww])
-
-
-RAILWAYS = {"rail", "light_rail", "narrow_gauge", "preserved"}
-RAIL_BED_M = 5.0          # one track's bed, ballast included ⚠️
-AEROWAY_WIDTH = {"runway": 45.0, "taxiway": 23.0}    # ⚠️ (150 and 75 ft, common sizes)
-
-
-def other_line(tags):
-    """For an OSM line, (what, kind, width m) when it covers the ground for sampling only: a railway track's bed
-    ('rail'; sidings and yards too, not trams, which run in streets), or a runway or taxiway drawn as a line
-    ('aeroway', its width tag else AEROWAY_WIDTH). Else None."""
-    if below_ground(tags) or tags.get("area") == "yes":
-        return None
-    if tags.get("railway") in RAILWAYS:
-        return "rail", tags["railway"], RAIL_BED_M
-    a = tags.get("aeroway")
-    if a in AEROWAY_WIDTH:
-        w = _width_tag(tags, 5.0, 100.0)
-        return "aeroway", a, (w if w is not None else AEROWAY_WIDTH[a])
-    return None
 
 
 # ---- NHD -----------------------------------------------------------------------------------------------------------
@@ -373,16 +363,21 @@ def nhd_area(f):
 
 
 def nhd_flowline(f):
-    """For an NHD flowline's fields, (kind, intermittent, width m) for streams, rivers, canals and ditches at the
-    surface, else None. Pipelines, connectors and artificial paths (the centre lines through NHD's own water
-    polygons, which are read as areas) are left out."""
+    """For an NHD flowline's fields, (kind, intermittent, width m, painted) for streams, rivers, canals and ditches
+    at the surface, else None. Pipelines, connectors and artificial paths (the centre lines through NHD's own water
+    polygons, which are read as areas) are left out.
+
+    painted is False for canal and ditch lines: they're kept out of sampling but not painted. Much of NHD's canal
+    geometry is 1:24,000-era and some has since been piped or built over (on Oct 11, 46% of the painted NHD canal
+    area lay over 20 m from any OSM water, and 6.8 ha under roofs). OSM's canals are painted, and water's conflated
+    mask (P4-data) decides the rest."""
     c = f.get("class")
     if (f.get("relationshiptosurface") or "").lower() == "underground":
         return None
     if c == "stream_river":
         order = f.get("streamorder") or 0
         width = next(w for o, w in NHD_STREAM_WIDTH if order >= o)
-        return "stream", _nhd_intermittent(f), width
+        return "stream", _nhd_intermittent(f), width, True
     if c == "canal_ditch":
-        return "canal", _nhd_intermittent(f), NHD_CANAL_WIDTH
+        return "canal", _nhd_intermittent(f), NHD_CANAL_WIDTH, False
     return None

@@ -567,6 +567,26 @@ class WriteReadTest(unittest.TestCase):
         os.makedirs(os.path.join(self.archive, "trees", "20261001T000000Z"))    # a plugin without exports
         self.assertEqual(sorted(M.find(self.archive)), ["farm", "soils"])
 
+    def test_partial_builds_are_never_the_newest(self):
+        # A build of part of what the export covers (a quick look) ends in -part: read only by its folder.
+        old = export(self.archive, build="20261011T000000Z")
+        M.write(old, "soils", [SSURGO], [ground_layer()])
+        part = export(self.archive, build="20261012T000000Z-box-d-part")
+        M.write(part, "soils", [SSURGO], [ground_layer()])
+        self.assertTrue(M.is_partial("20261012T000000Z-box-d-part"))
+        self.assertTrue(M.is_partial("20261012T000000Z-part"))
+        self.assertFalse(M.is_partial("20261012T000000Z"))
+        self.assertFalse(M.is_partial("20261012T000000Z-partly"))
+        self.assertEqual(M.builds(self.archive, "soils"), ["20261011T000000Z"])
+        self.assertEqual(M.builds(self.archive, "soils", partial=True),
+                         ["20261011T000000Z", "20261012T000000Z-box-d-part"])
+        self.assertEqual(M.latest(self.archive, "soils").build, "20261011T000000Z")
+        self.assertEqual(M.latest(self.archive, "soils", partial=True).build, "20261012T000000Z-box-d-part")
+        self.assertEqual(M.find(self.archive)["soils"].build, "20261011T000000Z")
+        self.assertEqual(M.read(part).build, "20261012T000000Z-box-d-part")
+        shutil.rmtree(old)
+        self.assertIsNone(M.latest(self.archive, "soils"))
+
     def test_newest_broken_export_raises(self):
         old = export(self.archive, build="20261011T000000Z")
         M.write(old, "soils", [SSURGO], [ground_layer()])

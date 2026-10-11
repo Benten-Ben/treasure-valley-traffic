@@ -2,7 +2,7 @@
 """Mask v0 (C6): what covers the ground, from raw inputs, built on the server. Runs in the worker image (GDAL).
 
     python basemap/ground/mask.py build --roofs DIR/buildings.pmtiles               # into $TVT_ARCHIVE
-    python basemap/ground/mask.py build --roofs ... --box d --archive /tmp/a        # one box, for a quick look
+    python basemap/ground/mask.py build --roofs ... --box d --archive DIR           # one box, for a quick look
 
 What it reads, every one public (inputs.RAW; C17):
 - osm: S1's valley cut of the held extract ($TVT_ARCHIVE/osm/cut/valley.osm.pbf, with the valley.json that names
@@ -15,25 +15,31 @@ What it reads, every one public (inputs.RAW; C17):
 NAD83 inputs (NHD, CDL) are read with the grid's null datum shift (rasterize.srs_of).
 
 maskrules.py decides what covers the ground and how wide a line is. mask.py writes its layers (maskrules.LAYERS) as
-MultiPolygon FlatGeobufs in EPSG:32611, each with its spatial index, to $TVT_ARCHIVE/ground_mask/export/<build>/,
-then manifest.json, last, through manifest.write(): every raw input with its version and sha256. A build that
-fails leaves no folder behind. The whole grid took 11 minutes at 474 MB (a light worker job), and 354 MB on disk.
+MultiPolygon FlatGeobufs in EPSG:32611, each with its spatial index, then manifest.json, last, through
+manifest.write(): every raw input with its version and sha256. It writes them in $TVT_ARCHIVE/ground_mask/staging/
+and moves the finished folder to ground_mask/export/<build>/ in one rename (build()). A build that fails or is
+stopped removes its folder; one that's killed leaves it, and the next build sweeps it. After a whole build, only
+the newest two whole builds are kept, and never the one the ground tiles name (--tiles). A box or bounds build is
+partial: its id ends in -part, readers skip it, and the command line puts it in another archive than
+$TVT_ARCHIVE. The whole grid took 11 minutes at 474 MB (a light worker job), and about 350 MB on disk.
 
 Consumers read it through the shared window-rasterising helper (rasterize.py):
 
     from basemap.ground import grid, mask
-    m = mask.latest(archive)                                    # the newest mask v0, every file checked
+    m = mask.latest(archive)                                    # the newest whole mask v0, every file checked
     for core, padded in grid.windows(grid.LEVELS["painter"], 2048, halo_m=20):
         sample = ~mask.covered(padded, m)                       # uncovered ground, for the soil sampler
         roofs = mask.exact(padded, m, "roofs")                  # one exact layer, for the painter
-        wet = mask.exact(padded, m, "water", where="intermittent = 0")
+        wet = mask.exact(padded, m, "water", where="intermittent = 0")   # water that may be dry is left out
 """
 
 import argparse
+import fcntl
 import json
 import os
 import re
 import shutil
+import signal
 import sys
 import time
 
@@ -44,7 +50,7 @@ if _ROOT not in sys.path:
 import numpy as np  # noqa: E402
 from osgeo import gdal, ogr, osr  # noqa: E402
 
-from basemap.ground import grid, inputs, manifest as M, maskrules as MR  # noqa: E402
+from basemap.ground import grid, inputs, manifest as M, maskrules as MR, tiles  # noqa: E402
 from basemap.ground import rasterize as R  # noqa: E402   (also switches PROJ's network off)
 
 gdal.UseExceptions()
@@ -258,7 +264,12 @@ def dissolve(path, out, bounds, block_m=MR.COVER_BLOCK_M, log=print):
     lyr = ds.GetLayer(0)
     step = int(round(block_m / grid.BASE_RES))
     blocks = 0
-    for core, _ in grid.windows(grid.BASE_RES, step, bounds=grid.snap_out(bounds, block_m)):   # a global lattice
+    x0, x1, y0, y1 = lyr.GetExtent() if lyr.GetFeatureCount() else (0, 0, 0, 0)
+    reach = (max(bounds[0], x0), max(bounds[1], y0), min(bounds[2], x1), min(bounds[3], y1))   # the blocks reached
+    if reach[2] <= reach[0] or reach[3] <= reach[1]:
+        log("  covered: nothing to dissolve")
+        return
+    for core, _ in grid.windows(grid.BASE_RES, step, bounds=grid.snap_out(reach, block_m)):   # a global lattice
         w, s, e, n = core.bounds
         lyr.SetSpatialFilterRect(w, s, e, n)
         box = rect(w, s, e, n)
@@ -285,8 +296,8 @@ def dissolve(path, out, bounds, block_m=MR.COVER_BLOCK_M, log=print):
 # ---- the inputs ----------------------------------------------------------------------------------------------------
 
 def read_osm(path, bounds, out, log=print):
-    """S1's valley cut: highway, water, rail and aeroway ways, and parking, highway, water, aeroway and railway
-    areas (maskrules)."""
+    """S1's valley cut: highway ways and waterways, and parking, highway, water, aeroway and railway areas
+    (maskrules)."""
     ds = gdal.OpenEx(path, gdal.OF_VECTOR, allowed_drivers=["OSM"],
                      open_options=[f"CONFIG_FILE={OSMCONF}", "INTERLEAVED_READING=YES"])
     ct = transformer(ds.GetLayerByName("lines").GetSpatialRef())
@@ -301,16 +312,16 @@ def read_osm(path, bounds, out, log=print):
         seen[name] += 1
         tags = json.loads(f.GetField("all_tags") or "{}")
         if name == "lines":
-            road, water, other = MR.road(tags), MR.waterway(tags), MR.other_line(tags)
-            if not (road or water or other):
+            road, water = MR.road(tags), MR.waterway(tags)
+            if not (road or water):
                 continue
             ref = f"w{f.GetField('osm_id')}"
         else:
-            road = None
-            water, paving, other = MR.water_area(tags), MR.paving_area(tags), MR.other_area(tags)
+            rel = f.GetField("osm_id")              # set for a multipolygon relation, else osm_way_id is
+            water, other = MR.water_area(tags), MR.other_area(tags)
+            paving = MR.paving_area(tags, relation=bool(rel))
             if not (water or paving or other):
                 continue
-            rel = f.GetField("osm_id")
             ref = f"r{rel}" if rel else f"w{f.GetField('osm_way_id')}"
         g = f.GetGeometryRef()
         if g is None or g.IsEmpty():
@@ -330,11 +341,7 @@ def read_osm(path, bounds, out, log=print):
                 kind, dry, width = water
                 out.water.add(grown(g, width / 2, EXACT_LINE), source="osm", ref=ref, kind=kind, intermittent=dry,
                               width=width)
-                if not dry:
-                    out.cover(g, "water", kind, width / 2)
-            if other:
-                what, kind, width = other
-                out.cover(g, what, kind, width / 2)
+                out.cover(g, "water", kind, width / 2)
         else:
             area = multipolygon(g)
             if area is None:
@@ -346,8 +353,7 @@ def read_osm(path, bounds, out, log=print):
             if water:
                 kind, dry = water
                 out.water.add(area, source="osm", ref=ref, kind=kind, intermittent=dry, width=None)
-                if not dry:
-                    out.cover(area, "water", kind)
+                out.cover(area, "water", kind)
             if other:
                 what, kind = other
                 out.cover(area, what, kind)
@@ -365,7 +371,8 @@ NHD_FIELDS = ("permanent_identifier", "ftype_name", "hydrographiccategory", "cla
 
 
 def read_nhd(path, bounds, out, log=print):
-    """NHD's open water: waterbodies, Stream/River and Canal/Ditch areas, and flowlines grown to their widths."""
+    """NHD's open water: waterbodies, Stream/River and Canal/Ditch areas, and flowlines grown to their widths (canal
+    and ditch lines for sampling only, maskrules.nhd_flowline)."""
     ds = open_gpkg(path)
     n = 0
     for layer, rule in (("waterbody", MR.nhd_waterbody), ("area", MR.nhd_area), ("flowline", MR.nhd_flowline)):
@@ -390,19 +397,18 @@ def read_nhd(path, bounds, out, log=print):
                 continue
             ref = f"nhd:{fields.get('permanent_identifier')}"
             if layer == "flowline":
-                kind, dry, width = r
-                out.water.add(grown(g, width / 2, EXACT_LINE), source="nhd", ref=ref, kind=kind, intermittent=dry,
-                              width=width)
-                if not dry:
-                    out.cover(g, "water", kind, width / 2)
+                kind, dry, width, painted = r
+                if painted:
+                    out.water.add(grown(g, width / 2, EXACT_LINE), source="nhd", ref=ref, kind=kind,
+                                  intermittent=dry, width=width)
+                out.cover(g, "water", kind, width / 2)
             else:
                 kind, dry = r
                 area = multipolygon(g)
                 if area is None:
                     continue
                 out.water.add(area, source="nhd", ref=ref, kind=kind, intermittent=dry, width=None)
-                if not dry:
-                    out.cover(area, "water", kind)
+                out.cover(area, "water", kind)
     log(f"  nhd: {n:,} features read")
 
 
@@ -550,72 +556,187 @@ def cdl_version(path, given=None):
 
 # ---- the build -----------------------------------------------------------------------------------------------------
 
+STAGING = "staging"               # <archive>/ground_mask/staging/<build>/: a build being written
+LOCK = ".build.lock"              # <archive>/ground_mask/.build.lock: one build at a time
+KEEP = 2                          # whole builds kept after a whole build (prune)
+
+
+def whole(bounds):
+    """True when bounds (west, south, east, north; grid metres) cover the whole grid."""
+    w, s, e, n = bounds
+    gw, gs, ge, gn = grid.EXTENT
+    return w <= gw and s <= gs and e >= ge and n >= gn
+
+
+def staging_dir(archive, build_id):
+    return os.path.join(archive, PRODUCT, STAGING, build_id)
+
+
+class _Lock:
+    """An exclusive lock on <archive>/ground_mask/.build.lock for one build, or MaskError when another holds it."""
+
+    def __init__(self, archive):
+        root = os.path.join(archive, PRODUCT)
+        os.makedirs(root, exist_ok=True)
+        self.f = open(os.path.join(root, LOCK), "a")
+        try:
+            fcntl.flock(self.f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            self.f.close()
+            raise MaskError(f"another mask build is running in {root} (it holds {LOCK})") from None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        fcntl.flock(self.f, fcntl.LOCK_UN)
+        self.f.close()
+
+
+def sweep(archive, log=print):
+    """Delete what stopped builds left in <archive>/ground_mask/staging/ (killed, out of memory, or stopped before
+    they could clean up). Call it holding the lock. Returns the names removed."""
+    root = os.path.join(archive, PRODUCT, STAGING)
+    gone = sorted(os.listdir(root)) if os.path.isdir(root) else []
+    for name in gone:
+        shutil.rmtree(os.path.join(root, name), ignore_errors=True)
+    if gone:
+        log(f"  swept what stopped builds left: {', '.join(gone)}")
+    return gone
+
+
+def tiles_builds(tiles_dir):
+    """The mask builds the ground tiles were painted from (tiles/manifest.json's ground entry), as a set of ids."""
+    path = os.path.join(tiles_dir, "manifest.json") if tiles_dir else None
+    if not path or not os.path.isfile(path):
+        return set()
+    with open(path, encoding="utf-8") as f:
+        entry = json.load(f).get(tiles.ENTRY) or {}
+    out = set()
+    for ref in entry.get("inputs", []):
+        plugin, _, build_id = ref.partition("@")
+        if plugin.split("/")[0] == PRODUCT and build_id:
+            out.add(build_id)
+    return out
+
+
+def prune(archive, keep=KEEP, protect=(), log=print):
+    """Delete whole mask builds but the newest `keep`, never a protected one (the build just written, the one the
+    ground tiles name). Partial builds are left alone. Returns the ids removed."""
+    if keep < 1:
+        raise MaskError("keep at least one build")
+    have = M.builds(archive, PRODUCT)
+    gone = [b for b in have[:-keep] if b not in set(protect)]
+    for b in gone:
+        folder = M.export_dir(archive, PRODUCT, b)
+        os.remove(os.path.join(folder, M.FILE))        # first: a half-deleted build is unfinished, never read
+        shutil.rmtree(folder)
+    if gone:
+        log(f"  pruned: {', '.join(gone)} (kept the newest {keep}{' and the protected' if protect else ''})")
+    return gone
+
+
 def build(archive, osm, nhd, roofs, cdl, bounds=None, build_id=None, osm_version=None, roofs_release=None,
-          nhd_version=NHD_VERSION, cdl_ver=None, command=None, log=print):
-    """Build mask v0 into <archive>/ground_mask/export/<build>/ and return its Manifest. bounds (west, south, east,
-    north; grid metres) limits it to part of the grid (default: all of it)."""
+          nhd_version=NHD_VERSION, cdl_ver=None, command=None, keep=KEEP, protect=(), log=print):
+    """Build mask v0 into <archive>/ground_mask/export/<build>/ and return its Manifest.
+
+    bounds (west, south, east, north; grid metres) limits it to part of the grid (default: all of it). A build of
+    part of the grid is partial: its id ends in -part (manifest.is_partial), so readers never take it for the
+    newest mask, and the id says so either way (MaskError otherwise).
+
+    The files are written to <archive>/ground_mask/staging/<build>/, manifest last, then the folder is moved into
+    export/ in one rename, so export/ only ever holds finished builds. A build that fails or is stopped (SIGTERM,
+    through main()) removes its staging folder; one that's killed leaves it, and the next build sweeps it. One
+    build runs at a time (a lock in ground_mask/). After a whole build, whole builds but the newest `keep` are
+    deleted, never the one just written or those in protect."""
     bounds = tuple(bounds) if bounds else grid.EXTENT
+    if keep < 1:
+        raise MaskError("keep at least one build")
     for label, p in (("osm", osm), ("nhd", nhd), ("roofs", roofs), ("cdl", cdl)):
         if not p or not os.path.isfile(p):
             raise MaskError(f"no {label} file at {p!r}")
+    is_whole = whole(bounds)
+    build_id = build_id or (M.build_id() if is_whole else M.build_id(suffix="part"))
+    if not M.BUILD_RE.match(build_id):
+        raise MaskError(f"build {build_id!r} must look like 20261012T031500Z (optionally -suffix)")
+    if M.is_partial(build_id) == is_whole:
+        raise MaskError(f"build {build_id!r}: a build of part of the grid, and only one, ends in "
+                        f"{M.PARTIAL_SUFFIX} (manifest.is_partial)")
     entries = [osm_entry(osm, osm_version), roofs_entry(roofs, roofs_release),
                file_entry("nhd", nhd, nhd_version, "NHD High Resolution, HU4 1705 cut to the map box (waterbodies, "
                                                    "areas, flowlines)"),
                file_entry("cdl", cdl, cdl_version(cdl, cdl_ver), "CDL at 10 m, NASS's national file cut to the map "
                                                                   "box; classes 123-124 (developed) read")]
-    build_id = build_id or M.build_id()
-    folder = M.export_dir(archive, PRODUCT, build_id)
-    if os.path.exists(folder):
-        raise MaskError(f"{folder} already exists")
-    os.makedirs(folder)
-    t0 = time.time()
-    out = None
-    try:
-        out = Out(folder)
-        for label, fn, path in (("osm", read_osm, osm), ("nhd", read_nhd, nhd), ("roofs", read_roofs, roofs),
-                                ("cdl", read_cdl, cdl)):
+    final = M.export_dir(archive, PRODUCT, build_id)
+    if os.path.exists(final):
+        raise MaskError(f"{final} already exists")
+    with _Lock(archive):
+        sweep(archive, log=log)
+        folder = staging_dir(archive, build_id)
+        os.makedirs(folder)
+        t0 = time.time()
+        out = None
+        try:
+            out = Out(folder)
+            for label, fn, path in (("osm", read_osm, osm), ("nhd", read_nhd, nhd), ("roofs", read_roofs, roofs),
+                                    ("cdl", read_cdl, cdl)):
+                t = time.time()
+                fn(path, bounds, out, log=log)
+                log(f"  {label} done in {time.time() - t:.0f} s")
+            log("  sampling buffers: " + ", ".join(f"{k} {v:,}" for k, v in sorted(out.cover_kinds.items())))
             t = time.time()
-            fn(path, bounds, out, log=log)
-            log(f"  {label} done in {time.time() - t:.0f} s")
-        log("  sampling buffers: " + ", ".join(f"{k} {v:,}" for k, v in sorted(out.cover_kinds.items())))
-        t = time.time()
-        out.finish(bounds, log=log)
-        log(f"  dissolved in {time.time() - t:.0f} s")
-        note = (f"Mask v0 (C6), from raw inputs only, over E {bounds[0]:g}-{bounds[2]:g}, N {bounds[1]:g}-"
-                f"{bounds[3]:g}. Exact layers for painting (roofs, roads, paving, water); covered, for sampling, "
-                f"grown by {', '.join(f'{k} {v:g} m' for k, v in MR.SAMPLE_BUFFER.items())} and dissolved by what "
-                f"in {MR.COVER_BLOCK_M / 1000:g} km blocks. Widths are OpenStreetMap's (width, else lanes, else "
-                "class) ⚠️")
-        m = M.write(folder, PRODUCT, entries, [w.spec() for w in out.writers], build=build_id,
-                    command=command, note=note)
-    except BaseException:
-        if out is not None:
-            out.discard()
-        shutil.rmtree(folder, ignore_errors=True)
-        raise
-    for w in out.writers:
-        log(f"  {w.name}: {w.n:,} features, {os.path.getsize(w.path) / 1e6:.1f} MB; " +
-            ", ".join(f"{k} {v:,}" for k, v in sorted(w.kinds.items())))
-    log(f"mask v0 {build_id}: {folder} in {time.time() - t0:.0f} s")
+            out.finish(bounds, log=log)
+            log(f"  dissolved in {time.time() - t:.0f} s")
+            extent = "the whole grid" if is_whole else "part of the grid (a partial build)"
+            note = (f"Mask v0 (C6), from raw inputs only, over {extent}: E {bounds[0]:g}-{bounds[2]:g}, "
+                    f"N {bounds[1]:g}-{bounds[3]:g}. Exact layers for painting (roofs, roads, paving, water; "
+                    f"filter water on intermittent = 0 for standing and running water); covered, for sampling, "
+                    f"grown by {', '.join(f'{k} {v:g} m' for k, v in MR.SAMPLE_BUFFER.items())} and dissolved by "
+                    f"what in {MR.COVER_BLOCK_M / 1000:g} km blocks. Widths are OpenStreetMap's (width, else lanes, "
+                    "else class) ⚠️")
+            m = M.write(folder, PRODUCT, entries, [w.spec() for w in out.writers], build=build_id,
+                        command=command, note=note)
+            os.makedirs(os.path.dirname(final), exist_ok=True)
+            if os.path.exists(final):
+                raise MaskError(f"{final} appeared while building")
+            os.rename(folder, final)
+        except BaseException:
+            if out is not None:
+                out.discard()
+            shutil.rmtree(folder, ignore_errors=True)
+            raise
+        m = M.Manifest(final, m.data)
+        for lay in m.layers:
+            w = next(x for x in out.writers if x.name == lay.name)
+            log(f"  {lay.name}: {lay['features']:,} features, {lay['bytes'] / 1e6:.1f} MB; " +
+                ", ".join(f"{k} {v:,}" for k, v in sorted(w.kinds.items())))
+        log(f"mask v0 {build_id}: {final} in {time.time() - t0:.0f} s")
+        if is_whole:
+            prune(archive, keep, protect=set(protect) | {build_id}, log=log)
     return m
 
 
 # ---- reading it back -----------------------------------------------------------------------------------------------
 
-def check(m):
-    """Raise MaskError unless m (a manifest.Manifest) is mask v0 with every layer maskrules names."""
+def check(m, partial=False):
+    """Raise MaskError unless m (a manifest.Manifest) is mask v0 with every layer maskrules names, and a whole build
+    (unless partial is true: a quick look at part of the grid)."""
     if m.plugin != PRODUCT:
         raise MaskError(f"{m.folder} is {m.plugin}'s export, not mask v0")
     missing = [n for n in MR.LAYERS if not m.has(n)]
     if missing:
         raise MaskError(f"{PRODUCT}@{m.build} has no {', '.join(missing)} layer(s)")
+    if M.is_partial(m.build) and not partial:
+        raise MaskError(f"{PRODUCT}@{m.build} covers part of the grid only (a quick look); pass partial=True to "
+                        "read it")
     return m
 
 
-def latest(archive, verify=True, hashes=True):
-    """The newest mask v0 under the archive, read and checked (manifest.latest), or None when none is built."""
-    m = M.latest(archive, PRODUCT, verify=verify, hashes=hashes)
-    return None if m is None else check(m)
+def latest(archive, verify=True, hashes=True, partial=False):
+    """The newest whole mask v0 under the archive, read and checked (manifest.latest), or None when none is built.
+    partial: the newest build of either kind, a quick look at part of the grid included."""
+    m = M.latest(archive, PRODUCT, verify=verify, hashes=hashes, partial=partial)
+    return None if m is None else check(m, partial=partial)
 
 
 def exact(target, m, layer, where=None, all_touched=False):
@@ -646,13 +767,18 @@ def _bounds(text):
     return tuple(v)
 
 
+def _stopped(signum, _frame):
+    """SIGTERM (docker stop, the scratch wrapper's limits) as SystemExit, so a build cleans up after itself."""
+    raise SystemExit(128 + signum)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
     b = sub.add_parser("build", help="build mask v0 into the archive")
     archive = os.environ.get("TVT_ARCHIVE")
     sources = os.environ.get("TVT_SOURCES")
-    b.add_argument("--archive", default=archive, help="default $TVT_ARCHIVE")
+    b.add_argument("--archive", default=archive, help="default $TVT_ARCHIVE (a box or bounds build: another folder)")
     b.add_argument("--osm", help="the valley cut (default $TVT_ARCHIVE/osm/cut/valley.osm.pbf)")
     b.add_argument("--nhd", default=sources and os.path.join(sources, "nhd", "nhd_mapbox.gpkg"),
                    help="NHD's GeoPackage (default $TVT_SOURCES/nhd/nhd_mapbox.gpkg)")
@@ -664,23 +790,38 @@ def main(argv=None):
     b.add_argument("--nhd-version", default=NHD_VERSION)
     b.add_argument("--cdl-version", help="CDL's year (default: from the file name)")
     g = b.add_mutually_exclusive_group()
-    g.add_argument("--bounds", type=_bounds, help="west,south,east,north in grid metres (default: the whole grid)")
-    g.add_argument("--box", help="one of the ten boxes, e.g. d")
-    b.add_argument("--build", help="the build id (default: now, UTC)")
+    g.add_argument("--bounds", type=_bounds, help="west,south,east,north in grid metres (default: the whole grid); "
+                                                  "a partial build, into another archive than $TVT_ARCHIVE")
+    g.add_argument("--box", help="one of the ten boxes, e.g. d (a partial build, as --bounds)")
+    b.add_argument("--build", help="the build id (default: now, UTC; ending in -part for a partial build)")
+    b.add_argument("--keep", type=int, default=KEEP, help=f"whole builds kept after a whole build (default {KEEP})")
+    b.add_argument("--tiles", default=os.environ.get("TVT_TILES"),
+                   help="the map's tiles folder ($TVT_TILES): the mask build its ground tiles name is never pruned")
     args = ap.parse_args(argv)
     if not args.archive:
         ap.error("give --archive or set TVT_ARCHIVE")
-    osm = args.osm or os.path.join(args.archive, "osm", "cut", "valley.osm.pbf")
+    osm = args.osm or os.path.join(archive or args.archive, "osm", "cut", "valley.osm.pbf")
     bounds = args.bounds or (grid.box(args.box).utm if args.box else None)
-    build_id = args.build or (M.build_id(suffix=f"box-{args.box}") if args.box else None)
+    if bounds and not whole(bounds) and archive and os.path.realpath(args.archive) == os.path.realpath(archive):
+        print("refused: a box or bounds build is a quick look; give --archive another folder than $TVT_ARCHIVE "
+              "(readers skip partial builds, but the live archive isn't the place for one)", file=sys.stderr)
+        return 2
+    build_id = args.build or (M.build_id(suffix=f"box-{args.box}-part") if args.box else None)
     command = "python basemap/ground/mask.py " + " ".join(argv if argv is not None else sys.argv[1:])
+    before = signal.signal(signal.SIGTERM, _stopped)
     try:
+        try:
+            protect = tiles_builds(args.tiles)
+        except (OSError, ValueError) as err:
+            raise MaskError(f"can't read the ground tiles' builds in {args.tiles}: {err}") from None
         build(args.archive, osm, args.nhd, args.roofs, args.cdl, bounds=bounds, build_id=build_id,
               osm_version=args.osm_version, roofs_release=args.roofs_release, nhd_version=args.nhd_version,
-              cdl_ver=args.cdl_version, command=command)
+              cdl_ver=args.cdl_version, command=command, keep=args.keep, protect=protect)
     except (MaskError, M.ManifestError) as err:
         print(f"refused: {err}", file=sys.stderr)
         return 2
+    finally:
+        signal.signal(signal.SIGTERM, before)
     return 0
 
 

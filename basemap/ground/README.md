@@ -89,7 +89,9 @@ rasters, so every box lies on the 0.5 m class grid.
 
 A plugin's export command writes its files to `$TVT_ARCHIVE/<plugin>/export/<build>/`, then `manifest.json`, last.
 A folder without a manifest is unfinished, and readers skip it. `<build>` is the UTC time, `20261012T031500Z`, with
-an optional `-suffix`. The ground and the base bake read exports only through `manifest.read()`, `latest()` and
+an optional `-suffix`. A build whose id ends in **`-part`** is partial: it covers only part of what the export covers
+(a quick look at one box, say). `builds()`, `latest()` and `find()` skip it, so it's never read as the newest, and
+`inputs.resolve()` refuses one handed to it; read it by its folder (`read()`, or the sheet tool's `@build`). The ground and the base bake read exports only through `manifest.read()`, `latest()` and
 `find()`, and all three check the files, not only the manifest:
 - **every file:** its size and sha256;
 - **FlatGeobuf:** the header's geometry type, fields, feature count and CRS (`fgb.py`);
@@ -273,8 +275,23 @@ and nothing internal reaches the ground through it. Later masks come from plugin
 
 ```bash
 python basemap/ground/mask.py build --roofs <a copy of the map's buildings.pmtiles>    # into $TVT_ARCHIVE
-python basemap/ground/mask.py build --roofs ... --box d --archive /tmp/a              # one box, for a quick look
+python basemap/ground/mask.py build --roofs ... --box d --archive <another folder>     # one box, for a quick look
 ```
+
+**Builds.** A build writes its files in `ground_mask/staging/<build>/`, `manifest.json` last, and then moves the
+folder into `ground_mask/export/` in one rename, so `export/` only ever holds finished builds. One build runs at a
+time (a lock in `ground_mask/`).
+- **Stopped:** a build that fails, or is stopped with SIGTERM (`docker stop`, the scratch wrapper's limits and disk
+  checks), removes its staging folder.
+- **Killed:** one killed outright (out of memory) leaves the folder, and the next build sweeps it.
+- **Pruned:** after a whole build, only the newest two whole builds are kept (`--keep`). The one just written is
+  never removed, and neither is the one the ground tiles were painted from (`--tiles`, default `$TVT_TILES`: the
+  builds `tiles/manifest.json`'s `ground` entry names).
+- **Partial:** a `--box` or `--bounds` build is partial. Its id ends in `-part` (`<time>-box-d-part`), readers skip
+  it, and it isn't pruned. The command line refuses to put one in `$TVT_ARCHIVE`, so give `--archive` another folder
+  (on the server, a work folder mounted into the job); a partial id for a whole build, or a whole id for a partial
+  one, is refused too. Look at one with the sheet tool's `ground_mask/<layer>@<build>`, or
+  `mask.latest(folder, partial=True)`.
 
 It's a light worker job (1 GB, 1 CPU). Valley-wide on Oct 11 it took **about 11 minutes, peaking at 474 MB**:
 reading the cut took about 3.5 minutes, the roofs 3 and dissolving `covered` 4. It's **354 MB on disk**. Run it
@@ -284,15 +301,15 @@ into a work folder.
 
 | Input | Read from | What's taken |
 |---|---|---|
-| `osm` | S1's valley cut, `$TVT_ARCHIVE/osm/cut/valley.osm.pbf`, through GDAL's OSM driver with [`osmconf.ini`](osmconf.ini) (every tag, as JSON) | highway ways, waterways, railways, runways and taxiways; parking, highway areas, water, aprons and rail yards. OSM's buildings aren't read: Overture's roofs hold them |
+| `osm` | S1's valley cut, `$TVT_ARCHIVE/osm/cut/valley.osm.pbf`, through GDAL's OSM driver with [`osmconf.ini`](osmconf.ini) (every tag, as JSON) | highway ways and waterways; parking, highway areas (plazas drawn as multipolygon relations included), water, and the soils design's rail and aeroway areas (aprons, runways, taxiways, helipads, `landuse=railway`). Railway tracks, runways and taxiways drawn as lines aren't read: no approval names them yet. OSM's buildings aren't read either: Overture's roofs hold them |
 | `overture-buildings` | a copy of the map's `buildings.pmtiles` at z15, with `buildings.json` beside it | every footprint. One crossing a z15 tile's edge comes in two pieces, and the tiles' coordinates are good to about 0.2 m |
-| `nhd` | `$TVT_SOURCES/nhd/nhd_mapbox.gpkg` (HU4 1705) | Lake/Pond and Reservoir waterbodies; Stream/River and Canal/Ditch areas; stream, river and canal flowlines |
+| `nhd` | `$TVT_SOURCES/nhd/nhd_mapbox.gpkg` (HU4 1705) | Lake/Pond and Reservoir waterbodies; Stream/River and Canal/Ditch areas; stream, river and canal flowlines (canal and ditch lines for sampling only) |
 | `cdl` | `$TVT_SOURCES/cdl/out/cdl_2025_10m.tif` | developed land, classes 123 and 124 (medium and high intensity), polygonised on CDL's own 10 m grid |
 
 Each input is named in the manifest with its version and sha256: the OSM extract's MD5 (from the `valley.json`
 beside the cut, which must describe the file), Overture's release (from `buildings.json`, or `--roofs-release`),
 NHD's `HU4 1705, published 2023-12-09`, and CDL's year (from the file's name). NHD and CDL are NAD83, read with the
-null datum shift. A build that fails or is refused leaves no folder behind.
+null datum shift.
 
 **The layers** (all MultiPolygon, EPSG:32611, with a spatial index and an integer `id`):
 
@@ -301,7 +318,7 @@ null datum shift. A build that fails or is refused leaves no folder behind.
 | `roofs` | painting | Overture's footprints | `id` |
 | `roads` | painting | the highway ways that cover the ground, each centreline grown to half its width (round ends, mitred bends) | `ref` (`w<OSM id>`), `highway`, `kind` (`major`, `street`, `service`, `walkway`, `path`, `track`), `surface` (`paved`, `unpaved`, `unknown`), `width` (m), `width_from` (`width`, `lanes`, `class`), `bridge` |
 | `paving` | painting | parking lots at ground level, and highways drawn as areas | `ref` (`w…`, `r…`), `kind` (`parking`, `highway_area`), `surface` |
-| `water` | painting | NHD's and OSM's water: bodies, and waterways grown to half their width | `source` (`nhd`, `osm`), `ref` (`nhd:<permanent_identifier>`, `w…`, `r…`), `kind`, `intermittent`, `width` (lines; null for areas) |
+| `water` | painting | NHD's and OSM's water: bodies, and waterways grown to half their width. NHD's canal and ditch lines aren't here. **Filter on `intermittent`** (`where="intermittent = 0"`): it marks water that may be dry, such as foothill draws and grassy detention basins | `source` (`nhd`, `osm`), `ref` (`nhd:<permanent_identifier>`, `w…`, `r…`), `kind`, `intermittent`, `width` (lines; null for areas) |
 | `covered` | sampling | everything that isn't uncovered ground, each grown by its buffer, then dissolved by `what` in 1 km blocks of the grid (one piece per block and what) | `what`, `buffer` (m) |
 
 | `covered`'s `what` | From | Grown by (C6) |
@@ -309,9 +326,9 @@ null datum shift. A build that fails or is refused leaves no folder behind.
 | `roof` | `roofs` | 1 m |
 | `road` | `roads` | 2 m beyond half the width |
 | `paving` | `paving` | 2 m |
-| `water` | `water` that isn't intermittent (a dry wash is ground) | 5 m (beyond half a line's width) |
-| `aeroway` | OSM's aprons, runways, taxiways and helipads | 2 m |
-| `rail` | OSM's railway beds (5 m a track ⚠️) and yards | 2 m |
+| `water` | all water, intermittent included (C6 and the soils design put no condition on it), and NHD's canal and ditch lines | 5 m (beyond half a line's width) |
+| `aeroway` | OSM's aprons, runways, taxiways and helipads drawn as areas | 2 m |
+| `rail` | OSM's rail yards (`landuse=railway`) | 2 m |
 | `developed` | CDL 2025 classes 123 and 124 | none |
 
 Sampling buffers have square ends and mitred corners, a little more than round ones would cover. Aeroway and rail are
@@ -333,18 +350,28 @@ for sampling only: the map doesn't draw them as surfaces, so the painter leaves 
   2.5 m, ditch 2 m ⚠️, or their width tag), except in culverts. From NHD: Lake/Pond and Reservoir; Stream/River and
   Canal/Ditch areas; streams by stream order (2, 4 or 8 m ⚠️) and canals (4 m ⚠️). These aren't water: wetlands
   (vegetation; P14 reviews them), NHD's swamps, playas, inundation areas and washes, and pipelines.
+- **Sampling keeps out all water; painting is the painter's choice.** Intermittent water is in `covered` like any
+  other: a pond that holds water in the June photo mustn't be sampled as soil, and over-covering only costs
+  samples. The `water` layer flags it, and a painter that wants only standing and running water filters on
+  `intermittent = 0`.
+- **NHD's canal and ditch lines are sampled around, not painted.** Much of their geometry is 1:24,000-era, and some
+  canals have since been piped or built over. On Oct 11, 46% of the painted NHD canal area lay more than 20 m from
+  any OSM water, and 6.8 ha of it lay under roofs (0.07 ha for OSM's canals). OSM's canals are painted, NHD's canal
+  polygons too, and water's conflated mask (P4-data) decides the rest.
 - **Paving.** amenity=parking at ground level (not underground, multi-storey, rooftop or carports, which roofs or
-  the ground hide), and highways drawn as areas unless they're unpaved.
+  the ground hide), and highways drawn as areas unless they're unpaved: a closed way with area=yes, area:highway,
+  or a multipolygon relation, which is an area by definition (downtown's plazas, such as Cecil D. Andrus Park Plaza,
+  are relations without area=yes).
 
 **Reading it** goes through the shared rasterising helper:
 
 ```python
 from basemap.ground import grid, mask
-m = mask.latest(archive)                                   # the newest mask v0, every file checked; None if none
+m = mask.latest(archive)                                   # the newest whole mask v0, files checked; None if none
 for core, padded in grid.windows(grid.LEVELS["painter"], 2048, halo_m=20):
     sample = ~mask.covered(padded, m)                      # uncovered ground (or what=("roof", "water"), ...)
     roofs = mask.exact(padded, m, "roofs")                 # one exact layer, as a bool array
-    wet = mask.exact(padded, m, "water", where="intermittent = 0")
+    wet = mask.exact(padded, m, "water", where="intermittent = 0")   # leave out water that may be dry
 ```
 
 P2 reads it at NAIP's own 0.6 m windows, `mask.covered(R.target_of(naip_path, window), m)`. Vectors are carried to
@@ -467,6 +494,7 @@ The fixtures are synthetic. `tests/fixtures/squares.fgb` and `lines-no-index.fgb
 the worker tests check that `tif.py` reads GDAL's own (plain, COG, BigTIFF, big-endian, PixelIsPoint) the same way.
 The worker tests make their own vectors with GDAL. Mask v0's (`test_mask.py`) make an OpenStreetMap file, an NHD
 GeoPackage in NAD83, roofs in Web Mercator (also as a PMTiles file, with a roof across a z15 tile's edge) and a CDL
-raster in Albers, build the mask and burn it through the rasterising helper. `test_maskrules.py` checks the rules
+raster in Albers, build the mask and burn it through the rasterising helper; they also check partial builds,
+staging, a stopped (SIGTERM) and a killed build, the lock and pruning. `test_maskrules.py` checks the rules
 case by case, and against S1's partition (`ingest/osm_extract.py`) over a grid of tag sets and S1's own fixture. The
 source checks read the repository's real plugin.json files.

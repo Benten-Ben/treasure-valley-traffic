@@ -206,6 +206,17 @@ class ResolveTest(unittest.TestCase):
         self.assertEqual(I.USES[[u.ref for u in I.USES].index("ground_mask")].required,
                          ("roofs", "roads", "paving", "water", "covered"))
 
+    def test_a_partial_mask_is_never_read(self):
+        # A box's quick look is skipped as the newest, and refused if it's handed in.
+        write_export(self.archive, "soils", [fgb_layer("ground", ["ssurgo"])], [SSURGO])
+        whole = write_mask(self.archive)
+        part = write_mask(self.archive, build="20261011T050000Z-box-d-part")
+        self.assertEqual(I.exports(self.archive)["ground_mask"].build, whole.build)
+        self.assertEqual(self.plan().status, "painted")
+        with self.assertRaises(I.InputError) as ctx:
+            I.resolve(dict(I.exports(self.archive), ground_mask=part))
+        self.assertIn("ground_mask@20261011T050000Z-box-d-part is a partial build", str(ctx.exception))
+
     def test_mask_v0_layers_are_areas(self):
         write_export(self.archive, "soils", [fgb_layer("ground", ["ssurgo"])], [SSURGO])
         inputs = [I.RAW_BY_NAME["osm"].entry("md5:0123")]

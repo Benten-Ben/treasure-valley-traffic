@@ -160,6 +160,14 @@ class AreasTest(unittest.TestCase):
         self.assertEqual(MR.paving_area({"highway": "pedestrian", "area": "yes"}), ("highway_area", "unknown"))
         self.assertEqual(MR.paving_area({"area:highway": "service"}), ("highway_area", "unknown"))
         self.assertIsNone(MR.paving_area({"highway": "pedestrian"}))                     # a closed line
+        # A multipolygon relation is an area by definition, and seldom says area=yes: a plaza (seven downtown
+        # on Oct 11, Cecil D. Andrus Park Plaza among them).
+        self.assertEqual(MR.paving_area({"highway": "pedestrian"}, relation=True), ("highway_area", "unknown"))
+        self.assertEqual(MR.paving_area({"highway": "pedestrian", "type": "multipolygon", "surface": "paving_stones"}),
+                         ("highway_area", "paved"))
+        self.assertIsNone(MR.paving_area({"highway": "pedestrian", "surface": "grass"}, relation=True))
+        self.assertIsNone(MR.paving_area({"highway": "primary"}, relation=True))         # not a highway area
+        self.assertIsNone(MR.paving_area({"highway": "pedestrian", "area": "no"}, relation=True))
         self.assertIsNone(MR.paving_area({"highway": "footway", "area": "yes", "surface": "dirt"}))
         self.assertIsNone(MR.paving_area({"landuse": "retail"}))
 
@@ -202,16 +210,12 @@ class LinesTest(unittest.TestCase):
                      {"waterway": "riverbank"}, {"waterway": "weir"}, {"highway": "residential"}):
             self.assertIsNone(MR.waterway(tags), tags)
 
-    def test_rail_and_runways(self):
-        self.assertEqual(MR.other_line({"railway": "rail"}), ("rail", "rail", MR.RAIL_BED_M))
-        self.assertEqual(MR.other_line({"railway": "rail", "service": "siding"})[0], "rail")
-        for tags in ({"railway": "abandoned"}, {"railway": "razed"}, {"railway": "tram"},
-                     {"railway": "rail", "tunnel": "yes"}, {"railway": "platform"}):
-            self.assertIsNone(MR.other_line(tags), tags)
-        self.assertEqual(MR.other_line({"aeroway": "runway"}), ("aeroway", "runway", 45.0))
-        self.assertEqual(MR.other_line({"aeroway": "runway", "width": "30"}), ("aeroway", "runway", 30.0))
-        self.assertEqual(MR.other_line({"aeroway": "taxiway"}), ("aeroway", "taxiway", 23.0))
-        self.assertIsNone(MR.other_line({"aeroway": "taxilane"}))
+    def test_rail_and_runway_lines_are_not_read(self):
+        # Decision 2's tag lists and the soils design name rail and aeroway areas only, so tracks and runways drawn
+        # as lines aren't mask v0's (an owner item).
+        for tags in ({"railway": "rail"}, {"aeroway": "runway"}, {"aeroway": "taxiway"}):
+            self.assertIsNone(MR.road(tags), tags)
+            self.assertIsNone(MR.waterway(tags), tags)          # on a line, mask.read_osm reads only these two
 
 
 class NhdTest(unittest.TestCase):
@@ -235,12 +239,13 @@ class NhdTest(unittest.TestCase):
 
     def test_flowlines(self):
         self.assertEqual(MR.nhd_flowline({"class": "stream_river", "hydrographiccategory": "Perennial",
-                                          "streamorder": 1}), ("stream", False, 2.0))
+                                          "streamorder": 1}), ("stream", False, 2.0, True))
         self.assertEqual(MR.nhd_flowline({"class": "stream_river", "streamorder": 3})[2], 4.0)
         self.assertEqual(MR.nhd_flowline({"class": "stream_river", "streamorder": 6})[2], 8.0)
         self.assertEqual(MR.nhd_flowline({"class": "stream_river", "streamorder": None})[2], 2.0)
         self.assertEqual(MR.nhd_flowline({"class": "stream_river", "hydrographiccategory": "Intermittent"})[1], True)
-        self.assertEqual(MR.nhd_flowline({"class": "canal_ditch"}), ("canal", False, MR.NHD_CANAL_WIDTH))
+        # Canal and ditch lines: kept out of sampling, not painted (1:24,000-era, some piped or built over)
+        self.assertEqual(MR.nhd_flowline({"class": "canal_ditch"}), ("canal", False, MR.NHD_CANAL_WIDTH, False))
         for c in ("pipeline", "connector", "artificial_path"):
             self.assertIsNone(MR.nhd_flowline({"class": c}), c)
         self.assertIsNone(MR.nhd_flowline({"class": "canal_ditch", "relationshiptosurface": "Underground"}))

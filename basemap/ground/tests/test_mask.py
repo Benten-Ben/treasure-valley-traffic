@@ -10,7 +10,9 @@ import json
 import math
 import os
 import shutil
+import signal
 import tempfile
+import time
 import unittest
 from unittest import mock
 from xml.sax.saxutils import quoteattr
@@ -99,14 +101,17 @@ def osm_fixture(path):
     o.way(square(300, 100, 360, 160), closed=True, natural="water")
     o.way([(0, 200), (200, 200)], waterway="canal")
     o.way([(0, 260), (200, 260)], waterway="stream", intermittent="yes")
-    o.way([(0, 320), (200, 320)], railway="rail")
+    o.way([(0, 320), (200, 320)], railway="rail")                                        # a line: not read
     o.way(square(400, 300, 440, 340), closed=True, aeroway="apron")
+    o.way(square(500, 300, 540, 340), closed=True, landuse="railway")
     o.way(square(400, 0, 420, 20), closed=True, building="yes")                         # OSM buildings: unused
     o.way(square(450, 0, 480, 30), closed=True, highway="pedestrian", area="yes")
     outer = o.way(square(300, 400, 400, 500), closed=True)
     inner = o.way(square(330, 430, 370, 470), closed=True)
     o.relation([(outer, "outer"), (inner, "inner")], type="multipolygon", natural="water", water="pond")
     o.way(square(500, 100, 510, 110), closed=True, leisure="swimming_pool")
+    plaza = o.way(square(620, 600, 680, 640), closed=True)
+    o.relation([(plaza, "outer")], type="multipolygon", highway="pedestrian", name="Test Plaza")   # no area=yes
     o.way([(0, 550), (200, 550)], highway="residential", bridge="yes", layer="1")
     o.write(path)
     return path
@@ -249,8 +254,8 @@ class MaskTest(unittest.TestCase):
         cls.roofs = roofs_fixture(os.path.join(cls.src, "roofs", "buildings.gpkg"))
         cls.cdl = cdl_fixture(os.path.join(cls.src, "cdl_2025_10m.tif"))
         cls.archive = os.path.join(cls.dir, "archive")
-        cls.m = K.build(cls.archive, cls.osm, cls.nhd, cls.roofs, cls.cdl, bounds=BOUNDS, build_id="20261011T120000Z",
-                        command="test", log=lambda *a: None)
+        cls.m = K.build(cls.archive, cls.osm, cls.nhd, cls.roofs, cls.cdl, build_id="20261011T120000Z",
+                        command="test", log=lambda *a: None)      # the whole grid (the fixtures are all in BOUNDS)
         cls.layers = {n: features(os.path.join(cls.m.folder, f"{n}.fgb")) for n in MR.LAYERS}
         cls.win = G.window(BOUNDS, G.LEVELS["classes"], snap="exact")
 
@@ -260,7 +265,7 @@ class MaskTest(unittest.TestCase):
 
     def build(self, **kw):
         args = dict(archive=os.path.join(self.dir, "other"), osm=self.osm, nhd=self.nhd, roofs=self.roofs,
-                    cdl=self.cdl, bounds=BOUNDS, log=lambda *a: None)
+                    cdl=self.cdl, log=lambda *a: None)
         args.update(kw)
         return K.build(**args)
 
@@ -296,7 +301,9 @@ class MaskTest(unittest.TestCase):
             raw = I.RAW_BY_NAME[name]
             self.assertEqual((e["licence"], e["republish"], e["credit"]), (raw.licence, "yes", raw.credit))
         self.assertEqual(m.data["command"], "test")
+        self.assertIn("over the whole grid", m.data["note"])
         self.assertFalse(os.path.exists(os.path.join(m.folder, K.Out.RAW)))   # the buffers one by one: gone
+        self.assertEqual(os.listdir(os.path.join(self.archive, "ground_mask", K.STAGING)), [])
 
     def test_the_ground_reads_it(self):
         archive = os.path.join(self.dir, "with-soils")
@@ -324,22 +331,23 @@ class MaskTest(unittest.TestCase):
         self.assertAlmostEqual(street["geom"].GetArea(), 200 * 10.4 + 3 * 5.2 ** 2, delta=1.0)
 
     def test_paving_and_water(self):
-        self.assertEqual(sorted((p["kind"], p["surface"]) for p in self.layers["paving"]),
-                         [("highway_area", "unknown"), ("parking", "unknown")])
+        self.assertEqual(sorted((p["kind"], p["surface"], p["ref"][0]) for p in self.layers["paving"]),
+                         [("highway_area", "unknown", "r"), ("highway_area", "unknown", "w"),
+                          ("parking", "unknown", "w")])                 # the plaza is a relation
         water = sorted((w["source"], w["kind"], bool(w["intermittent"]), w["width"] or 0.0)
                        for w in self.layers["water"])                # width: None for areas
-        self.assertEqual(water, [("nhd", "canal", False, 0.0), ("nhd", "canal", False, 4.0),
+        self.assertEqual(water, [("nhd", "canal", False, 0.0),
                                  ("nhd", "lake", False, 0.0), ("nhd", "stream", True, 2.0),
                                  ("osm", "canal", False, 6.0), ("osm", "lake", False, 0.0),
                                  ("osm", "lake", False, 0.0), ("osm", "pool", False, 0.0),
                                  ("osm", "stream", True, 2.5)])
         self.assertEqual([w["width"] for w in self.layers["water"] if w["source"] == "osm" and w["kind"] == "pool"],
                          [None])
-        holed = next(w for w in self.layers["water"] if w["ref"].startswith("r"))
+        holed = next(w for w in self.layers["water"] if w["ref"].startswith("r"))   # the pond with an island
         # OpenStreetMap's coordinates are whole 1e-7 degrees (about 1 cm), so a 100 m square is within a few m2
         self.assertAlmostEqual(holed["geom"].GetArea(), 100 ** 2 - 40 ** 2, delta=4.0)
         self.assertEqual(sorted(w["ref"] for w in self.layers["water"] if w["source"] == "nhd"),
-                         ["nhd:ar-1", "nhd:fl-1", "nhd:fl-2", "nhd:wb-1"])
+                         ["nhd:ar-1", "nhd:fl-1", "nhd:wb-1"])          # fl-2, a canal line, isn't painted
 
     def test_nad83_is_read_with_the_null_shift(self):
         lake = next(w for w in self.layers["water"] if w["ref"] == "nhd:wb-1")
@@ -399,17 +407,27 @@ class MaskTest(unittest.TestCase):
         self.assertFalse(self.at(cov, 365.6, 130))
         self.assertFalse(self.at(water, 350.1, 450.1) or self.at(cov, 350.1, 450.1))
         self.assertTrue(self.at(water, 310, 450))
-        # The intermittent stream is water to paint, but not kept out of sampling.
+        # The intermittent stream is water (painters filter on intermittent), and kept out of sampling like any
+        # water (C6): 1.25 m and 5 m.
         self.assertTrue(self.at(water, 100, 260.1))
-        self.assertFalse(self.at(cov, 100, 260.1))
-        # Railway and apron: sampling only.
-        self.assertTrue(self.at(cov, 100, 323.9))
-        self.assertFalse(self.at(cov, 100, 325))
+        self.assertFalse(self.at(K.exact(self.win, self.m, "water", where="intermittent = 0"), 100, 260.1))
+        self.assertTrue(self.at(cov, 100, 266.0))
+        self.assertFalse(self.at(cov, 100, 266.6))
+        # Apron and rail yard: sampling only, 2 m around. The railway line isn't read.
         self.assertTrue(self.at(cov, 420, 320) and not self.at(paving, 420, 320))
-        # Parking: paint and sample.
+        self.assertTrue(self.at(cov, 541.6, 320))
+        self.assertFalse(self.at(cov, 542.4, 320) or self.at(paving, 520, 320))
+        self.assertFalse(self.at(cov, 100, 320))
+        # Parking: paint and sample. The plaza (a relation): paint, and 2 m for sampling.
         self.assertTrue(self.at(paving, 320, 20) and self.at(cov, 341.9, 20))
-        # NHD: the canal area and line; the swamp and the inundation area aren't water; the pipeline is gone.
-        self.assertTrue(self.at(water, 100, 606) and self.at(water, 100, 701.9))
+        self.assertTrue(self.at(paving, 650, 620) and self.at(cov, 681.6, 620))
+        self.assertFalse(self.at(paving, 680.6, 620) or self.at(cov, 682.4, 620))
+        # NHD: the canal area is painted; the canal line only sampled (2 m and 5 m); the swamp and the inundation
+        # area aren't water; the pipeline is gone.
+        self.assertTrue(self.at(water, 100, 606))
+        self.assertFalse(self.at(water, 100, 700))
+        self.assertTrue(self.at(cov, 100, 706.6))
+        self.assertFalse(self.at(cov, 100, 707.4))
         self.assertFalse(self.at(water, 125, 425) or self.at(water, 350, 620) or self.at(water, 100, 750))
 
     def test_developed_land(self):
@@ -429,23 +447,116 @@ class MaskTest(unittest.TestCase):
         m = M.Manifest(self.m.folder, dict(self.m.data, layers=self.m.data["layers"][:-1]))
         with self.assertRaisesRegex(K.MaskError, "no covered layer"):
             K.check(m)
+        m = M.Manifest(self.m.folder, dict(self.m.data, build="20261011T120000Z-box-d-part"))
+        with self.assertRaisesRegex(K.MaskError, "part of the grid only"):
+            K.check(m)
+        self.assertIs(K.check(m, partial=True), m)
 
     # -- builds that stop ----------------------------------------------------------------------------------------
 
     def test_bounds(self):
-        m = self.build(bounds=(X0 - 20, Y0 - 20, X0 + 250, Y0 + 30), build_id="20261011T120000Z-small")
+        archive = os.path.join(self.dir, "bounds")
+        small = (X0 - 20, Y0 - 20, X0 + 250, Y0 + 30)
+        m = self.build(archive=archive, bounds=small)
+        self.assertRegex(m.build, r"^\d{8}T\d{6}Z-part$")                  # a partial build says so
+        self.assertIn("part of the grid (a partial build)", m.data["note"])
         self.assertEqual(sorted(f["kind"] for f in features(os.path.join(m.folder, "roads.fgb"))),
                          ["street", "walkway"])
         self.assertEqual(m.layer("water")["features"], 0)
         self.assertEqual(m.layer("roofs")["features"], 0)
+        with self.assertRaisesRegex(K.MaskError, "ends in -part"):
+            self.build(archive=archive, bounds=small, build_id="20261011T120000Z")
+        with self.assertRaisesRegex(K.MaskError, "ends in -part"):
+            self.build(archive=archive, build_id="20261011T120000Z-part")
+        self.assertEqual(M.builds(archive, "ground_mask", partial=True), [m.build])
+
+    def test_partial_builds_are_never_the_newest(self):
+        # A box's quick look, newer than the whole mask, doesn't become the mask the ground reads.
+        archive = os.path.join(self.dir, "partial")
+        whole = self.build(archive=archive, build_id="20261011T120000Z")
+        part = self.build(archive=archive, bounds=G.box("d").utm, build_id="20261011T130000Z-box-d-part")
+        self.assertEqual(M.builds(archive, "ground_mask"), [whole.build])
+        self.assertEqual(K.latest(archive).build, whole.build)
+        self.assertEqual(K.latest(archive, partial=True).build, part.build)
+        self.assertEqual(I.exports(archive)["ground_mask"].build, whole.build)
+        shutil.rmtree(whole.folder)
+        self.assertIsNone(K.latest(archive))
+        self.assertEqual(K.latest(archive, partial=True).build, part.build)
 
     def test_a_failed_build_leaves_nothing(self):
         archive = os.path.join(self.dir, "failed")
         with mock.patch.object(K, "read_cdl", side_effect=RuntimeError("boom")):
             with self.assertRaisesRegex(RuntimeError, "boom"):
                 self.build(archive=archive, build_id="20261011T120000Z")
-        self.assertEqual(os.listdir(os.path.join(archive, "ground_mask", "export")), [])
+        self.assertEqual(os.listdir(os.path.join(archive, "ground_mask", K.STAGING)), [])
+        self.assertFalse(os.path.exists(os.path.join(archive, "ground_mask", "export")))
         self.assertIsNone(K.latest(archive))
+
+    def test_a_stopped_build_cleans_up(self):
+        # docker stop sends SIGTERM: the command line turns it into SystemExit, and the build removes its folder.
+        archive = os.path.join(self.dir, "stopped")
+        before = signal.getsignal(signal.SIGTERM)
+
+        def stopped(*_a, **_k):
+            os.kill(os.getpid(), signal.SIGTERM)
+            time.sleep(5)                                       # the handler raises before this ends
+            raise AssertionError("SIGTERM didn't stop the build")
+
+        with mock.patch.object(K, "read_cdl", side_effect=stopped):
+            with self.assertRaises(SystemExit) as ctx:
+                K.main(["build", "--archive", archive, "--osm", self.osm, "--nhd", self.nhd, "--cdl", self.cdl,
+                        "--roofs", self.roofs])
+        self.assertEqual(ctx.exception.code, 128 + signal.SIGTERM)
+        self.assertEqual(signal.getsignal(signal.SIGTERM), before)
+        self.assertEqual(os.listdir(os.path.join(archive, "ground_mask", K.STAGING)), [])
+        self.assertIsNone(K.latest(archive, partial=True))
+
+    def test_a_killed_build_is_swept(self):
+        # SIGKILL (out of memory) skips every cleanup: the next build sweeps what it left.
+        archive = os.path.join(self.dir, "killed")
+        left = os.path.join(archive, "ground_mask", K.STAGING, "20261011T110000Z")
+        os.makedirs(left)
+        with open(os.path.join(left, "roofs.fgb"), "wb") as f:
+            f.write(b"half")
+        logged = []
+        m = self.build(archive=archive, build_id="20261011T120000Z", log=logged.append)
+        self.assertEqual(os.listdir(os.path.join(archive, "ground_mask", K.STAGING)), [])
+        self.assertTrue(any("20261011T110000Z" in line and "swept" in line for line in logged))
+        self.assertEqual(M.builds(archive, "ground_mask"), [m.build])
+
+    def test_one_build_at_a_time(self):
+        archive = os.path.join(self.dir, "locked")
+        with K._Lock(archive):
+            with self.assertRaisesRegex(K.MaskError, "another mask build is running"):
+                self.build(archive=archive, build_id="20261011T120000Z")
+        self.assertEqual(self.build(archive=archive, build_id="20261011T120000Z").build, "20261011T120000Z")
+
+    def test_old_builds_are_pruned(self):
+        archive = os.path.join(self.dir, "prune")
+        for t in ("100000", "110000", "120000"):
+            self.build(archive=archive, build_id=f"20261011T{t}Z")
+        self.assertEqual(M.builds(archive, "ground_mask"), ["20261011T110000Z", "20261011T120000Z"])
+        # A partial build is left alone; the build the ground tiles name is kept; one written with an older id
+        # than the newest is kept too.
+        part = self.build(archive=archive, bounds=BOUNDS, build_id="20261011T121000Z-part")
+        tiles_dir = os.path.join(self.dir, "prune-tiles")
+        os.makedirs(tiles_dir)
+        with open(os.path.join(tiles_dir, "manifest.json"), "w") as f:
+            json.dump({"ground": {"status": "painted", "inputs": [
+                "soils/ground@20261012T031500Z", "ground_mask/roofs@20261011T110000Z",
+                "ground_mask/covered@20261011T110000Z", "raw/osm@0123"]}, "buildings": {"file": "b.pmtiles"}}, f)
+        self.assertEqual(K.tiles_builds(tiles_dir), {"20261011T110000Z"})
+        self.assertEqual(K.tiles_builds(os.path.join(self.dir, "nowhere")), set())
+        self.build(archive=archive, build_id="20261011T130000Z", protect=K.tiles_builds(tiles_dir))
+        self.assertEqual(M.builds(archive, "ground_mask"),
+                         ["20261011T110000Z", "20261011T120000Z", "20261011T130000Z"])
+        self.build(archive=archive, build_id="20261011T090000Z", keep=1)
+        self.assertEqual(M.builds(archive, "ground_mask"), ["20261011T090000Z", "20261011T130000Z"])
+        self.assertEqual(M.builds(archive, "ground_mask", partial=True),
+                         ["20261011T090000Z", "20261011T121000Z-part", "20261011T130000Z"])
+        self.assertTrue(os.path.isdir(part.folder))
+        with self.assertRaisesRegex(K.MaskError, "keep at least one"):
+            self.build(archive=archive, build_id="20261011T140000Z", keep=0)
 
     def test_versions_must_be_known(self):
         other = os.path.join(self.dir, "versions")
@@ -477,14 +588,30 @@ class MaskTest(unittest.TestCase):
 
     def test_the_command_line(self):
         archive = os.path.join(self.dir, "cli")
-        rc = K.main(["build", "--archive", archive, "--osm", self.osm, "--nhd", self.nhd, "--cdl", self.cdl,
-                     "--roofs", self.roofs, "--bounds", ",".join(f"{v:g}" for v in BOUNDS),
-                     "--build", "20261011T130000Z"])
-        self.assertEqual(rc, 0)
-        self.assertEqual(K.latest(archive).build, "20261011T130000Z")
+        look = os.path.join(self.dir, "cli-look")
+        files = ["--osm", self.osm, "--nhd", self.nhd, "--cdl", self.cdl, "--roofs", self.roofs]
+        with mock.patch.dict(os.environ, {"TVT_ARCHIVE": archive}):
+            self.assertEqual(K.main(["build", "--build", "20261011T130000Z"] + files), 0)
+            self.assertEqual(K.latest(archive).build, "20261011T130000Z")
+            # A box or bounds build is a quick look: never into $TVT_ARCHIVE.
+            bounds = ["--bounds", ",".join(f"{v:g}" for v in BOUNDS)]
+            self.assertEqual(K.main(["build", "--box", "d"] + files), 2)
+            self.assertEqual(K.main(["build", "--archive", archive + "/"] + bounds + files), 2)
+            self.assertEqual(M.builds(archive, "ground_mask", partial=True), ["20261011T130000Z"])
+            self.assertEqual(K.main(["build", "--archive", look, "--box", "d"] + files), 0)
+            self.assertEqual(K.main(["build", "--archive", look, "--build", "20261011T130000Z"] + bounds + files),
+                             2)                                 # a partial build's id ends in -part
+        self.assertRegex(K.latest(look, partial=True).build, r"^\d{8}T\d{6}Z-box-d-part$")
+        self.assertIsNone(K.latest(look))
         rc = K.main(["build", "--archive", archive, "--osm", self.osm, "--nhd", self.nhd, "--cdl", self.cdl,
                      "--roofs", os.path.join(self.dir, "nowhere.pmtiles")])
         self.assertEqual(rc, 2)
+        bad = os.path.join(self.dir, "cli-tiles")
+        os.makedirs(bad)
+        with open(os.path.join(bad, "manifest.json"), "w") as f:
+            f.write("{not json")
+        self.assertEqual(K.main(["build", "--archive", archive, "--tiles", bad] + files), 2)
+        self.assertEqual(M.builds(archive, "ground_mask"), ["20261011T130000Z"])
 
 
 @unittest.skipIf(np is None, "needs the worker image (GDAL, NumPy, SciPy)")

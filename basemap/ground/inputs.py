@@ -288,7 +288,7 @@ def exports(archive, verify=True, hashes=True, registry=None):
 def resolve(manifests, versions=None):
     """The ground's plan from the newest exports ({name: Manifest}, as exports() gives) and the versions of the RAW
     inputs the painter reads directly ({raw name: version}, e.g. the OSM cut's MD5 or NAIP's release). Raises
-    InputError when an export the ground would read isn't public or has the wrong shape."""
+    InputError when an export the ground would read isn't public, has the wrong shape or is a partial build."""
     for plugin, why in NEVER.items():
         if any(u.plugin == plugin for u in USES):
             raise InputError(f"the ground must not read {plugin}: {why}")
@@ -306,6 +306,9 @@ def resolve(manifests, versions=None):
             continue
         if m.plugin != use.plugin:
             raise InputError(f"{m.folder} is {m.plugin}'s export, read as {use.plugin}'s")
+        if M.is_partial(m.build):
+            raise InputError(f"{use.plugin}@{m.build} is a partial build (a quick look at part of it): the ground "
+                             "reads whole builds only")
         if use.product:
             layers = m.layers
             missing = [n for n in use.required if not m.has(n)]

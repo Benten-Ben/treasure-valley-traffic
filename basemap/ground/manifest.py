@@ -1,9 +1,11 @@
 """Export manifests (C5): what a plugin's export folder holds, under which licence, and from which inputs.
 
 A plugin's export command writes files to $TVT_ARCHIVE/<plugin>/export/<build>/ and then manifest.json, last, with
-write(): an export folder without a manifest is unfinished and readers skip it. The ground (basemap/ground/) and the
-base bake (basemap/landscape/) read exports only through read() and latest(). Standard library only, so it runs in
-the ingest image that writes the exports as well as in the worker image that reads them.
+write(): an export folder without a manifest is unfinished and readers skip it. A build whose id ends in -part is
+partial (part of what the export covers, a quick look): builds() and latest() skip it too, so it's read only by its
+folder. The ground (basemap/ground/) and the base bake (basemap/landscape/) read exports only through read() and
+latest(). Standard library only, so it runs in the ingest image that writes the exports as well as in the worker
+image that reads them.
 
     {
       "contract": 1,
@@ -109,6 +111,7 @@ _GRID = {"res", "west", "north", "width", "height"}
 _BAND = {"name", "type", "nodata", "values", "about"}
 
 BUILD_RE = re.compile(r"^[0-9]{8}T[0-9]{6}Z(-[a-z0-9][a-z0-9-]*)?$")
+PARTIAL_SUFFIX = "-part"                   # a build of part of what the export covers (is_partial)
 _NAME = re.compile(r"^[a-z][a-z0-9_]*$")
 _INPUT_NAME = re.compile(r"^[a-z0-9][a-z0-9_.-]*$")
 _FIELD = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -573,19 +576,28 @@ def check_header(where, spec, h):
         raise ManifestError(f"{where}: the file's CRS is {h.crs}, the manifest says {spec['crs']}")
 
 
-def builds(archive, plugin):
-    """The plugin's finished export builds (folders with a manifest), oldest first."""
+def is_partial(build):
+    """True for a partial build, whose id ends in -part (e.g. 20261012T031500Z-box-d-part): a quick look at part of
+    what the export covers, which builds() and latest() leave out, so it's never read as the newest."""
+    return build.endswith(PARTIAL_SUFFIX)
+
+
+def builds(archive, plugin, partial=False):
+    """The plugin's finished export builds (folders with a manifest), oldest first. Partial builds (is_partial) are
+    left out unless partial is true."""
     root = os.path.join(archive, plugin, "export")
     if not os.path.isdir(root):
         return []
     return sorted(b for b in os.listdir(root)
-                  if BUILD_RE.match(b) and os.path.isfile(os.path.join(root, b, FILE)))
+                  if BUILD_RE.match(b) and (partial or not is_partial(b))
+                  and os.path.isfile(os.path.join(root, b, FILE)))
 
 
-def latest(archive, plugin, verify=True, hashes=True, registry=None):
+def latest(archive, plugin, verify=True, hashes=True, registry=None, partial=False):
     """The plugin's newest finished export, read and checked; None when it has none. A newest export that fails its
-    checks raises ManifestError rather than falling back to an older one silently."""
-    b = builds(archive, plugin)
+    checks raises ManifestError rather than falling back to an older one silently. Partial builds are left out unless
+    partial is true (then the newest build of either kind)."""
+    b = builds(archive, plugin, partial=partial)
     if not b:
         return None
     m = read(export_dir(archive, plugin, b[-1]), verify=verify, hashes=hashes, registry=registry)
