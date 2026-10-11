@@ -7,6 +7,7 @@ plugin.json files, as in the ground's tests.
 
 import json
 import os
+import re
 import shutil
 import tempfile
 import unittest
@@ -142,6 +143,13 @@ class ResolveTest(unittest.TestCase):
         with self.assertRaisesRegex(P.BakeError, "no plugin.json names"):
             self.plan(visibility={})
 
+    def test_a_never_source_is_refused_with_the_real_plugin_json(self):
+        ecoli = {"name": "ecoli", "licence": "none-stated", "republish": "internal",
+                 "credit": "City of Boise Parks and Recreation", "source": "water/boise_ecoli"}
+        write_export(self.archive, "water", [base_layer("reaches", ["osm", "ecoli"])], [OSM, ecoli])
+        with self.assertRaisesRegex(P.BakeError, "water/boise_ecoli, a City of Boise layer.*never in the base"):
+            self.plan(visibility=None)
+
     def test_real_plugin_visibility(self):
         vis = P.plugin_visibility()
         self.assertEqual(vis["water"], "public")
@@ -214,6 +222,16 @@ class ResolveTest(unittest.TestCase):
 
 
 class CheckBaseTest(unittest.TestCase):
+    INPUTS = {"osm": OSM, "achd": dict(ACHD, name="achd"),
+              "orgs": {"name": "orgs", "licence": "none-stated", "republish": "internal",
+                       "credit": "Idaho Department of Water Resources", "source": "water/idwr_organizations"},
+              "hazards": {"name": "hazards", "licence": "none-stated", "republish": "internal",
+                          "credit": "Boise Fire Department and City of Boise", "source": "water/boise_river_hazards"},
+              "things": {"name": "things", "licence": "none-stated", "republish": "internal", "credit": "Secret",
+                         "source": "secret/things"},
+              "elsewhere": {"name": "elsewhere", "licence": "none-stated", "republish": "internal",
+                            "credit": "Someone", "source": "nowhere/things"}}
+
     def layer(self, **kw):
         spec = {"name": "reaches", "file": "r.fgb", "format": "FlatGeobuf", "crs": "EPSG:32611",
                 "geometry": "LineString", "features": 1, "fields": {"id": "long", "kind": "string"}, "bytes": 1,
@@ -223,22 +241,95 @@ class CheckBaseTest(unittest.TestCase):
         return M.Layer("water", "20261012T031500Z", "/nowhere/r.fgb", spec)
 
     def test_fields(self):
-        P.check_base(self.layer(), "public")
-        P.check_base(self.layer(fields={"id": "int", "minzoom": "short", "w": "float", "ok": "bool"}), "public")
+        P.check_base(self.layer(), PUBLIC)
+        P.check_base(self.layer(fields={"id": "int", "minzoom": "short", "w": "float", "ok": "bool"}), PUBLIC)
         with self.assertRaisesRegex(P.BakeError, "integer 'id'"):
-            P.check_base(self.layer(fields={"id": "string"}), "public")
+            P.check_base(self.layer(fields={"id": "string"}), PUBLIC)
         with self.assertRaisesRegex(P.BakeError, "datetime"):
-            P.check_base(self.layer(fields={"id": "int", "seen": "datetime"}), "public")
+            P.check_base(self.layer(fields={"id": "int", "seen": "datetime"}), PUBLIC)
         with self.assertRaisesRegex(P.BakeError, "json"):
-            P.check_base(self.layer(fields={"id": "int", "tags": "json"}), "public")
+            P.check_base(self.layer(fields={"id": "int", "tags": "json"}), PUBLIC)
         with self.assertRaisesRegex(P.BakeError, "first zoom, so it must be an integer"):
-            P.check_base(self.layer(fields={"id": "int", "minzoom": "double"}), "public")
+            P.check_base(self.layer(fields={"id": "int", "minzoom": "double"}), PUBLIC)
 
     def test_republish(self):
-        P.check_base(self.layer(republish="internal"), "public")
+        P.check_base(self.layer(republish="internal"), PUBLIC)
         for r in ("aggregates", "no"):
             with self.assertRaisesRegex(P.BakeError, "never in the base"):
-                P.check_base(self.layer(republish=r), "public")
+                P.check_base(self.layer(republish=r), PUBLIC)
+
+    def test_plugin_visibility(self):
+        with self.assertRaisesRegex(P.BakeError, "water is a private plugin"):
+            P.check_base(self.layer(), dict(PUBLIC, water="private"))
+        with self.assertRaisesRegex(P.BakeError, "no plugin.json names plugin 'water'"):
+            P.check_base(self.layer(), {})
+
+    def test_inputs_sources(self):
+        """C17's named sources never go in, whatever their republish; nor does a private plugin's source."""
+        P.check_base(self.layer(inputs=["osm", "achd"], republish="internal"), PUBLIC, self.INPUTS)
+        for name, msg in (("orgs", "water/idwr_organizations, IDWR's data .*never in the base \\(C17\\)"),
+                          ("hazards", "water/boise_river_hazards, a City of Boise layer"),
+                          ("things", "secret/things, a source of a private plugin"),
+                          ("elsewhere", "nowhere/things, a source of 'nowhere', which no plugin.json names")):
+            with self.subTest(name):
+                with self.assertRaisesRegex(P.BakeError, msg):
+                    P.check_base(self.layer(inputs=["osm", name], republish="internal"), PUBLIC, self.INPUTS)
+
+    def test_never_covers_every_city_and_idwr_source(self):
+        """Every plugin.json source credited to the City of Boise or IDWR matches a NEVER pattern, so a source added
+        under another name can't slip into the base."""
+        credited = re.compile(r"City of Boise|Boise Fire|Ridge to Rivers|IDWR|Idaho Department of Water Resources")
+        sources = M.plugin_sources()
+        named = sorted(k for k, e in sources.items() if credited.search(str(e.get("credit", ""))))
+        self.assertIn("water/boise_ecoli", named)
+        self.assertIn("trails/r2r_trails", named)
+        self.assertEqual([k for k in named if not P.never(k)], [])
+        self.assertIsNone(P.never("roads/achd_roads"))
+        self.assertIsNone(P.never("roads/osm_valley"))
+        self.assertEqual(P.never("water/idwr_season_of_use"), P.NEVER["*/idwr*"])
+
+
+class PlanTest(unittest.TestCase):
+    """Built and empty base layers, from layers made by hand."""
+
+    def base(self, plugin, name, features, republish="yes", credit="© OpenStreetMap contributors", build=None):
+        spec = {"name": name, "file": f"{name}.fgb", "format": "FlatGeobuf", "crs": "EPSG:32611",
+                "geometry": "LineString", "features": features, "fields": {"id": "long"}, "bytes": 1,
+                "sha256": "0" * 64, "inputs": ["osm"], "licence": "ODbL-1.0", "republish": republish,
+                "credit": [credit], "base": True}
+        b = build or "20261012T031500Z"
+        return P.Base(M.Layer(plugin, b, f"/nowhere/{name}.fgb", spec))
+
+    def test_empty_layers_are_read_but_not_built(self):
+        plan = P.Plan(bases=[self.base("roads", "surfaces", 2), self.base("water", "reaches", 0, "internal", "IDWR")],
+                      skipped=[("trails", "trails@20261012T031500Z has no base layer")])
+        self.assertEqual(([b.id for b in plan.built], plan.empty, plan.ids), (["roads.surfaces"], ["water.reaches"],
+                                                                              ["roads.surfaces"]))
+        self.assertEqual(plan.refs, ["roads/surfaces@20261012T031500Z", "water/reaches@20261012T031500Z"])
+        # Only built layers count towards who may see the file and its credits.
+        self.assertEqual((plan.republish, plan.access, plan.credits), ("yes", "public",
+                                                                      ["© OpenStreetMap contributors"]))
+        e = baked(plan)
+        P.check_entry(e, in_manifest=False)
+        self.assertEqual((sorted(e["layers"]), e["empty"]), (["roads.surfaces"], ["water.reaches"]))
+        self.assertEqual(e["inputs"], plan.refs)
+        self.assertEqual(plan.why_not_built("water.reaches"), "water/reaches@20261012T031500Z is empty")
+        self.assertEqual(plan.why_not_built("trails.paved"), "trails@20261012T031500Z has no base layer")
+        self.assertEqual(plan.why_not_built("roads.markings"), "roads@20261012T031500Z has no base layer 'markings'")
+        self.assertEqual(plan.why_not_built("farm.fields"), "there's no export of farm")
+
+        none = P.Plan(bases=[self.base("water", "reaches", 0)])
+        self.assertEqual((none.status, none.reason), ("empty", "every base layer is empty: water.reaches"))
+        with self.assertRaises(ValueError):
+            P.baked_entry(none, "0" * 64, P.measure_budget({}, False), "GDAL")
+        # An entry may not list an empty layer, nor the same layer in both.
+        with self.assertRaisesRegex(ValueError, "has no features"):
+            P.check_entry(dict(e, layers={"roads.surfaces": dict(e["layers"]["roads.surfaces"], features=0)}),
+                          in_manifest=False)
+        for bad in (["roads.surfaces"], ["water.reaches", "water.reaches"], ["b.x", "a.x"], "water.reaches",
+                    ["Water"]):
+            with self.assertRaisesRegex(ValueError, "empty must list"):
+                P.check_entry(dict(e, empty=bad), in_manifest=False)
 
 
 class EntryTest(unittest.TestCase):

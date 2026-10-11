@@ -9,15 +9,17 @@ of vector tiles, landscape-<digest>.pmtiles, z8-16, switched in with tiles/manif
 
 `bake` runs in the worker image (GDAL's PMTiles writer); the others need only the standard library. The archive is
 $TVT_ARCHIVE unless --archive says otherwise. Exit codes: 0 done (or nothing to change); 1 a check failed (`check`)
-or the writer failed; 2 refused (a missing folder, a broken export, a layer that may not be baked, a file already
-named for this bake that isn't it); 3 nothing to bake (`status`); 4 over the byte budget (nothing switched in).
+or the writer failed; 2 refused (a missing folder, a broken export, a layer or feature that may not be baked, a file
+already named for this bake that isn't it, or a source-layer the served bake has that this one wouldn't build,
+without --allow-drop); 3 nothing to bake (`status`); 4 over the byte budget (nothing switched in).
 
 A bake: the newest export of each plugin that has a base layer is read (its manifest checked, and its base layers'
-files with their sha256), each base layer is written as one source-layer `<plugin>.<layer>` with its `id` as both the vector tile's
-feature id and a property (promoteId), read back, measured against the downtown z16 budget, given the bake's entry
-and credits in its metadata, and renamed into the tiles folder. Then the manifest's entry is replaced atomically
-(the old file becomes `previous`), and every other landscape file is deleted, so the last two are kept. The same
-exports give the same file name: a bake with nothing new switches nothing.
+files with their sha256), each base layer with features is written as one source-layer `<plugin>.<layer>` with its
+`id` as both the vector tile's feature id and a property (promoteId), read back, measured against the downtown z16
+budget, given the bake's entry and credits in its metadata, and renamed into the tiles folder. Then the manifest's
+entry is replaced atomically (the old file becomes `previous`), and every other landscape file is deleted, so the
+last two are kept. The same exports give the same file name: a bake with nothing new switches nothing. A bake that
+would leave out a source-layer the served one has (or switch to empty) is refused unless --allow-drop says so.
 """
 
 import argparse
@@ -84,9 +86,10 @@ def _ogr_type(ogr, kind):
 
 def write_tiles(plan, out, threads=2):
     """Write the plan's base layers to a PMTiles file at `out` with GDAL, its tile encoding on `threads` threads (the
-    job's CPUs: inside a container GDAL would count the host's). Returns {source layer: features}. Raises BakeError
-    for a feature the bake can't take: no geometry, an id that's missing, out of range or repeated in its layer, or a
-    minzoom past its layer's maxzoom."""
+    job's CPUs: inside a container GDAL would count the host's). Every layer is read and counted; an empty one gets
+    no source-layer. Returns {source layer: features}. Raises BakeError for a feature the bake can't take: no
+    geometry, a geometry that isn't the layer's type or its multi form, an id that's missing, out of range or
+    repeated in its layer, or a minzoom past its layer's maxzoom."""
     gdal, ogr, osr = _gdal()
     gdal.SetConfigOption("GDAL_NUM_THREADS", str(threads))
     srs = osr.SpatialReference()
@@ -122,6 +125,7 @@ def _write_layer(ds, ogr, srs, base):
         raise P.BakeError(f"{lay.ref}: the file's fields {sorted(have)} aren't the manifest's")
     fields = base.fields
     geom_type = getattr(ogr, GEOMETRY[lay["geometry"]])
+    family = {getattr(ogr, GEOMETRY[t]) for t in P.GEOMETRY_FAMILY[lay["geometry"]]}
     targets = {}
 
     def target(z):
@@ -153,6 +157,9 @@ def _write_layer(ds, ogr, srs, base):
             why = f"id {fid} is repeated"
         elif g is None or g.IsEmpty():
             why = f"id {fid} has no geometry"
+        elif ogr.GT_Flatten(g.GetGeometryType()) not in family:
+            why = (f"id {fid} is a {ogr.GeometryTypeToName(g.GetGeometryType())}, not a {lay['geometry']} or its "
+                   "multi form")
         z = base.minzoom
         if why is None and i_mz is not None and f.IsFieldSetAndNotNull(i_mz):
             fz = min(f.GetFieldAsInteger(i_mz), P.MAXZOOM)
@@ -182,23 +189,21 @@ def _write_layer(ds, ogr, srs, base):
                           + "; ".join(bad))
     if n != lay["features"]:
         raise P.BakeError(f"{lay.ref}: the file holds {n:,} features, the manifest says {lay['features']:,}")
-    if not targets:                                      # an empty layer still declares its source-layer
-        target(base.minzoom)
     src = None
     return len(seen)
 
 
-def read_back(path, plan, counts):
+def read_back(path, plan):
     """Check a fresh file before it's switched in: a PMTiles of gzipped vector tiles at the spec's zooms, whose
-    layers are the plan's (those with features), and which GDAL opens."""
+    source-layers are exactly the plan's built ones, and which GDAL opens."""
     h = pmtiles.read_header(path)
     if (h.tile_type_name, h.tile_compression_name, h.min_zoom, h.max_zoom) != ("mvt", "gzip", P.MINZOOM, P.MAXZOOM):
         raise P.BakeError(f"{path}: {h.tile_type_name} tiles ({h.tile_compression_name}), z{h.min_zoom}-"
                           f"{h.max_zoom}; the spec is gzipped mvt, z{P.MINZOOM}-{P.MAXZOOM}")
     meta = pmtiles.read_metadata(path)
-    got = {v.get("id") for v in meta.get("vector_layers", [])}
-    want = {sid for sid, n in counts.items() if n}
-    if not want <= got or not got <= set(counts):
+    got = source_layers(meta)
+    want = set(plan.ids)
+    if got != want:
         raise P.BakeError(f"{path}: source layers {sorted(got)}, expected {sorted(want)}")
     gdal, _, _ = _gdal()
     ds = gdal.OpenEx(path)
@@ -225,10 +230,21 @@ def metadata_with(meta, entry):
     return out
 
 
+def source_layers(meta):
+    """The source-layers a file's metadata lists (vector_layers' ids)."""
+    vl = meta.get("vector_layers")
+    return {v.get("id") for v in vl if isinstance(v, dict)} if isinstance(vl, list) else set()
+
+
+def meta_entry(meta):
+    """The bake entry a landscape file's metadata holds, or None."""
+    t = meta.get("tvt")
+    return t.get("landscape") if isinstance(t, dict) else None
+
+
 def file_entry(path):
     """The bake entry a landscape file's metadata holds, or None."""
-    t = pmtiles.read_metadata(path).get("tvt")
-    return t.get("landscape") if isinstance(t, dict) else None
+    return meta_entry(pmtiles.read_metadata(path))
 
 
 # --- commands ---------------------------------------------------------------------------------------------------
@@ -251,10 +267,10 @@ def _describe(plan):
         lay = b.layer
         z = f"z{b.minzoom}-{b.maxzoom}" + (", per feature" if b.per_feature_minzoom else "")
         _say(f"  {b.id:24} {lay.ref} ({lay['geometry']}, {lay['features']:,} features, {z}), {lay['licence']}, "
-             f"republish {lay['republish']}")
+             f"republish {lay['republish']}" + ("" if lay["features"] else ": empty, so not built"))
     for plugin, why in plan.skipped:
         _say(f"  ({why})")
-    if plan.bases:
+    if plan.built:
         _say(f"Republish {plan.republish}: served to the {plan.access}"
              + (" only, while these carry internal data: " + "; ".join(
                  f"{sid} ({', '.join(c)})" for sid, c in plan.internal) if plan.internal else ""))
@@ -291,29 +307,67 @@ def _say_tiles(cur, plan):
     if not cur:
         _say("Tiles: no landscape entry yet")
     elif cur["status"] == "empty":
-        _say(f"Tiles: empty ({cur['reason']})" + (", so a bake would switch one in" if plan.bases else ""))
-    elif cur["inputs"] == plan.refs:
-        _say(f"Tiles: {cur['file']}, built {cur['built']} from these exports (up to date)")
+        _say(f"Tiles: empty ({cur['reason']})" + (", so a bake would switch one in" if plan.built else ""))
     else:
-        new, old = set(plan.refs), set(cur["inputs"])
-        _say(f"Tiles: {cur['file']}, built {cur['built']} from other exports: a bake would add "
-             f"{', '.join(sorted(new - old)) or 'nothing'} and drop {', '.join(sorted(old - new)) or 'nothing'}")
+        if cur["inputs"] == plan.refs:
+            _say(f"Tiles: {cur['file']}, built {cur['built']} from these exports (up to date)")
+        else:
+            new, old = set(plan.refs), set(cur["inputs"])
+            _say(f"Tiles: {cur['file']}, built {cur['built']} from other exports: a bake would read "
+                 f"{', '.join(sorted(new - old)) or 'nothing new'} and no longer "
+                 f"{', '.join(sorted(old - new)) or 'anything it reads now'}")
+        dropped = sorted(set(cur["layers"]) - set(plan.ids))
+        if dropped:
+            _say("  It would leave out source-layer(s) the served file has, so it's refused without --allow-drop: "
+                 + "; ".join(f"{sid} ({plan.why_not_built(sid)})" for sid in dropped))
 
 
-def _previous(tiles_dir, old, name):
+def _previous(tiles_dir, raw, name):
     """The file the new entry keeps as previous: the one served until now (or, for an unchanged bake or an empty
-    entry, the one it kept), if it's still there."""
-    prev = P.served_file(old)
-    if prev is None or prev == name:
-        prev = old.get("previous") if old else None
-    if prev == name or not prev or not os.path.isfile(os.path.join(tiles_dir, prev)):
+    entry, the one it kept), if it's still there. raw: the manifest's entry as it is, even a broken one, so the file
+    it names is kept while clients may still be reading it."""
+    if not isinstance(raw, dict):
         return None
-    return prev
+    for prev in (raw.get("file"), raw.get("previous")):
+        if (isinstance(prev, str) and P.FILE_RE.match(prev) and prev != name
+                and os.path.isfile(os.path.join(tiles_dir, prev))):
+            return prev
+    return None
 
 
-def _switch_empty(tiles_dir, old, reason):
+def _checked(raw):
+    """The manifest's landscape entry when it's sound, else None (saying why)."""
+    if raw is None:
+        return None
+    try:
+        P.check_entry(raw)
+    except ValueError as err:
+        _err(f"the manifest's landscape entry is broken ({err}); this bake replaces it, keeping the file it names "
+             "(if that's there) as previous")
+        return None
+    return raw
+
+
+def _served(tiles_dir, raw, old):
+    """(the file served now, its source-layers): from the entry, or for a broken entry from the file's own
+    metadata. (None, []) when nothing is served."""
+    if old is not None:
+        return (old["file"], sorted(old["layers"])) if old["status"] == "baked" else (None, [])
+    name = raw.get("file") if isinstance(raw, dict) else None
+    if not (isinstance(name, str) and P.FILE_RE.match(name) and os.path.isfile(os.path.join(tiles_dir, name))):
+        return None, []
+    try:
+        made = file_entry(os.path.join(tiles_dir, name))
+        P.check_entry(made, in_manifest=False)
+    except (pmtiles.PMTilesError, ValueError) as err:
+        _err(f"{name}'s own metadata doesn't say what it serves ({err}), so a bake can't tell what it would drop")
+        return name, []
+    return name, sorted(made["layers"])
+
+
+def _switch_empty(tiles_dir, raw, old, reason):
     """Record that there's nothing to bake: an empty entry that keeps the file served until now as previous."""
-    entry = P.empty_entry(reason, previous=_previous(tiles_dir, old, None))
+    entry = P.empty_entry(reason, previous=_previous(tiles_dir, raw, None))
     if old and old.get("status") == "empty" and old["reason"] == entry["reason"] \
             and old["previous"] == entry["previous"]:
         _say(f"landscape-bake: nothing to bake, and the entry already says so ({reason})")
@@ -327,7 +381,8 @@ def _switch_empty(tiles_dir, old, reason):
 
 def _bake_file(plan, tiles_dir, work, digest, writer, threads=2):
     """Write, read back, measure and rename one bake into the tiles folder. Returns (its entry, None), ("empty",
-    None) when every layer turned out empty (GDAL writes no file then), or (None, exit code) after saying why."""
+    None) when every layer is empty (GDAL writes no file then; the writer still counts each), or (None, exit code)
+    after saying why."""
     name = P.file_name(digest)
     mine_work = work is None
     work = work or tempfile.mkdtemp(prefix="landscape-")
@@ -337,9 +392,11 @@ def _bake_file(plan, tiles_dir, work, digest, writer, threads=2):
     try:
         try:
             counts = write_tiles(plan, raw, threads)
-            if not any(counts.values()):
+            if counts != {b.id: b.layer["features"] for b in plan.bases}:     # _write_layer refuses a mismatch
+                raise P.BakeError(f"the writer's counts {counts} aren't the manifests'")
+            if not plan.built:
                 return "empty", None
-            meta = read_back(raw, plan, counts)
+            meta = read_back(raw, plan)
         except P.BakeError as err:
             _err(f"refused: {err}")
             return None, EXIT_REFUSED
@@ -359,7 +416,7 @@ def _bake_file(plan, tiles_dir, work, digest, writer, threads=2):
                 f"{'/'.join(map(str, t))} {n:,} bytes" for t, n in over[:10]))
             return None, EXIT_BUDGET
         zooms = pmtiles.zoom_range(sizes)
-        made = P.baked_entry(plan, digest, budget, writer, counts, zooms)
+        made = P.baked_entry(plan, digest, budget, writer, zooms=zooms)
         P.check_entry(made, in_manifest=False)
         pmtiles.write_with_metadata(raw, part, metadata_with(meta, made), zooms)
         os.chmod(part, 0o644)
@@ -390,21 +447,26 @@ def cmd_bake(args):
         if plan is None:
             return code
         try:
-            old = P.current(tiles_dir)
+            raw = P.current(tiles_dir)
         except P.BakeError as err:
             _err(f"refused: {err}")
             return EXIT_REFUSED
-        if old is not None:
-            try:
-                P.check_entry(old)
-            except ValueError as err:
-                _err(f"the manifest's landscape entry is broken ({err}); this bake replaces it, keeping no previous")
-                old = None
+        old = _checked(raw)
         _say(f"Base layers: {len(plan.bases)}")
         _describe(plan)
 
+        served, layers = _served(tiles_dir, raw, old)
+        dropped = sorted(set(layers) - set(plan.ids))
+        if dropped and not args.allow_drop:
+            _err(f"refused: {served} is served with source-layer(s) this bake wouldn't build: "
+                 + "; ".join(f"{sid} ({plan.why_not_built(sid)})" for sid in dropped)
+                 + (". It would switch the landscape to empty" if not plan.built else
+                    ". They would vanish from the map")
+                 + ". If that's meant, bake again with --allow-drop (the served file is kept as previous, for "
+                 "rollback)")
+            return EXIT_REFUSED
         if not plan.bases:
-            return _switch_empty(tiles_dir, old, plan.reason)
+            return _switch_empty(tiles_dir, raw, old, plan.reason)
         try:
             writer = writer_version()
         except ImportError as err:
@@ -430,10 +492,9 @@ def cmd_bake(args):
             if made is None:
                 return code
             if made == "empty":
-                return _switch_empty(tiles_dir, old, "every base layer is empty: "
-                                     + ", ".join(b.id for b in plan.bases))
+                return _switch_empty(tiles_dir, raw, old, plan.reason)
 
-        entry = dict(made, previous=_previous(tiles_dir, old, name))
+        entry = dict(made, previous=_previous(tiles_dir, raw, name))
         if old == entry:
             _say(f"landscape-bake: {name} is already switched in; nothing changed")
             return 0
@@ -443,7 +504,9 @@ def cmd_bake(args):
         _say(f"landscape-bake: switched in {name} ({len(entry['layers'])} layer(s), {total:,} features, "
              f"{os.path.getsize(final) / 1e6:.1f} MB), republish {entry['republish']}, "
              f"served to the {entry['access']}{' only' if entry['access'] != 'public' else ''}; kept "
-             f"{entry['previous'] or 'no previous file'}" + (f"; removed {', '.join(gone)}" if gone else ""))
+             f"{entry['previous'] or 'no previous file'}" + (f"; removed {', '.join(gone)}" if gone else "")
+             + (f"; empty, so not built: {', '.join(entry['empty'])}" if entry["empty"] else "")
+             + (f"; dropped {', '.join(dropped)} (--allow-drop)" if dropped else ""))
         return 0
 
 
@@ -480,7 +543,11 @@ def check(tiles_dir, public=False):
         else:
             try:
                 h = pmtiles.read_header(path)
-                made = file_entry(path)
+                meta = pmtiles.read_metadata(path)
+                made = meta_entry(meta)
+                if source_layers(meta) != set(entry["layers"]):
+                    problems.append(f"{entry['file']}: its source-layers {sorted(source_layers(meta))} aren't the "
+                                    f"entry's layers {sorted(entry['layers'])}")
                 if (h.tile_type_name, h.tile_compression_name, h.min_zoom, h.max_zoom) != (
                         "mvt", "gzip", entry["minzoom"], entry["maxzoom"]):
                     problems.append(f"{entry['file']}: not gzipped mvt at the entry's z{entry['minzoom']}-"
@@ -508,6 +575,10 @@ def check(tiles_dir, public=False):
                 problems.append(f"{f}: its metadata doesn't say who may see it")
             elif made["republish"] != "yes" or made.get("access") != "public":
                 problems.append(f"{f}: republish {made['republish']}, tailnet only (it's in the served folder)")
+        for f in sorted(os.listdir(tiles_dir)):
+            if f.startswith(P.PART_PREFIX):
+                problems.append(f"{f}: a stopped bake's part file, a full copy of its tiles, in the served folder "
+                                "(the next bake removes it; or delete it)")
     return problems
 
 
@@ -543,8 +614,8 @@ def cmd_rollback(args):
         except P.BakeError as err:
             _err(f"refused: {err}")
             return EXIT_REFUSED
-        prev = old.get("previous") if old else None
-        if not prev or not os.path.isfile(os.path.join(tiles_dir, prev)):
+        prev = old.get("previous") if isinstance(old, dict) else None
+        if not isinstance(prev, str) or not P.FILE_RE.match(prev) or not os.path.isfile(os.path.join(tiles_dir, prev)):
             _err("refused: there's no previous landscape file to go back to")
             return EXIT_REFUSED
         try:
@@ -553,7 +624,7 @@ def cmd_rollback(args):
         except (pmtiles.PMTilesError, ValueError, TypeError) as err:
             _err(f"refused: {prev} doesn't hold a bake entry ({err})")
             return EXIT_REFUSED
-        entry = dict(made, previous=P.served_file(old))
+        entry = dict(made, previous=_previous(tiles_dir, old, prev))
         P.update_manifest(tiles_dir, entry)
         _say(f"landscape: back to {prev} (built {made['built']}); {entry['previous'] or 'nothing'} kept as previous")
         return 0
@@ -572,6 +643,8 @@ def main(argv=None):
     p.add_argument("--work", help="where GDAL writes before the file moves in (default: a temporary folder)")
     p.add_argument("--threads", type=int, default=2, help="GDAL's threads for encoding tiles: the job's CPUs "
                    "(default 2, the heavy-job table's)")
+    p.add_argument("--allow-drop", action="store_true",
+                   help="switch in a bake without a source-layer the served one has, or switch to empty")
     p = sub.add_parser("check", help="check the entry and the files (exit 1 on a problem)")
     p.add_argument("--tiles", required=True)
     p.add_argument("--public", action="store_true",

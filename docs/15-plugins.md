@@ -179,7 +179,8 @@ How the pieces plug in:
   into one versioned PMTiles file served from `/tiles/`, a source-layer
   `<plugin>.<layer>` each. The file's `republish` is its strictest
   layer's, so it's tailnet-only while any layer is internal. Private
-  plugins and aggregates-only sources never go in.
+  plugins' data, aggregates-only sources, and IDWR's and the City of
+  Boise's sources never go in.
 
 ## 15.3 Private plugins
 

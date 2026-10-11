@@ -30,17 +30,19 @@ plugin's layers, base or not.
 |---|---|
 | An integer `id` field, unique in the layer, from 0 to 2^53 − 1 | It becomes the feature id and stays a property, so MapLibre's `promoteId` finds it (the canal season's feature-state) |
 | Fields are numbers, strings or booleans | What a vector tile holds: cast a date to text in the export |
-| Every feature has a geometry | |
+| Every feature has a geometry of the layer's type or its multi form | A `LineString` layer takes LineStrings and MultiLineStrings; a GeometryCollection, a point or a polygon sliver from a clip refuses the bake. PostGIS's FlatGeobuf header says `Unknown`, so the bake checks each feature |
 | Optional integer `minzoom` field: the feature's first zoom | e.g. water's main canals from z10 and ditches from z13 (plan §3.5). It's a directive, left out of the tiles. Past z16 means z16; the style does the rest |
 | Optional `minzoom` and `maxzoom` on the layer's manifest entry | The layer's range, inside z8–16 (paving lots from z14) |
-| Republish `yes` or `internal` | Sources published only as aggregates (Ridge to Rivers, the City's trails) and restricted data stay in side tables that cards read, never in the base (C17). IDWR's canal operators stay out of the base too, but by what water exports, not by this rule: IDWR's data is internal, like ACHD's |
-| A public plugin | Private plugins' data is never tiled ([ch. 15 §15.3](../../docs/15-plugins.md#153-private-plugins)) |
+| Republish `yes` or `internal` | Sources published only as aggregates (Ridge to Rivers, the City's trails) and restricted data stay in side tables that cards read, never in the base (C17) |
+| No input from a source on the bake's never list | IDWR's data (canal operators, the legal season window) and the City of Boise's layers stay in side tables that cards read, whatever their republish (C17). The list (`NEVER` in [`plan.py`](plan.py)) matches an input's `source`: `*/idwr*`, `*/boise_*` and `trails/r2r_*`. So an IDWR source is named `idwr_…`; a test fails if any plugin.json source credited to IDWR or the City doesn't match the list |
+| A public plugin, with inputs from public plugins' sources only | Private plugins' data is never tiled ([ch. 15 §15.3](../../docs/15-plugins.md#153-private-plugins)) |
 
 Only the fields the map needs go in: every byte is in every first load that shows the layer. Card details come from
 the plugin's own API. The ground's products (`ground_mask`, `ground_classes`) are never read.
 
 The source-layer is named **`<plugin>.<layer>`** (`water.reaches`, `roads.surfaces`), the same key core uses for the
-toggled layers' versions.
+toggled layers' versions. A base layer whose export holds no features isn't built: the file has no such source-layer,
+and the entry lists it under `empty`, not `layers`.
 
 ## The file
 
@@ -74,7 +76,8 @@ That's machine-checkable in three places:
 - the tiles-manifest entry's `republish` and `access` (`"tailnet"` or `"public"`), which `check_entry` keeps in step;
 - each file's own metadata (`tvt.landscape`), so a file kept as `previous` still says what it is;
 - **`bake.py check --tiles DIR --public`**, which exits 1 when the entry, or any landscape file in the folder (the
-  previous one too: everything there is served), isn't public, or doesn't say. A public deploy runs it and stops.
+  previous one too: everything there is served), isn't public, or doesn't say, or when a stopped bake left its part
+  file there (`.landscape-…part`, a full copy of that bake's tiles). A public deploy runs it and stops.
 
 The site is reached only over the owner's LAN and tailnet today ([deploy](../../deploy/README.md#remote-access)), so
 nothing serves the file further yet.
@@ -83,7 +86,9 @@ nothing serves the file further yet.
 
 `tiles/manifest.json`'s `"landscape"`, written last and atomically (the app fetches the manifest with `no-cache`). The
 app (S3a's base contributions) reads it; a contribution finds its source-layer in `layers`, and treats a missing
-source-layer as not built (its `suppresses` only applies once it's built).
+source-layer as not built (its `suppresses` only applies once it's built). `layers` lists exactly the file's
+source-layers, each with at least one feature (`check_entry` and `check` hold both to that), so an empty water export
+never hides Protomaps' water with nothing drawn in its place.
 
 ```json
 "landscape": {
@@ -100,6 +105,7 @@ source-layer as not built (its `suppresses` only applies once it's built).
                        "credit": ["© OpenStreetMap contributors", "Ada County Highway District"]},
     "water.reaches": {…}
   },
+  "empty": [],
   "attribution": "© OpenStreetMap contributors; Ada County Highway District; …",
   "licences": ["ODbL-1.0", "public-domain"],
   "republish": "internal", "access": "tailnet",
@@ -118,11 +124,12 @@ source-layer as not built (its `suppresses` only applies once it's built).
 | `file`, `digest` | the file under `/tiles/`, and the full digest its name is cut from |
 | `minzoom`, `maxzoom` | the zooms the file holds tiles at, inside z8–16: the vector source's |
 | `promoteId` | `"id"`, MapLibre's vector source option as it is (every source-layer has `id`) |
-| `layers` | by source-layer: its export (`plugin`, `layer`, `build`), geometry, features baked, the fields the tiles carry, its zoom range in the file, licence, republish and credits |
-| `attribution` | every layer's credit once, in layer order (the source's attribution; MapLibre shows it while one of its layers is visible) |
-| `licences` | every layer's licence, strictest first. An ODbL layer makes the tiles a derived database: published, they stay ODbL |
-| `republish`, `access` | the strictest layer's republish, and who may be served the file: `public` only when that's `yes` |
-| `inputs` | the export layers baked, `<plugin>/<layer>@<build>` |
+| `layers` | the built source-layers (each in the file, with at least one feature): its export (`plugin`, `layer`, `build`), geometry, features baked, the fields the tiles carry, its zoom range in the file, licence, republish and credits |
+| `empty` | the base layers read whose export held no features, sorted: not built, so not in the file or in `layers` |
+| `attribution` | every built layer's credit once, in layer order (the source's attribution; MapLibre shows it while one of its layers is visible) |
+| `licences` | every built layer's licence, strictest first. An ODbL layer makes the tiles a derived database: published, they stay ODbL |
+| `republish`, `access` | the strictest built layer's republish, and who may be served the file: `public` only when that's `yes` |
+| `inputs` | every export layer read, `<plugin>/<layer>@<build>`, empty ones included |
 | `budget` | the downtown z16 check: tiles with data, the largest and where, and whether roads was in |
 | `previous` | the file switched out, kept for clients still reading it and for `rollback`; null when there's none |
 
@@ -133,24 +140,31 @@ source-layer as not built (its `suppresses` only applies once it's built).
    a private plugin's source the bake's container can't see, doesn't hold it up. Every other manifest is checked in
    full, and its base layers' files with their sha256: one that fails refuses the bake, rather than dropping a
    contribution from the map.
-2. GDAL writes the tiles in a work folder. Each feature is checked as it's copied: its id, its geometry, its zoom.
-   The bake also checks that the file holds as many features as the manifest says.
-3. The file is read back: gzipped MVT at z8–16, the source-layers expected, and GDAL opens it. Then it's measured
-   against the budget.
-4. It's copied into the tiles folder under a hidden part name, with the bake's entry and credits in its metadata,
+2. **Nothing served is dropped unasked.** If the file served now has a source-layer this bake wouldn't build (its
+   plugin's newest export has no base layer, no longer has that one, or has it empty, or the plugin has no export at
+   all, as with `--archive` pointing at the wrong folder), the bake is refused (exit 2), naming each and why. That
+   includes switching a baked entry to empty. `--allow-drop` says it's meant; the served file is kept as `previous`,
+   so `rollback` brings it back. `status` says the same beforehand.
+3. GDAL writes the tiles in a work folder (a temporary folder unless `--work` says otherwise). Each feature is checked
+   as it's copied: its id, its geometry and its type, its zoom. The bake also checks that the file holds as many
+   features as the manifest says. A layer with no features gets no source-layer.
+4. The file is read back: gzipped MVT at z8–16, exactly the source-layers built, and GDAL opens it. Then it's
+   measured against the budget.
+5. It's copied into the tiles folder under a hidden part name, with the bake's entry and credits in its metadata,
    fsynced, and renamed to `landscape-<digest>.pmtiles`.
-5. The manifest's entry is replaced atomically. The file served until then becomes `previous`.
-6. Every other `landscape-*.pmtiles` is deleted, so **the last two are kept**.
+6. The manifest's entry is replaced atomically. The file served until then becomes `previous`, even when the entry
+   naming it is broken (another contract, say): clients may still be reading it.
+7. Every other `landscape-*.pmtiles` is deleted, so **the last two are kept**.
 
-A stopped bake leaves at most a part file, which the next bake removes. Two bakes can't overlap: each holds a lock
-file in the tiles folder. `rollback` switches the entry back to the previous file, from that file's own metadata,
-and keeps both.
+A stopped bake leaves at most a part file, which the next bake removes (and `check --public` reports until then). Two
+bakes can't overlap: each holds a lock file in the tiles folder. `rollback` switches the entry back to the previous
+file, from that file's own metadata, and keeps both.
 
 ## Commands
 
 ```bash
 python3 basemap/landscape/bake.py status --archive $TVT_ARCHIVE [--tiles DIR]   # what a bake would hold; exit 3: nothing
-python3 basemap/landscape/bake.py bake --tiles DIR [--archive DIR] [--work DIR] [--threads N]  # worker image
+python3 basemap/landscape/bake.py bake --tiles DIR [--archive DIR] [--work DIR] [--threads N] [--allow-drop]  # worker image
 python3 basemap/landscape/bake.py check --tiles DIR [--public]                   # the entry against the files
 python3 basemap/landscape/bake.py rollback --tiles DIR
 python3 -m unittest discover -s basemap/landscape -t .                          # the worker tests skip here
@@ -159,7 +173,8 @@ python3 -m unittest discover -s basemap/landscape -t .                          
 
 Exit codes: 0 done, or nothing to change; 1 `check` found a problem, or the writer failed; 2 refused (a missing
 folder, a broken export, a layer or feature that may not be baked, a file already named for this bake that isn't
-it); 3 nothing to bake (`status`); 4 over the budget, nothing switched in.
+it, or a served source-layer this bake would drop, without `--allow-drop`); 3 nothing to bake (`status`); 4 over the
+budget, nothing switched in.
 
 **On the VM.** The bake is a heavy job in the sprint's table (`--memory 2g --cpus 2`, any window, after each build).
 It's the last step of the refresh cascade after a new extract (osm-load, the builds, trails-match, the exports, then
@@ -168,19 +183,22 @@ production's (`deploy/scratch/README.md`). Its build name for the staleness mark
 
 ```bash
 /srv/tvt/work/bin/heavy --deadline 22:00 --runtime 20 --peak 1 "base bake (deploy)" \
-  docker run --rm --memory 2g --memory-swap 2g --cpus 2 --user "$(id -u):$(id -g)" \
-    -e PYTHONDONTWRITEBYTECODE=1 -e TZ=America/Boise -e TVT_ARCHIVE=/srv/archive \
-    -v /srv/tvt/repo:/repo:ro -v "$ARCHIVE_DIR":/srv/archive:ro -v "$TILES_DIR":/srv/tiles \
-    -v /srv/tvt/work/landscape:/work -w /repo \
-    tvt-worker python basemap/landscape/bake.py bake --tiles /srv/tiles --work /work
+  docker run --rm --memory 2g --memory-swap 2g --cpus 2 --network none --user "$(id -u):$(id -g)" \
+    -e HOME=/tmp -e PYTHONDONTWRITEBYTECODE=1 -e TZ=America/Boise -e TVT_ARCHIVE=/srv/archive \
+    -v /srv/tvt/repo:/repo:ro -v /srv/tvt/archive:/srv/archive:ro -v /srv/tvt/tiles:/srv/tiles -w /repo \
+    tvt-worker python basemap/landscape/bake.py bake --tiles /srv/tiles
 ```
 
-`ARCHIVE_DIR` and `TILES_DIR` are the ones in `deploy/.env` (the archive's default is `/srv/tvt/archive`). The
-tiles folder must be writable by the user the container runs as.
+The two host folders are `deploy/.env`'s `ARCHIVE_DIR` (Compose's default, `/srv/tvt/archive`, when the file doesn't
+set it) and `TILES_DIR`: change them here if the file says otherwise. Both must exist (`docker run -v` would create a
+missing one as root), and the tiles folder must be writable by the user the container runs as. GDAL writes in the
+container's own `/tmp` (about the file's size; it goes with the container), so there's no work folder to make or
+clean. The bake needs no network.
 
 The tests' exports are synthetic: FlatGeobuf files around downtown written with GDAL, and copies of the ground's
 PostGIS-written fixtures, with real manifests whose sources are checked against the repository's plugin.json files.
 `tests/pmt.py` writes small PMTiles files (runs, leaf directories, uncompressed directories) with the standard
 library, so the reader is tested apart from GDAL. The worker tests bake, read back with GDAL at several zooms, and
-check the ids, the per-feature zooms, the swap and pruning, the rollback, the budget (3,000 lots crowded into one
-downtown tile), and the refusals.
+check the ids, the per-feature zooms, the geometry types, an empty layer left out, the swap and pruning, a broken
+entry's file kept, the rollback, the budget (3,000 lots crowded into one downtown tile), the refused drops, and the
+refusals.

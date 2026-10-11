@@ -162,6 +162,7 @@ class BakeTest(unittest.TestCase):
         path = os.path.join(self.tiles, e["file"])
         self.assertTrue(P.FILE_RE.match(e["file"]))
         self.assertEqual(sorted(e["layers"]), ["roads.surfaces", "water.reaches"])
+        self.assertEqual(e["empty"], [])
         self.assertEqual(e["layers"]["water.reaches"]["features"], 3)
         self.assertEqual(e["layers"]["water.reaches"]["fields"],
                          {"id": "long", "kind": "string", "width": "float"})
@@ -316,10 +317,18 @@ class BakeTest(unittest.TestCase):
         self.assertEqual(self.bake()[0], 0)
         self.assertEqual(self.entry()["reason"], "every base layer is empty: water.reaches")
         roads(self.archive)
-        self.assertEqual(self.bake()[0], 0)
+        code, out, err = self.bake()
+        self.assertEqual(code, 0, err)
+        self.assertIn("empty, so not built: water.reaches", out)
         e = self.entry()
-        self.assertEqual(e["layers"]["water.reaches"]["features"], 0)
+        # An empty layer isn't built: it's not in the file or the entry's layers (the app treats it as not built,
+        # so water's suppresses don't apply), only in `empty`. The credits and access are the built layers'.
+        self.assertEqual((list(e["layers"]), e["empty"]), (["roads.surfaces"], ["water.reaches"]))
         self.assertEqual(e["layers"]["roads.surfaces"]["features"], 2)
+        self.assertNotIn("National Hydrography", e["attribution"])
+        self.assertIn("water/reaches@20261012T031500Z", e["inputs"])
+        meta = pmtiles.read_metadata(os.path.join(self.tiles, e["file"]))
+        self.assertEqual(bake.source_layers(meta), {"roads.surfaces"})
         # The file's zooms are those holding tiles (roads' surfaces from z14), in its header and its entry.
         h = pmtiles.read_header(os.path.join(self.tiles, e["file"]))
         self.assertEqual((e["minzoom"], e["maxzoom"], h.min_zoom, h.max_zoom), (14, 16, 14, 16))
@@ -329,7 +338,12 @@ class BakeTest(unittest.TestCase):
         self.assertEqual(bake.check(self.tiles), [])
         shutil.rmtree(os.path.join(self.archive, "water"))
         shutil.rmtree(os.path.join(self.archive, "roads"))
-        self.assertEqual(self.bake()[0], 0)
+        code, _, err = self.bake()                                # baked to empty: only when asked
+        self.assertEqual(code, 2)
+        self.assertIn("roads.surfaces (there's no export of roads). It would switch the landscape to empty", err)
+        self.assertEqual(self.entry(), e)
+        code, out, err = self.bake("--allow-drop")
+        self.assertEqual(code, 0, err)
         gone = self.entry()
         self.assertEqual((gone["status"], gone["previous"]), ("empty", e["file"]))
         self.assertEqual(P.files(self.tiles), [e["file"]])
@@ -337,6 +351,55 @@ class BakeTest(unittest.TestCase):
         code, out, _ = run("rollback", "--tiles", self.tiles)     # back from empty to the last bake
         self.assertEqual(code, 0)
         self.assertEqual((self.entry()["file"], self.entry()["previous"]), (e["file"], None))
+
+    def test_geometry_must_be_the_layers_type(self):
+        lines = [(line(CX, CY, CX + 10, CY), {"id": 1}),
+                 ("MULTILINESTRING((%s %s,%s %s),(%s %s,%s %s))" % (CX, CY, CX + 5, CY, CX, CY + 5, CX + 5, CY + 5),
+                  {"id": 2})]
+        cases = [("POINT(%s %s)" % (CX, CY), "Point"), (square(CX, CY, 10), "Polygon"),
+                 ("GEOMETRYCOLLECTION(LINESTRING(%s %s,%s %s))" % (CX, CY, CX + 1, CY), "Geometry Collection")]
+        for i, (wkt, kind) in enumerate(cases):
+            # A PostGIS export's header says Unknown, so only the features can tell.
+            export(self.archive, "water", f"2026101{i}T000000Z",
+                   [("reaches", "Unknown", [("id", "long")], lines + [(wkt, {"id": 3})],
+                     {"geometry": "LineString"})], [OSM, NHD])
+            code, _, err = self.bake()
+            self.assertEqual(code, 2, err)
+            self.assertIn(f"id 3 is a {kind}, not a LineString or its multi form", err)
+            self.assertIsNone(self.entry())
+        export(self.archive, "water", "20261019T000000Z",
+               [("reaches", "Unknown", [("id", "long")], lines, {"geometry": "LineString"})], [OSM, NHD])
+        code, _, err = self.bake()
+        self.assertEqual(code, 0, err)                                # LineString and MultiLineString both go in
+        self.assertEqual(set(at_zoom(os.path.join(self.tiles, self.entry()["file"]), 16)["water.reaches"]), {1, 2})
+
+    def test_a_bake_that_drops_a_served_layer_is_refused(self):
+        water(self.archive)
+        roads(self.archive)
+        self.assertEqual(self.bake()[0], 0)
+        before = self.entry()
+        # roads' newest export holds no base layer (a re-export of something else, say): its surfaces would vanish.
+        export(self.archive, "roads", "20261020T000000Z",
+               [("surfaces", "Polygon", SURFACE_FIELDS, SURFACES, {"base": False})], [OSM, ACHD])
+        code, out, _ = run("status", "--archive", self.archive, "--tiles", self.tiles)
+        self.assertIn("refused without --allow-drop: roads.surfaces (roads@20261020T000000Z has no base layer)", out)
+        code, _, err = self.bake()
+        self.assertEqual(code, 2)
+        self.assertIn(f"refused: {before['file']} is served with source-layer(s) this bake wouldn't build: "
+                      "roads.surfaces (roads@20261020T000000Z has no base layer). They would vanish", err)
+        self.assertEqual(self.entry(), before)
+        self.assertEqual(P.files(self.tiles), [before["file"]])
+        code, out, err = self.bake("--allow-drop")
+        self.assertEqual(code, 0, err)
+        self.assertIn("dropped roads.surfaces (--allow-drop)", out)
+        e = self.entry()
+        self.assertEqual((list(e["layers"]), e["previous"]), (["water.reaches"], before["file"]))
+        # A layer whose export is now empty is a drop too.
+        water(self.archive, build="20261021T000000Z", features=[])
+        code, _, err = self.bake()
+        self.assertEqual(code, 2)
+        self.assertIn("water.reaches (water/reaches@20261021T000000Z is empty). It would switch the landscape to "
+                      "empty", err)
 
     def test_feature_count_must_match_the_manifest(self):
         # PostGIS's ST_AsFlatGeobuf without its index states no count (and here no CRS): the bake counts.
@@ -378,6 +441,30 @@ class BakeTest(unittest.TestCase):
         self.assertIsNone(self.entry()["previous"])
         self.assertEqual(bake.check(self.tiles), [])
 
+    def test_a_broken_entry_keeps_the_file_it_serves(self):
+        water(self.archive)
+        self.assertEqual(self.bake()[0], 0)
+        a = self.entry()
+        with open(os.path.join(self.tiles, "manifest.json"), encoding="utf-8") as f:
+            m = json.load(f)
+        m["landscape"]["spec"] = 2                                    # a newer contract, say: not this bake's
+        with open(os.path.join(self.tiles, "manifest.json"), "w", encoding="utf-8") as f:
+            json.dump(m, f)
+        # The file it serves still says what it holds, so dropping water is refused all the same.
+        shutil.rmtree(os.path.join(self.archive, "water"))
+        roads(self.archive)
+        code, _, err = self.bake()
+        self.assertEqual(code, 2)
+        self.assertIn("water.reaches (there's no export of water)", err)
+        water(self.archive, build="20261014T031500Z")
+        code, _, err = self.bake()
+        self.assertEqual(code, 0, err)
+        self.assertIn("landscape entry is broken", err)
+        e = self.entry()
+        self.assertEqual(e["previous"], a["file"])                    # kept: clients may still be reading it
+        self.assertEqual(P.files(self.tiles), sorted([a["file"], e["file"]]))
+        self.assertEqual(bake.check(self.tiles), [])
+
     def test_status(self):
         code, out, _ = run("status", "--archive", self.archive, "--tiles", self.tiles)
         self.assertEqual(code, 3)
@@ -394,8 +481,9 @@ class BakeTest(unittest.TestCase):
         self.assertIn("(up to date)", out)
         water(self.archive, build="20261020T000000Z")
         code, out, _ = run("status", "--archive", self.archive, "--tiles", self.tiles)
-        self.assertIn("a bake would add water/reaches@20261020T000000Z and drop water/reaches@20261012T031500Z",
-                      out)
+        self.assertIn("a bake would read water/reaches@20261020T000000Z and no longer "
+                      "water/reaches@20261012T031500Z", out)
+        self.assertNotIn("--allow-drop", out)                     # a newer export of a layer drops nothing
 
     def test_check_finds_a_tampered_file(self):
         water(self.archive)

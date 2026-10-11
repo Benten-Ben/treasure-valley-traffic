@@ -35,9 +35,9 @@ class CheckTest(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.dir)
 
-    def fake_bake(self, roads=True, build="20261012T031500Z"):
-        """A landscape file as the bake leaves it (tiles in the budget's area, the entry in its metadata), switched
-        in like cmd_bake does."""
+    def fake_bake(self, roads=True, build="20261012T031500Z", layers=None):
+        """A landscape file as the bake leaves it (tiles in the budget's area, the entry in its metadata, its
+        source-layers in vector_layers), switched in like cmd_bake does. layers: other source-layers to list."""
         shutil.rmtree(self.archive)
         os.makedirs(self.archive)
         write_water(self.archive, build=build)
@@ -50,7 +50,9 @@ class CheckTest(unittest.TestCase):
         mine = {t: len(b) for t, b in tiles.items() if t[0] == 16}
         made = P.baked_entry(plan, digest, P.measure_budget(mine, plan.roads), "GDAL test")
         raw = pmt.write(os.path.join(self.dir, "raw.pmtiles"), tiles, {"vector_layers": []}, minzoom=8, maxzoom=16)
-        pmtiles.write_with_metadata(raw, os.path.join(self.tiles, made["file"]), bake.metadata_with({}, made))
+        vector_layers = [{"id": sid, "fields": {}} for sid in (made["layers"] if layers is None else layers)]
+        pmtiles.write_with_metadata(raw, os.path.join(self.tiles, made["file"]),
+                                    bake.metadata_with({"vector_layers": vector_layers}, made))
         old = P.current(self.tiles)
         entry = dict(made, previous=bake._previous(self.tiles, old, made["file"]))
         P.update_manifest(self.tiles, entry)
@@ -116,6 +118,23 @@ class CheckTest(unittest.TestCase):
         with open(os.path.join(self.tiles, "manifest.json"), "w", encoding="utf-8") as f:
             json.dump(m, f)
         self.assertIn("access must be 'tailnet'", bake.check(self.tiles)[0])
+
+    def test_the_files_source_layers_are_the_entrys(self):
+        e = self.fake_bake(layers=["roads.surfaces"])                 # water.reaches listed, but not in the file
+        self.assertEqual(bake.check(self.tiles),
+                         [f"{e['file']}: its source-layers ['roads.surfaces'] aren't the entry's layers "
+                          "['roads.surfaces', 'water.reaches']"])
+
+    def test_part_files_are_not_public(self):
+        e = self.fake_bake(roads=False)
+        self.assertEqual(bake.check(self.tiles, public=True), [])
+        part = f"{P.PART_PREFIX}{'ab' * 6}.pmtiles.4242.part"            # a bake stopped before its rename
+        shutil.copy(os.path.join(self.tiles, e["file"]), os.path.join(self.tiles, part))
+        self.assertEqual(bake.check(self.tiles), [])
+        problems = bake.check(self.tiles, public=True)
+        self.assertEqual(len(problems), 1)
+        self.assertTrue(problems[0].startswith(f"{part}: a stopped bake's part file"), problems)
+        self.assertEqual(run("check", "--tiles", self.tiles, "--public")[0], 1)
 
     def test_rollback(self):
         code, _, err = run("rollback", "--tiles", self.tiles)
