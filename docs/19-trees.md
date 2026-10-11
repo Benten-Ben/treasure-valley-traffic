@@ -482,9 +482,12 @@ build. Three things the experiments left open:
 - **Crops** come from farm's crop cover, as the landscape's crop class
   does (decision 15, Oct 8: crops in any state; pasture isn't crop): a
   watershed piece with half its cells or more in it is a crop, not
-  shrubs. Pieces rather than whole clumps, so the cut follows the field's
-  edge: a hedgerow touching a crop stays, and a small field touching
-  shrubland goes. The spike's own crop rule (the even, all-green, low
+  shrubs, and so is a piece mostly within 10 m of it (the cover's own
+  cells) when its clump is mostly crop: the outer rows of a field that the
+  cover's 10 m cells leave out (in the NY Canal box, 3,400 shrubs' worth,
+  nearly all within 5 m). Pieces rather than whole clumps, so the cut
+  follows the field's edge: a small field touching shrubland goes, and a
+  hedgerow touching a field keeps all but its first 10 m. The spike's own crop rule (the even, all-green, low
   25 m blocks) runs beside it as a check, and each build says how the two
   agree.
 - **The photo** sits a little off the lidar, by a shift each build

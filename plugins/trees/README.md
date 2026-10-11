@@ -53,7 +53,9 @@ from the land-cover spike's experiments on the ten test areas (Oct 8).
     cells (`params.photo_cover`).
   - **Crops** come from farm's crop cover (decision 15, Oct 8: its export's `crop_cover.tif`, band 1 the crop group,
     which must cover the whole area; `--crop` also takes a vector of crop fields). A watershed piece with half its
-    cells or more in it is a crop, so the cut follows the field's edge. The spike's own crop-field rule runs as a
+    cells or more in it is a crop, and so is one mostly within 10 m of it (the cover's own cells) when its clump is
+    mostly crop: a field's fringe that the 10 m cells leave out. So the cut follows the field's edge: a small field
+    touching shrubland goes, and a hedgerow touching a field keeps all but its first 10 m. The spike's own crop-field rule runs as a
     check: `crop_check` in `build.json` says how its fields and farm's agree, and `rule_shrubs` how many shrubs stand
     in its fields.
   - **Licence** (plan C3): the build takes each input's licence class, republish and credit (the lidar and NAIP from

@@ -18,11 +18,12 @@ lidar's 0.5 m grid (row 0 at the north):
 2. Clumps into pieces (pieces): the shrub heights' peaks, tallest first, each dropped when it stands closer to a kept
    one than half the two shrubs' model widths (the owner's spacing rule for trees); a watershed from the kept peaks
    splits each clump into pieces.
-3. Crops. The landscape's crop class comes from farm's fields (decision 15, Oct 8). A piece with at least half its
-   cells inside a crop field is a crop, not shrubs (split). Pieces, not whole clumps, so the cut follows the field's
-   edge: a crop clump that touches a hedgerow or a ditch bank's shrubs outside the field leaves them be, and they
-   don't keep it. The spike's own crop-field rule (field_rule: even, all-green, low 25 m blocks) stays as a check on
-   those fields; it no longer removes anything.
+3. Crops (crop_pieces). The landscape's crop class comes from farm's fields (decision 15, Oct 8). A piece with at
+   least half its cells inside a crop field is a crop, not shrubs; so is a piece mostly within 10 m of one (the crop
+   cover's own cells) when its clump is mostly crop: the field's fringe that the 10 m cells leave out. Pieces rather
+   than whole clumps, so the cut follows the field's edge: a small field touching shrubland goes, and a hedgerow or a
+   ditch bank's shrubs touching a field keep all but their first 10 m. The spike's own crop-field rule (field_rule:
+   even, all-green, low 25 m blocks) stays as a check on those fields; it no longer removes anything.
 4. Pieces into shrubs (split): a piece much bigger than a model shrub of its height is split again (k-means) into
    model-sized shrubs. Each shrub: the piece's top as its height, its equal-area width held within twice the
    model's spread, its centre, and its look, bush (mostly green: yard plantings, hedges, riparian thickets) or sage
@@ -63,6 +64,7 @@ WIDTH_CLAMP_SD = 2.0
 BUSH_GREEN_SHARE = 0.5
 # crops (decision 15) and the spike's crop-field rule, now a check
 CROP_PIECE_SHARE = 0.5           # a piece with this share of its cells in a crop field is a crop
+CROP_REACH_M = 10.0              # ... or that share within this of one, in a clump with that share in crops
 FIELD_BLOCK_CELLS = 50           # 25 m blocks
 FIELD_MIN_BAND_CELLS = 50
 FIELD_BAND_SHARE = 0.15
@@ -146,15 +148,32 @@ def shrub_cells(h, bld, bad, alive, n_ag, scat):
 
 
 def crop_pieces(seg, crop):
-    """Which pieces (labels of seg, 0 outside) are crops: at least CROP_PIECE_SHARE of their cells in a crop field. A
-    bool array indexed by label (label 0 never)."""
+    """Which pieces (labels of seg, 0 outside; a piece never spans two clumps) are crops: at least CROP_PIECE_SHARE of
+    their cells in a crop field; or, in a clump (8-connected) with at least that share of its cells in crop fields, at
+    least that share within CROP_REACH_M of one. Farm's crop cover has 10 m cells and keeps a field's edge cells only
+    where the CDL agrees, so a field's outer rows can fall just outside it (most of NY Canal's within 5 m, Oct 11); the
+    reach takes them with their field, and only there. A bool array indexed by label (label 0 never)."""
     n = int(seg.max())
     out = np.zeros(n + 1, bool)
-    if crop is None or n == 0:
+    if crop is None or n == 0 or not (crop & (seg > 0)).any():
         return out
-    size = np.bincount(seg.ravel(), minlength=n + 1)
-    inside = np.bincount(seg.ravel(), weights=(crop & (seg > 0)).ravel(), minlength=n + 1)
-    out = (inside >= CROP_PIECE_SHARE * size) & (inside > 0)
+    m = seg > 0
+    lab = seg.ravel()
+    size = np.bincount(lab, minlength=n + 1)
+    inside = np.bincount(lab, weights=(crop & m).ravel(), minlength=n + 1)
+    out = inside >= CROP_PIECE_SHARE * size
+    clump, nclump = ndi.label(m, structure=EIGHT)
+    csize = np.bincount(clump.ravel(), minlength=nclump + 1)
+    cinside = np.bincount(clump.ravel(), weights=(crop & m).ravel(), minlength=nclump + 1)
+    crop_clump = (cinside >= CROP_PIECE_SHARE * csize) & (cinside > 0)
+    crop_clump[0] = False
+    clump_of = np.zeros(n + 1, np.int64)
+    clump_of[seg[m]] = clump[m]
+    if crop_clump.any():
+        near = ndi.distance_transform_edt(~crop) * PX <= CROP_REACH_M
+        within = np.bincount(lab, weights=(near & m).ravel(), minlength=n + 1)
+        out |= crop_clump[clump_of] & (within >= CROP_PIECE_SHARE * size)
+    out &= size > 0
     out[0] = False
     return out
 
