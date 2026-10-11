@@ -3,7 +3,7 @@ heavy job (plan §4.4: --memory 6g, day windows):
 
     python plugins/trees/build/build_shrubs.py --area c --dsm .../dsm.tif --dtm .../dtm.tif --mask .../zero_mask_c.npy \\
       --photo .../naip2025/c.tif --points .../USGS_LPC_ID_SouthernGaps_D23_5630_8310.laz ... \\
-      --crop .../csb_mapbox.gpkg --crop-where "CDL2025 BETWEEN 1 AND 61 OR ..." \\
+      --crop $TVT_ARCHIVE/farm/export/<build>/crop_cover.tif \\
       --lidar "USGS 3DEP QL1 lidar (ID_SouthernGaps_D23)" --lidar-date 2023-10-24 --out $TVT_ARCHIVE/trees/shrubs/<id>
 
 Then `python3 -m ingest shrubs-load --build <out>` loads it.
@@ -18,10 +18,10 @@ Inputs, all on or onto the lidar products' 0.5 m grid (the DSM's):
   auto (the default) measures where its green best meets the lidar's trees (measure_shift); or give it in metres east
   and north. The green cut is the area's own (shrubs.ndvi_cut). A photo or crop raster in the grid's UTM zone on
   another datum (NAIP's NAD83) is read with a null datum shift (same_frame).
-- --crop: where crops grow, which shrubs leave alone: farm's fields (a vector of crop fields, or crop_cover.tif, where
-  band 1 > 0 is crop). Until farm's fields are built, CSB's crop fields (plan C7). --crop-where filters a vector's
-  features (OGR SQL). Without --crop no clump is called a crop; the crop-field rule still reports what it would have
-  dropped (crop_check in build.json).
+- --crop: where crops grow, which shrubs leave alone: farm's crop cover (its export's crop_cover.tif, where band 1,
+  the crop group, is above 0: crops in any state, decision 15), or a vector of crop fields (e.g. CSB's, filtered by
+  --crop-where, OGR SQL). The credits in a manifest.json beside it join the build's. Without --crop no clump is
+  called a crop; the crop-field rule still reports what it would have dropped (crop_check in build.json).
 - --skip-rect x0,y0,x1,y1 (grid CRS, repeatable): part of the grid that belongs to another area (downtown's box
   overlaps the North End's): shrubs centred there are left out, and so is that part of the area's outline.
 
@@ -29,8 +29,8 @@ Writes to --out: shrubs.geojson (WGS84 points: id, look, height_m, width_m, grou
 outline, settings, counts, the crop check and the score) and why.tif (uint8 per cell: 1 shrub, 2 speck, 3 skirt,
 4 gap, 5 crop; 0 elsewhere; for image sheets).
 
-Sources and credit: USGS 3D Elevation Program lidar and USDA NAIP (public domain); the crop fields' (CSB and CDL:
-public domain, USDA NASS). Nothing here reads a tree catalogue."""
+Sources and credit: USGS 3D Elevation Program lidar and USDA NAIP (public domain), and the crop cover's own inputs
+(farm's: CSB and CDL, public domain, and Sentinel-2). Nothing here reads a tree catalogue."""
 import argparse
 import datetime as dt
 import json
@@ -108,8 +108,9 @@ def read_onto(path, bands, tf, crs, shape, resampling, pad=0):
         for i, b in enumerate(bands):
             src = ds.read(b, window=win) if win is not None else ds.read(b)
             stf = ds.window_transform(win) if win is not None else ds.transform
+            # No destination nodata: with one, GDAL nudges a real 0 to the next float up (1e-45), so it isn't nodata.
             reproject(src, out[i], src_transform=stf, src_crs=src_crs, src_nodata=ds.nodata, dst_transform=dst,
-                      dst_crs=crs, dst_nodata=0, resampling=resampling)
+                      dst_crs=crs, dst_nodata=None, resampling=resampling)
     return out
 
 
@@ -219,6 +220,17 @@ def crop_mask(path, where, tf, crs, shape):
     return m > 0, {"crop_fields": len(geoms)}
 
 
+def crop_inputs(path):
+    """The crop input's own inputs, from the export manifest beside it (farm's export, the ground's contract): name,
+    licence, republish and credit of each, so the shrubs' build carries their credits. [] without a manifest."""
+    m = os.path.join(os.path.dirname(os.path.abspath(path)), "manifest.json")
+    if not os.path.exists(m):
+        return []
+    with open(m) as f:
+        man = json.load(f)
+    return [{k: i.get(k) for k in ("name", "licence", "republish", "credit", "version")} for i in man.get("inputs", [])]
+
+
 def parse_rect(s):
     v = [float(x) for x in s.split(",")]
     if len(v) != 4 or v[0] >= v[2] or v[1] >= v[3]:
@@ -303,7 +315,7 @@ def main(argv=None):
                     help="where the photo's features sit against the lidar's, metres east,north (whole cells), "
                          "or auto (measured; the default)")
     ap.add_argument("--photo-name", default="USDA NAIP", help="the photo, for the record")
-    ap.add_argument("--crop", help="crop fields: farm's fields (a vector) or crop_cover.tif (band 1 > 0)")
+    ap.add_argument("--crop", help="crops: farm's crop_cover.tif (band 1 > 0), or a vector of crop fields")
     ap.add_argument("--crop-where", help="OGR SQL filter on the crop vector's features")
     ap.add_argument("--skip-rect", type=parse_rect, action="append", default=[],
                     help="x0,y0,x1,y1 in the grid's CRS: another area's part (repeatable)")
@@ -355,6 +367,8 @@ def main(argv=None):
     log(f"rule: {int(shrub.sum()):,} shrub cells of {int(band.sum()):,} in the band")
 
     crop, crop_info = (np.zeros(shape, bool), {}) if not a.crop else crop_mask(a.crop, a.crop_where, tf, crs, shape)
+    crop_from = crop_inputs(a.crop) if a.crop else []
+    credit = "; ".join(dict.fromkeys([CREDIT] + [i["credit"] for i in crop_from if i.get("credit")]))
     drop_crop, crop_clumps = S.crop_clumps(shrub, crop)
     field, blocks_first, blocks = S.field_rule(h, bld, alive)
     m = shrub & ~drop_crop
@@ -420,7 +434,7 @@ def main(argv=None):
               "rule": {"band_m": list(S.BAND_M), "plant_returns": S.PLANT_RETURNS, "plant_scatter": S.PLANT_SCATTER,
                        "ground_h_m": S.GROUND_H, "knn": cloud.KNN, "edge_m": S.EDGE_CELLS * S.PX,
                        "crop_clump_share": S.CROP_CLUMP_SHARE},
-              "credit": CREDIT}
+              "crop_inputs": crop_from, "credit": credit}
     build = {"build_id": os.path.basename(os.path.normpath(a.out)), "area": a.area, "started_at": started.isoformat(),
              "finished_at": dt.datetime.now(dt.timezone.utc).isoformat(), "geom": geom, "params": params,
              "counts": counts}

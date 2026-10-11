@@ -178,6 +178,7 @@ class BuildTest(unittest.TestCase):
         self.assertEqual(p["rule"]["band_m"], [0.3, 2.4])
         self.assertEqual(p["width"]["bush"]["a"], 1.478)
         self.assertEqual(self.build["counts"]["cloud"]["above_ground"], 6000)
+        self.assertEqual((p["crop_inputs"], p["credit"]), ([], "U.S. Geological Survey, 3D Elevation Program; USDA NAIP"))
 
     def test_the_loader_reads_it(self):
         from plugins.trees.ingest import shrubs_load
@@ -224,6 +225,35 @@ class ShiftTest(unittest.TestCase):
         self.assertTrue(B.same_frame("EPSG:32611", "EPSG:6340"))
         self.assertFalse(B.same_frame("EPSG:5070", "EPSG:6340"))
         self.assertFalse(B.same_frame("EPSG:26912", "EPSG:6340"))
+
+
+@unittest.skipIf(np is None, "PDAL/GDAL/rasterio/NumPy/pyproj not installed (run in the worker image)")
+class CropCoverTest(unittest.TestCase):
+    def test_farms_crop_cover_on_its_own_10_m_grid(self):
+        import build_shrubs as B
+        from rasterio.crs import CRS
+        with tempfile.TemporaryDirectory(dir="/tmp") as d:
+            path = os.path.join(d, "crop_cover.tif")
+            bands = np.zeros((3, 10, 10), np.uint8)
+            bands[0, 3:5, 3:5] = 1                        # corn in a 20 m square, 30-50 m in from the cover's corner
+            bands[1], bands[2] = 1, 1
+            with rasterio.open(path, "w", driver="GTiff", width=10, height=10, count=3, dtype="uint8",
+                               crs="EPSG:32611", transform=from_origin(X0 - 20, Y1 + 20, 10, 10)) as ds:
+                ds.write(bands)
+            m, info = B.crop_mask(path, None, from_origin(X0, Y1, PX, PX), CRS.from_epsg(6340), (N, N))
+            self.assertEqual(info, {"crop_raster": "crop_cover.tif"})
+            self.assertEqual(int(m.sum()), 1600)          # 20 m x 20 m of 0.5 m cells, 10-30 m in from the grid's
+            self.assertTrue(m[20:60, 20:60].all())
+            self.assertEqual(B.crop_inputs(path), [])
+            json.dump({"inputs": [
+                {"name": "csb", "licence": "public-domain", "republish": "yes", "credit": "USDA NASS CSB",
+                 "version": "rev23", "sha256": "x"},
+                {"name": "sentinel-2", "licence": "Copernicus", "republish": "yes",
+                 "credit": "Contains modified Copernicus Sentinel data 2025"}]},
+                open(os.path.join(d, "manifest.json"), "w"))
+            ins = B.crop_inputs(path)
+            self.assertEqual([i["credit"] for i in ins], ["USDA NASS CSB", "Contains modified Copernicus Sentinel data 2025"])
+            self.assertNotIn("sha256", ins[0])
 
 
 if __name__ == "__main__":
