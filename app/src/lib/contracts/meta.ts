@@ -36,6 +36,15 @@ export interface DataVersions {
 	calibrations: string | null;
 	/** The basemap build (manifest dates), when the server can see the manifest. */
 	tiles: string | null;
+	/**
+	 * Toggled layers' tile versions, `'<plugin>.<layer>'` → version: each
+	 * layer's newest row in `core.layer_version` (migration 0020), for
+	 * `/api/<plugin>/tiles/<layer>/{z}/{x}/{y}?v=` (#lib/contracts/layer-tiles).
+	 * A layer with no build yet isn't listed. Optional (added in the
+	 * landscape sprint, so the contract stays 1): absent from older servers,
+	 * empty before migration 0020 or without the database.
+	 */
+	layers?: Record<string, string>;
 }
 
 export interface DataMeta {

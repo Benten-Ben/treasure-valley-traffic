@@ -5,7 +5,9 @@ import { join } from 'node:path';
 import type { DbPart } from './versions.js';
 
 vi.mock('$app/env/private', () => ({ DATABASE_URL: undefined, FRAMES_DIR: '/nonexistent', TVT_FRAME_SOURCE: 'fixture' }));
-const { assembleMeta, dataMeta, readTiles, resetMetaCache, shortHash } = await import('./versions.js');
+const { assembleMeta, dataMeta, readDatabase, readTiles, resetMetaCache, shortHash } = await import('./versions.js');
+const { META_CONTRACT } = await import('#lib/contracts/meta.js');
+const { layerTilesUrl, layerVersion } = await import('#lib/contracts/layer-tiles.js');
 
 const part = (over: Partial<DbPart> = {}): DbPart => ({
 	gtfs: { feedVersion: '457', routes: 20, updatedAt: 1_759_700_000 },
@@ -73,5 +75,59 @@ describe('/api/meta', () => {
 		expect(await readTiles(join(dir, 'missing'))).toBeNull();
 		expect(shortHash('x')).toHaveLength(12);
 		await rm(dir, { recursive: true, force: true });
+	});
+
+	it('stays contract 1: the versions as before, plus the optional layers', () => {
+		const m = assembleMeta(1, 'ok', part(), null);
+		expect(META_CONTRACT).toBe(1);
+		expect(m.contract).toBe(1);
+		expect(Object.keys(m.versions).sort()).toEqual(['calibrations', 'cameras', 'gtfs', 'layers', 'ribbons', 'roads', 'tiles']);
+		expect(Object.keys(m).sort()).toEqual(
+			['calibrations', 'cameras', 'contract', 'database', 'generatedAt', 'gtfs', 'progress', 'ribbons', 'roads', 'tiles', 'versions']
+		);
+		// Layer versions change nothing a client written before them reads.
+		const { layers, ...before } = m.versions;
+		const { layers: withLayers, ...after } = assembleMeta(1, 'ok', part({ layers: { 'soils.units': 's1' } }), null).versions;
+		expect(layers).toEqual({});
+		expect(withLayers).toEqual({ 'soils.units': 's1' });
+		expect(after).toEqual(before);
+	});
+
+	it("reports toggled layers' versions as their builds wrote them", () => {
+		const m = assembleMeta(1, 'ok', part({ layers: { 'soils.units': '20261011T0412Z-3fa9c1', 'farm.crop_fields': 'b7' } }), null);
+		expect(m.versions.layers).toEqual({ 'soils.units': '20261011T0412Z-3fa9c1', 'farm.crop_fields': 'b7' });
+		expect(m.versions.roads).toBe(assembleMeta(1, 'ok', part(), null).versions.roads);
+		expect(layerVersion(m, 'soils', 'units')).toBe('20261011T0412Z-3fa9c1');
+		expect(layerVersion(m, 'trails', 'paths')).toBeNull();
+		expect(layerVersion(null, 'soils', 'units')).toBeNull();
+		expect(layerVersion({ versions: { ...m.versions, layers: undefined } }, 'soils', 'units')).toBeNull();
+		expect(layerTilesUrl('https://x', 'soils', 'units', m)).toBe('https://x/api/soils/tiles/units/{z}/{x}/{y}?v=20261011T0412Z-3fa9c1');
+		expect(layerTilesUrl('https://x', 'trails', 'paths', m)).toBe('https://x/api/trails/tiles/paths/{z}/{x}/{y}');
+		expect(assembleMeta(1, 'error', null, null).versions.layers).toEqual({});
+	});
+
+	it('reads each layer\'s newest version, and none before migration 0020', async () => {
+		const seen: string[] = [];
+		const fake = (layerTable: boolean) =>
+			(async (strings: TemplateStringsArray) => {
+				const text = strings.join('$').replace(/\s+/g, ' ');
+				seen.push(text);
+				if (text.includes('to_regclass')) return [{ layer_versions: layerTable }];
+				if (text.includes('core.layer_version'))
+					return [
+						{ layer: 'soils.units', version: 's2' },
+						{ layer: 'trails.paths', version: 't1' }
+					];
+				return [];
+			}) as unknown as Parameters<typeof readDatabase>[0];
+		const after = await readDatabase(fake(true));
+		expect(after.layers).toEqual({ 'soils.units': 's2', 'trails.paths': 't1' });
+		expect(seen.some((t) => t.includes('to_regclass(\'core.layer_version\')'))).toBe(true);
+		expect(seen.find((t) => t.includes('from core.layer_version'))).toContain('distinct on (layer) layer, version from core.layer_version order by layer, id desc');
+		seen.length = 0;
+		const before = await readDatabase(fake(false));
+		expect(before.layers).toEqual({});
+		expect(seen.some((t) => t.includes('from core.layer_version'))).toBe(false);
+		expect(assembleMeta(1, 'ok', before, null).versions.layers).toEqual({});
 	});
 });

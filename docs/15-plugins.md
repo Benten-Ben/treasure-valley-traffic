@@ -140,6 +140,13 @@ How the pieces plug in:
   private folder. One catch-all API route, `/api/<plugin>/…`, hands requests
   to the plugin's handlers, so today's URLs (`/api/transit/…`,
   `/api/cameras/…`) stay the same.
+- **Tiles for toggled layers** (landscape sprint, Oct 2026): a plugin
+  exports its layers' tile definitions from
+  `app/src/lib/server/<plugin>/tiles.ts` (the MVT layers, each read from
+  one table or view per zoom band), and core's one route serves them at
+  `/api/<plugin>/tiles/<layer>/{z}/{x}/{y}?v=`. Each build that changes a
+  layer adds a row to `core.layer_version` (`ingest/layer_version.py`), in
+  the same transaction as its data; that row's version is the layer's `?v=`.
 
 ## 15.3 Private plugins
 

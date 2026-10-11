@@ -61,7 +61,7 @@ a package's environment.
 |---|---|
 | `src/routes/(map)/` | The map layout (MapHost and the chrome) and its pages; `calibrate/[id]` is Calibrate mode on the same map |
 | `src/routes/v1/calibrate/[id]/` | The old calibrator, kept until the owner has saved a calibration with the new one |
-| `src/routes/api/` | `meta`, `transit/{network,tracks}`, `cameras` (and `views`, `live`, `status`, `[id]`), `calibrations`, `views/[id]/{calibrations,frame,live/[sha]}`, `roadweather`, `tiles/roads`, `health` |
+| `src/routes/api/` | `meta`, `transit/{network,tracks}`, `cameras` (and `views`, `live`, `status`, `[id]`), `calibrations`, `views/[id]/{calibrations,frame,live/[sha]}`, `roadweather`, `tiles/roads`, `health`; `[plugin]/tiles/[layer]/…` serves every toggled layer's tiles (#lib/server/mvt) |
 | `src/lib/app/` | Boot (manifest and `/api/meta` before the map exists), the app context, cleanup |
 | `src/lib/components/MapHost.svelte` | Creates the one map |
 | `src/lib/map/` | Style, the Valley and Clay flavors, colors, layer order, the picker, the render loop, buildings |
@@ -72,7 +72,7 @@ a package's environment.
 | `src/lib/state/` | View, modes, windows, history, follow, clock, selection, polling, saved settings |
 | `src/lib/ui/` | The chrome: top bar, toolbar, legends, inspect card, windows, phone sheet and tab bar, keys and help |
 | `src/lib/contracts/` | The JSON contracts shared by server and client |
-| `src/lib/server/` | Database, data versions, tiles, frames, the capture archive, the 511 fetcher and robots.txt, transit queries |
+| `src/lib/server/` | Database, data versions, tiles (`road-tiles.ts`; `mvt.ts` for toggled layers, with each plugin's definitions in `<plugin>/tiles.ts`), frames, the capture archive, the 511 fetcher and robots.txt, transit queries |
 | `src/lib/perf/` | Performance marks and the `?perf` HUD |
 | `scripts/` | The harness: seeds, the fake archive, database clones, the e2e server, `perf.mjs`, `bundle-budget.mjs`, `review-page.mjs` |
 | `tests/e2e/` | Browser specs, one tag per package (`@wp0` … `@wp17`) |
