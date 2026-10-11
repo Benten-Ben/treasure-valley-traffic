@@ -193,4 +193,12 @@ scratch database now and production at deploy without asking NIFC again:
 
 A fire discovered from Jul 25 to Jul 31, 2025 is after the photo but outside
 the approved window, so it's drawn only if the poller holds it (RANGE is held).
-The read's folder is kept on the server, outside this repository.
+The read's folder is kept on the server with the other downloaded sources
+(`/srv/tvt/work/sources/nifc-wfigs-backfill/`), outside this repository.
+
+**Deploying.** The ingest service applies `0001` at start, and `burn_scars`
+then runs within the hour. The deploy runbook adds one step after the grants:
+load the read into production as `tvt_build`, in a capped container with the
+read's folder mounted read-only (`wfigs-backfill --load <folder>`), then
+`burn-scars --list` to see the scars. A scratch refresh replaces the scratch
+copy's `raw.record`, so the read is loaded there again after each refresh.
