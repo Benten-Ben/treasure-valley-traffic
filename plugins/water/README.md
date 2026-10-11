@@ -1,6 +1,8 @@
 # water
 
-Rivers, floods, snow, swimming water and drought around the valley: part
+The valley's water network (hydrography: rivers, creeks, canals, ponds and
+their gauges; [below](#hydrography-the-water-network)), and the pollers for
+rivers, floods, snow, swimming water and drought around the valley: part
 of "Wave A: start the clocks"
 ([docs/17 §17.4](../../docs/17-sources-for-new-plugins.md#174-proposed-order-with-rough-effort)).
 Each of these sources keeps only its current state or a short window
@@ -9,11 +11,12 @@ the latest sampling round; the hazards layer: each point's current
 status), so history exists only if we poll. Ingest only, standard library,
 no keys, no UI yet. The owner approved starting these on Oct 7, 2026.
 
-Everything goes into core's tables: readings into `raw.record` (until a
-core readings table lands, docs/17 Q8) and lifecycles into `evt.event`
-(through `ingest/events.py`). No migrations of its own. Cut to the ring
-(W −117.30, S 42.90, E −115.60, N 44.30), the regional ring adopted for
-the new plugins (docs/17 Q19).
+These pollers write only core's tables: readings into `raw.record` (until
+a core readings table lands, docs/17 Q8) and lifecycles into `evt.event`
+(through `ingest/events.py`); the hydrography has the `water` schema.
+They're cut to the ring (W −117.30, S 42.90, E −115.60, N 44.30), the
+regional ring adopted for the new plugins (docs/17 Q19); the hydrography
+and the IDWR layers to the map box.
 
 | Source | Runs | License | Credit | Republish |
 |---|---|---|---|---|
@@ -155,3 +158,193 @@ state no license: used internally with credit until the City answers a
 courtesy note (docs/17 Q17). Hazards and water quality are shown in the
 agencies' own words ("never deemed completely safe to float"); we never
 say "safe".
+
+## Hydrography: the water network
+
+One water network for the map (landscape sprint package P4-data, Oct 11,
+2026; the owner's decisions 17 and 19, Oct 8): **OpenStreetMap's geometry
+carrying NHD's facts**, NHD-only pieces kept and drawn lighter, canals with
+their topology, the gauges that measure them, and the base layers and the
+ground's water mask exported for the base bake and the ground. The Water
+layer and its cards are P4-app's; the canal season is P5's.
+
+| Source | Kind | What | Licence | Republish |
+|---|---|---|---|---|
+| `nhd_hr` | by hand | USGS NHD High Resolution, HU4 1705 (product of 2023-12-09), cut to the map box, with NHDFlow | public domain; credit "USGS National Hydrography Dataset" | yes |
+| `hydroshare_canals` | by hand | The Treasure Valley Irrigation System (HydroShare, 2022): 2,743 named canal, lateral, drain and field-supply lines in the box | CC BY 4.0: Tatum, Bittmann, Stone, Kaiser (2022), doi:10.4211/hs.24a5f761bf4f41fb9b872b130d9d1a3f, "modified" | yes |
+| `osm_waterways` | OpenStreetMap consumer | waterways, water areas, wetlands, springs, reservoirs and basins, swimming pools (decision 2b) | ODbL; "© OpenStreetMap contributors" | yes |
+| `idwr_irrigation_orgs` | every 30 days | IDWR's irrigation organizations: 59 service areas touching the box, without the `Owner` field | none stated (IDWR's disclaimer); credit IDWR | **internal** |
+| `idwr_season_of_use` | every 90 days | IDWR's season of use: the legal irrigation season's 4 zones touching the box | none stated (IDWR's disclaimer); credit IDWR | **internal** |
+
+- **NHD**: the HU4 zip was downloaded once more on Oct 11 with the owner's
+  OK (19c), from the same S3 URL (same ETag and sha256 as Oct 8), to keep
+  NHDFlow. robots.txt: 404 (no rules). It's kept whole on the server for a
+  later cut to the regional ring. Its geometry is mostly 1:24,000 topo-era,
+  with Lower Boise canal updates in 2013–15. NAD83 is read as WGS 84, the
+  ground's datum policy ([basemap/ground](../../basemap/ground/README.md)).
+- **HydroShare**: downloaded once by hand on Oct 8 (its download path is
+  closed to robots, behind a licence click; [farm.md](../../docs/sources/farm.md#treasure-valley-irrigation-system-hydroshare-canal-network)).
+  A static 2022 snapshot, with no scripted refresh. Untrusted: the worker
+  unpacks the bag and its 7z into new empty folders, checks the bag's MD5
+  manifest, and parses none of its XML. It names canals and is evidence;
+  it's never geometry.
+- **OpenStreetMap**: core's loader ([ingest/osm_extract.py](../../ingest/osm_extract.py))
+  reads the held extract's valley cut. 14,087 objects (Oct 5 extract): 7,406
+  lines, 6,443 areas (4,795 of them pools, which decision 2b counted) and 238
+  nodes. Water isn't part of the highway partition, so it loads whichever
+  extract it's given; the build records the MD5 it read. The box's Oregon
+  slice has no OpenStreetMap data, so NHD alone draws it.
+- **IDWR**: both layers checked Oct 11 through `ingest/http.py` with our
+  User-Agent ([`ingest/idwr.py`](ingest/idwr.py)): robots.txt answers with a
+  redirect to an HTML "Not Found" page (no rules); each item's licence field
+  is IDWR's disclaimer, with no licence granted; Query and Extract only.
+  Internal: they're read only into `water.idwr_*` and the side tables a
+  canal card reads, never an export or the base map (the bake refuses any
+  input from an `idwr_*` source). The `Owner` field is never requested. A
+  courtesy note to IDWR covering both is drafted with the private files
+  for the owner to send.
+
+### Tables (migration 0001)
+
+| Table | What | Licence |
+|---|---|---|
+| `water.load` | each NHD and HydroShare load: file, sha256, prepare.json, counts | |
+| `water.nhd_flowline`, `nhd_polygon`, `nhd_line`, `nhd_point`, `nhd_flow` | NHD as prepared: flowlines with Strahler order, flags and visibility filter; waterbodies and areas; dam and flume lines; springs, waterfalls, gauging stations and point events; NHDFlow | public domain |
+| `water.hydroshare_canal` | HydroShare's lines in the box | CC BY 4.0 |
+| `water.osm_feature` | OpenStreetMap's water, keyed by type, id and shape, versioned in place (plan C2) | ODbL |
+| `water.idwr_org`, `water.idwr_season` | IDWR's layers, replaced whole each run (a snapshot under half of what's held is refused) | **internal** |
+| `water.build` | each build: its inputs (sha256s, the extract's MD5, IDWR's fetch times), settings and counts | |
+| `water.reach` | every drawn line: kind (river, stream, canal, lateral, ditch, drain), name and where it came from, flow (perennial, intermittent, ephemeral, unknown), piped, width and how we know it, Strahler order, first zoom, geometry_from (osm, nhd), confirmed, the canal and the distance from its head, length | ODbL |
+| `water.reach_link` | which reach flows into which: `end`, `branch` (a lateral leaving its canal), `joins` (a drain joining a canal), `nhdflow`; `at_m` along the upstream reach | ODbL |
+| `water.reach_evidence` | how we know each reach: its geometry's source, NHD's facts it carries, and every other source that agrees, with the share of its length and the median distance | ODbL |
+| `water.body` | every drawn area: kind (lake, reservoir, pond, river, canal, basin, wastewater, wetland, pool, water, dock), intermittent, area, first zoom, geometry_from, confirmed, gauge | ODbL |
+| `water.structure` | dams, weirs, lock and sluice gates, waterfalls, springs and gauges, with the reach each sits on | ODbL |
+| `water.canal` | one row per named canal (its connected reaches of one name): kind (main canal, canal, lateral, ditch, drain), length, piped length, head reach and structure, source (river, reservoir, canal, unknown), gauge, sources | ODbL |
+| `water.gauge` | each NWPS gauge in the box and the reach, body or canal it measures | public domain |
+| `water.canal_org`, `water.canal_season` | the IDWR service areas each canal runs through (share of its length; whether its head is in it), and the legal season at its head | **internal** |
+
+Evidence lives in `water.reach_evidence`, not `core.source_link`: that
+table's key allows one entity per source record, and one NHD flowline runs
+along several OpenStreetMap ways.
+
+### The build
+
+`python3 -m ingest water-build` ([`ingest/build.py`](ingest/build.py)), by
+hand, never inside `ingest serve` (a run of the build `water-build`; the
+loads mark it, and it marks `water-export`). In PostGIS, in UTM 11N metres:
+
+1. NHD's flowlines, clipped to the map box, are cut into equal pieces of
+   25 m or less. A piece is matched when its middle lies within 20 m of an
+   OpenStreetMap waterway line, or of an OSM water area.
+2. Every OSM waterway way is a reach with OSM's geometry. It takes NHD's
+   facts (the GNIS name when OSM has none, perennial or intermittent when
+   OSM doesn't say, Strahler order, reach code, visibility filter) from the
+   NHD flowline of a like class that is 70% or more matched (the design's
+   rule) and covers half the way or more. A way half of whose length or
+   more lies within 20 m of NHD is `confirmed`.
+3. An unmatched NHD run 100 m or longer is an NHD-only reach. Where it
+   leaves or rejoins the OSM way it was matched to, its end is carried onto
+   that way, so a lateral OSM lacks starts on the canal OSM draws.
+   Artificial paths through lakes and rivers, and connectors, aren't drawn.
+4. HydroShare names the canal reaches OSM and NHD leave unnamed, where one
+   of its lines runs along half the reach within 20 m.
+5. Kinds, flow, widths and first zooms come from [`ingest/rules.py`](ingest/rules.py).
+   Named canal reaches within 500 m of each other form one canal; one 20 km
+   or longer in the box is a main canal ⚠️ (our threshold). An OSM stream
+   named "... Canal" is a canal.
+6. Topology: links from endpoints and NHDFlow. OSM draws waterways
+   downstream, and NHD's flowdir 1 says the same. Each canal's head is the
+   reach from which most of the canal is reached; each reach gets its
+   distance from the head. A canal's source is the river, reservoir or
+   canal its head leaves (a link, or within 50 m), and its head structure
+   the dam, weir or gate within 150 m.
+7. Bodies: OSM's water areas, wetlands and pools; NHD's lakes, ponds,
+   reservoirs, marshes and river and canal polygons where OSM water covers
+   less than half of them. Structures: OSM's and NHD's (NHD's within 50 m of
+   OSM's of the same kind dropped), and the NWPS gauges.
+8. Gauges: the water a gauge's name says, within 1.5 km (a body for
+   "Reservoirs at ..." and "above ... Dam", a river or creek for a river
+   name, the canal for "... Canal Diversion"), else the nearest reach within
+   300 m.
+9. When IDWR's tables hold rows: `canal_org` and `canal_season` (internal).
+
+**Widths are estimates ⚠️** until measured from NAIP 2025's near-infrared:
+perennial streams by Strahler order (1: 1 m, 2: 1.5, 3: 2.5, 4: 4, 5: 6,
+6: 9, 7+: 14 m), intermittent ones half that (at least 0.75 m); canals by
+kind (main canal 8 m, named canal 5, lateral 2.5, ditch or unnamed 1.5,
+drain 3); an OSM width tag of 0.5–40 m over either. **First zooms**:
+perennial streams by NHD's visibility filter (1:1M z8, 500k z9, 250k z10,
+100k z11, 75k z12, finer z13), rivers by z9, intermittent streams z12
+(order 3+) or z13; main canals z10, named canals z11, laterals and drains
+z12, ditches and unnamed canals z13, NHD-only canals a zoom later; piped
+water z16 only; bodies by size (1 km² z8, 10 ha z10, 1 ha z11, else z13),
+river polygons z8, wetlands z14, pools z15.
+
+On scratch (Oct 11, build 8, about 2.5 minutes as a light job): 14,604
+reaches (7,286 OSM ways, 3,929 km, 6,520 of them confirmed by NHD; 7,318
+NHD-only runs, 8,351 km, of which 2,092 km canals and laterals and the rest
+mostly intermittent desert washes), 9,490 named (2,201 by HydroShare), 804
+canals (22 main), 7,736 bodies (4,795 pools; 1,311 NHD-only), 866
+structures, and all 13 gauges in the box linked: BSEI1 to the New York
+Canal, whose head is the Boise Diversion Dam on the Boise River; LOWI1 to
+Lake Lowell; LUCI1 to Lucky Peak Reservoir; the Boise, Snake, Mores Creek
+and Succor Creek gauges to their rivers. The New York Canal is two canals
+here, as it is on the ground: its lower part leaves Indian Creek.
+
+The schema is about 74 MB with its indexes on scratch; each export about
+21 MB in the archive.
+
+### Exports and the base bake
+
+`python3 -m ingest water-export` ([`ingest/export.py`](ingest/export.py))
+writes `$TVT_ARCHIVE/water/export/<build>/` through the ground's export
+contract, from the newest build (a run of `water-export`, which marks
+`landscape-bake`):
+
+| Layer | Base | Fields | What |
+|---|---|---|---|
+| `reaches` | yes | `id` (stable across builds: an OSM way's id, an NHD run's 2^51 + a hash), `kind`, `name` ('' for none), `width_m`, `intermittent`, `piped`, `nhd_only`, `canal` (0 for none), `minzoom` | every drawn line, the source-layer `water.reaches` |
+| `bodies` | yes | `id`, `kind`, `name`, `intermittent`, `nhd_only`, `minzoom` | every drawn area, `water.bodies` |
+| `mask` | no | `kind` | the ground's confident water: every body but wetlands, and the reaches OSM draws or both sources agree on, buffered to their widths, with piped water and intermittent channels left out |
+
+All three are ODbL, republish yes, credited to OpenStreetMap, NHD and (when
+its names are used) HydroShare. IDWR is never an input. Exported columns
+are never NULL: PostGIS 3.6.4's `ST_AsFlatGeobuf` writes the value after a
+NULL under the NULL column's index, so a reader gets the wrong field or
+fails on the feature; names export as '' and canals as 0.
+
+A trial bake on scratch (Oct 11, `--threads 1`, about a minute): 17.5 MB,
+z8–16, the largest tile 21 KB at z10 and under 2 KB at z16.
+
+### Commands
+
+```bash
+# the worker image (GDAL), no network: files to files
+python plugins/water/build/prepare.py nhd --zip $TVT_SOURCES/nhd/download/NHD_H_1705_HU4_GDB.zip --out DIR
+python plugins/water/build/prepare.py hydroshare --zip $TVT_SOURCES/hydroshare/<id>.zip --out DIR
+# the ingest image (standard library)
+python3 -m ingest nhd-load --from DIR/nhd.gpkg              # replaces water.nhd_*; skips a file already loaded
+python3 -m ingest hydroshare-load --from DIR/hydroshare.gpkg
+python3 -m ingest osm-load --only water.osm_waterways        # on the valley cut we hold (light)
+python3 -m ingest run idwr_irrigation_orgs idwr_season_of_use
+python3 -m ingest water-build [--dry-run]
+python3 -m ingest water-export
+python3 -m unittest discover -s plugins/water -t .           # with TVT_TEST_DATABASE_URL for the database tests
+/srv/tvt/work/bin/worker-test -C <checkout> plugins.water.tests.test_prepare
+```
+
+**Deploying** (the runbook's loads, as `tvt_build`, after migration water
+0001): copy the two prepared GeoPackages (or prepare them again from
+`/srv/tvt/work/sources/`) into `$TVT_ARCHIVE/water/prepared/`, with the
+NHD zip and its PROVENANCE moving to `$TVT_ARCHIVE/water/nhd/`; then
+nhd-load, hydroshare-load, `osm-load --only water.osm_waterways` (light on
+the cut production holds), the two IDWR sources once, water-build,
+water-export, and the base bake. After a new extract, `osm-load` reloads
+the water consumer with the rest, and water-build follows (the refresh
+cascade).
+
+**Limits ⚠️**: widths are estimates; NHD-only canals are topo-era and some
+are piped or gone (they draw lighter, and the card says so); 1,139 of OSM's
+canal ways are culverts or pipes; OSM's names vary ("A line Canal");
+`canal_org` lists the service areas a canal runs through, not who runs it,
+and service areas overlap; the main-canal threshold is ours.
