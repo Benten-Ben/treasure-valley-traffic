@@ -16,6 +16,10 @@
 -- anything kept across builds (cards, links) keys on the OpenStreetMap way (osm_id) and ACHD's segment, never
 -- on a piece's id.
 --
+-- The tables reference each other by the build's ids (piece_id, junction_id) without foreign keys, but
+-- roads.xsection's: they're replaced together, and a delete checking six tables for each of 70,000 pieces made
+-- a rebuild's clearing take minutes.
+--
 -- Geometry is in EPSG:32611 (UTM 11N on WGS 84: the ground's grid and the export contract's CRS), in metres.
 --
 -- Licence: the geometry is OpenStreetMap's (ODbL: a derived database, credit "© OpenStreetMap contributors"),
@@ -140,8 +144,8 @@ comment on table roads.junction is
 create table roads.surface (
   id              int primary key,
   kind            text not null check (kind in ('carriageway', 'junction', 'deck', 'median', 'island')),
-  piece_id        int references roads.piece on delete cascade,
-  junction_id     int references roads.junction on delete cascade,
+  piece_id        int,                             -- roads.piece
+  junction_id     int,                             -- roads.junction
   material        text not null check (material in ('asphalt', 'concrete', 'gravel', 'dirt', 'unknown')),
   tier            text not null check (tier in ('inventoried', 'measured', 'counted', 'estimated')),
   layer           smallint not null default 0,
@@ -164,8 +168,8 @@ create table roads.edge (
   kind            text not null check (kind in ('curb', 'shoulder', 'deck', 'island')),
   tier            text not null check (tier in ('inventoried', 'measured', 'counted', 'estimated')),
   layer           smallint not null default 0,
-  piece_id        int references roads.piece on delete cascade,
-  junction_id     int references roads.junction on delete cascade,
+  piece_id        int,                             -- roads.piece
+  junction_id     int,                             -- roads.junction
   geom            geometry(MultiLineString, 32611) not null
 );
 create index edge_geom on roads.edge using gist (geom);
@@ -182,8 +186,8 @@ create table roads.marking (
   kind            text not null check (kind in ('edge', 'lane', 'centre_double', 'twltl', 'bike', 'stop_bar',
                                                 'crosswalk')),
   dash            text not null check (dash in ('solid', 'dashed', 'double', 'solid_dashed')),
-  piece_id        int references roads.piece on delete cascade,
-  junction_id     int references roads.junction on delete cascade,
+  piece_id        int,                             -- roads.piece
+  junction_id     int,                             -- roads.junction
   node_osm_id     bigint,                          -- a crosswalk's crossing node (roads.osm_walk_node)
   geom            geometry(Geometry, 32611) not null,
   check ((kind = 'crosswalk') = (GeometryType(geom) in ('POLYGON', 'MULTIPOLYGON'))),
@@ -198,7 +202,7 @@ comment on table roads.marking is
 -- Turn arrows from turn:lanes: one per lane with turns, ahead of where its lane lines stop.
 create table roads.arrow (
   id              int primary key,
-  piece_id        int not null references roads.piece on delete cascade,
+  piece_id        int not null,                    -- roads.piece
   direction       text not null check (direction in ('forward', 'backward')),
   lane            smallint not null,               -- from 1 at the left as it travels
   turns           text[] not null,
@@ -217,8 +221,8 @@ create table roads.review (
   kind            text not null,                   -- lanes_conflict, direction, other_direction_assumed, components_exceed,
                                                    -- sidewalk_close, unmatched, deck_mismatch, turn_slots, junction_large,
                                                    -- geometry, bike_other_carriageway
-  piece_id        int references roads.piece on delete cascade,
-  junction_id     int references roads.junction on delete cascade,
+  piece_id        int,                             -- roads.piece
+  junction_id     int,                             -- roads.junction
   osm_id          bigint,
   road_segment_id bigint,
   detail          jsonb not null default '{}',
