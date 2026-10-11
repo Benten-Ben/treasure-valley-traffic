@@ -572,13 +572,18 @@ rules (`trails.surface_class`, `trails.no_public_access`,
 same columns (`trails.exception_way`). `trails-match` links Ridge to Rivers'
 trails and the Greenbelt's closures, read from `raw.record` (`trails.agency_line`),
 to those ways with the core line matcher in 150 m pieces: `trails.link` (one row
-per line and way, full or partial) and `trails.matched_line` (each line's
-match, and its gap: where it draws itself). The views `trails.path` (the
-layer's ways and access rules), `trails.agency_state` (each line's state now,
-from `evt.event`) and `trails.agency_gap`, and the tables `trails.route_line`,
-`trails.path_lo` and `trails.canal_track`, are what the map reads
-([plugins/trails](../plugins/trails/README.md)). The links carry the City's ids,
-so they're internal, like their sources.
+per line and way, full or partial, and whether the way `paints`: takes the
+line's state whole, lying along it with less than 20 m beyond it) and
+`trails.matched_line` (each line's match, and what it draws itself: `along`,
+the stretches of the ways it doesn't paint that lie along it, and `gap`, its
+own line elsewhere). Licences follow plan C3. The layer's ways (`trails.path`,
+with the access rules) and the valley-zoom network (`trails.path_lo`) are
+OpenStreetMap's alone, republish yes; what the City's lines draw
+(`trails.agency_drawn`, `trails.agency_lo`) and say (`trails.agency_state`,
+from `evt.event`; `trails.way_agency`) is republish aggregates, and the views
+over the City's rows run with their reader's privileges, so the tile login
+can't read them ([plugins/trails](../plugins/trails/README.md)). The links
+carry the City's ids, so they're internal, like their sources.
 
 **COMPASS (built Oct 6, 2026, migration 0012).** Crashes are `obs.crash`,
 one row per ITD serial number. `crashed_at` is the reported local time, so

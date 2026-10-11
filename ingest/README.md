@@ -187,10 +187,11 @@ One exception predates the rule: the scheduled `intersections` source
 sources inside `ingest serve` once a day, in about 10 s. It stays a
 source, logged in `ops.fetch`, until the owner decides otherwise. And the
 trails pollers relink the few lines a poll changed once its data is
-committed (plan P6-data: at most 40 lines, about 2 s), in their own try
+committed (plan P6-data: at most 40 lines, a few seconds), in their own try
 block with their own `ops.fetch` row (`trails_match`), so a failure never
-fails the poll; anything bigger marks the `trails-match` build
-([plugins/trails](../plugins/trails/README.md)).
+fails the poll. Each statement stops after 20 s and the relink after 60 s,
+so it can't hold up the sources after it; anything bigger, or out of time,
+marks the `trails-match` build ([plugins/trails](../plugins/trails/README.md)).
 
 A build is named by the command that runs it (or, for a worker step, its
 job), in lower-case letters, digits, `.`, `_` and `-`. A run that fails

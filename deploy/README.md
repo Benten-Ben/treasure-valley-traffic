@@ -461,11 +461,15 @@ cut is 32 MB.
 Trails' paths (`trails.osm_path`, `osm_area`, `osm_route`: the `osm_paths`
 consumer), on scratch on Oct 11: 22,200 ways, 82 areas and 147 route
 relations in 21 s on the cut, as `tvt_build`. Then `python3 -m ingest
-trails-match` (light, about 15 s) links Ridge to Rivers' trails and the
+trails-match` (light, about 25 s) links Ridge to Rivers' trails and the
 Greenbelt's closures to them and draws the routes; the load marks it.
-On production, after trails 0001 and the grants: `osm-load --only
-trails.osm_paths` on the cut already made, then `trails-match`, both as
-`tvt_build` in a capped container, never inside `ingest serve`.
+On production, after trails 0001: the grants (`tvt_build.sql`, and
+`tvt_tiles.sql` again, which keeps the tile login off the views over the
+City's rows: `trails.agency_line`, `agency_state`, `way_agency`), then
+`osm-load --only trails.osm_paths` on the cut already made, then
+`trails-match`, both as `tvt_build` in a capped container, never inside
+`ingest serve`. Run `trails-match` again after each water build (its
+canal-bank rule reads `water.reach`), until water's build marks it.
 
 ## Unmerged code and builds: the scratch database and tvt_build
 

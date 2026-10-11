@@ -180,9 +180,11 @@ How the pieces plug in:
   plugin's scheduled `intersections` source rebuilds `core.intersection`
   inside `ingest serve` once a day (about 10 s). And by the landscape
   plan's design (P6-data), the trails pollers relink the few lines a poll
-  changed once its data is committed (at most 40 lines, about 2 s), in
-  their own try block with their own `ops.fetch` row (`trails_match`); the
-  full rematch, `trails-match`, is a build like the others.
+  changed once its data is committed (at most 40 lines, a few seconds;
+  each statement limited to 20 s and the relink to 60 s, then left to the
+  build), in their own try block with their own `ops.fetch` row
+  (`trails_match`), so that a closure the City posts shows within the hour;
+  the full rematch, `trails-match`, is a build like the others.
 - **Base layers, baked** (landscape sprint, Oct 2026): what draws for
   every viewer (water, paving, road surfaces and markings, paved paths)
   isn't cut live. A plugin marks those layers `base: true` in its export
