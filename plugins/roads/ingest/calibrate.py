@@ -5,9 +5,10 @@ first"). Read only; run it after a build.
 Two measures, in the ten test windows (basemap/ground/spec.json's boxes) first, then valley-wide:
 
 1. **ACHD's bike network** (roads.segment_bike_xsection): the curb-to-curb width ACHD measured (`total_pavement_m`)
-   on local and collector streets, against the build's own reading of each piece's edges (curbed or rural), for the
-   two-way pieces that lie along those segments and whose width the build didn't take from it (so not already
-   inventoried). Internal data: the numbers it prints are aggregates, for setting a default.
+   on local and collector streets, by the build's own reading of each piece's edges (curbed, rural or mixed), for
+   the two-way pieces along two-way segments. The build takes those widths as they are; the defaults are for the
+   streets ACHD hasn't measured, read the same way. Internal data: the numbers it prints are aggregates, for
+   setting a default.
 2. **Sidewalk spacing** (OpenStreetMap only, so a public variant can be calibrated too): on residential pieces with
    a parallel sidewalk mapped on both sides, the distance between the two sidewalks' centre lines less twice
    ATTACHED_OFFSET_M (a sidewalk's centre to the curb's face, for sidewalks along the curb ⚠️). Planter strips make
@@ -48,11 +49,10 @@ with d as (
   join roads.segment_bike_xsection k on k.road_segment_id = p.road_segment_id
   {join}
   where p.oneway = 0 and s.one_way = 'both' and s.functional_class = %(fclass)s and k.total_pavement_m is not null
-    and x.width_source <> 'achd_bike_network' and not p.bridge and p.length_m >= 30
+    and not p.bridge and p.length_m >= 30
 )
 select box, edges, count(distinct road_segment_id),
-       percentile_cont(array[0.1, 0.25, 0.5, 0.75, 0.9]) within group (order by achd),
-       percentile_cont(0.5) within group (order by ours)
+       percentile_cont(array[0.1, 0.25, 0.5, 0.75, 0.9]) within group (order by achd)
 from d group by 1, 2 order by 1, 2
 """
 
@@ -97,11 +97,12 @@ def report(conn, out=print):
     if conn.execute("select count(*) from roads.build where current").fetchone()[0] == 0:
         raise B.BuildError("no current roads build to calibrate against (roads-build first)")
     got = measure(conn)
+    from .xsection import DEFAULTS
+    out(f"The defaults now: {DEFAULTS['local_pavement']}")
     for fclass, rows in got["achd"].items():
-        out(f"ACHD bike network, {fclass} streets: curb-to-curb (m) p10 / p25 / p50 / p75 / p90, and the build's "
-            "median for the same pieces")
-        for box, edges, segments, q, ours in rows:
-            out(f"  {box:9} {edges:7} {segments:5} segments  {_q(q)}   ours {ours:.2f}")
+        out(f"ACHD bike network, {fclass} streets: curb-to-curb (m) p10 / p25 / p50 / p75 / p90")
+        for box, edges, segments, q in rows:
+            out(f"  {box:9} {edges:7} {segments:5} segments  {_q(q)}")
     out(f"Sidewalk spacing on residential pieces, less 2 x {ATTACHED_OFFSET_M} m (m): p10 / p25 / p50 / p75 / p90")
     for box, n, q in got["sidewalks"]:
         out(f"  {box:9} {n:6} pieces  {_q(q)}")

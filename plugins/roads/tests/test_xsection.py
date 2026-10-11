@@ -52,6 +52,7 @@ class LocalStreets(unittest.TestCase):
         self.assertEqual((xs["lanes_fwd"], xs["lanes_bwd"], xs["lanes_source"]), (1, 1, "default"))
         self.assertEqual((xs["total_w_m"], xs["width_tier"], xs["width_source"]),
                          (D["local_pavement"]["curbed"], "estimated", "class_default"))
+        self.assertEqual(D["local_pavement"], {"curbed": 9.75, "rural": 7.3})     # calibrated Oct 11 (README)
         self.assertEqual((xs["edge_l"], xs["edge_r"]), ("curb", "curb"))
         self.assertEqual(xs["width_left_m"], xs["width_right_m"])
         self.assertFalse(xs["markings"])
@@ -97,9 +98,15 @@ class SidewalkCap(unittest.TestCase):
         self.assertIn("sidewalk_cap", xs["flags"])
         self.assertEqual(xs["reviews"], [])
 
+    def test_an_estimated_streets_lanes_give_way_to_a_sidewalk(self):
+        # Its lanes are notional (no lines): a sidewalk 4 m out cuts it to 3 m, though that's more than its gutter.
+        xs = X.cross_section(piece(sidewalk={"left": 4.0, "right": 4.0}, developed=1.0))
+        self.assertEqual((xs["width_left_m"], xs["width_right_m"]), (3.0, 3.0))
+        self.assertEqual(xs["reviews"], [])
+
     def test_never_into_the_lanes(self):
         xs = X.cross_section(piece(sidewalk={"left": 2.5, "right": None}, developed=1.0))
-        self.assertEqual(xs["width_left_m"], xs["total_w_m"] / 2)
+        self.assertAlmostEqual(xs["width_left_m"], xs["total_w_m"] / 2, delta=0.01)
         self.assertIn("sidewalk_close", xs["flags"])
         self.assertEqual(xs["reviews"][0][0], "sidewalk_close")
 
@@ -215,7 +222,7 @@ class Widths(unittest.TestCase):
         xs = X.cross_section(p)
         self.assertEqual((xs["width_tier"], xs["width_source"], xs["total_w_m"]),
                          ("inventoried", "achd_bike_network", 18.9))
-        self.assertEqual(xs["lane_w_m"], round((18.9 - 3.0 - 2 * D["gutter"]) / 5, 2))
+        self.assertEqual(xs["lane_w_m"], round((18.9 - 3.0) / 5, 2))      # the gutters are in the bike lanes
         self.assertEqual((xs["bike_l_m"], xs["bike_r_m"]), (1.5, 1.5))
         self.assertEqual(xs["sources"]["lane_w"], "fitted")
         kinds = [k for k, _, _ in X.marking_lines(xs, 0)]
@@ -231,6 +238,16 @@ class Widths(unittest.TestCase):
         self.assertEqual(xs["reviews"][0][0], "components_exceed")
         parts = sum(xs[k] for k in ("park_l_m", "park_r_m", "shoulder_l_m", "shoulder_r_m")) + 4 * xs["lane_w_m"]
         self.assertAlmostEqual(parts, 9.0, delta=0.05)
+
+    def test_a_yield_street_shares_its_lanes_between_parked_cars(self):
+        # A 9.75 m local street with parking both sides: the two directions share what's left, unmarked, no review.
+        row = bike_row(9.75, **side("fwd", 1, parking="parallel", parking_w=2.4),
+                       **side("bwd", 1, parking="parallel", parking_w=2.4))
+        p = piece(seg=seg(), lanes=seg_lanes("default", 1, 1), bike=row, developed=1.0)
+        xs = X.cross_section(p)
+        self.assertEqual((xs["total_w_m"], xs["markings"], xs["reviews"]), (9.75, False, []))
+        self.assertEqual(xs["lane_w_m"], round((9.75 - 4.8) / 2, 2))      # the gutters are in the parking lanes
+        self.assertEqual((xs["shoulder_l_m"], xs["shoulder_r_m"]), (0.0, 0.0))
 
     def test_wide_pavement_goes_to_the_edges(self):
         row = bike_row(16.0)

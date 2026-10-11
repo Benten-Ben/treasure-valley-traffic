@@ -32,7 +32,7 @@ Lane width: HPMS's on its sections, else ACHD's lane next to the bike facility, 
 major roads, 3.35 m collectors, 3.05 m local streets). Bike lanes: ACHD's facility where it's in the roadway, else
 1.5 m where OpenStreetMap tags one. Parking: ACHD's, else OpenStreetMap's parking tags. Shoulders: HPMS's, else
 the class's (motorways 3.0 m outside and 1.2 m inside; other rural roads 1.2 m), and a curbed side's 0.6 m
-gutter. Median: HPMS's on a single two-way way. Where an inventoried total and the components disagree, the
+gutter (inside a parking or bike lane there, which are measured from the curb's face). Median: HPMS's on a single two-way way. Where an inventoried total and the components disagree, the
 lanes are widened or narrowed to fit (2.6-4.6 m), and the rest is unassigned pavement at the edges; components
 that don't fit are scaled down, flagged and listed for review.
 
@@ -71,7 +71,13 @@ DEFAULTS = {
     "parking": {"parallel": 2.4, "diagonal": 4.8, "perpendicular": 5.4},   # ⚠️
     "gutter": 0.6,                                                    # a curbed side's gutter ⚠️
     "shoulder": {"motorway_out": 3.0, "motorway_in": 1.2, "rural": 1.2},   # ⚠️
-    "local_pavement": {"curbed": 10.4, "rural": 7.3},                 # unmarked local streets ⚠️ (calibrated: README)
+    # Unmarked local streets ⚠️. The design's 10.4 m curbed and 7.3 m rural, calibrated Oct 11 against ACHD's
+    # measured curb-to-curb widths (calibrate.py; README): curbed local streets' median is 9.75 m valley-wide (1,899
+    # segments; the test windows' 9.30-10.82 m bracket it); no measured rural local street lies in the windows, so
+    # rural stays 7.3 m (valley-wide ACHD's 244 run 7.32-9.75 m, p25-p75).
+    "local_pavement": {"curbed": 9.75, "rural": 7.3},
+    "lane_w_min_unmarked": 2.0,                                       # an unmarked street's lanes may share its space
+    "half_w_min_estimated": 2.75,                                     # a sidewalk may cut an estimated street to this
     "alley": 5.0,                                                     # ⚠️
     "roundabout_lane": 5.0,                                           # a ring's circulating lane ⚠️
     "service": 5.5,                                                   # as osm_paving's other service ways ⚠️
@@ -479,7 +485,8 @@ def cross_section(p, d=DEFAULTS):
     tagged_sh = osm_shoulders(tags)
     for side in ("left", "right"):
         if edge[side] == "curb":
-            shoulder[side] = d["gutter"]
+            # A parking lane or a bike lane is measured from the curb's face: its gutter is inside it.
+            shoulder[side] = 0.0 if park[side] or bike[side] else d["gutter"]
             continue
         if tagged_sh[side] is not None:
             shoulder[side], sh_source = tagged_sh[side], "osm"
@@ -513,6 +520,7 @@ def cross_section(p, d=DEFAULTS):
         sources["median"] = "itd_hpms"
 
     # -- the total, by tier
+    marked_source = lanes_source != "default" and (cls != "local" or fwd + bwd + (1 if centre else 0) >= 3)
     nonlane = sum(bike.values()) + sum(park.values()) + sum(shoulder.values()) + median_w
     comp_total = nonlane + n_lanes * lane_w
     tier, width_source, total = None, None, None
@@ -535,6 +543,8 @@ def cross_section(p, d=DEFAULTS):
         if n_lanes:
             fit = (total - nonlane) / n_lanes
             lo, hi = d["lane_w_range"]
+            if cls == "local" and not marked_source:
+                lo = d["lane_w_min_unmarked"]     # a yield street: parking both sides, one shared lane between
             if lo <= fit <= hi:
                 lane_w = fit
                 sources["lane_w"] = "fitted"
@@ -593,7 +603,9 @@ def cross_section(p, d=DEFAULTS):
                 reviews.append(("sidewalk_close", {"side": side, "sidewalk_m": _r(dist), "half_width": _r(half),
                                                    "width_source": width_source}))
             continue
-        if cut <= outer[side] + 1e-6:
+        notional = tier == "estimated" and width_source == "class_default"
+        if cut <= outer[side] + 1e-6 or (notional and cap >= d["half_w_min_estimated"]):
+            # An estimated street's lanes are notional (it has no lines): a mapped sidewalk says where its edge is.
             width[side] = max(cap, 0.5)
             flags.append("sidewalk_cap")
         else:

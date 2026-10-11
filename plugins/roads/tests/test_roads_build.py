@@ -16,7 +16,7 @@ The synthetic town (metres):
 - 1st St continues north into a roundabout of radius 20 m centred (0, 350), with legs east, west and north.
 - A secondary road on a bridge (layer 1) crosses 1st St at y = -100 without a shared node.
 - Crossings on Main: marked at (10, 0) with a crossing way, unmarked at (-80, 0); on 1st St, marked at (0, -12).
-- A sidewalk 6 m east of 1st St from y = 60 to 190.
+- A sidewalk 5 m east of 1st St from y = 60 to 190.
 """
 
 import math
@@ -113,7 +113,7 @@ def town(conn):
                    '{"highway": "footway", "footway": "crossing"}', ST_GeomFromEWKT(%s)),
                   (3002, 'sidewalk', 'footway', 'sidewalk', 'concrete', 'default', 1.5, 'default', null, null,
                    '{"highway": "footway", "footway": "sidewalk"}', ST_GeomFromEWKT(%s))""",
-        (line((10, -12), (10, 0), (10, 12)), line((6, 60), (6, 190))))
+        (line((10, -12), (10, 0), (10, 12)), line((5, 60), (5, 190))))
     conn.execute(
         """insert into roads.osm_walk_node (osm_id, kind, marked, ways, tags, geom)
            values (5001, 'crossing', true, '{3001}', '{"crossing": "marked"}', ST_GeomFromEWKT(%s)),
@@ -293,7 +293,7 @@ class BuildTest(unittest.TestCase):
                                     on p.id = x.piece_id where p.osm_id = 2001
                                     and ST_DWithin(p.geom, {self.at(0, 120)}, 1)""")
         self.assertIn("sidewalk_cap", flags)
-        self.assertAlmostEqual(right, 5.0, delta=0.3)
+        self.assertAlmostEqual(right, 4.0, delta=0.3)
 
     def test_the_build_row_and_review(self):
         bid, current, inputs = self.one("select id, current, inputs from roads.build")
