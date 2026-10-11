@@ -59,7 +59,8 @@ RAW = (
     Raw("csb", "public-domain", "yes", "USDA NASS Crop Sequence Boundaries",
         "CSB 2025 field polygons, the crop fallback until farm's crop_cover lands (C7)"),
     Raw("naip", "public-domain", "yes", "USDA NAIP",
-        "NAIP 2025 county mosaics (0.3 m) for Ada and Canyon; NAIP 2023 (0.6 m) in boxes h-j"),
+        "NAIP 2025 county mosaics (0.3 m) for Ada and Canyon, and P2's 2 m COG of them (red, green, blue and the "
+        "NDVI on Sentinel-2's scale by flight day); NAIP 2023 (0.6 m) in boxes h-j"),
     Raw("3dep", "public-domain", "yes", "U.S. Geological Survey, 3D Elevation Program",
         "the 2023-24 QL1 lidar products in the class boxes, and the DEM for slope and aspect"),
     Raw("sentinel-2", "Copernicus", "yes", "Contains modified Copernicus Sentinel data 2025",

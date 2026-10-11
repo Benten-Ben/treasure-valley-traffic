@@ -218,7 +218,7 @@ one changes this table and `inputs.USES` in the same review.
 | Export layer | Format | Needs | Without it | Made by |
 |---|---|---|---|---|
 | `soils/ground` | FlatGeobuf, polygons | integer `ground_type` | **the ground stays flat** | P1-data |
-| `soils/palette` | JSON `soils.palette/1` | | flat colours per ground type, labelled | P2 |
+| `soils/palette` | JSON `soils.palette/1` | per type `gid` (ground.fgb's `ground_type`): `status` (`measured`, or a fallback: `series`, `texture`, `albedo`; `none`), `lab_med`, `lab_cov`, `l_p10`, `l_p90`, `oct_l`, `oct_c` ([soils](../../plugins/soils/README.md#the-palette)) | flat colours per ground type, labelled | P2 |
 | `farm/crop_cover` | GeoTIFF, 10 m grid | bands group, state, confidence | CSB 2025 plus CDL 2025 (C7) | P3-data |
 | `farm/fields` | FlatGeobuf, polygons | numeric `bearing` (degrees from north) | CSB 2025, no row bearing | P3-data |
 | `water/mask` | FlatGeobuf, polygons | | mask v0's NHD and OSM water | P4-data |
@@ -246,7 +246,7 @@ and an unconfirmed version (v7 or v8) ⚠️.
 | `overture-buildings` | ODbL-1.0 | roof footprints, as the map's `buildings.pmtiles` holds them at z15 (built by `basemap/buildings.py` from the Overture release it names) |
 | `nhd` | public domain | NHD HU4 1705, water until water's export lands |
 | `cdl`, `csb` | public domain | CDL 2025 (10 m) crop pixels and developed land; CSB 2025 fields, the crop fallback |
-| `naip` | public domain | NAIP 2025 (0.3 m) for Ada and Canyon; NAIP 2023 (0.6 m) in boxes h–j |
+| `naip` | public domain | NAIP 2025 (0.3 m) for Ada and Canyon, and the 2 m COG P2 makes from them in its decode pass (`naip2025_2m.tif`: red, green, blue and the NDVI on Sentinel-2's scale by flight day, on the 2 m grid, with `flights.fgb`; [soils](../../plugins/soils/README.md#the-photo-statistics)); NAIP 2023 (0.6 m) in boxes h–j |
 | `3dep` | public domain | the 2023–24 QL1 lidar products in the boxes; the DEM for slope and aspect |
 | `sentinel-2` | Copernicus | the July 2025 NDVI median, on the 10 m grid |
 | `rcmap` | public domain | RCMAP fractional cover (30 m), which calibrates the classes' bare cut |

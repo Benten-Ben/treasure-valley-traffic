@@ -1,21 +1,27 @@
 """Export the soil base for the ground: `python3 -m ingest soils-export` (plan C5; basemap/ground/README.md).
 
 Writes $TVT_ARCHIVE/soils/export/<build>/ through the ground's export contract (basemap/ground/manifest.py), with
-manifest.json last, from what soils-load put in the database (one snapshot, so the two files agree):
+manifest.json last, from what soils-load and soils-photo-load put in the database (one snapshot, so the files agree):
 
 | Layer | File | What |
 |---|---|---|
-| `ground` | ground.fgb | every map-unit polygon, whole, in EPSG:32611: `id` (soils.polygon.gid), `ground_type` (soils.ground_type.gid, an integer; 0 for none), `misc` (the type's kind of miscellaneous area, or null for a soil; `nodata` is no survey), `mukey` |
-| `ground_types` | ground_types.json | schema `soils.ground_types/1`: each ground type by its gid, with its text id, series, surface texture, misc, surface fragment cover, dry albedo, map units and area in the box |
+| `ground` | ground.fgb | every map-unit polygon, whole, in EPSG:32611: `id` (soils.polygon.gid), `ground_type` (soils.ground_type.gid, an integer; 0 for none), `mukey`, `misc` (the type's kind of miscellaneous area, or null for a soil; `nodata` is no survey), in that order |
+| `ground_types` | ground_types.json | schema `soils.ground_types/1`: each ground type by its gid, with its text id, series, surface texture, misc, landform, surface fragment cover, dry albedo, map units and area in the box |
+| `palette` | palette.json | schema `soils.palette/1`, once a photo build is loaded (P2): each ground type's colour, spread and texture from soils.ground_colour, keyed by the same gid |
 
-The ground reads `soils/ground` (basemap/ground/inputs.py USES): without it the ground stays flat. The integer
-`ground_type` is what the painter rasterises, and the key that P2's palette.json (`soils.palette/1`, added to this
-export by P2) uses too. A gid is kept while its type exists and never reused, so the files of one export always agree;
-take the palette and the ground from the same export. Neither layer is a base layer.
+The ground reads `soils/ground` (basemap/ground/inputs.py USES; without it the ground stays flat) and `soils/palette`
+(without it, flat colours per type). The integer `ground_type` is what the painter rasterises, and the palette's key.
+A gid is kept while its type exists and never reused, so the files of one export always agree: take the palette and
+the ground from the same export. None is a base layer.
 
-SSURGO is public domain: republish yes, credit "Soils: USDA NRCS, Soil Survey Geographic Database (SSURGO)". The
-export is checked against the ground's shape and licence rules before it's left in place. Standard library plus
-psycopg (and basemap/ground, which the ingest image carries).
+misc, the one nullable column, is written last: PostGIS's ST_AsFlatGeobuf writes the column after a null under the
+null's index, so a null misc before mukey read back as misc = the mukey and mukey = null.
+
+SSURGO is public domain: the ground layers are republish yes, credit "Soils: USDA NRCS, Soil Survey Geographic
+Database (SSURGO)". The palette was measured from NAIP through mask v0 (OpenStreetMap, Overture, NHD, CDL), farm's
+crop cover (CSB, CDL, Sentinel-2) and the July Sentinel-2 median, so it carries those inputs (from the photo builds'
+records): ODbL-1.0, republish yes. The export is checked against the ground's shape and licence rules before it's left
+in place. Standard library plus psycopg (and basemap/ground, which the ingest image carries).
 """
 
 import argparse
