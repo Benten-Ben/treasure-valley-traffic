@@ -397,13 +397,31 @@ What a load does:
   active objects (at any size) refuses to retire the rest. Check the file, or
   pass `--allow-shrink`. A consumer's load that brings nothing while anything
   is active is always refused.
-- `roads.osm_paving` reads the Cropland Data Layer for its materials (plan
-  C11): before its first production load, copy
-  `/srv/tvt/work/sources/cdl/out/cdl_2025_10m.tif` (10 MB, public domain) to
-  `/srv/tvt/archive/roads/cdl/`, where the load finds it as
-  `$TVT_ARCHIVE/roads/cdl/cdl_2025_10m.tif`. Without it the consumer fails
-  alone and says so (the others load); copy the file, then load it with
-  `--only roads.osm_paving`.
+- `roads.osm_paving` measures its service ways and lots against
+  `roads.developed_land` (plan C11), developed land traced from the Cropland
+  Data Layer in the worker image ([plugins/roads](../plugins/roads/README.md)).
+  It loads without it, and says so: untagged service ways and lots stay
+  unknown until a build is loaded, which measures them again. Once farm's
+  `farm-cdl-load` has put the CDL in `/srv/tvt/archive/farm/cdl/`, make a
+  build in the worker (light: about 45 s at 0.15 GB, 1 GB and 1 CPU, no
+  network) and load it, before or after the paving's first load. The load is
+  a production load, so it goes under `heavy` (about a minute; as
+  `tvt_build`, `DATABASE_URL` set in the shell). The archive belongs to uid
+  1000, as both images run:
+
+  ```bash
+  stamp=$(date -u +%Y%m%dT%H%M%SZ)
+  docker run --rm --memory 1g --memory-swap 1g --cpus 1 --network none --user 1000:1000 \
+    -v /srv/tvt/repo:/repo:ro -v /srv/tvt/archive:/srv/archive tvt-worker \
+    python -m plugins.roads.build.developed --cdl /srv/archive/farm/cdl --out /srv/archive/roads/developed/$stamp
+  /srv/tvt/work/bin/heavy --deadline HH:MM --runtime 5 --peak 1 "roads-developed-load (deploy)" \
+    docker run --rm --memory 1g --memory-swap 1g --cpus 1 --network tvt_default -e DATABASE_URL \
+      -e TVT_ARCHIVE=/srv/archive -v /srv/tvt/archive:/srv/archive \
+      tvt-ingest:latest python3 -m ingest roads-developed-load --build /srv/archive/roads/developed/$stamp
+  ```
+
+  Again after each new CDL year (late February, with the owner's OK for the
+  download): `farm-cdl-load`, then these two.
 - Then the refresh cascade (plan §6): the builds that read the new tables
   (`roads-build`, `water-build`, `trails-match`), the exports, the bake.
 

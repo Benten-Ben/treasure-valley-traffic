@@ -188,9 +188,11 @@ def build(cdl, out, window=WINDOW_CELLS, log=print):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--cdl", required=True, help="farm's copy: a folder of cdl_<year>_<res>m.tif ($TVT_ARCHIVE/farm/cdl; "
-                                                 "the newest year is read), or one of them")
-    ap.add_argument("--out", required=True, help="the build folder ($TVT_ARCHIVE/roads/developed/<id>), new or unfinished")
+    ap.add_argument("--cdl", required=True,
+                    help="farm's copy: a folder of cdl_<year>_<res>m.tif ($TVT_ARCHIVE/farm/cdl; the newest year is "
+                         "read), or one of them")
+    ap.add_argument("--out", required=True,
+                    help="the build folder ($TVT_ARCHIVE/roads/developed/<id>), new or unfinished")
     ap.add_argument("--window", type=int, default=WINDOW_CELLS, help="window size in cells")
     args = ap.parse_args(argv)
     try:

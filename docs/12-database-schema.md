@@ -470,9 +470,10 @@ others only the extract it holds, and osm_valley never while a follower that
 holds another extract stays behind. So a way is never in two of their tables
 or in none, unless a follower fails after osm_valley loaded; a build that
 reads `core.osm_way` with `roads.osm_street` or `roads.osm_paving` (the
-roads build) calls `check_partition()` first, and it refuses until they
-match again. On scratch, Oct 11, no active way was in two of the three
-tables.
+roads build) calls `check_partition(conn, names)` first, naming every owner
+it reads (`("osm_valley", "osm_street", "osm_paving")`: the default names
+only the first two), and it refuses until they match again. On scratch,
+Oct 11, no active way was in two of the three tables.
 
 ```sql
 -- Each consumer's gate: the extract it loaded last (osm_valley's stays in its file).
@@ -500,7 +501,8 @@ create table roads.osm_street (
 -- roads 0002: the paving (the osm_paving consumer), versioned in place like osm_street.
 -- material: asphalt, concrete, gravel, dirt or unknown; material_source 'surface' (the tag),
 -- 'default' (the kind's, estimated) or null (unknown). Untagged service ways and lots take
--- their default only on CDL 2025 developed land (developed: the share on classes 122-124).
+-- their default only on CDL developed land (developed: the share on classes 122-124,
+-- measured in PostGIS against roads.developed_land, below).
 create table roads.osm_paving (                   -- service ways but alleys, and walkways
   osm_id bigint primary key, kind text not null,  -- service, driveway, parking_aisle, drive_through,
                                                   -- emergency_access, sidewalk, crossing, access_aisle, traffic_island
@@ -526,6 +528,19 @@ create table roads.osm_walk_node (                -- crossing and kerb nodes
   ways bigint[] not null,                         -- the roads.osm_paving ways through it
   tags jsonb not null, geom geometry(Point, 4326) not null, ...
 );
+-- Developed land: the CDL's classes 122-124 traced into polygons in the worker image
+-- (plugins/roads/build/developed.py), loaded by roads-developed-load. One build is current.
+create table roads.developed_build (
+  id text primary key, cdl_file text not null, cdl_year int not null, cdl_res_m real not null,
+  cdl_sha256 text not null, classes int[] not null, srid int not null,
+  license text not null, credit text not null, republish text not null,   -- public domain; "USDA NASS Cropland Data Layer <year>"
+  pieces int not null, parts int not null, area_km2 real not null,
+  made_at timestamptz not null, loaded_at timestamptz not null, current boolean not null
+);
+create table roads.developed_land (
+  id int primary key, piece int not null,
+  geom geometry(Polygon, 5070) not null          -- NASS's grid; at most 256 vertices (ST_Subdivide)
+);
 ```
 
 The new consumers' tables keep OpenStreetMap's version and timestamp, the
@@ -533,9 +548,16 @@ loads that first and last saw each object, and `active`; an object missing
 from a load is retired, never deleted, and the archive keeps the last two
 extracts (an exception to the Oct 5 rule for these tables only, owner Oct 8).
 Their license is ODbL, republish yes, recorded in the table's comment and the
-manifest. `roads.osm_street` held 22,785 ways (11 MB) on scratch on Oct 11;
-`roads.osm_paving` 124,582 ways (53 MB), `roads.osm_parking` 4,387 lots and
-stalls (2 MB) and `roads.osm_walk_node` 65,617 nodes (20 MB).
+manifest. `roads.osm_street` held 22,785 ways (11 MB with its indexes) on
+scratch on Oct 11. Freshly loaded the same day, with their indexes,
+`roads.osm_paving` held 124,582 ways (53 MB), `roads.osm_parking` 4,387 lots
+and stalls (2 MB) and `roads.osm_walk_node` 65,617 nodes (20 MB). A reload
+rewrites every row it brings, so a table holds up to about twice its size
+until it's vacuumed.
+`roads.developed_land` (the 2025 CDL: 203,546 parts, 861 km²) is 62 MB; it's
+public domain (USDA NASS), and the paving's `developed`, and the materials
+resting on it, credit it too: an export lists it as an input, with
+`roads.developed_build`'s current year and sha256.
 
 **COMPASS (built Oct 6, 2026, migration 0012).** Crashes are `obs.crash`,
 one row per ITD serial number. `crashed_at` is the reported local time, so

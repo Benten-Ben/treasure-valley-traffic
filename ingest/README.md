@@ -26,7 +26,7 @@ names didn't change, so `ops.source` and `ops.fetch` carry on:
 |---|---|---|
 | [cameras](../plugins/cameras) | `achd_cameras`, `idaho511_views_oneoff`; stream `idaho511_frames` | `rollup` |
 | [transit](../plugins/transit) | `vrt_gtfs`; stream `vrt_realtime` | `match-routes`, `transit-progress`, `transit-ribbons`, `route-colors` |
-| [roads](../plugins/roads) | `achd_roads`, `itd_hpms`, `achd_msm`, `compass_centerline`, `achd_bike_network`; by hand (OpenStreetMap consumers) `osm_valley`, `osm_street`, `osm_paving` | `segment-match` |
+| [roads](../plugins/roads) | `achd_roads`, `itd_hpms`, `achd_msm`, `compass_centerline`, `achd_bike_network`; by hand (OpenStreetMap consumers) `osm_valley`, `osm_street`, `osm_paving`; by hand `cdl_developed` | `segment-match`, `roads-developed-load` |
 | [conditions](../plugins/conditions) | streams `itd_wzdx`, `idaho511_api` | |
 | [intersections](../plugins/intersections) | `fra_crossings`, `achd_signal_points`, `compass_signals`, `compass_regional_signals`, `intersections` | `match-intersections` |
 | [safety](../plugins/safety) | `compass_crashes` | |
@@ -92,7 +92,7 @@ osmium export makes areas only from a/ expressions, so a lot or a lake needs
 |---|---|---|
 | `roads.osm_valley` | highway ways; signal, crossing-signal and level-crossing nodes | as below (unchanged; its own pipeline over the cut) |
 | `roads.osm_street` | residential, unclassified, living_street, road, busway and alleys that osm_valley doesn't keep | `roads.osm_street` |
-| `roads.osm_paving` | the other service ways, sidewalks, crossings, access aisles and traffic islands; parking lots and stalls drawn as areas (multipolygons too); crossing and kerb nodes. Untagged service ways and lots get a default material only on the Cropland Data Layer's developed land ([plugins/roads](../plugins/roads/README.md#paving-service-ways-sidewalks-crossings-and-lots)) | `roads.osm_paving`, `roads.osm_parking`, `roads.osm_walk_node` |
+| `roads.osm_paving` | the other service ways, sidewalks, crossings, access aisles and traffic islands; parking lots and stalls drawn as areas (multipolygons too); crossing and kerb nodes. Untagged service ways and lots get a default material only on the Cropland Data Layer's developed land, traced in the worker image and measured in PostGIS ([plugins/roads](../plugins/roads/README.md#paving-service-ways-sidewalks-crossings-and-lots)) | `roads.osm_paving`, `roads.osm_parking`, `roads.osm_walk_node` |
 
 ```bash
 python3 -m ingest osm-load --inbox                  # a new extract: every consumer (a heavy job: see below)

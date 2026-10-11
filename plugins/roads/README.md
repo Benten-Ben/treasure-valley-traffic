@@ -16,7 +16,8 @@ streets (for drawing) stay in core (`basemap/`).
 | `achd_bike_network` | monthly (skipped when unchanged) | none stated (disclaimer: not for planning determinations) | Ada County Highway District | internal |
 | `osm_valley` | by hand | ODbL | © OpenStreetMap contributors | yes, as ODbL |
 | `osm_street` | by hand | ODbL | © OpenStreetMap contributors | yes, as ODbL |
-| `osm_paving` | by hand | ODbL (and the CDL, public domain, for developed land) | © OpenStreetMap contributors | yes, as ODbL |
+| `osm_paving` | by hand | ODbL | © OpenStreetMap contributors | yes, as ODbL |
+| `cdl_developed` | by hand, after a new CDL year | public domain | USDA NASS Cropland Data Layer | yes |
 
 "Internal" for ACHD's and ITD's layers means no license is stated and the
 owner hasn't decided on republishing; they're shown only on the owner's own
@@ -66,8 +67,8 @@ what the partition gives it and what its tags name:
 
 | Table | What | Oct 5 extract (scratch, Oct 11) |
 |---|---|---|
-| `roads.osm_paving` | every service way but alleys (`kind` driveway, parking_aisle, drive_through, emergency_access, or service for untagged and other values; an alley drawn as an area too, since `osm_street` takes lines only), and `footway=sidewalk`, `crossing`, `access_aisle` or `traffic_island` on a footway, path or cycleway; lines, whole across the box's edge (a way tagged `area=yes` keeps its outline, `area` true) | 124,582: sidewalks 43,162, crossings 27,976, service 26,573, driveways 14,812, parking aisles 10,397, drive-throughs 800, access aisles 659, traffic islands 139, emergency access 64 |
-| `roads.osm_parking` | lots (`amenity=parking`) and mapped stalls (`amenity=parking_space`) drawn as areas, closed ways and multipolygons; the smart cut keeps a multipolygon whole when any member is in the box. Lots mapped only as points aren't kept | 2,198 lots (30 multipolygons), 2,189 stalls; 827 ha |
+| `roads.osm_paving` | every service way but alleys (`kind` driveway, parking_aisle, drive_through, emergency_access, or service for untagged and other values), and `footway=sidewalk`, `crossing`, `access_aisle` or `traffic_island` on a footway, path or cycleway; lines, whole across the box's edge (a closed way tagged `area=yes` keeps its outline, `area` true). An alley is `osm_street`'s unless it's tagged `area=yes`, closed or not; the table checks the partition's own test on the raw tags, so an alley the partition gives the paving never fails the load | 124,582: sidewalks 43,162, crossings 27,976, service 26,573, driveways 14,812, parking aisles 10,397, drive-throughs 800, access aisles 659, traffic islands 139, emergency access 64 |
+| `roads.osm_parking` | lots (`amenity=parking`) and mapped stalls (`amenity=parking_space`) drawn as areas, closed ways and multipolygons; the smart cut keeps a multipolygon whole when any member is in the box. Lots mapped only as points aren't kept | 2,198 lots (29 of them multipolygons), 2,189 stalls (1 a multipolygon); 828 ha |
 | `roads.osm_walk_node` | crossing nodes (`highway=crossing` or any `crossing=*`) and kerb nodes (`kerb=*`), with the `roads.osm_paving` ways through each (`ways`) | 35,806 crossings, 29,811 kerbs |
 
 **Material** (plan C11): `material` is asphalt, concrete, gravel, dirt or
@@ -78,23 +79,47 @@ kind's default (`material_source` 'default': the card says "surface
 estimated"): concrete for driveways, sidewalks, traffic islands and parking
 garages, asphalt for the other service ways, crossings, access aisles, lots
 and stalls. **Service ways and lots take theirs only on developed land:**
-at least half of the way's length (sampled every 10 m) or of the lot's area
-on the Cropland Data Layer 2025's developed classes 122-124 (`developed`
-holds the share). Off it they're `unknown`: farm lanes, private roads and
-trailhead lots are often gravel, and we don't guess. Class 121 (developed
-open space) doesn't count: it's lawns and parks, and NLCD paints rural roads
-into it. Walkways and garages take their default anywhere; underground lots
-get none. On the Oct 5 extract, 4,338 service ways (1,013 km) and 82 lots
-and stalls (one underground) are unknown.
+at least half of the way's length or of the lot's area on the Cropland Data
+Layer's developed classes 122-124 (`developed` holds the share, measured
+exactly in PostGIS on NASS's equal-area grid). Off it they're `unknown`:
+farm lanes, private roads and trailhead lots are often gravel, and we don't
+guess. Class 121 (developed open space) doesn't count: it's lawns and parks,
+and NLCD paints rural roads into it. Walkways and garages take their default
+anywhere; underground lots get none. On the Oct 5 extract, against the 2025
+CDL, 4,511 service ways (1,029 km; 2,405 of kind service and 2,021
+driveways among them) and 81 lots and stalls (one underground) are unknown.
+Driveways sit on the line more than the rest: 1,642 have between 0.4 and 0.6
+of their length on developed land.
 
-The CDL is read with the standard library ([`ingest/cdl.py`](ingest/cdl.py):
-NASS's 10 m cut of the box, EPSG:5070, deflate tiles; the projection matches
-PROJ's, and 5,000 random samples matched GDAL's reads, Oct 11), from
-`$TVT_CDL`, else `$TVT_ARCHIVE/roads/cdl/cdl_2025_10m.tif` (production's
-copy, placed by hand at deploy: 10 MB, public domain), else
-`$TVT_SOURCES/cdl/out/cdl_2025_10m.tif` (the downloaded sources, mounted in
-scratch jobs). Without any the load fails, rather than turn every untagged
-service way unknown; `TVT_CDL=none` loads without it on purpose.
+**Developed land** is a vector input, so the raster is never decoded in the
+ingest image (docs/17 §17.8 Q9: rasters are decoded in the worker):
+
+1. A worker step, [`build/developed.py`](build/developed.py) (GDAL, NumPy),
+   traces the CDL's classes 122-124 into polygons on NASS's own grid
+   (EPSG:5070), window by window (512 cells), from **farm's archived copy**
+   (`$TVT_ARCHIVE/farm/cdl/`, which `farm-cdl-load` fills and indexes in
+   `farm.cdl_year`; the newest year there is read), so the paving and the
+   crop fields read the same file. It writes `developed.jsonl.gz` and
+   `build.json` to `$TVT_ARCHIVE/roads/developed/<UTC stamp>/`. For the 2025
+   CDL: 191,222 pieces (3.1 million vertices) and 861.4 km² of developed
+   land, 7.7 MB, in about 45 s at 0.15 GB (a light job).
+2. `roads-developed-load` ([`ingest/developed.py`](ingest/developed.py),
+   standard library) checks the build, records it in
+   `roads.developed_build` (the CDL's file, year, sha256, licence and
+   credit; one build is current), replaces `roads.developed_land` with its
+   polygons cut to at most 256 vertices (203,546 parts; the stored area
+   must match the build's cell count), and measures the stored paving
+   again, marking `roads-build` when any material changed. About 45-55 s.
+3. Every `osm_paving` load measures what it loads against the current
+   build. With none loaded it still loads, and says so: untagged service
+   ways and lots are unknown until a build is loaded, which measures them.
+   So a missing CDL never fails an OpenStreetMap load or leaves the
+   partition's tables on two extracts.
+
+**After a new CDL year** (late February, the owner's OK for each download):
+`farm-cdl-load` takes it into farm's folder, then run the worker step and
+`roads-developed-load` again; the paving follows, and `roads-build` is marked
+if anything changed.
 
 **Widths** (⚠️ estimates until measured in the test windows): the width tag
 where it reads as metres (57 ways), else a kind's default in `width_est_m`
@@ -104,31 +129,52 @@ drive-through 3.5, emergency access 6.0, other service 5.5.
 
 **Crossings:** `marked` is true for `crossing:markings` other than `no`,
 `crossing=marked`, `zebra` or `uncontrolled` (OpenStreetMap's older word for
-a painted crossing without signals ⚠️), or `crossing_ref=zebra`; false for
-`crossing:markings=no` or `crossing=unmarked`/`no`; otherwise null, not
-known (`crossing=traffic_signals` alone says nothing about paint). A crossing
-way with nothing on it takes its crossing nodes' (`marked_from` 'node'). Rail
-crossings are never crosswalks (`railway` set, `marked` null). Crosswalks are
+a painted crossing without signals ⚠️; 1,700 nodes), or
+`crossing_ref=zebra`; false for `crossing:markings=no` or
+`crossing=unmarked`/`no`; otherwise null, not known
+(`crossing=traffic_signals` alone says nothing about paint). A crossing way
+with nothing on it takes its crossing nodes' (`marked_from` 'node'). Rail
+crossings (`railway=crossing`, `level_crossing`, `tram_crossing` or
+`tram_level_crossing`) are never crosswalks: `marked` stays null, and a rail
+crossing way doesn't take its nodes'. Another railway value (`abandoned`,
+`disused`: a rail trail) doesn't make a crossing a rail crossing; the three
+crossing ways on rail trails are marked on the way itself. Crosswalks are
 drawn only where `marked` is true (decision 10; the roads build, P7, makes
-them). On the Oct 5 extract: 5,912 crossing nodes and 5,183 crossing ways
-are marked, and 1,741 crossing nodes are at signals (`signals`).
+them from `roads.osm_walk_node` where `kind = 'crossing' and marked`). On
+the Oct 5 extract: 5,912 crossing nodes and 5,183 crossing ways are marked;
+1,741 crossing nodes are at signals (`signals`), and 856 of those have no
+`crossing:markings` and stay null.
 
 Kerbs are stored for routing, not drawn. A load that changed anything
-marks `roads-build` (`ops.build_pending`). Loading takes
-about 50 s and 0.3 GB on a cut already made (a light job).
+marks `roads-build` (`ops.build_pending`). Loading takes about 60 s and
+0.3 GB on a cut already made (a light job).
+
+**Size** on scratch, freshly loaded, with indexes: `roads.osm_paving` 53 MB,
+`roads.osm_parking` 2 MB, `roads.osm_walk_node` 20 MB, `roads.developed_land`
+62 MB. A reload rewrites every row it brings (and a developed load every
+polygon), so a table holds up to about twice that until it's vacuumed.
+
+**Licences:** the three paving tables are ODbL (© OpenStreetMap
+contributors). `developed`, and the materials resting on it, also read the
+CDL (USDA NASS, public domain, "free to redistribute"; credit "USDA NASS
+Cropland Data Layer <year>"), which changes neither. An export of them lists
+the CDL as an input, with `roads.developed_build`'s current year and sha256;
+the tables' comments say so.
 
 **Tables:** `core.road_segment`, `core.segment_match`, `core.hpms_section`,
 `core.msm_arterial`, `core.compass_segment`, `core.osm_way`, `core.osm_lane`,
 `core.osm_node`, and the `core.segment_lanes` view with its four per-source
 views (migrations 0004, 0011, 0016–0018 in `db/migrations/`). In the plugin's
 own schema `roads` ([migrations/](migrations/)): `roads.osm_street` (0001),
-`roads.osm_paving`, `roads.osm_parking` and `roads.osm_walk_node` (0002),
+`roads.osm_paving`, `roads.osm_parking`, `roads.osm_walk_node`,
+`roads.developed_build` and `roads.developed_land` (0002),
 `roads.bike_facility`, `roads.bike_facility_note` (internal),
 `roads.bike_facility_match` and the views `roads.bike_facility_side` and
 `roads.segment_bike_xsection` (0004).
 
-**Code:** `ingest/sources/` (the sources and consumers), `ingest/cdl.py`
-(developed land from the Cropland Data Layer, for the paving's materials),
+**Code:** `ingest/sources/` (the sources and consumers), `ingest/developed.py`
+(developed land: loading a build, and measuring shares of it in PostGIS),
+`build/developed.py` (the worker step that traces it from the CDL),
 `ingest/segment_match.py` (matching to ACHD's segments with core's line
 matcher, and `core.segment_match`), `ingest/streets.py` (street names made
 comparable; the intersections plugin uses it too).
@@ -138,10 +184,13 @@ comparable; the intersections plugin uses it too).
 ```bash
 TVT_ARCHIVE=data/archive python3 -m ingest osm-load --inbox            # an OSM extract downloaded by hand (needs osmium-tool)
 TVT_ARCHIVE=data/archive python3 -m ingest osm-load --only osm_street  # this consumer, on the extract we hold
-TVT_ARCHIVE=data/archive python3 -m ingest osm-load --only osm_paving  # the paving (needs the CDL: above)
+TVT_ARCHIVE=data/archive python3 -m ingest osm-load --only osm_paving  # the paving (measured against the current developed land)
+python -m plugins.roads.build.developed --cdl $TVT_ARCHIVE/farm/cdl --out $TVT_ARCHIVE/roads/developed/<UTC stamp>   # worker image
+python3 -m ingest roads-developed-load --build $TVT_ARCHIVE/roads/developed/<UTC stamp>          # then measures the paving again
 python3 -m ingest run achd_bike_network                                # ACHD's bike network (monthly when scheduled)
 python3 -m ingest segment-match [itd_hpms achd_msm compass_centerline osm_valley achd_bike_network]
 python3 -m unittest discover -s plugins/roads -t .
+data/dev/worker-test-remote.sh <worktree> <name> plugins.roads.tests.test_developed_build    # the worker step, worker image
 ```
 
 **Ethics:** Geofabrik's robots.txt disallows scripted downloads of its
@@ -149,9 +198,10 @@ extracts (Oct 6, 2026), so the owner downloads the Idaho extract in a
 browser; no OpenStreetMap source has download code or a schedule.
 Loading the remaining street classes was approved by the owner on Oct 8
 (decision 2a), and the paving's tags (service and driveway ways, sidewalks
-and crossings, parking) the same day. The CDL is USDA's, public domain, a
-hand download kept with its provenance among the downloaded sources. Anything we publish that's derived from OpenStreetMap stays
-ODbL.
+and crossings, parking) the same day. The CDL is USDA NASS's, public domain:
+farm's archived copy of the owner's hand download (each yearly download
+needs the owner's OK), traced in the worker image, never served as tiles.
+Anything we publish that's derived from OpenStreetMap stays ODbL.
 
 ## ACHD's bike network: widths for the real-width roads
 
