@@ -36,6 +36,14 @@ STATE_DIR = "state"
 INBOX = "inbox"
 
 
+def _copy(src, dst):
+    """A file's bytes and times; its mode comes from the umask (refresh.sh's 077: the dumps and
+    archives are the server user's only)."""
+    shutil.copyfile(src, dst)
+    st = os.stat(src)
+    os.utime(dst, ns=(st.st_atime_ns, st.st_mtime_ns))
+
+
 def _skipped(name):
     return name.startswith(".") or name.endswith(".part")
 
@@ -61,7 +69,7 @@ def copy_state(src, dest):
     for e in _top_files(src):
         if is_state_file(e.name):
             os.makedirs(dest, exist_ok=True)
-            shutil.copy2(e.path, os.path.join(dest, e.name))
+            _copy(e.path, os.path.join(dest, e.name))
             copied.append(e.name)
     top = os.path.join(src, STATE_DIR)
     if os.path.isdir(top) and not os.path.islink(top):
@@ -73,7 +81,7 @@ def copy_state(src, dest):
                 path = os.path.join(root, name)
                 if _skipped(name) or os.path.islink(path) or not os.path.isfile(path):
                     continue
-                shutil.copy2(path, os.path.join(dest, rel, name))
+                _copy(path, os.path.join(dest, rel, name))
                 copied.append(os.path.join(rel, name))
     return sorted(copied)
 
@@ -117,7 +125,7 @@ def stage(prod, state, out, dirs):
         held = []
         for e in _top_files(src):
             if not is_state_file(e.name):
-                shutil.copy2(e.path, os.path.join(dest, e.name))
+                _copy(e.path, os.path.join(dest, e.name))
                 held.append(e.name)
         kept = copy_state(os.path.join(state, d), dest) if state else []
         done[d] = (held, kept)

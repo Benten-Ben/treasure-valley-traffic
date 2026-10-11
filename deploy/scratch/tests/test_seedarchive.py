@@ -117,6 +117,18 @@ class Stage(Folders):
         self.assertEqual(read(os.path.join(out, "osm", "idaho-y.osm.pbf")), "extract Y")
         self.assertNotIn("water", got)
 
+    def test_times_are_kept_and_the_mode_follows_the_umask(self):
+        extract = os.path.join(self.prod, "osm", EXTRACT)
+        os.utime(extract, (1_760_000_000, 1_760_000_000))
+        old = os.umask(0o077)
+        try:
+            seedarchive.stage(self.prod, None, self.p("staged"), ["osm"])
+        finally:
+            os.umask(old)
+        st = os.stat(self.p("staged", "osm", EXTRACT))
+        self.assertEqual(int(st.st_mtime), 1_760_000_000)
+        self.assertEqual(st.st_mode & 0o777, 0o600)
+
     def test_no_snapshot_means_no_state(self):
         out = self.p("archive", ".staged-tvt_s1")
         got = seedarchive.stage(self.prod, None, out, ["osm"])
