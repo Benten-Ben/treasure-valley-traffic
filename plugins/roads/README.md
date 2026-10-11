@@ -409,7 +409,7 @@ county a piece is in) and developed land (the CDL, `roads.developed_land`).
 
 | | |
 |---|---|
-| Ways, pieces | 36,689 ways (13,917 in `core.osm_way`, 22,772 in `roads.osm_street`), 69,893 pieces: Ada 44,884, Canyon 22,310, elsewhere 2,699; 38,097 of Ada's on an ACHD segment |
+| Ways, pieces | 36,689 ways (13,904 in `core.osm_way`: its 13,917 less the 7 cycleways, 4 tracks, 1 pedestrian way and 1 raceway; 22,785 in `roads.osm_street`), 69,893 pieces: Ada 44,884, Canyon 22,310, elsewhere 2,699; 38,097 of Ada's on an ACHD segment |
 | Lanes | from OpenStreetMap 22,111 pieces, the Master Street Map 1,043, HPMS 326, COMPASS (in Ada, by the lanes rule) 143, OpenStreetMap through ACHD's segment 101, the default 46,169; lines on 13,303 |
 | Widths | inventoried 8,916, counted 4,767, estimated 56,210 |
 | Junctions | 31,087 (signal 588, roundabout 139, interchange 126); 79,950 corner pairs closed, 30,324 fills; 1,852 islands; 928 tapers |
