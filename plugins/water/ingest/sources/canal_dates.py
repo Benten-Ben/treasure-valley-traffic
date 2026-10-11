@@ -30,7 +30,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from typing import Optional
 
-from ingest import manifest, seasons
+from ingest import db, manifest, seasons
 
 from .. import rules
 
@@ -209,7 +209,6 @@ def unmatched(conn, entries):
 
 def store(conn, entries, path, digest):
     """Replace water.canal_date with entries (in the caller's transaction) and record the load. Returns stats."""
-    from ingest import db
     db.ensure_source(conn, SOURCE)
     missing = unmatched(conn, entries)
     counts = {"entries": len(entries), "names": sum(len(s.canals) for s in entries),
@@ -243,8 +242,7 @@ def main(argv=None):
         entries, digest = read_file(args.file)
     except (OSError, ValueError) as err:
         sys.exit(f"canal-dates-load: {err}")
-    from ingest import db
-    from .. import season
+    from .. import season                    # season imports this module
     with db.connect() as conn:
         if not ready(conn):
             sys.exit("canal-dates-load: water 0002 isn't applied (python3 db/migrate.py)")

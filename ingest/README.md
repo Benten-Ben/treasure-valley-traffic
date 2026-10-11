@@ -34,7 +34,7 @@ names didn't change, so `ops.source` and `ops.fetch` carry on:
 | [development](../plugins/development) | `compass_growth`, `compass_plats` | |
 | [hazards](../plugins/hazards) | `idl_fire_restrictions`, `nifc_wfigs_incidents`, `nifc_wfigs_perimeters`, `nasa_firms`, `nws_wwa`, `usgs_quakes` | |
 | [air](../plugins/air) | `noaa_hms_smoke` | |
-| [water](../plugins/water) | `nwps_gauges`, `nrcs_snotel`, `boise_ecoli`, `boise_river_hazards`, `usdm_drought`, `idwr_irrigation_orgs`, `idwr_season_of_use`; by hand `nhd_hr`, `hydroshare_canals`, and (OpenStreetMap consumer) `osm_waterways` | `nhd-load`, `hydroshare-load`, `water-build`, `water-export` |
+| [water](../plugins/water) | `nwps_gauges`, `nrcs_snotel`, `boise_ecoli`, `boise_river_hazards`, `usdm_drought`, `idwr_irrigation_orgs`, `idwr_season_of_use`, `canal_season` (derived, hourly); by hand `nhd_hr`, `hydroshare_canals`, `canal_dates`, and (OpenStreetMap consumer) `osm_waterways` | `nhd-load`, `hydroshare-load`, `water-build`, `water-export`, `canal-season`, `canal-dates-load` |
 | [trails](../plugins/trails) | `r2r_trails`, `boise_greenbelt_closures`; manual `osm_paths` (an `osm-load` consumer), `trails_match` | `trails-match` |
 | [lands](../plugins/lands) | `usfs_r4_orders`, `idpr_route_closures`, `idpr_area_restrictions` | |
 | [weather](../plugins/weather) | `awc_metar` | |
