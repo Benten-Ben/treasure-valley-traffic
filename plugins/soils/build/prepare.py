@@ -24,6 +24,7 @@ The shapefiles are in WGS 84 already; nothing is reprojected here (areas are mea
 """
 
 import argparse
+import contextlib
 import csv
 import glob
 import hashlib
@@ -144,12 +145,13 @@ def prepare(sources, out, only=None, log=print):
     os.makedirs(os.path.join(out, "tabular"), exist_ok=True)
     box = box_geometry()
     inputs, meta_areas = {}, []
-    writers, handles, rows_out, headers = {}, {}, defaultdict(int), {}
+    writers, rows_out, headers = {}, defaultdict(int), {}
+    files_open = contextlib.ExitStack()              # every file written, closed however prepare ends
 
     def writer(table, columns):
         if table not in writers:
-            f = open(os.path.join(out, "tabular", f"{table}.csv"), "w", newline="", encoding="utf-8")
-            handles[table] = f
+            f = files_open.enter_context(
+                open(os.path.join(out, "tabular", f"{table}.csv"), "w", newline="", encoding="utf-8"))
             writers[table] = csv.writer(f)
             headers[table] = ["areasymbol"] + columns
             writers[table].writerow(headers[table])
@@ -160,7 +162,8 @@ def prepare(sources, out, only=None, log=print):
     polygons_path = os.path.join(out, package.POLYGONS)
     bounds_path = os.path.join(out, package.SURVEY_AREAS)
     n_bounds = 0
-    with open(polygons_path, "w", encoding="utf-8") as poly_out, open(bounds_path, "w", encoding="utf-8") as sa_out:
+    with files_open, open(polygons_path, "w", encoding="utf-8") as poly_out, \
+            open(bounds_path, "w", encoding="utf-8") as sa_out:
         for sym, folder in areas.items():
             tab = Tabular(os.path.join(folder, "tabular"))
             cat = next(tab("sacatalog"))
@@ -253,8 +256,6 @@ def prepare(sources, out, only=None, log=print):
                 "horizons": counts["chorizon"]})
             log(f"prepare: {sym} ({cat['areaname']}, {rest}): {n_poly} polygons, {counts['mapunit']} map units, "
                 f"{counts['component']} components, {counts['chorizon']} horizons")
-    for f in handles.values():
-        f.close()
 
     files = {package.POLYGONS: {"sha256": file_sha256(polygons_path),
                                 "rows": sum(a["polygons"] for a in meta_areas)},
