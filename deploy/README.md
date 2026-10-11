@@ -304,6 +304,18 @@ differ, the Oct 7 load is the fact; the Oct 6 numbers were sizing guesses.
 | `core.segment_match` | about 6,000–9,000 | 14,054 ACHD segments matched, plus 2,222 turn-bay matches |
 | `raw.record` | about 16,300 rows (5–8 MB) on the first load, then about 150–500 new versions (60–200 KB) a week | not recorded |
 
+## Unmerged code and builds: the scratch database and tvt_build
+
+Since Oct 11 (landscape sprint, F6), **unmerged code never touches the
+production database**. A branch's migrations, loads and builds run against
+`tvt-scratch-db`, a capped copy of production on its own internal network,
+refreshed by hand. Builds and loads run as **`tvt_build`**, a role with caps
+(`statement_timeout` 45 min, `temp_file_limit` 5 GB, `work_mem` 64 MB, one
+parallel worker) and only the grants builds need, on scratch and on
+production alike. Production gets new schemas through its migrations, then the
+role's grants again, then its loads, each in its own capped container. How it
+works, the grants and the commands: [scratch/README.md](scratch/README.md).
+
 ## Preview of main's app (UI v2)
 
 While UI v2 lands a wave at a time (docs/14 §14.10),
