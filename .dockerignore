@@ -4,7 +4,9 @@
 !db/
 !plugins/
 !basemap/ground/
+!basemap/landscape/
 **/__pycache__
 ingest/tests
 plugins/*/tests
 basemap/ground/tests
+basemap/landscape/tests
