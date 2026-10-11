@@ -123,17 +123,23 @@ worktree to `/srv/tvt/work/sheets-src/<pkg>/` and runs it (`data/dev/README-shee
 
 The worker sheets show data; the map sheets show the map as people see it. `app/scripts/map-sheets.mjs` drives
 Playwright on the laptop against the preview (`app-next`) and screenshots a list of views: the same places, each in
-the looks and layer sets a review asks for. It's a script only for now; it runs once the landscape layers are on
-the preview.
+the looks and layer sets a review asks for. It's for the owner's two reviews, once the landscape layers are on the
+preview; a smoke run on Oct 11 (one camera in Valley and Aerial, with no layers and with Trees) took about 25 s a shot.
 
 ```bash
-cd app && node scripts/map-sheets.mjs --url "$TVT_SHEETS_URL" --places cameras,spots --looks valley,clay \
-  --layers ,trees --label review-1                      # writes data/sheets/<label>/ (git-ignored)
+cd app && node scripts/map-sheets.mjs --url "$TVT_SHEETS_URL" --places cameras,spots --looks valley,aerial \
+  --layers none --layers trees+lanes --label review-1   # writes data/sheets/<time>-review-1/ (git-ignored)
 node scripts/map-sheets.mjs --list --places boxes        # the shot list, no browser
 ```
 
-The preview's address isn't in the repository: pass `--url` or set `TVT_SHEETS_URL`. The screenshots stay on the
-laptop until they're copied to the VM's private files (`data/dev/README-sheets.md`).
+- Each shot is the frame fitted to the viewport's height (1280 x 800 by default), straight down unless `--pitch`.
+- Looks: `valley`, `clay`, `auto`, and `aerial` (Valley with the photo, switched on through the map's view buttons).
+  A layer set is one `--layers`, ids joined by `+`; `none` is an explicit empty set, so a first visit's defaults
+  never apply. A layer the build doesn't know is noted in `index.json`, not drawn.
+- `--clean` hides the app's chrome and keeps the map and its credits.
+- The preview's address isn't in the repository: pass `--url` or set `TVT_SHEETS_URL`. The browser resolves only that
+  host. The screenshots stay on the laptop until they're copied to the VM's private files
+  (`data/dev/README-sheets.md`), then are deleted here.
 
 ## Tests
 
