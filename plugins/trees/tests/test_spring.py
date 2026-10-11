@@ -7,6 +7,7 @@ import os
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 try:
     import numpy as np
@@ -73,9 +74,10 @@ class SeasonsTest(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def seasons(self, **kw):
+    def seasons(self, where="h", **kw):
+        """Seasons for the test area, as the build makes them for --area where (h, Bogus Basin, is a checked area)."""
         import build
-        return build.Seasons(*seasons_dirs(self.tmp.name, **kw), area())
+        return build.Seasons(*seasons_dirs(self.tmp.name, **kw), area(), where)
 
     def test_the_test_square_is_on_the_ground_grid(self):
         import build
@@ -89,6 +91,23 @@ class SeasonsTest(unittest.TestCase):
         self.assertEqual(c["april_views"], 2)
         self.assertAlmostEqual(c["crown_m2"], math.pi * 36, places=1)
         self.assertTrue(c["evergreen"])
+        self.assertTrue(c["area_checked"])
+
+    def test_the_cue_types_trees_only_in_a_checked_area(self):
+        # its false calls over snow are untested where no labelled crown is big enough (Silver City, j): there it is
+        # recorded but types nothing; so too in an area not listed, or with no area given
+        import build
+        self.assertEqual(build.SPRING_CHECKED_AREAS, {"h": "Bogus Basin"})
+        c = self.seasons().cue(560050.0, 4829960.0, 6.0)
+        self.assertTrue(build.spring_conifer(c))
+        for where in ("j", "c", "t", None):
+            with self.subTest(where=where):
+                s = self.seasons(where)
+                c = s.cue(560050.0, 4829960.0, 6.0)
+                self.assertTrue(c["evergreen"])                       # what it sees is kept
+                self.assertFalse(c["area_checked"])
+                self.assertFalse(build.spring_conifer(c))
+                self.assertFalse(s.about()["area_checked"])
 
     def test_without_snow_it_cant_tell(self):
         # in the valley the April lawns are green too: a green crown there says nothing
@@ -170,6 +189,8 @@ class SeasonsTest(unittest.TestCase):
         self.assertTrue(all(len(f["sha256"]) == 64 and f["bytes"] > 0 for f in ab["files"].values()))
         self.assertEqual(ab["rule"], {"near_m": build.SPRING_NEAR_M, "snow_min": build.SPRING_SNOW_MIN,
                                       "min_crown_m2": build.SPRING_MIN_CROWN_M2, "ndvi_min": build.SPRING_NDVI_MIN})
+        self.assertTrue(ab["area_checked"])
+        self.assertEqual(ab["checked_areas"], ["h"])
         self.assertNotIn(self.tmp.name, json.dumps(ab))                 # no paths
 
 
@@ -187,15 +208,18 @@ class SpringTypeTest(unittest.TestCase):
     def test_the_order_narrow_spring_then_the_curve(self):
         import build
         narrow_p = {"top_m": 10.0, "drop_1m": 0.2, "drop_2m": 0.4, "drop_3m": 0.6, "rough": 0.05}
-        green = {"apr_ndvi": 0.4, "jul_ndvi": 0.7, "snow_share": 1.0, "april_views": 2, "crown_m2": 80.0}
+        green = {"apr_ndvi": 0.4, "jul_ndvi": 0.7, "snow_share": 1.0, "april_views": 2, "crown_m2": 80.0,
+                 "area_checked": True}
         dark = dict(green, apr_ndvi=0.1)
         valley = dict(green, snow_share=0.0)
+        held = dict(green, area_checked=False)                         # evergreen, in an area not checked
+        unmarked = {k: v for k, v in green.items() if k != "area_checked"}
         for keep in (True, False):
             build.KEEP_WIDTH_CONIFER = keep
             self.assertEqual(build.placed_type(narrow_p, 9.2, "broadleaf", self.model, green), "narrow")
             self.assertEqual(build.placed_type(None, 9.2, "broadleaf", self.model, green), "conifer")
             self.assertEqual(build.placed_type(None, 9.2, "narrow", self.model, green), "conifer")
-            for s in (dark, valley, None):
+            for s in (dark, valley, held, unmarked, None):
                 self.assertEqual(build.placed_type(None, 9.2, "broadleaf", self.model, s), "broadleaf")
                 self.assertEqual(build.placed_type(None, 9.2, "conifer", self.model, s), "conifer" if keep else "broadleaf")
 
@@ -209,12 +233,23 @@ class SpringTypeTest(unittest.TestCase):
             self.assertFalse(build.evergreen(dict(ok, **{k: v})), k)
         self.assertFalse(build.evergreen(None))
         self.assertFalse(build.evergreen({}))
+        self.assertFalse(build.spring_conifer(ok))                     # no area_checked: not typed
+        self.assertTrue(build.spring_conifer(dict(ok, area_checked=True)))
+        self.assertFalse(build.spring_conifer(dict(ok, area_checked=False)))
+        self.assertFalse(build.spring_conifer(dict(ok, area_checked=True, apr_ndvi=0.1)))
+        self.assertFalse(build.spring_conifer(None))
 
 
 @unittest.skipIf(np is None, "NumPy/SciPy/rasterio not installed (run in the worker image)")
 class SpringBuildTest(unittest.TestCase):
-    def run_build(self, tmp, **kw):
-        """Two crowns 30 m apart on flat ground, as in test_narrow: a cone that falls fast and a broad dome."""
+    def run_build(self, tmp, checked=True, **kw):
+        """Two crowns 30 m apart on flat ground, as in test_narrow: a cone that falls fast and a broad dome. The build's
+        area, t, is made a checked area unless checked is False."""
+        import build
+        with mock.patch.dict(build.SPRING_CHECKED_AREAS, {"t": "the test area"} if checked else {}):
+            return self._run_build(tmp, **kw)
+
+    def _run_build(self, tmp, **kw):
         import build
         shape = (160, 240)
         hgt = np.maximum(cone(shape, 80, 60, 14.0, 5.0), dome(shape, 80, 180, 15.0, 7.0)).astype(np.float32)
@@ -245,6 +280,7 @@ class SpringBuildTest(unittest.TestCase):
         dome_t, cone_t = self.tallest(trees, 560090), self.tallest(trees, 560030)
         self.assertEqual(dome_t["type"], "conifer")
         self.assertTrue(dome_t["fit"]["spring"]["evergreen"])
+        self.assertTrue(dome_t["fit"]["spring"]["area_checked"])
         self.assertEqual(cone_t["type"], "narrow")                    # the narrow rule comes first
         m = build.model_for(json.load(open(os.path.join(os.path.dirname(HERE), "model", "crown_model.json"))))
         for t in trees:                                               # a stored build can be retyped
@@ -260,6 +296,32 @@ class SpringBuildTest(unittest.TestCase):
         self.assertGreaterEqual(c["evergreen"], c["conifer"])
         self.assertGreaterEqual(c["conifer"], 1)
         self.assertEqual(c["conifer"], sum(1 for t in trees if t["type"] == "conifer" and t["fit"]["spring"]["evergreen"]))
+        self.assertEqual(c["held_back"], 0)
+        self.assertTrue(sp["area_checked"])
+
+    def test_where_the_area_isnt_checked_the_cue_types_nothing(self):
+        import build
+        keep = build.KEEP_WIDTH_CONIFER
+        build.KEEP_WIDTH_CONIFER = False
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                trees, bj = self.run_build(tmp, checked=False)
+            dome_t = self.tallest(trees, 560090)
+            self.assertTrue(dome_t["fit"]["spring"]["evergreen"])       # it sees the crown green over the snow
+            self.assertFalse(dome_t["fit"]["spring"]["area_checked"])
+            self.assertEqual(dome_t["type"], "broadleaf")                # but doesn't type it
+            m = build.model_for(json.load(open(os.path.join(os.path.dirname(HERE), "model", "crown_model.json"))))
+            for t in trees:                                               # retyping a stored build agrees
+                fit = t["fit"]
+                self.assertEqual(t["type"], build.placed_type(fit["profile"], t["height_m"], fit["width_curve"], m,
+                                                              fit["spring"]))
+        finally:
+            build.KEEP_WIDTH_CONIFER = keep
+        c = bj["counts"]["spring"]
+        self.assertEqual(c["conifer"], 0)
+        self.assertGreaterEqual(c["held_back"], 1)
+        self.assertEqual(c["held_back"], c["evergreen"])
+        self.assertFalse(bj["params"]["spring"]["area_checked"])
 
     def test_in_the_valley_nothing_changes(self):
         import build
@@ -271,7 +333,7 @@ class SpringBuildTest(unittest.TestCase):
         finally:
             build.KEEP_WIDTH_CONIFER = keep
         self.assertEqual(self.tallest(trees, 560090)["type"], "broadleaf")
-        self.assertEqual(bj["counts"]["spring"], {"can_tell": 0, "evergreen": 0, "conifer": 0})
+        self.assertEqual(bj["counts"]["spring"], {"can_tell": 0, "evergreen": 0, "conifer": 0, "held_back": 0})
 
     def test_spring_and_summer_go_together(self):
         import build

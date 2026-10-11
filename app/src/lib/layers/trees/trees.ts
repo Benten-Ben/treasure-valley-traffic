@@ -439,11 +439,16 @@ const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFi
 
 /**
  * Whether the spring Sentinel-2 cue made a placed tree a conifer (§19.3): its
- * crown read green over the April snow (the build's fit.spring.evergreen).
+ * crown read green over the April snow (the build's fit.spring.evergreen) in
+ * an area where the cue types trees (fit.spring.area_checked: its calls were
+ * checked against labelled trees there). Elsewhere it is recorded but types
+ * nothing, so a conifer there came from the width curve.
  */
 export function typedBySpring(d: Pick<TreeDetail, 'kind' | 'type' | 'fit'>): boolean {
 	const s = d.fit?.spring;
-	return d.kind === 'placed' && d.type === 'conifer' && typeof s === 'object' && s !== null && (s as { evergreen?: unknown }).evergreen === true;
+	if (d.kind !== 'placed' || d.type !== 'conifer' || typeof s !== 'object' || s === null) return false;
+	const c = s as { evergreen?: unknown; area_checked?: unknown };
+	return c.evergreen === true && c.area_checked === true;
 }
 
 /** How we know, in plain words (§19.3): the lidar, the trunk point's distance to the crown, or the placement's fit. */

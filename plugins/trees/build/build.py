@@ -14,8 +14,9 @@ Then `python3 -m ingest trees-load --build <dir>` loads it.
    sized from Boise's measured trees of its genus (Urban Tree Database) by trunk diameter.
 2. The placer fills the rest (place.py), then repairs. Each placed crown's size and shape come from the width curve that
    explains the lidar best. Its type: narrow by the narrow rule (narrow_rule below), not by that curve; else conifer
-   when the spring Sentinel-2 cue sees an evergreen crown (--spring and --summer: Seasons, evergreen below); else the
-   curve's conifer call stands for now (KEEP_WIDTH_CONIFER), and broadleaf otherwise.
+   when the spring Sentinel-2 cue sees an evergreen crown in an area where its calls were checked against labelled
+   trees (--spring and --summer: Seasons, spring_conifer and SPRING_CHECKED_AREAS below); else the curve's conifer call
+   stands for now (KEEP_WIDTH_CONIFER), and broadleaf otherwise.
 3. Writes trees.geojson (WGS84 points with the tree's fields), log.jsonl (one event per line) and build.json.
 
 The area's inputs for the pilot are the land-cover spike's lidar products (0.5 m DSM and DTM in UTM 11N) and its
@@ -72,6 +73,14 @@ SPRING_NEAR_M = 50.0
 SPRING_SNOW_MIN = 0.5
 SPRING_MIN_CROWN_M2 = 50.0
 SPRING_NDVI_MIN = 0.2
+# Where the cue types trees (Oct 11, after review): only in the areas (the build's --area) where its calls over snow were
+# checked against the owner's labelled trees. Its false calls are untested anywhere: no labelled broadleaf or narrow tree
+# over snow has a crown of 50 m² or more. In Bogus Basin (h) every real tree the owner labelled is a conifer, and the
+# cue's 10 calls among the labelled crowns were 9 conifers and a part of a bigger tree. In Silver City (j) no labelled
+# crown is that big, and two of its five labelled broadleaf trees read 0.22 and 0.30 over the snow, as green as four of
+# the nine conifers the cue caught in Bogus Basin (0.20 to 0.25). So there, and in any area not listed, the cue is
+# recorded with each tree (fit.spring) but types nothing until the owner labels that area's large green-over-snow crowns.
+SPRING_CHECKED_AREAS = {"h": "Bogus Basin"}
 SPRING_FILES = {"apr": ("spring", "ndvi_median.tif"), "clear": ("spring", "clear_count.tif"),
                 "snow": ("spring", "snow_count.tif"), "jul": ("summer", "ndvi_median.tif")}
 SENTINEL2_CREDIT = "Contains modified Copernicus Sentinel data 2025"
@@ -157,16 +166,22 @@ def evergreen(c):
     return can_tell_spring(c) and c["apr_ndvi"] >= SPRING_NDVI_MIN
 
 
+def spring_conifer(c):
+    """True when the spring cue types the crown conifer: it sees it evergreen (evergreen), in an area where its calls
+    were checked against labelled trees (the cue's area_checked: the build's area is in SPRING_CHECKED_AREAS)."""
+    return evergreen(c) and c.get("area_checked") is True
+
+
 def placed_type(p, H, width_curve, model, spring=None):
     """A placed tree's type from its profile, its height, the width curve that sized its crown and its spring cue.
     Narrow when the narrow rule says so (first: one labelled narrow tree was sized by the conifer curve). Otherwise
-    conifer when the spring cue sees an evergreen crown. Otherwise conifer when that curve was the conifer one and
-    KEEP_WIDTH_CONIFER (pending the owner), else broadleaf. The curve's narrow call isn't kept: on the labels, 2 of its
-    23 narrow calls on real trees were narrow trees (Oct 8: neighbours squeeze crowns, so width is a cue to the type
-    only on lone trees)."""
+    conifer when the spring cue types it (spring_conifer: an evergreen crown in a checked area). Otherwise conifer when
+    that curve was the conifer one and KEEP_WIDTH_CONIFER (pending the owner), else broadleaf. The curve's narrow call
+    isn't kept: on the labels, 2 of its 23 narrow calls on real trees were narrow trees (Oct 8: neighbours squeeze
+    crowns, so width is a cue to the type only on lone trees)."""
     if narrow_rule(p, H, model):
         return "narrow"
-    if evergreen(spring):
+    if spring_conifer(spring):
         return "conifer"
     return "conifer" if KEEP_WIDTH_CONIFER and width_curve == "conifer" else "broadleaf"
 
@@ -204,9 +219,11 @@ class Seasons:
     """The spring cue's inputs around one area: the early-April 2025 Sentinel-2 NDVI median with its clear and snow
     view counts (spring_dir: ndvi_median.tif, clear_count.tif, snow_count.tif) and the July 2025 NDVI median (summer_dir:
     ndvi_median.tif), all on the ground's 10 m grid (basemap/ground/grid.py), read once as a window around the area's
-    bounds (metres in UTM 11N: the lidar's NAD83 coordinates are the grid's under the null datum shift)."""
+    bounds (metres in UTM 11N: the lidar's NAD83 coordinates are the grid's under the null datum shift). area is the
+    build's --area: the cue types trees only where it is in SPRING_CHECKED_AREAS."""
 
-    def __init__(self, spring_dir, summer_dir, bounds):
+    def __init__(self, spring_dir, summer_dir, bounds, area=None):
+        self.area, self.area_checked = area, area in SPRING_CHECKED_AREAS
         west, south, east, north = bounds
         res, pad = grid.BASE_RES, SPRING_NEAR_M + grid.BASE_RES
         self.col0 = math.floor((west - pad - grid.ORIGIN_X) / res)
@@ -234,16 +251,19 @@ class Seasons:
         self.near_i, self.near_j = (v.ravel() for v in np.mgrid[-k:k + 1, -k:k + 1])
 
     def about(self):
-        """What the build records of its Sentinel-2 inputs (no paths): acquisitions, credit, files' bytes and sha256."""
+        """What the build records of its Sentinel-2 inputs (no paths): acquisitions, credit, files' bytes and sha256, the
+        rule, and whether the cue types trees in this area (area_checked, with the areas where it does)."""
         return {"april": self.tags["spring"].get("ACQUISITIONS"), "july": self.tags["summer"].get("ACQUISITIONS"),
                 "credit": SENTINEL2_CREDIT, "files": self.files,
                 "rule": {"near_m": SPRING_NEAR_M, "snow_min": SPRING_SNOW_MIN, "min_crown_m2": SPRING_MIN_CROWN_M2,
-                         "ndvi_min": SPRING_NDVI_MIN}}
+                         "ndvi_min": SPRING_NDVI_MIN},
+                "area_checked": self.area_checked, "checked_areas": sorted(SPRING_CHECKED_AREAS)}
 
     def cue(self, x, y, R):
         """The spring cue for a crown of radius R (m) centred at (x, y) (metres): its April and July NDVI (the cells its
         disc covers, weighted by its area in each, sampled every 0.5 m), the snow share of the clear April views of the
-        cells within SPRING_NEAR_M of its centre, its fewest clear April views, its area and whether it's evergreen."""
+        cells within SPRING_NEAR_M of its centre, its fewest clear April views, its area, whether it's evergreen, and
+        whether the cue types trees in this area (area_checked; spring_conifer)."""
         rows, cols = self.a["apr"].shape
         res = grid.BASE_RES
         n = int(math.ceil(R / PX))
@@ -272,6 +292,7 @@ class Seasons:
         out["snow_share"] = round(float((snow / clear[clear > 0]).mean()), 2) if (clear > 0).any() else None
         out["crown_m2"] = round(math.pi * R * R, 1)
         out["evergreen"] = evergreen(out)
+        out["area_checked"] = self.area_checked
         return out
 
 
@@ -320,11 +341,14 @@ def sources(a, seasons):
 
 
 def spring_counts(trees):
-    """Among placed trees: how many the spring cue could tell, how many it saw evergreen, and how many it typed."""
+    """Among placed trees: how many the spring cue could tell, how many it saw evergreen, how many it typed conifer,
+    and how many evergreen crowns it left untyped because the area isn't checked (held_back)."""
     placed = [t for t in trees if t["kind"] == "placed"]
-    return {"can_tell": sum(1 for t in placed if can_tell_spring(t["fit"].get("spring"))),
-            "evergreen": sum(1 for t in placed if evergreen(t["fit"].get("spring"))),
-            "conifer": sum(1 for t in placed if evergreen(t["fit"].get("spring")) and t["type"] == "conifer")}
+    sp = [t["fit"].get("spring") for t in placed]
+    return {"can_tell": sum(1 for c in sp if can_tell_spring(c)),
+            "evergreen": sum(1 for c in sp if evergreen(c)),
+            "conifer": sum(1 for t, c in zip(placed, sp) if spring_conifer(c) and t["type"] == "conifer"),
+            "held_back": sum(1 for c in sp if evergreen(c) and not spring_conifer(c))}
 
 
 def main(argv=None):
@@ -368,7 +392,10 @@ def main(argv=None):
         if epsg is None or not grid.same_coordinates(epsg):
             sys.exit(f"--spring: the lidar's CRS ({crs}) isn't UTM 11N, so it can't be read on the Sentinel-2 grid")
         (xa, ya), (xb, yb) = tf * (c0, r0), tf * (c0 + h.shape[1], r0 + h.shape[0])
-        seasons = Seasons(a.spring, a.summer, (min(xa, xb), min(ya, yb), max(xa, xb), max(ya, yb)))
+        seasons = Seasons(a.spring, a.summer, (min(xa, xb), min(ya, yb), max(xa, xb), max(ya, yb)), a.area)
+        if not seasons.area_checked:
+            print(f"spring cue: area {a.area!r} isn't one where its calls were checked against labelled trees "
+                  f"({', '.join(sorted(SPRING_CHECKED_AREAS))}): it is recorded with each tree but types none", flush=True)
     s = ndimage.gaussian_filter(np.where(bld, 0, h), 1.0)
     valid = ~bld & ~bad
     model = model_for(cm)

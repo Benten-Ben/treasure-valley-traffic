@@ -282,13 +282,15 @@ describe('the words (the legend and the tree panel)', () => {
 	});
 
 	it('says when the spring Sentinel-2 image made a placed tree a conifer, and only then', () => {
-		const spring = { apr_ndvi: 0.45, jul_ndvi: 0.68, snow_share: 1, april_views: 2, crown_m2: 153, evergreen: true };
+		const spring = { apr_ndvi: 0.45, jul_ndvi: 0.68, snow_share: 1, april_views: 2, crown_m2: 153, evergreen: true, area_checked: true };
 		const yes = detail({ kind: 'placed', type: 'conifer', fit: { spring } });
 		expect(typedBySpring(yes)).toBe(true);
 		expect(howWeKnow(yes).join(' ')).toContain('green over the snow in an early-April 2025 Sentinel-2 image');
 		for (const d of [
 			detail({ kind: 'placed', type: 'narrow', fit: { spring } }),                       // the narrow rule came first
 			detail({ kind: 'placed', type: 'conifer', fit: { spring: { ...spring, evergreen: false } } }), // the width curve's call
+			detail({ kind: 'placed', type: 'conifer', fit: { spring: { ...spring, area_checked: false } } }), // held back there
+			detail({ kind: 'placed', type: 'conifer', fit: { spring: { ...spring, area_checked: undefined } } }),
 			detail({ kind: 'placed', type: 'conifer', fit: { spring: null } }),                // a build without Sentinel-2
 			detail({ kind: 'placed', type: 'conifer', fit: {} }),
 			detail({ kind: 'catalogued', type: 'conifer', fit: { spring } })                   // the genus says conifer

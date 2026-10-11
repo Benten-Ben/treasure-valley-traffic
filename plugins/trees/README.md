@@ -13,7 +13,9 @@ Every tree we can find in the lidar, catalogued trees first ([docs/19](../../doc
   a conifer when the spring cue sees an evergreen crown: with `--spring` and `--summer` (the early-April and July 2025
   Sentinel-2 NDVI on the ground's 10 m grid), a crown of 50 m² or more whose April NDVI is 0.2 or more where at least
   half the April views around it were snow. In the valley the April lawns are as green as an evergreen at 10 m, so the
-  cue only tells in the mountains. Otherwise it is broadleaf, or conifer where the conifer curve sized it
+  cue only tells in the mountains, and it types trees only in areas where its calls were checked against the owner's
+  labels (`SPRING_CHECKED_AREAS`: Bogus Basin, `h`, so far); elsewhere it is kept in the fit but types nothing. Otherwise
+  it is broadleaf, or conifer where the conifer curve sized it
   (`KEEP_WIDTH_CONIFER`, pending the owner). The fit keeps the curve, the crown's profile and its spring cue. It writes
   `trees.geojson`, `log.jsonl` and `build.json` (with the Sentinel-2 files' sha256 and the sources it read) to a build
   folder.
@@ -21,7 +23,7 @@ Every tree we can find in the lidar, catalogued trees first ([docs/19](../../doc
 - Tables: `trees.build`, `trees.tree`, `trees.tree_log` (migrations/0001_trees.sql).
 - Sources (`plugin.json`, each a manual source with a module stating its licence and credit, in `ingest/sources/`):
   the USGS 3DEP lidar (public domain), Sentinel-2 (Copernicus: "Contains modified Copernicus Sentinel data 2025") and
-  OpenStreetMap's hedges (ODbL; the shrub build's check, not read yet). The build never reads a catalogue unless
+  OpenStreetMap's hedges (ODbL; the shrubs' hedge check, docs/19 §19.8). The build never reads a catalogue unless
   `--anchors` names one.
 
 The settings were calibrated on the North End's city street trees on Oct 8 (overlap limit 0.2: 76% of 941 street trees
