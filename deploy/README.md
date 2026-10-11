@@ -426,7 +426,7 @@ What a load does:
   (`roads-build`, `water-build`, `trails-match`), the exports, the bake.
   `roads-build` (the real-width roads, roads 0003) is a production load:
   under `heavy` as `tvt_build`, about 8-9 minutes and 0.6 GB in its own
-  container (it measured 456-516 s on scratch, Oct 11), then `roads-export`
+  container (it measured 456-528 s on scratch, Oct 11), then `roads-export`
   (about 15 s), whose base layers the bake reads:
 
   ```bash
