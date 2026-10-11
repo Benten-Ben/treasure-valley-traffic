@@ -185,8 +185,28 @@ python3 -m ingest soils-export
 ```
 
 The pass reads the newest soils export, mask v0 and farm export in `$TVT_ARCHIVE` (or `--soils`, `--mask`,
-`--farm`), the July 2025 Sentinel-2 median and the same-day normalisation (`--july`, `--norm`; `$TVT_SOURCES`), and
-the two county mosaics, each window decoded at 0.6 m (`mrsiddecode -s 1`) into the container's tmpfs and deleted.
+`--farm`), the July 2025 Sentinel-2 median, the same-day normalisation and the colour gains (`--july`, `--norm`,
+`--gains`; `$TVT_SOURCES`), and the two county mosaics, each window decoded at 0.6 m (`mrsiddecode -s 1`) into the
+container's tmpfs and deleted. `calibrate` in a build folder uses the run's own inputs and rules (`run.json`), refuses a
+flag that says otherwise (a sweep goes in a folder of its own), and records them in `calibration.json`; `finish`
+takes a calibration only when they match.
+
+**One mosaic per place.** The county mosaics reach a few kilometres past their county lines: Ada's mask covers about
+3,630 km² (the county 2,747), Canyon's 2,143, and they overlap by about 390 km² along the county line. Each pixel is
+served by one of them: inside a county's survey area (the export's `areasymbol`: ID001 is Ada County, ID665 Canyon)
+by that county's mosaic, and elsewhere by the nearest county's (a 20 m grid of the nearest county, `owner_grid`); the
+other mosaic serves it only where the first doesn't cover it. So nothing is counted twice, and in the COG the two
+mosaics' balancing meets at the county line, where G1b's seam handling looks for it.
+
+**Colour on one flight day's scale** (`--gains`, `photo.Gains`). NAIP 2025 was flown on four days in Ada and Canyon,
+and the first build's flight-day check fired (median 3.15 against the design's 3), so the conditional Sentinel-2 read
+the owner approved (decision 22) was made: Sentinel-2 L2A blue, green and red on each flight day (the same scenes as
+the NDVI curves; 63 range reads, 389 MB, nothing kept but the fits). Per day and band a monotone curve takes NAIP's DN
+(10 m means of the 2 m COG) to same-day reflectance, and each day's table puts its DNs on the June 18 flight's scale
+(June 18 is 63% of the photo): the reference curve inverted at that day's reflectance. The pass applies the table
+before anything else reads the colour, so the statistics, the dark rule and the COG's colour bands are all on June
+18's scale; the NDVI keeps its own curves. The fit, its checks and the scripts are with the server's sources
+(`sentinel2/naip_colour/`: `gains.json`, `PROVENANCE.md`), as naip_norm's are.
 LizardTech's SDK is for internal use only: it's mounted read-only at run time and never committed, as in
 [basemap](../../basemap/README.md#county-wide-detail-from-the-naip-county-mosaics-oct-7).
 
@@ -214,17 +234,24 @@ polygon: the count, sums and histograms, for the outlier check.
 1. `series`: every type of its series, any texture;
 2. `texture`: every soil type with its texture class and landform;
 3. `albedo`: L from a straight fit of the measured types' L on their dry albedo, chroma, hue, spread and texture from
-   its texture class's measured types (or every measured soil).
+   its texture class's measured types (or every measured soil). Only when the fit has some skill (r of 0.5 or more):
+   otherwise the type takes those peers' colour as it is, L included, labelled `texture` with a note that says so.
+   The first build's fit had r 0.28, which put every such type at L 0.75-0.80, the mean.
 
 A miscellaneous area borrows nothing (water, urban land, rock outcrop and the like have no series, texture or albedo
 of their own), and NOTCOM isn't a soil. A type with nothing to borrow gets no row: the palette says `none` and the
-ground paints it flat. **Outside Ada and Canyon** there's no NAIP 2025, so a type found only there is a flat type
-colour, labelled by its fallback; the 2023 tiles' colour fit for them is cut (plan §0's cut-first list).
+ground paints it flat. **Beyond the mosaics** there's no NAIP 2025. The county mosaics reach a few kilometres past
+Ada and Canyon (into Owyhee, Elmore, Boise, Gem and Payette counties and a strip of Malheur, Oregon: about a fifth of
+the sampled pixels), so a type there is measured from what those strips hold, and borrows only where it has too
+little. The line between measured and flat colours follows the mosaics' edges, not the county lines. A type found
+only beyond them is a flat type colour, labelled by its fallback; the 2023 tiles' colour fit is cut (plan §0's
+cut-first list).
 
 **Checks** (`report.json`, and the build's counts):
-- the same type on different flight days: per-flight colour gains (from Sentinel-2's blue and green on the flight
-  days, a conditional read the owner approved) are needed only when the median type's largest dE between days is
-  over 3;
+- the same type on different flight days: per-flight colour gains are needed when the median type's largest dE
+  between days is over 3 (the design's rule). With the gains applied, `flight_days` reports what's left
+  (`gains_applied`, `over_rule`), mostly each type's spread over the valley, and `pair_offsets` the flights' own
+  offsets (per pair of days, the median paired difference over the types on both);
 - the share of colour variance the types explain; Spearman's rho of type L against dry albedo;
 - polygons whose median lies more than 3 (Mahalanobis, in the type's own spread) from their type, with 2,000 pixels
   or more: a list for review;
@@ -236,10 +263,12 @@ colour, labelled by its fallback; the 2023 tiles' colour fit for them is cut (pl
 
 **The 2 m NAIP COG** for G1b (`finish`, beside its parts on the cold drive): `naip2025_2m.tif`, 4 bands, uint8, on the
 ground's 2 m grid, the extent of Ada and Canyon, DEFLATE, 512 px tiles, with an internal mask (cells at least half
-covered by a county mosaic). Bands 1-3 are the area means of the 0.6 m red, green and blue; band 4, `ndvi`, is the
-photo's NDVI on Sentinel-2's scale by its flight day's curve (the per-day normalisation), coded 1..255 for −1..+1
-(`(code − 128) / 127`; 0 where no flight polygon covers it). Colour isn't normalised per flight day unless the check
-above asks for it. `naip2025_2m.json` beside it says what it is (bands, coding, grid, sources, credits, sha256), and
+covered by a county mosaic). Bands 1-3 are the area means of the 0.6 m red, green and blue on the June 18 flight's
+scale (the colour gains); band 4, `ndvi`, is the photo's NDVI on Sentinel-2's scale by its flight day's curve, coded
+1..255 for −1..+1 (`(code − 128) / 127`; 0 where no flight polygon covers it). Both are per-day normalised. Each cell
+comes from its own county's mosaic (above). It's Copernicus-derived public-domain NAIP: the ground reads it as the raw
+input `naip-2m` (basemap/ground/inputs.py), crediting both. `naip2025_2m.json` beside it says what it is (bands,
+coding, grid, colour, sources, credits, sha256), and
 `flights.fgb` holds USDA's seamline polygons with their days and local times, for the sun angle G1b normalises by
 (C8).
 

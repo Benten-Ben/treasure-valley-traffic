@@ -106,9 +106,62 @@ _M2 = np.array([[0.2104542553, 0.7936177850, -0.0040720468],
 def colour(r, g, b):
     """OKLab (L, a, b) as float32 arrays from 8-bit sRGB arrays (the photo's DNs read as sRGB, as the map shows them;
     the same matrices as app/src/lib/map/color.ts and plugins/transit/ingest/route_colors.py)."""
-    lin = (_LIN[r], _LIN[g], _LIN[b])
-    lms = [np.cbrt(_M1[i, 0] * lin[0] + _M1[i, 1] * lin[1] + _M1[i, 2] * lin[2]) for i in range(3)]
+    return colour_linear(_LIN[r], _LIN[g], _LIN[b])
+
+
+def colour_linear(lr, lg, lb):
+    """OKLab (L, a, b) as float32 arrays from linear-light red, green and blue (0..1)."""
+    lms = [np.cbrt(_M1[i, 0] * lr + _M1[i, 1] * lg + _M1[i, 2] * lb) for i in range(3)]
     return tuple((_M2[i, 0] * lms[0] + _M2[i, 1] * lms[1] + _M2[i, 2] * lms[2]).astype(np.float32) for i in range(3))
+
+
+def srgb_to_linear(dn):
+    """Linear light (0..1) of sRGB values given as DNs (0..255, any float)."""
+    c = np.asarray(dn, np.float64) / 255.0
+    return np.where(c <= 0.04045, c / 12.92, ((c + 0.055) / 1.055) ** 2.4)
+
+
+# ---- colour gains per flight day ----------------------------------------------------------------------------------
+
+GAINS_FORMAT = "tvt-naip-colour-gains/1"
+GAIN_BANDS = ("red", "green", "blue")
+
+
+class Gains:
+    """The per-flight colour gains (the soils design: "only if the same type differs by more than dE 3 across flights
+    ... fit per-flight gains"). NAIP 2025 was flown on four days in Ada and Canyon, and each day's colour sits on its
+    own scale. gains.json (the one-off colour read beside naip_norm: same-day Sentinel-2 L2A blue, green and red) has,
+    per flight day and band, a table from the photo's DN (0..255) to the DN the reference day (June 18, 63% of the
+    photo) would have recorded for the same reflectance. The reference day's table is the identity, and a pixel with
+    no flight day (index 0) is left as it is. Tables are kept as floats: the statistics and the COG's area means
+    don't round to whole DNs on the way."""
+
+    def __init__(self, doc, days):
+        if doc.get("format") != GAINS_FORMAT:
+            raise PhotoError(f"gains: format {doc.get('format')!r}, not {GAINS_FORMAT}")
+        self.reference = doc.get("reference_day")
+        lut = np.tile(np.arange(256, dtype=np.float64), (len(days) + 1, 3, 1))
+        for i, d in enumerate(days, start=1):
+            entry = (doc.get("days") or {}).get(d)
+            if entry is None:
+                raise PhotoError(f"gains: no tables for flight day {d}")
+            for c, band in enumerate(GAIN_BANDS):
+                v = np.asarray(entry["lut"][band], np.float64)
+                if (v.shape != (256,) or not np.isfinite(v).all() or np.any(np.diff(v) < -1e-9) or v.min() < 0
+                        or v.max() > 255):
+                    raise PhotoError(f"gains: {d} {band}: a table is 256 values in 0..255 that never fall")
+                lut[i, c] = v
+        self.days = list(days)
+        self.dn = lut.astype(np.float32)
+        self.lin = srgb_to_linear(lut).astype(np.float32)
+
+    def apply(self, flight, r, g, b):
+        """((red, green, blue) as DNs on the reference day's scale; the same in linear light), float32 arrays, for
+        8-bit arrays and the flight index (0 none, i for days[i - 1])."""
+        f = np.asarray(flight).astype(np.intp)
+        dn = tuple(self.dn[f, c, v] for c, v in enumerate((r, g, b)))
+        lin = tuple(self.lin[f, c, v] for c, v in enumerate((r, g, b)))
+        return dn, lin
 
 
 def oklab_to_srgb(lab):

@@ -44,7 +44,7 @@ def row(level, key, flight=None, n=30000, L=0.8, fallback=None, polygons=4):
             "oct_l": [1e-4, 1e-4, 9e-5, 8e-5, 5e-5], "oct_c": [3e-6, 3e-6, 3e-6, 2e-6, 2e-6], "fallback": fallback}
 
 
-def write_build(root, build_id="photo-20261011T190000Z", rows=None, partial=False):
+def write_build(root, build_id="photo-20261011T190000Z", rows=None, partial=False, inputs=None):
     folder = os.path.join(root, "soils", "photo", build_id)
     os.makedirs(folder)
     rows = rows if rows is not None else [
@@ -57,7 +57,7 @@ def write_build(root, build_id="photo-20261011T190000Z", rows=None, partial=Fals
     ]
     doc = {"format": "tvt-soils-photo/1", "build_id": build_id, "started": "2026-10-11T19:00:00Z",
            "finished": "2026-10-11T21:00:00Z", "photo": "naip2025", "mask": "photo-v1", "partial": partial,
-           "soils_export": "20261011T160000Z", "inputs": INPUTS, "files": {},
+           "soils_export": "20261011T160000Z", "inputs": inputs or INPUTS, "files": {},
            "params": {"rules": {"green_cut_s2": 0.45}, "res": 0.6, "octaves_m": [1.2, 2.4, 4.8, 9.6, 19.2]},
            "counts": {"rows": len(rows), "calibration": "pass", "flight_days": {"gains_needed": False}},
            "rows": rows}
@@ -140,7 +140,7 @@ class PhotoLoadTest(unittest.TestCase):
                               "from soils.build where build_id = 'photo-20261011T190000Z'").fetchone()
         self.assertEqual(b[0], "photo")
         self.assertIsNotNone(b[1])
-        self.assertEqual(b[2], "public-domain; ODbL-1.0; Copernicus")
+        self.assertEqual(b[2], "ODbL-1.0")                 # the share-alike input's, as the ground's exports
         self.assertEqual(b[3], "yes")
         self.assertIn("© OpenStreetMap contributors", b[4])
         self.assertEqual(b[5]["sentinel-2"], "ab" * 32)
@@ -213,18 +213,47 @@ class PhotoLoadTest(unittest.TestCase):
         self.assertEqual(doc["builds"][0]["build"], "photo-20261011T190000Z")
         self.assertEqual(doc["builds"][0]["calibration"], "pass")
 
+    def test_every_input_reaches_the_palette_and_a_private_one_is_refused(self):
+        # A build whose mask came through water's export (HydroShare, CC BY 4.0) carries that input into the palette's
+        # licence and credits; one with a private input loads (soils.build says so) but the export refuses it.
+        cc_by = {"name": "hydroshare", "licence": "CC-BY-4.0", "republish": "yes",
+                 "credit": "Tatum, T., et al. (2022), Treasure Valley Irrigation System, HydroShare (CC BY 4.0)"}
+        photo_load.load(self.conn, write_build(self.archive, inputs=INPUTS + [cc_by]),
+                        now=datetime(2026, 10, 11, 21, 0, tzinfo=timezone.utc))
+        m = export.export(self.conn, self.archive, build="20261011T220000Z")
+        pal = M.read(m.folder).layer("palette")
+        self.assertIn("hydroshare", pal["inputs"])
+        self.assertIn(cc_by["credit"], pal["credit"])
+        self.assertEqual((pal["licence"], pal["republish"]), ("ODbL-1.0", "yes"))
+        private = {"name": "secret", "licence": "restricted", "republish": "no", "credit": "a private plugin"}
+        photo_load.load(self.conn, write_build(self.archive, "photo-20261011T230000Z", inputs=INPUTS + [private]),
+                        now=datetime(2026, 10, 11, 23, 0, tzinfo=timezone.utc))
+        self.assertEqual(self.conn.execute("select license, republish from soils.build "
+                                           "where build_id = 'photo-20261011T230000Z'").fetchone(), ("ODbL-1.0", "no"))
+        with self.assertRaises((export.ExportError, M.ManifestError, GI.InputError)):
+            export.export(self.conn, self.archive, build="20261012T010000Z")
+        self.assertFalse(os.path.exists(os.path.join(self.archive, "soils", "export", "20261012T010000Z")))
+
+    def test_licence_of(self):
+        self.assertEqual(photo_load.licence_of(INPUTS)[:2], ("ODbL-1.0", "yes"))
+        with self.assertRaisesRegex(photo_load.PhotoLoadError, "several licences"):
+            photo_load.licence_of([i for i in INPUTS if i["licence"] != "ODbL-1.0"])
+        with self.assertRaisesRegex(photo_load.PhotoLoadError, "doesn't know"):
+            photo_load.licence_of(INPUTS + [{"name": "x", "licence": "WTFPL", "republish": "yes", "credit": "x"}])
+
     def test_ground_fgb_columns_read_back_right(self):
         # PostGIS's ST_AsFlatGeobuf writes the column after a null under the null's index; misc, the one nullable
         # column, is last so nothing follows it.
         m = export.export(self.conn, self.archive, build="20261011T160000Z")
         props = fgb_properties(m.layer("ground").path)
         self.assertEqual(len(props), 6)
-        db = dict(self.conn.execute("select gid, mukey from soils.polygon").fetchall())
+        db = {gid: (mukey, area) for gid, mukey, area in
+              self.conn.execute("select gid, mukey, areasymbol from soils.polygon").fetchall()}
         for p in props:
-            self.assertEqual(p["mukey"], db[p["id"]])
+            self.assertEqual((p["mukey"], p["areasymbol"]), db[p["id"]])
             self.assertIn(p.get("misc"), (None, "water", "rock", "nodata"))
         self.assertEqual(list(fgb.read_header(m.layer("ground").path).columns),
-                         ["id", "ground_type", "mukey", "misc"])
+                         ["id", "ground_type", "mukey", "areasymbol", "misc"])
 
     def test_command(self):
         folder = write_build(self.archive)

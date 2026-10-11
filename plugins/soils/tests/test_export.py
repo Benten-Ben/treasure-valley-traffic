@@ -51,7 +51,8 @@ class ExportTest(unittest.TestCase):
         ground = again.layer("ground")
         self.assertEqual((ground["format"], ground["geometry"], ground["features"], ground["crs"]),
                          ("FlatGeobuf", "MultiPolygon", 6, "EPSG:32611"))
-        self.assertEqual(ground["fields"], {"id": "int", "ground_type": "int", "misc": "string", "mukey": "string"})
+        self.assertEqual(ground["fields"], {"id": "int", "ground_type": "int", "misc": "string", "mukey": "string",
+                                            "areasymbol": "string"})
         self.assertEqual((ground["licence"], ground["republish"], ground["base"]), ("public-domain", "yes", False))
         self.assertEqual(ground["credit"], ["Soils: USDA NRCS, Soil Survey Geographic Database (SSURGO)"])
         self.assertEqual(again.inputs["ssurgo"]["source"], "soils/ssurgo")

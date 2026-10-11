@@ -13,15 +13,19 @@ Output: the rows of soils.photo_stats (as dicts) and a report of the checks.
   2. `texture`: every soil type with the same surface texture class and landform, summed (if measured);
   3. `albedo`: L from a straight fit of the measured types' L on their dry albedo (SSURGO's albedodry_r), with
      chroma, hue, spread and texture from the types of the same texture class (all measured soils when it has
-     none). Needs the type's albedo.
+     none). Needs the type's albedo, and a fit with some skill: when the fit's r is under ALBEDO_MIN_R the type
+     takes its texture-class peers' colour as it is, L included, labelled `texture` (the first build's fit had r 0.28:
+     L 0.75-0.80 over the whole albedo range, the mean, not an estimate).
   A type with none of these has no row: the ground paints it flat and says so. NRCS's NOTCOM ('nodata') is never
   a soil, and a miscellaneous area borrows nothing (it has no series, texture or albedo of its own): it's measured
   from fewer polygons instead, when it has MIN_PX pixels in at least one.
-  Outside Ada and Canyon (no NAIP 2025 here) types are measured only where they also occur inside, else they
-  borrow: flat type colours, labelled by their fallback. The 2023 tiles' colour fit for them is cut (plan §0).
-- **Checks** (report): the same type across flight days (dE over 3 means per-flight colour gains are needed); the
-  share of colour variance the types explain; the Spearman correlation of type L with dry albedo; polygons whose
-  own median lies more than OUTLIER_D (Mahalanobis, in the type's own spread) from their type.
+  NAIP 2025 here is the Ada and Canyon county mosaics, which reach a few kilometres past the county lines (into
+  Owyhee, Elmore, Boise, Gem and Payette counties, and a strip of Malheur, Oregon). A type is measured from whatever
+  of it those strips hold, and borrows only where it has too little: so the line between measured and flat colours
+  follows the mosaics' edges, not the county lines. The 2023 tiles' colour fit beyond them is cut (plan §0).
+- **Checks** (report): the same type across flight days (dE over 3 asks for per-flight colour gains; with the gains
+  applied, what's left); the share of colour variance the types explain; the Spearman correlation of type L with dry
+  albedo; polygons whose own median lies more than OUTLIER_D (Mahalanobis, in the type's own spread) from their type.
 """
 
 import math
@@ -36,7 +40,8 @@ POLY_PX = 500          # a polygon counts toward that when this many of its pixe
 OUTLIER_PX = 2000      # polygons with at least this many pixels are checked against their type...
 OUTLIER_D = 3.0        # ...and listed when their median is this far out (Mahalanobis)
 FLIGHT_DE = 3.0        # the same type on two flight days further apart than this (dE) asks for per-flight gains
-ALBEDO_MIN_TYPES = 5   # the albedo fit needs at least this many measured types with an albedo
+ALBEDO_MIN_TYPES = 5   # the albedo fit needs at least this many measured types with an albedo...
+ALBEDO_MIN_R = 0.5     # ...and this correlation, or it doesn't set L
 
 PHOTO = "naip2025"
 MASK = "photo-v1"
@@ -137,11 +142,12 @@ def spearman(x, y):
     return float(np.corrcoef(rx, ry)[0, 1])
 
 
-def pool(mapunits, types, flights, acc, polygons):
+def pool(mapunits, types, flights, acc, polygons, gains_applied=False):
     """Pool everything. mapunits: [{mukey, type}] in key order (map unit i, flight f is key i * len(flights) + f);
     types: {type id: {gid, series, texcl, landform, albedo_dry, misc}}; flights: ['2025-05-25', ...]; acc: the
-    merged Accumulator; polygons: {"gid": array, "mu": array (map-unit index), "acc": Accumulator over them}.
-    Returns (rows, report)."""
+    merged Accumulator; polygons: {"gid": array, "mu": array (map-unit index), "acc": Accumulator over them};
+    gains_applied: whether the colours were put on one flight day's scale first (photo.Gains). Returns (rows,
+    report)."""
     nf = len(flights)
     rows, report = [], {"thresholds": {"min_px": MIN_PX, "min_polygons": MIN_POLYGONS, "polygon_px": POLY_PX}}
 
@@ -192,6 +198,9 @@ def pool(mapunits, types, flights, acc, polygons):
             slope, icept = np.polyfit(x, y, 1)
             fit = {"slope": float(slope), "intercept": float(icept), "n": len(fit_pts),
                    "r": float(np.corrcoef(x, y)[0, 1])}
+            fit["sets_l"] = fit["r"] >= ALBEDO_MIN_R
+            fit["l_range"] = [round(icept + slope * float(np.percentile(x, 5)), 4),
+                              round(icept + slope * float(np.percentile(x, 95)), 4)]
     report["albedo_fit"] = fit
 
     def peers(pred):
@@ -231,7 +240,7 @@ def pool(mapunits, types, flights, acc, polygons):
                 cp = total(tg[o] for o in soils if o in measured)
                 label = "all measured soils"
             st = cp.summary()
-            if st is not None:
+            if st is not None and fit["sets_l"]:
                 L = fit["intercept"] + fit["slope"] * t["albedo_dry"]
                 shift = L - st["med"][0]
                 st["med"] = [L, st["med"][1], st["med"][2]]
@@ -239,6 +248,9 @@ def pool(mapunits, types, flights, acc, polygons):
                 st["l_p90"] = st["l_p90"] + shift
                 borrowed = ("albedo", st, f"L from dry albedo {t['albedo_dry']:g}; chroma, hue, spread and texture "
                                           f"from {label} ({cp.n} px)")
+            elif st is not None:
+                borrowed = ("texture", st, f"{label} on any landform ({cp.n} px), L included: the dry-albedo fit is "
+                                           f"too weak to set L (r {fit['r']:.2f} under {ALBEDO_MIN_R:g})")
         if borrowed is None:
             status[tid] = {"status": "none", "n_px": g.n, "n_polygons": g.polygons,
                            "why": "no series, texture-class or albedo peers measured"}
@@ -281,13 +293,17 @@ def pool(mapunits, types, flights, acc, polygons):
         offsets[k] = {"types": len(v), "dL": round(float(med[0]), 2), "da": round(float(med[1]), 2),
                       "db": round(float(med[2]), 2), "dE": round(float(np.sqrt(np.sum(med ** 2))), 2),
                       "dL_iqr": [round(float(q1), 2), round(float(q3), 2)]}
+    over = bool(des) and float(np.median(des)) > FLIGHT_DE
     report["flight_days"] = {
+        "gains_applied": bool(gains_applied),
         "types_on_two_or_more": len(spread),
         "median_max_de": round(float(np.median(des)), 2) if des else None,
         "share_over": round(sum(d > FLIGHT_DE for d in des) / len(des), 3) if des else None,
-        "gains_needed": bool(des) and float(np.median(des)) > FLIGHT_DE,
+        "over_rule": over,
+        "gains_needed": over and not gains_applied,
         "rule": f"per-flight colour gains are needed when the median type's largest dE between flight days is over "
-                f"{FLIGHT_DE:g}",
+                f"{FLIGHT_DE:g}; with the gains applied (gains_applied), the same numbers are what's left, mostly "
+                f"each type's spread over the valley (pair_offsets separates the flights' own offsets)",
         "types": spread,
         "pair_offsets": offsets,
         "pair_offsets_about": "per pair of flight days, the median over the types measured on both of the paired "

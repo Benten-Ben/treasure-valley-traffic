@@ -21,6 +21,20 @@ import os
 import sys
 from datetime import datetime, timezone
 
+# The photo statistics as a source (plugin.json "manual"): a derived product, not a download. Its rows were measured
+# from NAIP 2025 through mask v0 (OpenStreetMap and Overture), farm's crop cover (CSB, CDL, Sentinel-2) and
+# Sentinel-2's July median, NDVI curves and colour gains: ODbL as a whole, crediting every input. Each build records
+# its own inputs, licence and credit in soils.build (licence_of).
+SOURCE = {
+    "name": "naip_photo",
+    "license": "derived: ODbL-1.0 (measured through mask v0, from OpenStreetMap and Overture), from USDA NAIP 2025 "
+               "(public domain), Copernicus Sentinel-2 (free, full and open), SSURGO, NHD, CDL and CSB (public domain)",
+    "credit": "USDA NAIP; Contains modified Copernicus Sentinel data 2025; © OpenStreetMap contributors; Overture "
+              "Maps Foundation; U.S. Geological Survey, National Hydrography Dataset; USDA NASS Cropland Data Layer "
+              "and Crop Sequence Boundaries; Soils: USDA NRCS, Soil Survey Geographic Database (SSURGO)",
+    "republish": "yes",
+}
+
 FORMAT = "tvt-soils-photo/1"
 FILE = "stats.json"
 COLUMNS = ("build_id", "level", "key", "photo", "flight", "mask", "n_px", "n_polygons", "lab_med", "lab_cov", "l_p10",
@@ -73,13 +87,28 @@ def read(folder):
 
 
 def licence_of(inputs):
-    """soils.build's licence, republish and credit from the build's inputs (the strictest republish; every licence
-    and credit, once each)."""
-    order = ("yes", "aggregates", "internal", "no")
-    republish = max((i["republish"] for i in inputs), key=order.index)
-    licences = list(dict.fromkeys(i["licence"] for i in inputs))
+    """soils.build's licence, republish and credit from the build's inputs, by the ground's export rule
+    (basemap/ground/manifest.py write): the share-alike input's licence when there is one (ODbL: the rows were
+    measured through mask v0), else the one strictest; the strictest republish; every credit, once each."""
+    from basemap.ground import manifest as M
+    every = list(dict.fromkeys(i["licence"] for i in inputs))
+    unknown = [lic for lic in every if lic not in M.LICENCES]
+    if unknown:
+        raise PhotoLoadError(f"inputs with licences the ground doesn't know: {', '.join(unknown)}")
+    shared = [lic for lic in every if M.LICENCES[lic].share_alike]
+    top = [lic for lic in every if M.strictness(lic) == max(map(M.strictness, every))]
+    if len(shared) > 1:
+        raise PhotoLoadError(f"inputs under two share-alike licences ({', '.join(shared)})")
+    if shared:
+        licence = shared[0]
+    elif len(top) == 1:
+        licence = top[0]
+    else:
+        raise PhotoLoadError(f"inputs under several licences, none share-alike ({', '.join(top)}): the build's "
+                             "licence would have to be named")
+    republish = M.strictest(i["republish"] for i in inputs)
     credits = list(dict.fromkeys(i["credit"] for i in inputs))
-    return "; ".join(licences), republish, "; ".join(credits)
+    return licence, republish, "; ".join(credits)
 
 
 def load(conn, folder, now=None):

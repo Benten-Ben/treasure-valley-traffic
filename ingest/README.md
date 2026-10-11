@@ -40,7 +40,7 @@ names didn't change, so `ops.source` and `ops.fetch` carry on:
 | [weather](../plugins/weather) | `awc_metar` | |
 | [wildlife](../plugins/wildlife) | `idfg_roadkill` | |
 | [farm](../plugins/farm) | `agrimet_et` | |
-| [soils](../plugins/soils) | by hand `ssurgo` | `soils-load`, `soils-photo-load`, `soils-export` |
+| [soils](../plugins/soils) | by hand `ssurgo`; manual `naip_photo` (the photo statistics, derived) | `soils-load`, `soils-photo-load`, `soils-export` |
 | [sky](../plugins/sky) | `swpc_ovation`, `swpc_kp_1m` | |
 
 Private plugins (ACHD's tables, parcels) live on the server, outside this

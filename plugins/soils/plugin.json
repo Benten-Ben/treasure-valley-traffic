@@ -6,7 +6,12 @@
   "order": 68,
   "sources": [
     {"name": "ssurgo", "module": "ingest.sources.ssurgo", "kind": "manual",
-     "license": "public domain", "credit": "Soils: USDA NRCS, Soil Survey Geographic Database (SSURGO)",
+     "license": "public domain",
+     "credit": "Soils: USDA NRCS, Soil Survey Geographic Database (SSURGO)",
+     "republish": "yes"},
+    {"name": "naip_photo", "module": "ingest.photo_load", "kind": "manual",
+     "license": "derived: ODbL-1.0 (measured through mask v0, from OpenStreetMap and Overture), from USDA NAIP 2025 (public domain), Copernicus Sentinel-2 (free, full and open), SSURGO, NHD, CDL and CSB (public domain)",
+     "credit": "USDA NAIP; Contains modified Copernicus Sentinel data 2025; © OpenStreetMap contributors; Overture Maps Foundation; U.S. Geological Survey, National Hydrography Dataset; USDA NASS Cropland Data Layer and Crop Sequence Boundaries; Soils: USDA NRCS, Soil Survey Geographic Database (SSURGO)",
      "republish": "yes"}
   ],
   "tables": ["soils.build", "soils.survey_area", "soils.ground_type", "soils.map_unit", "soils.component",
@@ -20,5 +25,5 @@
      "help": "export the soil base for the ground (ground.fgb, ground_types.json, palette.json) to $TVT_ARCHIVE/soils/export/"}
   ],
   "storage": "About 126 MB in PostGIS (measured Oct 11): 108 MB the 21,999 polygons (2.66 M vertices, whole, plus a 5 m simplified copy and indexes), 13 MB the map units with their valley-zoom geometry, the rest components, horizons and the survey areas' boundaries; under 5,000 photo-statistics rows per photo build (about 1 MB), old builds kept. Each photo build's folder ($TVT_ARCHIVE/soils/photo/<build>/: run.json, the windows' sums, stats.json, report.json, calibration.json) is about 80 MB, and its 2 m NAIP COG for the ground 3.4 GB on the cold drive (with 2.7 GB of 2 m parts until it's made). Each prepared folder ($TVT_ARCHIVE/soils/prepared/<stamp>/) is about 75 MB, and each export ($TVT_ARCHIVE/soils/export/<build>/) about 47 MB. Reloaded once a year at most.",
-  "ethics": "USDA NRCS's soil survey: public domain, credited \"Soils: USDA NRCS, Soil Survey Geographic Database (SSURGO)\". Not for regulatory decisions, as NRCS says, and the card says so. Downloaded by hand with the owner's OK for each yearly refresh; no collector and no schedule. Soils, not people."
+  "ethics": "USDA NRCS's soil survey: public domain, credited \"Soils: USDA NRCS, Soil Survey Geographic Database (SSURGO)\". Not for regulatory decisions, as NRCS says, and the card says so. Downloaded by hand with the owner's OK for each yearly refresh; no collector and no schedule. Soils, not people. The photo statistics (soils.photo_stats, soils.ground_colour and the palette) are measured from USDA NAIP 2025 through mask v0, which is built from OpenStreetMap and Overture, so they are ODbL as a whole and credit every input (the naip_photo entry; each build records its own in soils.build); their Sentinel-2 parts (the green rule, the NDVI curves, the colour gains) are Copernicus data, credited."
 }

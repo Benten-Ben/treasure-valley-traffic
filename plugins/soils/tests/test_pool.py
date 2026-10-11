@@ -125,6 +125,7 @@ class PoolTest(unittest.TestCase):
         self.assertEqual(alb["fallback"], "albedo")
         fit = self.report["albedo_fit"]
         self.assertEqual(fit["n"], 5)
+        self.assertTrue(fit["sets_l"])
         self.assertAlmostEqual(alb["lab_med"][0], fit["intercept"] + fit["slope"] * 0.40, places=4)
         self.assertGreater(alb["lab_med"][0], 0.8)
         self.assertLess(alb["l_p10"], alb["lab_med"][0])
@@ -138,6 +139,8 @@ class PoolTest(unittest.TestCase):
         fd = self.report["flight_days"]
         self.assertEqual(fd["types_on_two_or_more"], 1)        # only m2 has MIN_PX on each day (30,000 a day)
         self.assertFalse(fd["gains_needed"])
+        self.assertFalse(fd["gains_applied"])
+        self.assertFalse(fd["over_rule"])
         self.assertGreater(self.report["variance_explained"], 0.5)
         self.assertAlmostEqual(self.report["spearman_l_albedo"], 1.0, places=6)
         out = self.report["polygon_outliers"]
@@ -162,6 +165,39 @@ class PoolTest(unittest.TestCase):
         off = fd["pair_offsets"]["2025-05-25/2025-06-18"]
         self.assertEqual(off["types"], 5)
         self.assertLess(abs(off["dL"]), 1.0)                                 # four of five types don't move
+
+    def test_with_gains_the_rule_reports_what_is_left(self):
+        old, old_de = self.PL.MIN_PX, self.PL.FLIGHT_DE
+        try:
+            self.PL.MIN_PX, self.PL.FLIGHT_DE = 5000, 0.0                    # so the median type is over the rule
+            _, acc, polys = synthetic(outlier=False)
+            _, before = self.PL.pool(self.mapunits, TYPES, FLIGHTS, acc, polys)
+            _, after = self.PL.pool(self.mapunits, TYPES, FLIGHTS, acc, polys, gains_applied=True)
+        finally:
+            self.PL.MIN_PX, self.PL.FLIGHT_DE = old, old_de
+        self.assertEqual((before["flight_days"]["over_rule"], before["flight_days"]["gains_needed"]), (True, True))
+        self.assertEqual((after["flight_days"]["over_rule"], after["flight_days"]["gains_needed"]), (True, False))
+        self.assertTrue(after["flight_days"]["gains_applied"])
+
+    def test_a_weak_albedo_fit_doesnt_set_l(self):
+        # Scrambled albedos: the measured types' L no longer follows them (r under ALBEDO_MIN_R), so xyz:sand takes
+        # its texture-class peers' colour as it is (it has none: all measured soils), labelled texture.
+        scrambled = dict(TYPES)
+        for t, a in (("m1:silt-loam", 0.35), ("m2:silt-loam", 0.15), ("m3:silt-loam", 0.30), ("m4:loam", 0.20),
+                     ("m5:loam", 0.25)):
+            scrambled[t] = dict(TYPES[t], albedo_dry=a)
+        _, acc, polys = synthetic()
+        rows, report = self.PL.pool(self.mapunits, scrambled, FLIGHTS, acc, polys)
+        fit = report["albedo_fit"]
+        self.assertLess(fit["r"], self.PL.ALBEDO_MIN_R)
+        self.assertFalse(fit["sets_l"])
+        by = {(r["level"], r["key"], r["flight"]): r for r in rows}
+        sand = by[("ground_type", "xyz:sand", None)]
+        self.assertEqual(sand["fallback"], "texture")
+        self.assertEqual(report["types"]["xyz:sand"]["status"], "texture")
+        self.assertRegex(report["types"]["xyz:sand"]["from"], "too weak to set L")
+        self.assertLess(sand["lab_med"][0], 0.8)                             # the soils' pooled L, not the line's
+        self.assertEqual(report["counts"]["albedo"], 0)
 
 
 class SpearmanTest(unittest.TestCase):

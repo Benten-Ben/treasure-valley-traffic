@@ -11,6 +11,11 @@ run time (--dsdk), never in this repository, and run with no network (basemap/RE
 **run** walks the ground's 2 m grid in windows of CORE_M (1,024 m), each read with a HALO_M (64 m) margin. For each
 window it decodes each county mosaic's part at 0.6 m (`mrsiddecode -s 1`, half the 0.3 m resolution) into /tmp (a
 tmpfs), and
+- gives each pixel to one mosaic: the two county mosaics reach a few kilometres past their county lines and overlap
+  by about 390 km2 along the Ada/Canyon line, so a pixel in a county's survey area (soils' areasymbol: ID001 Ada,
+  ID665 Canyon) is served by that county's mosaic, and one in neither county by the nearest county's (owner_grid);
+  the other mosaic serves it only where the first doesn't cover it;
+- puts each flight day's colour on the reference day's scale (--gains: photo.Gains, from same-day Sentinel-2);
 - marks the pixels that are uncovered ground, the 'photo-v1' mask (photo.py's rules): inside a soil polygon and at
   least 10 m from its edge; outside mask v0's `covered` (roofs + 1 m, roads + 2 m, paving, water + 5 m, rail,
   aeroways, CDL 2025's developed land); not green (the photo's NDVI put on Sentinel-2's scale by its flight day's
@@ -18,8 +23,8 @@ tmpfs), and
   only row crops and fallow (farm's crop_cover and fields);
 - adds them up per (map unit, flight day) and per soil polygon: OKLab sums, cross-products and histograms, and the
   texture energy of L and chroma in five octaves (photo.py);
-- averages the window onto the 2 m grid (the photo's red, green and blue, and its NDVI on Sentinel-2's scale), for
-  the COG G1b reads.
+- averages the window onto the 2 m grid (the photo's red, green and blue on the reference day's scale, and its NDVI
+  on Sentinel-2's scale), for the COG G1b reads.
 It writes `windows/<key>.npz` and `<cog>/parts/<key>.tif`, then deletes the decoded window, so a run stopped by its
 deadline resumes where it stopped (run it again with the same --out; `--limit N` does N windows at a time). It uses
 --workers processes (3 for `--cpus 3`), each holding one window (about 0.6 GB) and its decoded copy in /tmp (about
@@ -30,7 +35,9 @@ three workers.
 "as of July" classes, exp31) it compares, per ground type, the photo-v1 median with the median under the class mask
 (flat and not green, or pale surfaced: short dry grass and pale surfaced cells; not hard things, trees, shrubs or
 their filled floor). It passes when the median dE over (box, type) pairs is CAL_PASS (3) or less. Boxes h, i and j
-have no NAIP 2025: they're measured on their NAIP 2023 crops (0.6 m) with the 2023 curve.
+have no NAIP 2025: they're measured on their NAIP 2023 crops (0.6 m) with the 2023 curve. In a build folder it uses
+the run's own inputs, gains and rules (run.json), and records them in calibration.json; finish takes a calibration
+only when they match the run's.
 
 **finish** adds the windows up, pools them to ground types with the fallbacks (pool.py), writes `stats.json` (the
 rows `python3 -m ingest soils-photo-load --build DIR` loads), `report.json` (the checks), and assembles the COG:
@@ -38,7 +45,8 @@ rows `python3 -m ingest soils-photo-load --build DIR` loads), `report.json` (the
     <cog>/naip2025_2m.tif    4 bands, uint8, on the ground's 2 m grid (EPSG:32611), over the parts' extent (Ada and
                              Canyon, cut to the grid), DEFLATE, 512 px tiles, no overviews, an internal mask (cells at
                              least half covered by Ada's or Canyon's mosaic):
-                             1-3 red, green and blue, the area mean of the 0.6 m DNs; 4 ndvi, the photo's NDVI on
+                             1-3 red, green and blue, the area mean of the 0.6 m DNs (on the reference flight day's
+                             scale when the run had gains); 4 ndvi, the photo's NDVI on
                              Sentinel-2's scale by its flight day's curve, coded 1..255 for -1..+1 (photo.encode_ndvi;
                              0 where no flight polygon covers it)
     <cog>/naip2025_2m.json   what it is: bands, coding, grid, flight days, sources and credits, sha256
@@ -46,7 +54,8 @@ rows `python3 -m ingest soils-photo-load --build DIR` loads), `report.json` (the
                              (the flight day), sdate and edate (local time), camera; for the sun angle G1b normalises
                              by (C8)
 
-Colour isn't normalised per flight day: finish measures whether it needs to be (report.json `flight_days`).
+report.json's `flight_days` says how far the same type's colour still differs between flight days, and how far the
+flights themselves are apart (`pair_offsets`), after the gains when the run had them.
 """
 
 import argparse
@@ -95,7 +104,8 @@ CAL_PASS = 3.0             # the ten-box calibration passes at a median dE of th
 CAL_MIN_PX = 2000          # a (box, type) pair is compared when both masks hold this many pixels (720 m2)
 CLASS_KEEP = (9, 12, 14)   # exp31's classes: flat, not green; short dry grass; surfaced, pale
 CLASS_RES = 0.5
-COUNTY_AREAS = {"ada": "ID001", "canyon": "ID665"}       # the survey areas the two mosaics cover
+COUNTY_AREAS = {"ada": "ID001", "canyon": "ID665"}       # each county mosaic's own survey area
+OWNER_RES = 20.0           # the grid that gives a place in neither county to the nearest county's mosaic (owner_grid)
 NAIP_CREDIT = "USDA NAIP 2025 (public domain)"
 
 
@@ -279,8 +289,8 @@ def read_flights(path):
 
 
 def read_soils(folder, hashes=True):
-    """The soils export (P1-data): its manifest, ground.fgb's polygons (gid, mukey, ground_type gid, misc) and
-    ground_types.json. Returns a dict with the map units in key order and the lookups the windows need."""
+    """The soils export (P1-data): its manifest, ground.fgb's polygons (gid, mukey, ground_type gid, areasymbol, misc)
+    and ground_types.json. Returns a dict with the map units in key order and the lookups the windows need."""
     m = M.read(folder, hashes=hashes)
     if m.plugin != "soils" or not m.has("ground") or not m.has("ground_types"):
         raise StatsError(f"{folder}: not a soils export with ground and ground_types")
@@ -290,19 +300,25 @@ def read_soils(folder, hashes=True):
     ds = ogr.Open(m.layer("ground").path)
     lyr = ds.GetLayer(0)
     lyr.SetIgnoredFields(["OGR_GEOMETRY"])
+    has_area = lyr.GetLayerDefn().GetFieldIndex("areasymbol") >= 0
     polys = []
     for f in lyr:
-        polys.append((int(f.GetField("id")), f.GetField("mukey"), int(f.GetField("ground_type") or 0)))
+        polys.append((int(f.GetField("id")), f.GetField("mukey"), int(f.GetField("ground_type") or 0),
+                      f.GetField("areasymbol") if has_area else None))
     ds = None
     mukeys = sorted({p[1] for p in polys})
     mu_index = {k: i for i, k in enumerate(mukeys)}
     mu_type = {}
-    for gid_poly, mukey, tg in polys:
+    for gid_poly, mukey, tg, _ in polys:
         t = by_gid.get(tg)
         mu_type[mukey] = t["id"] if t else None
+    areas = sorted({p[3] for p in polys if p[3]})
+    area_index = {a: i for i, a in enumerate(areas)}
     gids = np.array([p[0] for p in polys], np.int64)
     pid_mu = np.full(int(gids.max()) + 1 if len(gids) else 1, -1, np.int32)
     pid_mu[gids] = [mu_index[p[1]] for p in polys]
+    pid_area = np.full(len(pid_mu), -1, np.int16)          # the polygon's survey area (an index into areas), -1 none
+    pid_area[gids] = [area_index.get(p[3], -1) for p in polys]
     pid_row = np.full(len(pid_mu), -1, np.int32)
     order = np.argsort(gids)
     pid_row[gids[order]] = np.arange(len(gids))
@@ -310,7 +326,8 @@ def read_soils(folder, hashes=True):
              for t in gt["types"]}
     return {"manifest": m, "ground": m.layer("ground"), "mapunits": [{"mukey": k, "type": mu_type[k]} for k in mukeys],
             "types": types, "pid_mu": pid_mu, "pid_row": pid_row, "poly_gid": gids[order],
-            "poly_mu": pid_mu[gids[order]], "has_landform": any("landform" in t for t in gt["types"])}
+            "poly_mu": pid_mu[gids[order]], "has_landform": any("landform" in t for t in gt["types"]),
+            "areas": areas if has_area else None, "pid_area": pid_area}
 
 
 def field_drop_lut():
@@ -368,19 +385,68 @@ class Context:
                 self.fid_flight[fid] = self.days.index(day) + 1
         with open(cfg["fits"], encoding="utf-8") as f:
             fits = json.load(f)
-        self.curves = [P.Curve(fits["naip2025"]["days"][d]["curve"]["lut_x"], fits["naip2025"]["days"][d]["curve"]["lut_y"], d)
-                       for d in self.days]
+        days = fits["naip2025"]["days"]
+        self.curves = [P.Curve(days[d]["curve"]["lut_x"], days[d]["curve"]["lut_y"], d) for d in self.days]
         pooled = fits["naip2023_boxes_h_i_j"]["pooled_curve"]
         self.curve_2023 = P.Curve(pooled["lut_x"], pooled["lut_y"], "2023 pooled")
+        self.gains = None
+        if cfg.get("gains"):
+            with open(cfg["gains"], encoding="utf-8") as f:
+                self.gains = P.Gains(json.load(f), self.days)
         self.code_drop = field_drop_lut()
         self.nf = len(self.days)
         self.nkeys = len(self.soils["mapunits"]) * self.nf
+        self.owner = None
+        self.area_mosaic = np.full(1, -1, np.int8)
 
-    def pixels(self, target, arr, flight_curve=None):
-        """The photo-v1 mask and what the statistics need, for one decoded window (arr: 5 x h x w uint8)."""
+    def set_mosaics(self, mosaics):
+        """Which mosaic serves a place where the county mosaics overlap (owner_grid; the run computes it first)."""
+        self.owner = owner_grid(self.soils, mosaics, self.cfg.get("cache"))
+        areas = self.soils["areas"] or []
+        am = np.full(len(areas) + 1, -1, np.int8)              # the last entry answers area -1 (none): -1
+        for i, area in enumerate(county_of(mosaics)):
+            if area in areas:
+                am[areas.index(area)] = i
+        self.area_mosaic = am
+
+    def polygons(self, target):
+        """The soil polygon (soils.polygon.gid, 0 none) at each pixel of a window."""
+        pid = R.rasterize(target, self.soils["ground"], attribute="id", dtype="uint32").astype(np.int64)
+        pid[pid >= len(self.soils["pid_mu"])] = 0
+        return pid
+
+    def serves(self, i, target, pid, decoded):
+        """True where mosaic i serves a pixel of its window: the pixel's county is i's (by its soil polygon's survey
+        area; outside both counties, the nearest county by the owner grid), or the county's own mosaic doesn't cover
+        it. decoded: [(mosaic index, array, target, pid)] of the mosaics read for this window."""
+        own = self.area_mosaic[self.soils["pid_area"][pid]].astype(np.int16)
+        need = own < 0
+        if need.any() and self.owner is not None:
+            og, ogt = self.owner
+            xs, ys = centres(target)
+            cols = np.clip(np.floor((xs - ogt[0]) / ogt[1]).astype(np.int64), 0, og.shape[1] - 1)
+            rows = np.clip(np.floor((ogt[3] - ys) / -ogt[5]).astype(np.int64), 0, og.shape[0] - 1)
+            own = np.where(need, og[rows[:, None], cols[None, :]], own)
+        ok = own == i
+        there = {j: (a, t) for j, a, t, _ in decoded}
+        for j in np.unique(own):
+            j = int(j)
+            if j == i:
+                continue
+            if j not in there:
+                ok |= own == j                                  # its mosaic doesn't reach this window
+            else:
+                a, t = there[j]
+                ok |= (own == j) & ~on_lattice(a[4] == 255, t, target)
+        return ok
+
+    def pixels(self, target, arr, flight_curve=None, pid=None, allowed=None):
+        """The photo-v1 mask and what the statistics need, for one decoded window (arr: 5 x h x w uint8). pid: the
+        window's soil polygons, if already rasterised; allowed: where this mosaic serves (serves())."""
         r8, g8, b8, n8, mk = arr
         valid = mk == 255
-        L, a, b = P.colour(r8, g8, b8)
+        if allowed is not None:
+            valid &= allowed
         raw = P.ndvi(n8, r8)
         if flight_curve is None:
             fid = R.rasterize(target, self.flights_path, attribute="src_fid", dtype="uint32")
@@ -390,20 +456,99 @@ class Context:
         else:
             flight = np.ones(raw.shape, np.uint8)
             ndvi_s2 = flight_curve(raw)
+        if self.gains is not None and flight_curve is None:
+            rgb, lin = self.gains.apply(flight, r8, g8, b8)    # on the reference flight day's scale
+            L, a, b = P.colour_linear(*lin)
+            del lin
+        else:
+            rgb = (r8, g8, b8)
+            L, a, b = P.colour(r8, g8, b8)
         jv, jin = sample10(self.july, target)
         july = np.where(jin & (jv != -32768), jv / 10000.0, np.nan).astype(np.float32)
         cv, cin = sample10(self.crop_cover, target)
         cover = np.where(cin, cv, 0)
         field = R.rasterize(target, self.fields, attribute="cdl", dtype="uint16")
         crop = P.crop_ok(cover, self.code_drop[field])
-        pid = R.rasterize(target, self.soils["ground"], attribute="id", dtype="uint32").astype(np.int64)
-        pid[pid >= len(self.soils["pid_mu"])] = 0
+        if pid is None:
+            pid = self.polygons(target)
         inner_ok = P.inner(pid, RES)
         covered = MK.covered(target, self.mask)
         U, why = P.sample_mask(valid, pid, inner_ok, covered, flight, ndvi_s2, july, L, a, b, crop)
         mu = self.soils["pid_mu"][pid]
         return {"valid": valid, "L": L, "a": a, "b": b, "pid": pid, "mu": mu, "inner": inner_ok, "U": U,
-                "why": why, "flight": flight, "ndvi_s2": ndvi_s2, "rgb": (r8, g8, b8)}
+                "why": why, "flight": flight, "ndvi_s2": ndvi_s2, "rgb": rgb}
+
+
+# ---- which mosaic serves a place ----------------------------------------------------------------------------------
+
+def county_of(mosaics):
+    """Each mosaic's county survey area (COUNTY_AREAS, by the mosaic's name), or None."""
+    return [COUNTY_AREAS.get(m.name) for m in mosaics]
+
+
+def owner_grid(soils, mosaics, cache=None):
+    """The county mosaics overlap: each reaches a few kilometres past its county line (Ada's mask covers about
+    3,630 km2, the county 2,747), so one of them must serve each place, or the overlap would be counted twice and
+    blended in the COG. A place in a county's survey area (ID001 Ada, ID665 Canyon: soils' areasymbol, whose shared
+    edge is the county line) is its county's mosaic's; a place in neither is the nearest county's. This is the second
+    rule on an OWNER_RES grid over the map box: (mosaic index per cell, uint8; its geotransform), cached in the build
+    folder. None with one mosaic."""
+    if len(mosaics) < 2:
+        return None
+    if soils["areas"] is None:
+        raise StatsError("the soils export has no areasymbol per polygon: re-export soils (soils-export) so the "
+                         "county mosaics can be split on the county line")
+    path = os.path.join(cache, "owner.npz") if cache else None
+    if path and os.path.exists(path):
+        with np.load(path) as z:
+            return z["owner"], tuple(float(v) for v in z["gt"])
+    from scipy import ndimage
+    # Over the mosaics' extents (which hold their counties), cut to the map box, on OWNER_RES steps from its corner.
+    w = max(G.WEST, min(m.x0 for m in mosaics))
+    e = min(G.EAST, max(m.x0 + m.width * m.res for m in mosaics))
+    n = min(G.NORTH, max(m.y0 for m in mosaics))
+    s_ = max(G.SOUTH, min(m.y0 - m.height * m.res for m in mosaics))
+    w = G.WEST + np.floor((w - G.WEST) / OWNER_RES) * OWNER_RES
+    n = G.NORTH - np.floor((G.NORTH - n) / OWNER_RES) * OWNER_RES
+    width = max(int(np.ceil((e - w) / OWNER_RES)), 1)
+    height = max(int(np.ceil((n - s_) / OWNER_RES)), 1)
+    gt = (float(w), OWNER_RES, 0.0, float(n), 0.0, -OWNER_RES)
+    srs = osr.SpatialReference()
+    srs.ImportFromEPSG(G.EPSG)
+    target = R.Target(gt, width, height, srs.ExportToWkt())
+    owner = np.zeros((height, width), np.uint8)
+    best = np.full((height, width), np.inf, np.float32)
+    for i, area in enumerate(county_of(mosaics)):
+        if area not in soils["areas"]:
+            continue
+        inside = R.rasterize(target, soils["ground"], where=f"areasymbol = '{area}'").astype(bool)
+        if not inside.any():
+            continue
+        d = ndimage.distance_transform_edt(~inside).astype(np.float32)
+        nearer = d < best
+        owner[nearer] = i
+        best = np.minimum(best, d)
+        del d, inside, nearer
+    if path:
+        np.savez_compressed(path + ".part.npz", owner=owner, gt=np.array(gt))
+        os.replace(path + ".part.npz", path)
+    return owner, gt
+
+
+def on_lattice(a, src, dst):
+    """A bool array on src's pixels, read on dst's pixels (the same 0.6 m lattice, other corners); False where src
+    has no pixel."""
+    dc = (dst.transform[0] - src.transform[0]) / RES
+    dr = (src.transform[3] - dst.transform[3]) / RES
+    if abs(dc - round(dc)) > 1e-3 or abs(dr - round(dr)) > 1e-3:
+        raise StatsError("the county mosaics' pixels aren't on one lattice")
+    dc, dr = int(round(dc)), int(round(dr))
+    out = np.zeros((dst.height, dst.width), bool)
+    r0, r1 = max(0, -dr), min(dst.height, a.shape[0] - dr)
+    c0, c1 = max(0, -dc), min(dst.width, a.shape[1] - dc)
+    if r1 > r0 and c1 > c0:
+        out[r0:r1, c0:c1] = a[r0 + dr:r1 + dr, c0 + dc:c1 + dc]
+    return out
 
 
 # ---- one window ---------------------------------------------------------------------------------------------------
@@ -442,7 +587,8 @@ def process(ctx, core, mosaics):
     num = np.zeros((4, core.height, core.width))
     den = np.zeros((core.height, core.width))
     den_nd = np.zeros((core.height, core.width))
-    for mos in mosaics:
+    decoded = []
+    for i, mos in enumerate(mosaics):
         if not mos.covers(pad.bounds):
             continue
         reg = mos.region(pad.bounds)
@@ -450,7 +596,11 @@ def process(ctx, core, mosaics):
             continue
         arr = pad16(mos.read(*reg))
         target = R.Target(mos.transform(reg[0], reg[1]), arr.shape[2], arr.shape[1], mos.crs)
-        px = ctx.pixels(target, arr)
+        decoded.append((i, arr, target, ctx.polygons(target)))
+    # Where both counties' mosaics reach, each pixel is served by one of them (Context.serves).
+    serve = [ctx.serves(i, target, pid, decoded) if len(decoded) > 1 else None for i, _, target, pid in decoded]
+    for (i, arr, target, pid), allowed in zip(decoded, serve):
+        px = ctx.pixels(target, arr, pid=pid, allowed=allowed)
         core_px = in_core(target, core)
         key = np.where((px["mu"] >= 0) & (px["flight"] > 0), px["mu"] * nf + px["flight"].astype(np.int64) - 1, -1)
         sel = px["U"] & core_px & (key >= 0)
@@ -471,13 +621,14 @@ def process(ctx, core, mosaics):
         Ay = P.overlap(0.0, RES, target.height, target.transform[3] - core.north, PAINTER, core.height)
         w = px["valid"].astype(np.float32)
         den += P.area_sum(Ay, Ax, w)
-        for i, band in enumerate(px["rgb"]):
-            num[i] += P.area_sum(Ay, Ax, band.astype(np.float32) * w)
+        for c, band in enumerate(px["rgb"]):
+            num[c] += P.area_sum(Ay, Ax, band.astype(np.float32) * w)
         has = px["valid"] & ~np.isnan(px["ndvi_s2"])
         wn = has.astype(np.float32)
         den_nd += P.area_sum(Ay, Ax, wn)
         num[3] += P.area_sum(Ay, Ax, np.where(has, px["ndvi_s2"], 0.0).astype(np.float32))
-        del px, arr, C
+        del px, C
+    del decoded, serve
     out = acc.sparse("c_")
     if poly_parts:
         pid = np.concatenate([p[0] for p in poly_parts])
@@ -532,6 +683,7 @@ def _init(cfg):
     P.configure(**cfg.get("rules", {}))
     _CTX = Context(cfg)
     _MOSAICS = open_mosaics(cfg)
+    _CTX.set_mosaics(_MOSAICS)
 
 
 def open_mosaics(cfg):
@@ -568,29 +720,54 @@ def plan_windows(cfg, mosaics, bounds=None):
     return out
 
 
+# The export layers a build reads (and so whose inputs it carries): soils' polygons and types, mask v0's sampling
+# mask, farm's crop cover and fields.
+READS = (("soils", ("ground", "ground_types")), ("ground_mask", (MK.MR.SAMPLE_LAYER,)),
+         ("farm", ("crop_cover", "fields")))
+
+
+def layer_inputs(m, names):
+    """Every input of the named layers of an export, whole, in the manifest's order."""
+    want = set()
+    for n in names:
+        want.update(m.layer(n)["inputs"])
+    return [dict(e) for k, e in m.inputs.items() if k in want]
+
+
 def inputs_of(cfg, soils_m, mask_m, farm_m, mosaics, hashes=True):
-    """The build's inputs, as manifest inputs (basemap/ground/manifest.py): licences, credits, versions, sha256."""
-    farm_in, soils_in, mask_in = farm_m.inputs, soils_m.inputs, mask_m.inputs
+    """The build's inputs, as manifest inputs (basemap/ground/manifest.py): the photo and Sentinel-2 entries made
+    here, then every input of each export layer read (READS), copied whole with a note of the export it came through,
+    so a licence or credit can't drop out ("the strictest input wins"). An input met twice keeps its first entry and
+    adds the second's note. Also the files and builds read, for run.json."""
     naip_files = [{"name": m.name, "file": os.path.basename(m.path),
                    "sha256": sha256(m.path) if hashes else None} for m in mosaics]
+    gains = cfg.get("gains")
+    s2_version = "the July 2025 NDVI median; the NAIP 2025 flight days' same-day fits (naip_norm, band 4)"
+    s2_note = f"fits.json sha256 {sha256(cfg['fits']) if hashes else None}"
+    if gains:
+        s2_version += "; same-day blue, green and red for the per-flight colour gains (naip_colour)"
+        s2_note += f"; gains.json sha256 {sha256(gains) if hashes else None}"
     ins = [
         {"name": "naip", "licence": "public-domain", "republish": "yes", "credit": "USDA NAIP",
          "version": "NAIP 2025 county mosaics, " + ", ".join(f["file"] for f in naip_files) + ", read at 0.6 m",
          "note": "; ".join(f"{f['name']} sha256 {f['sha256']}" for f in naip_files if f["sha256"])},
-        dict(soils_in["ssurgo"], note=f"soils export {soils_m.build} ({soils_in['ssurgo'].get('version', '')})"),
-        dict(mask_in["osm"], note=f"through mask v0 {mask_m.build}"),
-        dict(mask_in["overture-buildings"], note=f"through mask v0 {mask_m.build}"),
-        dict(mask_in["nhd"], note=f"through mask v0 {mask_m.build}"),
-        dict(mask_in["cdl"], note=f"through mask v0 {mask_m.build} and farm export {farm_m.build}"),
-        dict(farm_in["csb"], note=f"through farm export {farm_m.build}"),
         {"name": "sentinel-2", "licence": "Copernicus", "republish": "yes",
-         "credit": "Contains modified Copernicus Sentinel data 2025",
-         "version": "the July 2025 NDVI median; the NAIP 2025 flight days' same-day fits (naip_norm, band 4)",
-         "sha256": sha256(cfg["july"]) if hashes else None,
-         "note": f"fits.json sha256 {sha256(cfg['fits']) if hashes else None}; via farm export {farm_m.build} too"},
+         "credit": "Contains modified Copernicus Sentinel data 2025", "version": s2_version,
+         "sha256": sha256(cfg["july"]) if hashes else None, "note": s2_note},
     ]
+    by_name = {i["name"]: i for i in ins}
+    for m, (what, names) in zip((soils_m, mask_m, farm_m), READS):
+        via = f"through {what} export {m.build} ({', '.join(names)})"
+        for e in layer_inputs(m, names):
+            have = by_name.get(e["name"])
+            if have is None:
+                e["note"] = f"{e['note']}; {via}" if e.get("note") else via
+                ins.append(e)
+                by_name[e["name"]] = e
+            else:
+                have["note"] = f"{have['note']}; {via}" if have.get("note") else via
     files = {"soils": soils_m.build, "ground_mask": mask_m.build, "farm": farm_m.build,
-             "july": cfg["july"], "fits": cfg["fits"], "flights": cfg["flights"],
+             "july": cfg["july"], "fits": cfg["fits"], "flights": cfg["flights"], "gains": gains,
              "naip": {f["name"]: f for f in naip_files},
              "decoder": "; ".join(getattr(m, "version", "") for m in mosaics)}
     return [{k: v for k, v in i.items() if v is not None} for i in ins], files
@@ -605,11 +782,27 @@ def config(args):
         if not v:
             raise StatsError(f"{name}: no export found (set TVT_ARCHIVE or give the folder)")
     norm = args.norm
+    gains = None if args.no_gains else args.gains
+    if gains and not os.path.exists(gains):
+        raise StatsError(f"--gains: {gains} isn't there (the per-flight colour gains; --no-gains to measure without)")
     return {"soils": soils, "mask": mask, "farm": farm, "july": args.july, "fits": os.path.join(norm, "fits.json"),
-            "flights": os.path.join(norm, "flights_mapbox.gpkg"), "naip": [tuple(n.split("=", 1)) for n in args.naip],
+            "flights": os.path.join(norm, "flights_mapbox.gpkg"), "gains": gains,
+            "naip": [tuple(n.split("=", 1)) for n in args.naip],
             "dsdk": args.dsdk, "tmp": args.tmp, "cache": args.out,
             "days": ["2025-05-25", "2025-05-30", "2025-06-18", "2025-07-24"],
             "rules": {"dark_l": args.dark_l, "neutral_c": args.neutral_c, "blue_b": args.blue_b}}
+
+
+def colour_params(cfg):
+    """What run.json and the build record about the colour: the per-flight gains used (or none)."""
+    if not cfg.get("gains"):
+        return {"normalised": False, "about": "the photo's DNs as they are, read as sRGB"}
+    with open(cfg["gains"], encoding="utf-8") as f:
+        doc = json.load(f)
+    return {"normalised": True, "gains": os.path.basename(cfg["gains"]), "sha256": sha256(cfg["gains"]),
+            "reference_day": doc["reference_day"], "method": doc.get("method"), "made": doc.get("made"),
+            "about": f"each flight day's red, green and blue put on the {doc['reference_day']} flight's scale through "
+                     "same-day Sentinel-2 reflectance (P.Gains); read as sRGB"}
 
 
 def same(cfg):
@@ -631,7 +824,8 @@ def cmd_run(args):
     if os.path.exists(run_path):
         with open(run_path, encoding="utf-8") as f:
             run = json.load(f)
-        if same(run["config"]) != same(cfg) or run.get("bounds") != (list(bounds) if bounds else None):
+        if (same(run["config"]) != same(cfg) or run.get("bounds") != (list(bounds) if bounds else None)
+                or run.get("colour") != colour_params(cfg)):
             raise StatsError(f"{out} was started with other inputs; start a new build folder")
         log(f"resuming {run['build_id']}")
     else:
@@ -642,8 +836,10 @@ def cmd_run(args):
                "files": files, "rules": P.RULES, "res": RES, "core_m": CORE_M, "halo_m": P.HALO_M,
                "octaves_m": list(P.OCTAVES_M), "support": P.SUPPORT, "bins": P.BINS, "ranges": P.RANGES,
                "mapunits": [m["mukey"] for m in read_soils(cfg["soils"])["mapunits"]], "days": cfg["days"],
+               "colour": colour_params(cfg), "counties": dict(zip((m.name for m in mosaics), county_of(mosaics))),
                "windows": len(windows), "partial": bounds is not None}
         write_json(run_path, run)
+    owner_grid(read_soils(cfg["soils"], hashes=False), mosaics, cache=out)   # computed once, before the workers
     todo = [w for w in windows if not os.path.exists(os.path.join(out, "windows", f"{w.key}.npz"))]
     if args.limit:
         todo = todo[:args.limit]
@@ -714,7 +910,10 @@ def cmd_finish(args):
         log("note: this soils export has no landform per type; the texture fallback matches on texture class "
             "and no landform")
     polys = {"gid": soils["poly_gid"], "mu": soils["poly_mu"], "acc": pacc}
-    rows, report = PL.pool(soils["mapunits"], soils["types"], run["days"], acc, polys)
+    colour = run.get("colour") or {"normalised": False}
+    rows, report = PL.pool(soils["mapunits"], soils["types"], run["days"], acc, polys,
+                           gains_applied=colour["normalised"])
+    report["colour"] = colour
     seen = reasons.sum() - reasons[0]
     report["pixels"] = {"in_cores": int(reasons.sum()), "sampled": int(reasons[0]),
                         "not_sampled": {r: int(reasons[i + 1]) for i, r in enumerate(P.REASONS)},
@@ -724,12 +923,20 @@ def cmd_finish(args):
     if os.path.exists(cal_path):
         with open(cal_path, encoding="utf-8") as f:
             cal = json.load(f)
-        report["calibration"] = cal["summary"]
-        report["calibration_palette"] = palette_vs_classes(cal, rows)
+        why = calibration_mismatch(cal, run)
+        if why:
+            log(f"calibration.json isn't this build's ({why}): left out; run calibrate --out {out} again")
+            report["calibration"] = {"verdict": None, "left_out": why}
+        else:
+            report["calibration"] = cal["summary"]
+            report["calibration_palette"] = palette_vs_classes(cal, rows)
     finished = utc_now()
     counts = {"rows": len(rows), "types": report["counts"], "pixels_sampled": int(reasons[0]),
               "windows": nwin, "flight_days": {k: report["flight_days"][k] for k in
-                                               ("types_on_two_or_more", "median_max_de", "share_over", "gains_needed")},
+                                               ("gains_applied", "types_on_two_or_more", "median_max_de",
+                                                "share_over", "over_rule", "gains_needed")},
+              "colour": {k: colour.get(k) for k in ("normalised", "reference_day", "sha256")},
+              "albedo_fit_r": round(report["albedo_fit"]["r"], 3) if report.get("albedo_fit") else None,
               "variance_explained": report["variance_explained"], "spearman_l_albedo": report["spearman_l_albedo"],
               "polygon_outliers": report["polygon_outliers"]["listed"],
               "calibration": report.get("calibration", {}).get("verdict")}
@@ -737,7 +944,9 @@ def cmd_finish(args):
              "photo": PL.PHOTO, "mask": PL.MASK, "partial": run["partial"] or bool(missing),
              "soils_export": soils["manifest"].build, "inputs": run["inputs"], "files": run["files"],
              "params": {k: run[k] for k in ("rules", "res", "core_m", "halo_m", "octaves_m", "support", "bins",
-                                            "ranges", "days")} | {"thresholds": report["thresholds"]},
+                                            "ranges", "days")} | {"thresholds": report["thresholds"],
+                                                                  "colour": colour,
+                                                                  "counties": run.get("counties")},
              "counts": counts, "rows": rows}
     write_json(os.path.join(out, "report.json"), report)
     write_json(os.path.join(out, "stats.json"), stats)
@@ -747,6 +956,22 @@ def cmd_finish(args):
     if not args.no_cog and not run["partial"] and not missing:
         assemble_cog(run, args.cog or run["cog"])
     return 0
+
+
+def calibration_mismatch(cal, run):
+    """Why a calibration.json isn't the run's own (its rules or inputs differ), or None when it is."""
+    rules = cal.get("summary", {}).get("rules") or {}
+    for k in ("dark_l", "neutral_c", "blue_b", "green_cut_s2", "july_cut", "edge_m"):
+        if rules.get(k) != run["rules"].get(k):
+            return f"rule {k} {rules.get(k)} against the run's {run['rules'].get(k)}"
+    ins = cal.get("inputs")
+    if not ins:
+        return "it doesn't record its inputs"
+    want = cal_inputs(None, run)
+    for k in ("soils", "ground_mask", "farm", "july", "fits", "gains"):
+        if ins.get(k) != want.get(k):
+            return f"{k} {ins.get(k)} against the run's {want.get(k)}"
+    return None
 
 
 def palette_vs_classes(cal, rows):
@@ -807,16 +1032,20 @@ def assemble_cog(run, cog_dir):
         "flight_days": run["days"],
         "flights": "flights.fgb: USDA's NAIP 2025 seamline polygons in the box (EPSG:32611): src_fid, idate (the "
                    "flight day), sdate and edate (local time, MM/DD/YYYY hh:mm, read as MDT), camera",
-        "colour_normalised": False,
+        "colour_normalised": bool((run.get("colour") or {}).get("normalised")),
+        "colour": run.get("colour") or {"normalised": False},
         "ndvi_note": "The curves were fitted on 20 m cells that weren't developed, water or mixed: bare and fallow "
                      "ground reads up to 0.1 greener than Sentinel-2, developed land 0.02-0.07. In a July 24 strip "
                      "near lon -116.02, lat 43.38-43.40 (about 13 km2) NAIP's near-infrared is below its red, so "
                      "ndvi reads about -0.06 where Sentinel-2 reads 0.14 (dry rangeland: not green either way). "
                      "Over water it isn't meaningful (naip_norm's caveats).",
-        "colour_note": "The colour bands are the photo's DNs, not normalised per flight day: stats.json's "
-                       "flight-day check says whether they need to be (report.json flight_days).",
+        "colour_note": colour_note(run),
+        "counties": "Ada's and Canyon's mosaics overlap by a few kilometres along the county line; each cell is "
+                    "served by its own county's mosaic (soils' survey areas ID001 and ID665), and a cell in neither "
+                    "county by the nearest county's, so the two mosaics' balancing meets at the county line",
         "inputs": [i for i in run["inputs"] if i["name"] in ("naip", "sentinel-2")],
-        "licence": "public-domain (NAIP) with Copernicus-derived curves; republish yes",
+        "licence": "Copernicus (the ndvi band's curves and the colour gains come from Sentinel-2) over public-domain "
+                   "NAIP; republish yes, with both credits",
         "credit": [NAIP_CREDIT, "Contains modified Copernicus Sentinel data 2025"],
         "decoder": "LizardTech MrSID Decode SDK (internal use; not redistributed): " + run["files"]["decoder"],
     }
@@ -825,8 +1054,20 @@ def assemble_cog(run, cog_dir):
     log(f"COG: {final} ({sidecar['sha256'][:12]}), flights.fgb, naip2025_2m.json")
 
 
+def colour_note(run):
+    colour = run.get("colour") or {}
+    if not colour.get("normalised"):
+        return ("The colour bands are the photo's DNs, not normalised per flight day: stats.json's flight-day check "
+                "says whether they need to be (report.json flight_days).")
+    return (f"The colour bands are on the {colour['reference_day']} flight's scale: each flight day's DNs went "
+            "through that day's table (gains.json: NAIP against same-day Sentinel-2 blue, green and red, composed "
+            "with the reference day's curve) before the area mean. Pixels outside every flight polygon are as "
+            "photographed.")
+
+
 BAND_ABOUT = (
-    ("red", "NAIP 2025 red, the area mean of the 0.6 m pixels (DN, read as sRGB)"),
+    ("red", "NAIP 2025 red, the area mean of the 0.6 m pixels on the reference flight day's scale (DN, read as "
+            "sRGB; the sidecar's colour says which day, or that it isn't normalised)"),
     ("green", "NAIP 2025 green, the same"),
     ("blue", "NAIP 2025 blue, the same"),
     ("ndvi", "the photo's NDVI on Sentinel-2's scale, by its flight day's curve (naip_norm band 4), averaged; "
@@ -836,8 +1077,45 @@ BAND_ABOUT = (
 
 # ---- calibrate ----------------------------------------------------------------------------------------------------
 
+def calibration_config(args):
+    """calibrate's inputs. In a build folder with a run.json they're the run's (its soils, mask v0, farm, July, fits,
+    gains and rules), so the verdict finish publishes is the build's own; a flag that says otherwise is refused.
+    Without one (a sweep in a folder of its own), they're resolved as run resolves them."""
+    run_path = os.path.join(args.out, "run.json")
+    if not os.path.exists(run_path):
+        return config(args), None
+    with open(run_path, encoding="utf-8") as f:
+        run = json.load(f)
+    rc = run["config"]
+    given = {"soils": args.soils, "mask": args.mask, "farm": args.farm,
+             "rules": {k: v for k, v in (("dark_l", args.dark_l), ("neutral_c", args.neutral_c),
+                                         ("blue_b", args.blue_b)) if v is not None}}
+    for k in ("soils", "mask", "farm"):
+        if given[k] and os.path.abspath(given[k]) != os.path.abspath(rc[k]):
+            raise StatsError(f"--{k}: {args.out} was run on {rc[k]}; calibrate a build on its own inputs (or "
+                             "calibrate into another folder)")
+    for k, v in given["rules"].items():
+        if run["rules"].get(k) != v:
+            raise StatsError(f"--{k.replace('_', '-')} {v}: the run used {run['rules'].get(k)}; a sweep goes in a "
+                             "folder of its own")
+    out = dict(rc, naip=[tuple(n.split("=", 1)) for n in args.naip], dsdk=args.dsdk, tmp=args.tmp, cache=args.out,
+               rules={k: run["rules"].get(k) for k in ("dark_l", "neutral_c", "blue_b")})
+    return out, run
+
+
+def cal_inputs(cfg, run):
+    """What a calibration was measured on: the builds and files read, and the rules (finish compares them)."""
+    if run is not None:
+        return {"build": run["build_id"], "soils": run["files"]["soils"], "ground_mask": run["files"]["ground_mask"],
+                "farm": run["files"]["farm"], "july": run["config"]["july"], "fits": run["config"]["fits"],
+                "gains": (run.get("colour") or {}).get("sha256")}
+    return {"build": None, "soils": M.read(cfg["soils"], hashes=False).build,
+            "ground_mask": M.read(cfg["mask"], hashes=False).build, "farm": M.read(cfg["farm"], hashes=False).build,
+            "july": cfg["july"], "fits": cfg["fits"], "gains": sha256(cfg["gains"]) if cfg.get("gains") else None}
+
+
 def cmd_calibrate(args):
-    cfg = config(args)
+    cfg, run = calibration_config(args)
     P.configure(**cfg["rules"])
     ctx = Context(cfg)
     mosaics = {m.name: m for m in open_mosaics(cfg)}
@@ -936,8 +1214,8 @@ def cmd_calibrate(args):
                                if any("de" in r for r in v.get("types", [])) else None)
                            for b, v in boxes.items()},
                "rules": P.RULES, "class_keep": [CLASS_NAMES[c] for c in CLASS_KEEP], "min_px": CAL_MIN_PX}
-    cal = {"format": "tvt-soils-calibration/1", "made": utc_now(), "summary": summary, "boxes": boxes,
-           "pairs": out_pairs}
+    cal = {"format": "tvt-soils-calibration/1", "made": utc_now(), "inputs": cal_inputs(cfg, run),
+           "summary": summary, "boxes": boxes, "pairs": out_pairs}
     if args.explore:
         cal["explore"] = explore
     os.makedirs(args.out, exist_ok=True)
@@ -967,6 +1245,9 @@ def main(argv=None):
         p.add_argument("--july", default=os.path.join(src, "sentinel2/july2025/ndvi_median.tif"))
         p.add_argument("--norm", default=os.path.join(src, "sentinel2/naip_norm"),
                        help="the same-day normalisation: fits.json and flights_mapbox.gpkg")
+        p.add_argument("--gains", default=os.path.join(src, "sentinel2/naip_colour/gains.json"),
+                       help="the per-flight colour gains (photo.Gains)")
+        p.add_argument("--no-gains", action="store_true", help="measure the photo's colours as they are")
         p.add_argument("--naip", action="append", default=[], metavar="NAME=PATH",
                        help="a county mosaic (.sid) or a 0.6 m GeoTIFF, e.g. ada=.../ortho_1-1_hm_s_id001_2025_1.sid")
         p.add_argument("--dsdk", default="/dsdk", help="the MrSID Decode SDK's folder (mounted, never committed)")

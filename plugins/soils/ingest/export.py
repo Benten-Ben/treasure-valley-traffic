@@ -5,7 +5,7 @@ manifest.json last, from what soils-load and soils-photo-load put in the databas
 
 | Layer | File | What |
 |---|---|---|
-| `ground` | ground.fgb | every map-unit polygon, whole, in EPSG:32611: `id` (soils.polygon.gid), `ground_type` (soils.ground_type.gid, an integer; 0 for none), `mukey`, `misc` (the type's kind of miscellaneous area, or null for a soil; `nodata` is no survey), in that order |
+| `ground` | ground.fgb | every map-unit polygon, whole, in EPSG:32611: `id` (soils.polygon.gid), `ground_type` (soils.ground_type.gid, an integer; 0 for none), `mukey`, `areasymbol` (its survey area: ID001 is Ada County, ID665 Canyon), `misc` (the type's kind of miscellaneous area, or null for a soil; `nodata` is no survey), in that order |
 | `ground_types` | ground_types.json | schema `soils.ground_types/1`: each ground type by its gid, with its text id, series, surface texture, misc, landform, surface fragment cover, dry albedo, map units and area in the box |
 | `palette` | palette.json | schema `soils.palette/1`, once a photo build is loaded (P2): each ground type's colour, spread and texture from soils.ground_colour, keyed by the same gid |
 
@@ -43,7 +43,8 @@ TYPES_SCHEMA = "soils.ground_types/1"
 # read back as misc = the mukey and mukey = null. Last, a null misc is simply left out, which readers take as null.
 GROUND_SQL = """
 select ST_AsFlatGeobuf(q, true, 'geom') from (
-  select p.gid as id, coalesce(g.gid, 0)::int as ground_type, p.mukey, g.misc, ST_Transform(p.geom, 32611) as geom
+  select p.gid as id, coalesce(g.gid, 0)::int as ground_type, p.mukey, p.areasymbol, g.misc,
+         ST_Transform(p.geom, 32611) as geom
   from soils.polygon p join soils.map_unit m on m.mukey = p.mukey
   left join soils.ground_type g on g.id = m.ground_type
   order by p.gid) q"""
@@ -207,8 +208,9 @@ def export(conn, archive, build=None):
             {"name": "ground", "file": "ground.fgb", "format": "FlatGeobuf", "inputs": ["ssurgo"], "base": False,
              "title": "Soil map units with their ground types",
              "note": "ground_type: soils.ground_type.gid (0 none), the key of ground_types.json and P2's palette; "
-                     "misc: water, urban, rock, badland, rubble, pits, other, or nodata (not surveyed); null for a "
-                     "soil. Polygons are whole, not clipped to the box"},
+                     "areasymbol: the survey area (ID001 Ada County, ID665 Canyon; their shared edge is the county "
+                     "line P2 splits the two NAIP mosaics on); misc: water, urban, rock, badland, rubble, pits, "
+                     "other, or nodata (not surveyed); null for a soil. Polygons are whole, not clipped to the box"},
             {"name": "ground_types", "file": "ground_types.json", "format": "JSON", "schema": TYPES_SCHEMA,
              "inputs": ["ssurgo"], "base": False, "title": "The ground types, by their integer key"},
         ]

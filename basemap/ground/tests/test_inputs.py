@@ -89,8 +89,8 @@ class RawInputsTest(unittest.TestCase):
 
     def test_credits_named_in_the_plan(self):
         names = {r.name for r in I.RAW}
-        self.assertEqual(names, {"osm", "overture-buildings", "nhd", "cdl", "csb", "naip", "3dep", "sentinel-2",
-                                 "rcmap"})
+        self.assertEqual(names, {"osm", "overture-buildings", "nhd", "cdl", "csb", "naip", "naip-2m", "3dep",
+                                 "sentinel-2", "rcmap"})
         credits = " ".join(r.credit for r in I.RAW)
         for word in ("OpenStreetMap", "Overture", "National Hydrography", "Cropland Data Layer",
                      "Crop Sequence Boundaries", "NAIP", "3D Elevation Program", "Copernicus Sentinel", "RCMAP"):

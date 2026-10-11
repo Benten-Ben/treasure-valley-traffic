@@ -35,6 +35,8 @@ EAST_SOIL = (150, 130, 110, 140)
 GREEN = (60, 120, 50, 200)
 DAY = {"2025-06-18": 900, "2025-05-25": 1700}
 BUILD_ID = "20261011T000000Z"
+MAY_GAIN = 10           # the synthetic gains: May 25's DNs read 10 higher on June 18's scale (June 18 is the reference)
+CANYON_LIFT = 20        # the two-county case: Canyon's mosaic is balanced 20 DN brighter than Ada's
 
 
 def srs(code):
@@ -82,8 +84,10 @@ RAW = {"osm": ("ODbL-1.0", "© OpenStreetMap contributors"),
        "cdl": ("public-domain", "USDA NASS Cropland Data Layer")}
 
 
-def make_inputs(root):
-    """The synthetic inputs under root; returns the photo_stats arguments that point at them."""
+def make_inputs(root, two_counties=False):
+    """The synthetic inputs under root; returns the photo_stats arguments that point at them. two_counties: Ada's
+    mosaic and Canyon's overlap over the middle 560 m, the county line between soil A (Canyon, ID665, the west) and
+    soil B (Ada, ID001, the east); Canyon's is balanced CANYON_LIFT brighter, so a blend or a double count shows."""
     archive = os.path.join(root, "archive")
     xs = np.arange(SIZE) * 0.6 + X0 + 0.3
     ys = Y0 - np.arange(SIZE) * 0.6 - 0.3
@@ -99,7 +103,17 @@ def make_inputs(root):
         bands.append(np.clip(v + rng.normal(0, 4, v.shape), 0, 255).astype(np.uint8))
     mask = np.where(Y < 4801500, 0, 255).astype(np.uint8)            # the county ends 60 m above the raster's foot
     county = os.path.join(root, "county.tif")
-    write_raster(county, (X0, 0.6, 0, Y0, 0, -0.6), bands + [mask], 26911)
+    naip = [f"ada={county}"]
+    if two_counties:
+        ada_mask = np.where(X >= X0 + 200, mask, 0).astype(np.uint8)
+        write_raster(county, (X0, 0.6, 0, Y0, 0, -0.6), bands + [ada_mask], 26911)
+        canyon = os.path.join(root, "canyon.tif")
+        lifted = [np.clip(b.astype(np.int16) + CANYON_LIFT, 0, 255).astype(np.uint8) for b in bands]
+        write_raster(canyon, (X0, 0.6, 0, Y0, 0, -0.6), lifted + [np.where(X < X0 + 760, mask, 0).astype(np.uint8)],
+                     26911)
+        naip = [f"ada={county}", f"canyon={canyon}"]
+    else:
+        write_raster(county, (X0, 0.6, 0, Y0, 0, -0.6), bands + [mask], 26911)
 
     # The soils export: three strips of soil A in the west, three of B in the east, and a water pond.
     folder = os.path.join(archive, "soils", "export", BUILD_ID)
@@ -108,11 +122,14 @@ def make_inputs(root):
     w = X0
     for i, (gid, mukey) in enumerate([(1, "A1")] * 3 + [(2, "B1")] * 3):
         e = w + 160
-        feats.append((rect(w, Y0 - 960, e, Y0), {"id": i + 1, "ground_type": gid, "mukey": mukey, "misc": None}))
+        feats.append((rect(w, Y0 - 960, e, Y0), {"id": i + 1, "ground_type": gid, "mukey": mukey,
+                                                  "areasymbol": "ID665" if gid == 1 else "ID001", "misc": None}))
         w = e
-    feats.append((rect(549400, 4801900, 549450, 4801950), {"id": 7, "ground_type": 3, "mukey": "W1", "misc": "water"}))
+    feats.append((rect(549400, 4801900, 549450, 4801950), {"id": 7, "ground_type": 3, "mukey": "W1",
+                                                           "areasymbol": "ID001", "misc": "water"}))
     write_vector(os.path.join(folder, "ground.fgb"), 32611,
-                 (("id", "int"), ("ground_type", "int"), ("mukey", "string"), ("misc", "string")), feats)
+                 (("id", "int"), ("ground_type", "int"), ("mukey", "string"), ("areasymbol", "string"),
+                  ("misc", "string")), feats)
     types = [
         {"gid": 1, "id": "alpha:silt-loam", "series": "Alpha", "texture": "Silt loam", "texcl": "Silt loam",
          "modifier": None, "misc": None, "landform": "terraces", "frag_cover_pct": None, "albedo_dry": 0.3,
@@ -220,8 +237,23 @@ def make_inputs(root):
     write_vector(os.path.join(norm, "flights_mapbox.gpkg"), 26911,
                  (("src_fid", "int"), ("idate", "string"), ("sdate", "string"), ("edate", "string"),
                   ("camera", "string")), flights, driver="GPKG", layer="flights")
-    return ["--soils", folder, "--mask", mfolder, "--farm", ffolder,
-            "--july", os.path.join(jdir, "ndvi_median.tif"), "--norm", norm, "--naip", f"ada={county}"]
+
+    # The per-flight colour gains: June 18 is the reference; May 25 reads MAY_GAIN higher on its scale.
+    gdir = os.path.join(root, "sources", "sentinel2", "naip_colour")
+    os.makedirs(gdir)
+    ident = list(range(256))
+    lift = [min(v + MAY_GAIN, 255) for v in range(256)]
+    gains = {"format": "tvt-naip-colour-gains/1", "reference_day": "2025-06-18", "made": "2026-10-11T00:00:00Z",
+             "method": "synthetic",
+             "days": {d: {"lut": {b: (lift if d == "2025-05-25" else ident) for b in ("red", "green", "blue")}}
+                      for d in ("2025-05-25", "2025-05-30", "2025-06-18", "2025-07-24")}}
+    with open(os.path.join(gdir, "gains.json"), "w", encoding="utf-8") as f:
+        json.dump(gains, f)
+    out = ["--soils", folder, "--mask", mfolder, "--farm", ffolder, "--july", os.path.join(jdir, "ndvi_median.tif"),
+           "--norm", norm, "--gains", os.path.join(gdir, "gains.json")]
+    for n in naip:
+        out += ["--naip", n]
+    return out
 
 
 @unittest.skipIf(gdal is None, "GDAL not installed")
@@ -246,8 +278,11 @@ class PhotoStatsTest(unittest.TestCase):
             cls.report = json.load(f)
 
     @classmethod
-    def cal_args(cls):
+    def cal_args(cls, fresh=True):
         lc = os.path.join(cls.tmp, "landcover")
+        if not fresh:
+            return ["--classes", os.path.join(lc, "classes"), "--windows", os.path.join(lc, "search"),
+                    "--shifts", os.path.join(lc, "shifts.json"), "--naip2023", os.path.join(lc, "none")]
         os.makedirs(os.path.join(lc, "classes"))
         os.makedirs(os.path.join(lc, "search"))
         J = np.full((1000, 1000), 12, np.uint8)               # short dry grass...
@@ -274,7 +309,14 @@ class PhotoStatsTest(unittest.TestCase):
         self.assertFalse(self.stats["partial"])
         self.assertEqual(self.stats["soils_export"], BUILD_ID)
         names = [i["name"] for i in self.stats["inputs"]]
-        self.assertEqual(names, ["naip", "ssurgo", "osm", "overture-buildings", "nhd", "cdl", "csb", "sentinel-2"])
+        # Every input of every export layer read, once each: soils' ground, mask v0's covered, farm's crop cover
+        # and fields.
+        self.assertEqual(names, ["naip", "sentinel-2", "ssurgo", "osm", "overture-buildings", "nhd", "cdl", "csb"])
+        s2 = self.stats["inputs"][1]
+        self.assertIn("colour gains", s2["version"])
+        self.assertIn("farm export", s2["note"])                     # crop_cover's Sentinel-2, the same input
+        self.assertTrue(self.stats["params"]["colour"]["normalised"])
+        self.assertEqual(self.stats["params"]["colour"]["reference_day"], "2025-06-18")
 
     def test_each_soil_is_measured_on_its_own_flight_day(self):
         a = self.rows(level="ground_type", key="alpha:silt-loam", flight=None)[0]
@@ -284,7 +326,7 @@ class PhotoStatsTest(unittest.TestCase):
         self.assertEqual((a["n_polygons"], b["n_polygons"]), (3, 3))
         import photo
         want_a = photo.colour(*(np.array([[v]], np.uint8) for v in WEST_SOIL[:3]))
-        want_b = photo.colour(*(np.array([[v]], np.uint8) for v in EAST_SOIL[:3]))
+        want_b = photo.colour(*(np.array([[v + MAY_GAIN]], np.uint8) for v in EAST_SOIL[:3]))   # May 25's gains
         self.assertLess(photo.delta_e(a["lab_med"], [float(c[0, 0]) for c in want_a]), 1.0)
         self.assertLess(photo.delta_e(b["lab_med"], [float(c[0, 0]) for c in want_b]), 1.0)
         self.assertEqual([r["flight"] for r in self.rows(level="ground_type", key="alpha:silt-loam")
@@ -335,6 +377,9 @@ class PhotoStatsTest(unittest.TestCase):
         raw = (WEST_SOIL[3] - WEST_SOIL[0]) / (WEST_SOIL[3] + WEST_SOIL[0])
         self.assertAlmostEqual(float(photo.decode_ndvi(west[3])), raw + 0.1, delta=0.03)   # June 18's curve
         east, _ = at(549500, 4802300)
+        for got, want in zip(east[:3], EAST_SOIL[:3]):
+            self.assertLessEqual(abs(got - (want + MAY_GAIN)), 2)                     # on June 18's scale
+        self.assertTrue(side["colour_normalised"])
         self.assertAlmostEqual(float(photo.decode_ndvi(east[3])),
                                (EAST_SOIL[3] - EAST_SOIL[0]) / (EAST_SOIL[3] + EAST_SOIL[0]), delta=0.03)
         _, m = at(548700, 4801490)                                            # outside the county
@@ -352,6 +397,25 @@ class PhotoStatsTest(unittest.TestCase):
         self.assertTrue(des)
         self.assertEqual(cal["summary"]["verdict"], "pass")
         self.assertEqual(self.report["calibration"]["verdict"], "pass")
+        self.assertEqual(cal["inputs"]["build"], "photo-20261011T000000Z")
+        self.assertEqual(cal["inputs"]["soils"], BUILD_ID)
+
+    def test_calibrate_keeps_to_the_runs_inputs(self):
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(self.S.main(["calibrate", "--out", self.out, "--dark-l", "0.6"] + self.args
+                                         + self.cal_args(fresh=False)), 1)
+        self.assertIn("folder of its own", err.getvalue())
+        # A calibration that isn't the run's is left out of finish's verdict.
+        with open(os.path.join(self.out, "run.json"), encoding="utf-8") as f:
+            run = json.load(f)
+        with open(os.path.join(self.out, "calibration.json"), encoding="utf-8") as f:
+            cal = json.load(f)
+        self.assertIsNone(self.S.calibration_mismatch(cal, run))
+        other = dict(cal, inputs=dict(cal["inputs"], ground_mask="20991231T000000Z"))
+        self.assertIn("ground_mask", self.S.calibration_mismatch(other, run))
+        other = dict(cal, summary=dict(cal["summary"], rules=dict(cal["summary"]["rules"], dark_l=0.7)))
+        self.assertIn("dark_l", self.S.calibration_mismatch(other, run))
 
     def test_a_second_run_resumes_and_other_inputs_are_refused(self):
         log = io.StringIO()
@@ -365,6 +429,73 @@ class PhotoStatsTest(unittest.TestCase):
         with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(self.S.main(["run", "--out", self.out, "--cog", self.cog, "--no-hashes"] + other), 1)
         self.assertIn("other inputs", err.getvalue())
+
+
+
+@unittest.skipIf(gdal is None, "GDAL not installed")
+class TwoCountiesTest(unittest.TestCase):
+    """Ada's and Canyon's mosaics overlap: each place is counted once, from its own county's mosaic, and the COG
+    takes each side's values, not a blend."""
+
+    @classmethod
+    def setUpClass(cls):
+        import photo_stats
+        cls.S = photo_stats
+        cls.tmp = tempfile.mkdtemp()
+        cls.log = io.StringIO()
+        cls.out = {}
+        for case, two in (("one", False), ("two", True)):
+            root = os.path.join(cls.tmp, case)
+            os.makedirs(root)
+            args = make_inputs(root, two_counties=two)
+            out = os.path.join(root, "archive", "soils", "photo", "photo-20261011T000000Z")
+            cog = os.path.join(root, "cold")
+            with contextlib.redirect_stdout(cls.log):
+                rc = photo_stats.main(["run", "--out", out, "--cog", cog, "--workers", "1", "--no-hashes",
+                                       "--no-gains"] + args)
+                rc_fin = photo_stats.main(["finish", "--out", out])
+            cls.out[case] = (rc, rc_fin, out, cog)
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def doc(self, case, name):
+        with open(os.path.join(self.out[case][2], name), encoding="utf-8") as f:
+            return json.load(f)
+
+    def test_each_place_is_counted_once(self):
+        self.assertEqual(self.out["two"][:2], (0, 0), self.log.getvalue())
+        one, two = self.doc("one", "report.json"), self.doc("two", "report.json")
+        self.assertEqual(two["pixels"]["in_cores"], one["pixels"]["in_cores"])
+        self.assertEqual(two["pixels"]["sampled"], one["pixels"]["sampled"])
+        rows = {(r["level"], r["key"], r["flight"]): r for r in self.doc("two", "stats.json")["rows"]}
+        rows1 = {(r["level"], r["key"], r["flight"]): r for r in self.doc("one", "stats.json")["rows"]}
+        for t in ("alpha:silt-loam", "beta:loam"):
+            self.assertEqual(rows[("ground_type", t, None)]["n_px"], rows1[("ground_type", t, None)]["n_px"], t)
+        import photo
+        # Soil A is in Canyon: Canyon's (brighter) mosaic; soil B in Ada: Ada's.
+        want_a = photo.colour(*(np.array([[v + CANYON_LIFT]], np.uint8) for v in WEST_SOIL[:3]))
+        want_b = photo.colour(*(np.array([[v]], np.uint8) for v in EAST_SOIL[:3]))
+        self.assertLess(photo.delta_e(rows[("ground_type", "alpha:silt-loam", None)]["lab_med"],
+                                      [float(c[0, 0]) for c in want_a]), 1.0)
+        self.assertLess(photo.delta_e(rows[("ground_type", "beta:loam", None)]["lab_med"],
+                                      [float(c[0, 0]) for c in want_b]), 1.0)
+        self.assertEqual(self.doc("two", "run.json")["counties"], {"ada": "ID001", "canyon": "ID665"})
+
+    def test_the_cog_takes_each_side_not_a_blend(self):
+        ds = gdal.Open(os.path.join(self.out["two"][3], "naip2025_2m.tif"))
+        gt = ds.GetGeoTransform()
+
+        def at(x, y):
+            c, r = int((x - gt[0]) / 2), int((gt[3] - y) / 2)
+            return [int(ds.GetRasterBand(i + 1).ReadAsArray(c, r, 1, 1)[0, 0]) for i in range(3)]
+        for x, base, lift in ((X0 + 100, WEST_SOIL, CANYON_LIFT),      # Canyon only
+                              (X0 + 300, WEST_SOIL, CANYON_LIFT),      # the overlap, Canyon's side
+                              (X0 + 600, EAST_SOIL, 0),                # the overlap, Ada's side
+                              (X0 + 900, EAST_SOIL, 0)):               # Ada only
+            for got, want in zip(at(x, 4802300), base[:3]):
+                self.assertLessEqual(abs(got - (want + lift)), 2, x)
 
 
 if __name__ == "__main__":

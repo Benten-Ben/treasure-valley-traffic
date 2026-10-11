@@ -81,7 +81,7 @@ class RegistryTest(unittest.TestCase):
             self.assertTrue(module.startswith(f"plugins.{plugin}.ingest."), module)
         self.assertEqual([e["name"] for _, e in registry.MANUAL if _.name == "roads"],
                          ["osm_valley", "osm_street", "osm_paving", "cdl_developed"])
-        self.assertEqual([e["name"] for _, e in registry.MANUAL if _.name == "soils"], ["ssurgo"])
+        self.assertEqual([e["name"] for _, e in registry.MANUAL if _.name == "soils"], ["ssurgo", "naip_photo"])
         self.assertEqual([e["name"] for _, e in registry.MANUAL if _.name == "hazards"],
                          ["nifc_wfigs_perimeters_backfill"])
         self.assertEqual([e["name"] for _, e in registry.MANUAL if _.name == "trails"], ["osm_paths", "trails_match"])
