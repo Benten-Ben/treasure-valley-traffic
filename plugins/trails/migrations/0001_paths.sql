@@ -22,9 +22,10 @@
 --   along canal banks are irrigation access (trails.canal_track, written by trails-match once
 --   water's reaches exist; cut-first).
 -- * trails-match (plugins/trails/ingest/match.py) links the agencies' lines to OpenStreetMap's
---   ways with core's line matcher (ingest/linematch.py): trails.link and trails.matched_line.
---   The pollers rematch the lines a poll changed, and the trails-match build everything. Links
---   carry the City of Boise's ids, so they're internal (republish aggregates, like their source).
+--   ways with core's line matcher (ingest/linematch.py), in 150 m pieces: trails.link and
+--   trails.matched_line, with each line's gap (where it draws itself). The pollers relink the
+--   lines a poll changed, and the trails-match build everything. Links carry the City of Boise's
+--   ids, so they're internal (republish aggregates, like their source).
 --
 -- The 12 lane-tagged cycleways, tracks and pedestrian ways osm_valley keeps (the partition's
 -- named exception) stay in core.osm_way; trails reads them through trails.exception_way.
@@ -35,8 +36,8 @@ create schema if not exists trails;
 -- plugins/trails/ingest/sources/osm_paths.py applies the same rules when it loads a way, in
 -- Python; a database test runs both over the same tags and asserts they agree.
 
--- OpenStreetMap's surface tag in four classes: paved, gravel, dirt, or unknown (untagged, or a
--- value none of these name).
+-- OpenStreetMap's surface tag in four classes: paved, gravel, dirt, or unknown (a value none of
+-- these name); null when untagged.
 create function trails.surface_class(surface text) returns text
 language sql immutable parallel safe as $$
   select case
@@ -195,11 +196,13 @@ comment on table trails.route_line is
   'Each OpenStreetMap route''s line, from its member ways (trails-match). License ODbL (© OpenStreetMap contributors); republish: yes';
 
 -- How an agency's line (an R2R trail, a Greenbelt closure or detour) lies on OpenStreetMap's
--- ways: one row per way it matched, from core's line matcher (buffer 15 m, bearing 20°, a 60%
--- share of the way or of the line). share and overlap_m measure the way; line_share the line,
--- when the way's share didn't pass (method way_in_...: a partial link, the line covers only part
--- of a longer way). A way takes its line's state only on a full link: its own share passed, so
--- it lies along the line. Elsewhere, partial links included, the line draws itself (its gap).
+-- ways: one row per way, from core's line matcher run on the line's pieces of at most 150 m
+-- (buffer 15 m, bearing 20°, a 60% share of the way or of the piece). overlap_m and share measure
+-- the way: how much of it lies within 15 m of the pieces that matched it; line_share how much of
+-- the line those pieces are. A full link (method pieces150_buffer15_bearing20): 60% of the way
+-- lies along the line. A partial one (way_in_pieces150_...): 20 m or more of it does, but less,
+-- since the way is longer than the line or runs on past it. A way takes its line's state only on
+-- a full link; elsewhere the line draws itself (its gap, in trails.matched_line).
 create table trails.link (
   source         text not null references ops.source,
   source_id      text not null,
@@ -246,8 +249,10 @@ create index matched_line_gap on trails.matched_line using gist (gap);
 comment on table trails.matched_line is
   'Each agency trail line''s last match and where it draws itself (trails-match). Internal: the City''s ids and lines; republish: aggregates';
 
--- Tracks along a canal bank: irrigation access, not trails (plan C18; cut-first). Within 15 m and
--- parallel to a canal, lateral, ditch or drain of water's build, without access=yes|permissive.
+-- Tracks along a canal bank: irrigation access, not trails (plan C18; cut-first). 60% or more of
+-- the track within 15 m of canal, lateral, ditch or drain reaches of water's build that match it
+-- (bearing within 20°), and no access=yes|permissive. line_share is that share; reach_id the reach
+-- most of it lies along.
 create table trails.canal_track (
   osm_id         bigint primary key,
   reach_id       text not null,

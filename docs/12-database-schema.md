@@ -457,8 +457,8 @@ read by each plugin's consumers (`osm_consumers` in its manifest). No
 highway way has two owners; the owner is decided by its tags alone:
 osm_valley's keep rule above, unchanged, then the other streets and alleys
 (`roads.osm_street`), then sidewalks, crossings and the other service ways
-(`roads.osm_paving`, roads 0002), then paths (`trails.osm_paths`, later). On
-the Oct 5 extract that's 13,917 / 22,785 / 124,582 / 22,263 of the box's 185,358
+(`roads.osm_paving`, roads 0002), then paths (`trails.osm_paths`, trails 0001).
+On the Oct 5 extract that's 13,917 / 22,785 / 124,582 / 22,263 of the box's 185,358
 highway ways. 1,811 have no owner: 1,369 proposed, 350 under construction,
 65 indoor corridors and 10 other ways that aren't built or aren't roads
 (service areas, rest areas, a platform, an elevator), and 17 built ones that
@@ -558,6 +558,27 @@ until it's vacuumed.
 public domain (USDA NASS), and the paving's `developed`, and the materials
 resting on it, credit it too: an export lists it as an input, with
 `roads.developed_build`'s current year and sha256.
+
+**Trails (landscape sprint, Oct 2026; trails 0001).** Schema `trails`. The
+`osm_paths` consumer writes `trails.osm_path` (paths, footways but sidewalks
+and crossings, cycleways, tracks, bridleways, steps, pedestrian ways: 22,200
+on scratch on Oct 11), `trails.osm_area` (pedestrian and footway areas) and
+`trails.osm_route` (hiking, mtb, bicycle, foot and horse route relations, with
+their members in order: 147), versioned in place like `roads.osm_street`. Each
+way carries its surface class, a width estimate and the access rule's result
+(`no_access`, `informal`), computed on load by tags alone; SQL twins of those
+rules (`trails.surface_class`, `trails.no_public_access`,
+`trails.width_estimate`) give the named exception's ways in `core.osm_way` the
+same columns (`trails.exception_way`). `trails-match` links Ridge to Rivers'
+trails and the Greenbelt's closures, read from `raw.record` (`trails.agency_line`),
+to those ways with the core line matcher in 150 m pieces: `trails.link` (one row
+per line and way, full or partial) and `trails.matched_line` (each line's
+match, and its gap: where it draws itself). The views `trails.path` (the
+layer's ways and access rules), `trails.agency_state` (each line's state now,
+from `evt.event`) and `trails.agency_gap`, and the tables `trails.route_line`,
+`trails.path_lo` and `trails.canal_track`, are what the map reads
+([plugins/trails](../plugins/trails/README.md)). The links carry the City's ids,
+so they're internal, like their sources.
 
 **COMPASS (built Oct 6, 2026, migration 0012).** Crashes are `obs.crash`,
 one row per ITD serial number. `crashed_at` is the reported local time, so

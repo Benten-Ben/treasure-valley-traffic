@@ -178,7 +178,11 @@ How the pieces plug in:
   its schedule (migration 0021); `/api/meta` and the VM's `bin/status`
   report both. One exception predates the rule: the intersections
   plugin's scheduled `intersections` source rebuilds `core.intersection`
-  inside `ingest serve` once a day (about 10 s).
+  inside `ingest serve` once a day (about 10 s). And by the landscape
+  plan's design (P6-data), the trails pollers relink the few lines a poll
+  changed once its data is committed (at most 40 lines, about 2 s), in
+  their own try block with their own `ops.fetch` row (`trails_match`); the
+  full rematch, `trails-match`, is a build like the others.
 - **Base layers, baked** (landscape sprint, Oct 2026): what draws for
   every viewer (water, paving, road surfaces and markings, paved paths)
   isn't cut live. A plugin marks those layers `base: true` in its export
@@ -244,7 +248,7 @@ sampler.
 | `hazards` | Fire and warnings (ch. 17 Wave A, Oct 7): IDL's fire-restriction stages, NIFC's WFIGS incidents and perimeters, NASA FIRMS detections, NWS watches, warnings and advisories (person alerts dropped), USGS quakes | — | public (IDL stages internal) |
 | `air` | Smoke: NOAA's HMS smoke polygons (AirNow waits on the owner's form) | — | public |
 | `water` | Rivers and snow: NWPS gauges (37 in the ring), SNOTEL hourly, Boise's E. coli results and river hazards, the Drought Monitor by county | — | public (Boise's layers internal) |
-| `trails` | Ridge to Rivers trail conditions and the Greenbelt's closures and detours | — | public, aggregates until the City answers |
+| `trails` | Ridge to Rivers trail conditions and the Greenbelt's closures and detours; OpenStreetMap's paths, tracks and trail routes (landscape sprint), with the City's lines linked onto them (`trails-match`) | — | public, aggregates until the City answers (the links too) |
 | `lands` | Forest orders (Region 4) and IDPR's route closures and area restrictions | — | public, IDPR aggregates |
 | `weather` | Aviation Weather Center METARs for the ring's airports | — | public |
 | `wildlife` | IDFG's roadkill reports (about 9,300 in the ring), sensitive-species rules before anything public | — | public, aggregates only |

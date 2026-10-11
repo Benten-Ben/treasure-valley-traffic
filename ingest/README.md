@@ -35,7 +35,7 @@ names didn't change, so `ops.source` and `ops.fetch` carry on:
 | [hazards](../plugins/hazards) | `idl_fire_restrictions`, `nifc_wfigs_incidents`, `nifc_wfigs_perimeters`, `nasa_firms`, `nws_wwa`, `usgs_quakes` | |
 | [air](../plugins/air) | `noaa_hms_smoke` | |
 | [water](../plugins/water) | `nwps_gauges`, `nrcs_snotel`, `boise_ecoli`, `boise_river_hazards`, `usdm_drought` | |
-| [trails](../plugins/trails) | `r2r_trails`, `boise_greenbelt_closures` | |
+| [trails](../plugins/trails) | `r2r_trails`, `boise_greenbelt_closures`; manual `osm_paths` (an `osm-load` consumer), `trails_match` | `trails-match` |
 | [lands](../plugins/lands) | `usfs_r4_orders`, `idpr_route_closures`, `idpr_area_restrictions` | |
 | [weather](../plugins/weather) | `awc_metar` | |
 | [wildlife](../plugins/wildlife) | `idfg_roadkill` | |
@@ -185,7 +185,12 @@ with builds.Run(conn, "roads-build", then=["landscape-bake"]) as run:   # one ru
 One exception predates the rule: the scheduled `intersections` source
 (the intersections plugin) rebuilds `core.intersection` from the signal
 sources inside `ingest serve` once a day, in about 10 s. It stays a
-source, logged in `ops.fetch`, until the owner decides otherwise.
+source, logged in `ops.fetch`, until the owner decides otherwise. And the
+trails pollers relink the few lines a poll changed once its data is
+committed (plan P6-data: at most 40 lines, about 2 s), in their own try
+block with their own `ops.fetch` row (`trails_match`), so a failure never
+fails the poll; anything bigger marks the `trails-match` build
+([plugins/trails](../plugins/trails/README.md)).
 
 A build is named by the command that runs it (or, for a worker step, its
 job), in lower-case letters, digits, `.`, `_` and `-`. A run that fails

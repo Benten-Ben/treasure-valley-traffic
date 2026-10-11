@@ -62,7 +62,7 @@ a package's environment.
 |---|---|
 | `src/routes/(map)/` | The map layout (MapHost and the chrome) and its pages; `calibrate/[id]` is Calibrate mode on the same map |
 | `src/routes/v1/calibrate/[id]/` | The old calibrator, kept until the owner has saved a calibration with the new one |
-| `src/routes/api/` | `meta`, `transit/{network,tracks}`, `cameras` (and `views`, `live`, `status`, `[id]`), `calibrations`, `views/[id]/{calibrations,frame,live/[sha]}`, `roadweather`, `tiles/roads`, `health`; `[plugin]/tiles/[layer]/…` serves every toggled layer's tiles (#lib/server/mvt) |
+| `src/routes/api/` | `meta`, `transit/{network,tracks}`, `cameras` (and `views`, `live`, `status`, `[id]`), `calibrations`, `views/[id]/{calibrations,frame,live/[sha]}`, `roadweather`, `tiles/roads`, `health`, `trails/status` (trail status for feature-state, #lib/server/trails); `[plugin]/tiles/[layer]/…` serves every toggled layer's tiles (#lib/server/mvt) |
 | `src/lib/app/` | Boot (manifest and `/api/meta` before the map exists), the app context, cleanup |
 | `src/lib/components/MapHost.svelte` | Creates the one map |
 | `src/lib/map/` | Style, the Valley and Clay flavors, colors, layer order, the picker, the render loop, buildings |

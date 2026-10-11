@@ -458,6 +458,15 @@ consumer), loaded on scratch from the same extract on Oct 11: 22,785 ways
 roads; about 5,600 km), 11 MB with indexes, in 16 s on the cut. The valley
 cut is 32 MB.
 
+Trails' paths (`trails.osm_path`, `osm_area`, `osm_route`: the `osm_paths`
+consumer), on scratch on Oct 11: 22,200 ways, 82 areas and 147 route
+relations in 21 s on the cut, as `tvt_build`. Then `python3 -m ingest
+trails-match` (light, about 15 s) links Ridge to Rivers' trails and the
+Greenbelt's closures to them and draws the routes; the load marks it.
+On production, after trails 0001 and the grants: `osm-load --only
+trails.osm_paths` on the cut already made, then `trails-match`, both as
+`tvt_build` in a capped container, never inside `ingest serve`.
+
 ## Unmerged code and builds: the scratch database and tvt_build
 
 Since Oct 11 (landscape sprint, F6), **unmerged code never touches the
