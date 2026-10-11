@@ -72,6 +72,7 @@ RAMP = np.array([(68, 1, 84), (59, 81, 139), (33, 144, 141), (92, 200, 99), (253
 STYLE_KEYS = {"by", "color", "fill", "width", "size", "label", "where", "name", "layer", "band", "kind", "min",
               "max", "clip", "alpha", "credit"}
 MAX_LABELS = 300
+MAX_SIDE = 4000                                   # pixels: a frame's photo, overlays and sheet stay well under 1 GB
 MAX_FEATURES = 250_000
 THUMB = 360
 
@@ -932,6 +933,10 @@ def build_overlays(args):
 
 def draw(args):
     frames = P.select(args.places, res=args.res, size=args.size)
+    big = [f.id for f in frames if max(f.window.width, f.window.height) > MAX_SIDE]
+    if big:
+        raise SheetError(f"{', '.join(big[:5])}: over {MAX_SIDE} pixels a side (the run is capped at 1 GB); give a "
+                         "coarser --res or a smaller --size")
     if args.max_frames and len(frames) > args.max_frames:
         raise SheetError(f"{len(frames)} frames, over --max-frames {args.max_frames}")
     overlays = build_overlays(args)

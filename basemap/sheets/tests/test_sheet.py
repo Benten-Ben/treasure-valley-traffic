@@ -331,7 +331,8 @@ class SheetTest(unittest.TestCase):
                            (["--layer", "soils/ground,fill=2"], "out of range"),
                            (["--vector", "/no/such.fgb"], "no such file"),
                            (["--layer", "soils/ground", "--layer", "soils/ground"], "named twice"),
-                           (["--panels", "map"], "--panels")):
+                           (["--panels", "map"], "--panels"),
+                           (["--res", "0.25", "--size", "1500"], "over 4000 pixels a side")):
             code, _out, err = run(args + extra)
             self.assertIn(code, (1, 2), extra)
             if code == 1:                                             # failed in a frame: recorded, not fatal

@@ -14,8 +14,9 @@ painted ground, each drawn over the aerial photo at the same places every time, 
 
 **Sheets are private.** They show places at full resolution and may draw internal layers (the base bake's ACHD
 widths), so they go to the VM's private files, `/srv/tvt/private/sheets/<package>/<run>/`, and are never committed or
-published. Each says so in its footer, with the strictest `republish` of what it draws. The tests use synthetic data
-only.
+published. Each says so in its footer, with the strictest `republish` of what it draws. The City of Boise's tree
+data is never read for them: the VM's runner won't mount it, nor production's trees archive, which holds rows derived
+from it. The tests use synthetic data only.
 
 ## The places
 
