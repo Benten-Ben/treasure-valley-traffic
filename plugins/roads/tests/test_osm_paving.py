@@ -519,9 +519,20 @@ class DatabaseTest(unittest.TestCase):
                                            (self.BASE + 3,)).fetchone(), ("unknown", None))
 
     def test_the_tables_refuse_what_the_partition_never_gives_them(self):
-        alley = {**way(6, highway="service", service="alley"), "osm_id": self.BASE + 6}
-        with self.assertRaises(self.psycopg.errors.CheckViolation):
-            pv.consume(self.conn, FakeRun([alley]))
+        for tags in ({"highway": "service", "service": "alley"},              # osm_street's
+                     {"highway": "track", "footway": "sidewalk"}):            # osm_paths'
+            with self.subTest(tags):
+                self.conn.execute("savepoint s")
+                with self.assertRaises(self.psycopg.errors.CheckViolation):
+                    pv.consume(self.conn, FakeRun([{**way(6, **tags), "osm_id": self.BASE + 6}]))
+                self.conn.execute("rollback to savepoint s")
+
+    def test_an_alley_drawn_as_an_area_is_the_paving_s(self):
+        self.assertEqual(osm_extract.owner({"highway": "service", "service": "alley", "area": "yes"}), "osm_paving")
+        alley = {**area(7, highway="service", service="alley", area="yes"), "osm_id": self.BASE + 7}
+        pv.consume(self.conn, FakeRun([alley]))
+        self.assertEqual(self.conn.execute("select kind, service, area, ST_IsClosed(geom) from roads.osm_paving "
+                                           "where osm_id = %s", (self.BASE + 7,)).fetchone(), ("service", "alley", True, True))
 
     @unittest.skipUnless(HAVE_OSMIUM, "needs osmium-tool")
     def test_the_fixture_through_the_loader(self):

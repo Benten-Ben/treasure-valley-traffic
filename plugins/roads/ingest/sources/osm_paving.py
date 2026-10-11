@@ -20,7 +20,8 @@ the valley box:
     access and untagged and other service ways; and footway=sidewalk, crossing,
     access_aisle or traffic_island on a footway, path or cycleway. osm_valley
     keeps any of them tagged with lanes. Lines, kept whole across the box's
-    edge. A way drawn as an area (area=yes) keeps its outline, with area true.
+    edge. A way drawn as an area (area=yes) keeps its outline, with area true;
+    an alley drawn as one is the paving's too (osm_street takes lines only).
   - roads.osm_parking: parking lots (amenity=parking) and mapped stalls
     (amenity=parking_space) drawn as areas: closed ways and multipolygons. The
     smart cut keeps a multipolygon whole when any member is in the box, so a

@@ -8,8 +8,8 @@
 --                        but alleys (driveways, parking aisles, drive-throughs, emergency access,
 --                        untagged and other service ways), and footway=sidewalk, crossing,
 --                        access_aisle or traffic_island on a footway, path or cycleway. Lines; a
---                        service way or sidewalk drawn as an area (area=yes) keeps its outline,
---                        with area true.
+--                        way drawn as an area (area=yes) keeps its outline, with area true (an
+--                        alley drawn as one is the paving's too: osm_street takes lines only).
 --   roads.osm_parking    parking lots (amenity=parking) and mapped stalls (amenity=parking_space)
 --                        drawn as areas: closed ways and multipolygons, whole (the loader's smart
 --                        cut keeps a multipolygon whole when any member is in the box).
@@ -46,7 +46,7 @@ create table roads.osm_paving (
                                                 'emergency_access', 'sidewalk', 'crossing', 'access_aisle',
                                                 'traffic_island')),
   highway         text not null check (highway in ('service', 'footway', 'path', 'cycleway')),
-  service         text,                              -- service=*, as tagged (alleys are osm_street's)
+  service         text,                              -- service=*, as tagged (alleys only as areas)
   footway         text,                              -- footway=*, as tagged
   name            text,
   area            boolean not null default false,    -- drawn as an area (area=yes): geom is its outline
@@ -75,7 +75,7 @@ create table roads.osm_paving (
   last_seen       timestamptz not null default now(),
   check ((highway = 'service') = (kind in ('service', 'driveway', 'parking_aisle', 'drive_through',
                                            'emergency_access'))),
-  check (service is distinct from 'alley'),
+  check (service is distinct from 'alley' or area),
   check ((material = 'unknown') = (material_source is null)),
   check (marked_from is null or marked is not null),
   check (kind = 'crossing' or marked is null)
