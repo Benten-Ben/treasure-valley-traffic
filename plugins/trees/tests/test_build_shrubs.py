@@ -159,6 +159,16 @@ class BuildTest(unittest.TestCase):
         self.assertAlmostEqual(b["counts"]["area_ha"], 0.35, delta=0.005)
         self.assertEqual(b["geom"]["type"], "MultiPolygon")
         self.assertEqual(b["counts"]["shrubs"], 2)
+        # the outline is the grid's edge exactly, with the skipped square cut out exactly
+        tr = Transformer.from_crs(4326, "EPSG:6340", always_xy=True)
+        pts = [tr.transform(*p) for poly in b["geom"]["coordinates"] for ring in poly for p in ring]
+        xs, ys = [p[0] - X0 for p in pts], [Y1 - p[1] for p in pts]
+        self.assertAlmostEqual(min(xs), 0, delta=0.01)
+        self.assertAlmostEqual(max(xs), 60, delta=0.01)
+        self.assertAlmostEqual(min(ys), 0, delta=0.01)
+        self.assertAlmostEqual(max(ys), 60, delta=0.01)
+        corners = {(round(x, 1), round(y, 1)) for x, y in zip(xs, ys)}
+        self.assertTrue({(45.0, 5.0), (55.0, 5.0), (45.0, 15.0), (55.0, 15.0)} <= corners, corners)
 
     def test_the_settings_are_recorded(self):
         p = self.build["params"]

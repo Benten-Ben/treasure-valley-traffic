@@ -244,8 +244,12 @@ def skip_mask(tf, shape, rects):
 
 
 def outline(bad, tf, crs, skip):
-    """The area's outline in WGS84 (a GeoJSON MultiPolygon): 5 m blocks with any lidar, less the skipped rectangles.
-    Returns (geometry, hectares)."""
+    """The area's outline in WGS84 (a GeoJSON MultiPolygon): the 5 m blocks with any lidar, cut exactly to the grid's
+    edges, less the skipped rectangles (exactly too, so two areas' outlines meet without a gap or an overlap).
+    Returns (geometry, hectares of lidar cells in it)."""
+    from osgeo import ogr, osr
+    ogr.UseExceptions()
+    osr.UseExceptions()
     B = OUTLINE_CELLS
     rows, cols = bad.shape
     nr, nc = math.ceil(rows / B), math.ceil(cols / B)
@@ -253,19 +257,29 @@ def outline(bad, tf, crs, skip):
     pad[:rows, :cols] = bad
     has = ~pad.reshape(nr, B, nc, B).all(axis=(1, 3))
     btf = tf @ Affine.scale(B)
-    if skip:
-        has &= ~skip_mask(btf, has.shape, skip)
-    to_ll = Transformer.from_crs(crs, 4326, always_xy=True)
-    polys = []
-    for geom, v in rfeatures.shapes(has.astype(np.uint8), mask=has, transform=btf, connectivity=4):
-        rings = []
-        for ring in geom["coordinates"]:
-            xs, ys = zip(*ring)
-            lon, lat = to_ll.transform(xs, ys)
-            rings.append([[round(a, 7), round(b, 7)] for a, b in zip(lon, lat)])
-        polys.append(rings)
+    rect = lambda x0, y0, x1, y1: ogr.CreateGeometryFromWkt(  # noqa: E731
+        f"POLYGON(({x0} {y0},{x1} {y0},{x1} {y1},{x0} {y1},{x0} {y0}))")
+    geom = ogr.Geometry(ogr.wkbMultiPolygon)
+    for g, _ in rfeatures.shapes(has.astype(np.uint8), mask=has, transform=btf, connectivity=4):
+        geom.AddGeometry(ogr.CreateGeometryFromJson(json.dumps(g)))
+    geom = geom.UnionCascaded().Intersection(rect(tf.c, tf.f + rows * tf.e, tf.c + cols * tf.a, tf.f))
+    for r in skip:
+        geom = geom.Difference(rect(*r))
+    src = osr.SpatialReference()
+    src.ImportFromWkt(crs.to_wkt())
+    dst = osr.SpatialReference()
+    dst.ImportFromEPSG(4326)
+    for r in (src, dst):
+        r.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
+    geom.Segmentize(50.0)                  # a straight edge in UTM bends a little in degrees
+    geom.Transform(osr.CoordinateTransformation(src, dst))
+    out = json.loads(geom.ExportToJson())
+    if out["type"] == "Polygon":
+        out = {"type": "MultiPolygon", "coordinates": [out["coordinates"]]}
+    out["coordinates"] = [[[[round(x, 7), round(y, 7)] for x, y in ring] for ring in poly]
+                          for poly in out["coordinates"]]
     valid = ~bad & ~skip_mask(tf, bad.shape, skip)
-    return {"type": "MultiPolygon", "coordinates": polys}, float(valid.sum()) * S.PX * S.PX / 1e4
+    return out, float(valid.sum()) * S.PX * S.PX / 1e4
 
 
 def write_why(path, why, tf, crs):
