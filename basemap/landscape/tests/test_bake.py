@@ -362,6 +362,16 @@ class BakeTest(unittest.TestCase):
         with open(os.path.join(self.tiles, name), "rb") as f:
             self.assertEqual(f.read(), b"something else")
 
+    def test_a_broken_entry_is_replaced(self):
+        with open(os.path.join(self.tiles, "manifest.json"), "w", encoding="utf-8") as f:
+            json.dump({"zoom": 10, "landscape": {"status": "baked", "file": "x"}}, f)
+        water(self.archive)
+        code, _, err = self.bake()
+        self.assertEqual(code, 0, err)
+        self.assertIn("landscape entry is broken", err)
+        self.assertIsNone(self.entry()["previous"])
+        self.assertEqual(bake.check(self.tiles), [])
+
     def test_status(self):
         code, out, _ = run("status", "--archive", self.archive, "--tiles", self.tiles)
         self.assertEqual(code, 3)

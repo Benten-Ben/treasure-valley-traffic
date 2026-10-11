@@ -58,9 +58,11 @@ markings are densest, so the budget binds once roads exports its base layers (P7
 file's directory. **An over-budget bake isn't switched in** (exit 4, with the largest tiles named). The bake also
 prints the largest tile and total per zoom.
 
-Measured on the laptop with synthetic exports at about the valley's scale (150,000 road polygons from z12 and 150,000
-marking lines with per-feature zooms, 8% of them downtown): 59 s, under 100 MB of memory, about 35 MB of temporary
-files, a 35 MB file of 14,773 tiles; the largest downtown z16 tile was 21 KB.
+**Size and time**, measured Oct 11 with synthetic exports at about the valley's scale: 150,000 road polygons from
+z12 and 150,000 marking lines with per-feature zooms, 8% of them downtown. The file is 35 MB (14,773 tiles), and the
+largest downtown z16 tile 21 KB. On the VM at the job table's caps (`--memory 2g --cpus 2`, `--threads 2`) it took
+**2.6 minutes and under 100 MB** of memory, plus about 35 MB of temporary files. As a light job (1 CPU) it took 7.5
+minutes: pass `--threads 1` there.
 
 ## Who may see it
 
@@ -145,7 +147,7 @@ and keeps both.
 
 ```bash
 python3 basemap/landscape/bake.py status --archive $TVT_ARCHIVE [--tiles DIR]   # what a bake would hold; exit 3: nothing
-python3 basemap/landscape/bake.py bake --tiles DIR [--archive DIR] [--work DIR]  # worker image
+python3 basemap/landscape/bake.py bake --tiles DIR [--archive DIR] [--work DIR] [--threads N]  # worker image
 python3 basemap/landscape/bake.py check --tiles DIR [--public]                   # the entry against the files
 python3 basemap/landscape/bake.py rollback --tiles DIR
 python3 -m unittest discover -s basemap/landscape -t .                          # the worker tests skip here

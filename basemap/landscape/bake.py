@@ -82,11 +82,13 @@ def _ogr_type(ogr, kind):
     raise P.BakeError(f"field type {kind} can't go into a vector tile")
 
 
-def write_tiles(plan, out):
-    """Write the plan's base layers to a PMTiles file at `out` with GDAL. Returns {source layer: features}. Raises
-    BakeError for a feature the bake can't take: no geometry, an id that's missing, out of range or repeated in its
-    layer, or a minzoom past its layer's maxzoom."""
+def write_tiles(plan, out, threads=2):
+    """Write the plan's base layers to a PMTiles file at `out` with GDAL, its tile encoding on `threads` threads (the
+    job's CPUs: inside a container GDAL would count the host's). Returns {source layer: features}. Raises BakeError
+    for a feature the bake can't take: no geometry, an id that's missing, out of range or repeated in its layer, or a
+    minzoom past its layer's maxzoom."""
     gdal, ogr, osr = _gdal()
+    gdal.SetConfigOption("GDAL_NUM_THREADS", str(threads))
     srs = osr.SpatialReference()
     srs.ImportFromEPSG(int(grid.CRS.split(":")[1]))
     srs.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
@@ -307,7 +309,7 @@ def _switch_empty(tiles_dir, old, reason):
     return 0
 
 
-def _bake_file(plan, tiles_dir, work, digest, writer):
+def _bake_file(plan, tiles_dir, work, digest, writer, threads=2):
     """Write, read back, measure and rename one bake into the tiles folder. Returns (its entry, None), ("empty",
     None) when every layer turned out empty (GDAL writes no file then), or (None, exit code) after saying why."""
     name = P.file_name(digest)
@@ -318,7 +320,7 @@ def _bake_file(plan, tiles_dir, work, digest, writer):
     part = os.path.join(tiles_dir, f"{P.PART_PREFIX}{digest[:12]}.pmtiles.{os.getpid()}.part")
     try:
         try:
-            counts = write_tiles(plan, raw)
+            counts = write_tiles(plan, raw, threads)
             if not any(counts.values()):
                 return "empty", None
             meta = read_back(raw, plan, counts)
@@ -375,6 +377,12 @@ def cmd_bake(args):
         except P.BakeError as err:
             _err(f"refused: {err}")
             return EXIT_REFUSED
+        if old is not None:
+            try:
+                P.check_entry(old)
+            except ValueError as err:
+                _err(f"the manifest's landscape entry is broken ({err}); this bake replaces it, keeping no previous")
+                old = None
         _say(f"Base layers: {len(plan.bases)}")
         _describe(plan)
 
@@ -401,7 +409,7 @@ def cmd_bake(args):
                 return EXIT_REFUSED
             _say(f"{name} already holds these exports")
         else:
-            made, code = _bake_file(plan, tiles_dir, args.work, digest, writer)
+            made, code = _bake_file(plan, tiles_dir, args.work, digest, writer, args.threads)
             if made is None:
                 return code
             if made == "empty":
@@ -544,6 +552,8 @@ def main(argv=None):
     p.add_argument("--tiles", required=True, help="the tiles folder (its manifest.json is updated)")
     p.add_argument("--archive", help="default: $TVT_ARCHIVE")
     p.add_argument("--work", help="where GDAL writes before the file moves in (default: a temporary folder)")
+    p.add_argument("--threads", type=int, default=2, help="GDAL's threads for encoding tiles: the job's CPUs "
+                   "(default 2, the heavy-job table's)")
     p = sub.add_parser("check", help="check the entry and the files (exit 1 on a problem)")
     p.add_argument("--tiles", required=True)
     p.add_argument("--public", action="store_true",
