@@ -1,18 +1,20 @@
 """OpenStreetMap hedges: a check for the shrub build (docs/19 §19.8).
 
-ODbL: credit "© OpenStreetMap contributors". Mapped hedges (barrier=hedge) come from the held Idaho extract through
-core's OpenStreetMap loader and are stored with the fences plugin's barriers, never drawn as fences; the shrub build
-checks its shrubs against them (decided Oct 8: hedges are a shrub check). Listed in plugin.json as a manual source, for
-its licence: this module makes no network requests and has no schedule. The shrub build isn't written yet, so nothing in
-this plugin reads them so far."""
+ODbL: credit "© OpenStreetMap contributors". Mapped hedges (barrier=hedge ways and areas) are a check on the shrubs,
+never drawn and never a source of shrubs (decided Oct 8). The shrubs' hedge check (`shrubs-hedge-check`) reads them,
+the first that applies: a GeoJSON file of hedges (--hedges, e.g. from `osmium export`), the held Idaho extract filtered
+by osmium (--extract), or the fences plugin's hedges once that plugin is built. It prints a report and stores nothing
+in the database. Listed in plugin.json as a manual source, for its licence: this module makes no network requests and
+has no schedule."""
 
 SOURCE = {
     "name": "osm_hedges",
     "title": "OpenStreetMap hedges: a check for the shrubs",
     "url": "https://www.openstreetmap.org/copyright",
     "access": "open",
-    "schedule": None,   # the extract is downloaded and loaded by hand (roads' osm_valley)
+    "schedule": None,   # the extract is downloaded by hand (roads' osm_valley)
     "license": "ODbL",
     "credit": "© OpenStreetMap contributors",
-    "notes": "barrier=hedge ways, read through the fences plugin's table once it exists; a check, never drawn.",
+    "notes": "barrier=hedge ways and areas, read by the shrubs' hedge check from a file, the held extract or the fences "
+             "plugin's hedges; a check, never drawn or stored.",
 }
