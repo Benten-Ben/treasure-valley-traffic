@@ -35,6 +35,9 @@ class RuleTest(unittest.TestCase):
             lm.Rule(15, "shape")
         with self.assertRaises(ValueError):
             lm.Rule(0)
+        with self.assertRaises(ValueError):
+            lm.Rule(loops="no")
+        self.assertEqual(lm.Rule(loops=False).method, lm.Rule().method)          # not part of the name
 
     def measures(self, **kw):
         c = {"share": 1.0, "line_len": 300.0, "line_share": None, "chord_m": 100.0, "projected_m": 100.0,
@@ -117,6 +120,34 @@ TARGETS_SQL = (f"select * from (values {values([(k, *v) for k, v in TARGETS.item
 LINES_SQL = f"select 'test' as source, * from (values {values([(k, *v) for k, v in LINES.items()], 3)}) l(source_id, name, geom)"
 
 
+def ring(cx, cy, r, start_deg=0, n=8):
+    """A closed n-gon of radius r around (cx, cy), starting at start_deg (0 is east)."""
+    import math
+    pts = [(cx + r * math.cos(math.radians(start_deg + 360 * i / n)),
+            cy + r * math.sin(math.radians(start_deg + 360 * i / n))) for i in range(n)]
+    return line(*pts, pts[0])
+
+
+# Closed lines, 10 km and more from the cases above.
+POND = line((10000, 0), (10100, 0), (10100, 60), (10000, 60), (10000, 0))          # a 320 m pond loop
+LOOP_TARGETS = {
+    "pond": ("Pond Loop", POND),
+    "rb": (None, ring(12000, 0, 10, start_deg=90)),      # a small roundabout as one closed way...
+    "rb2": (None, ring(13000, 0, 10)),                   # ...and one whose halfway chord lies along the road
+    "path": ("Bench Path", line((14000, 0), (14000, 900))),
+}
+LOOP_LINES = {
+    "same": ("Pond Loop", POND),                                                       # the loop drawn twice
+    "round": ("Pond Loop", line((9997, -3), (10103, -3), (10103, 63), (9997, 63), (9997, 10))),  # open, 3 m out
+    "road": ("Main St", line((11900, 0), (12100, 0))),                                 # straight through rb
+    "road2": ("Main St", line((12900, 0), (13100, 0))),                                # straight through rb2
+    "thin": ("Bench Path", line((14003, 300), (14003, 400), (14006, 400), (14006, 300), (14003, 300))),
+}
+LOOP_TARGETS_SQL = f"select * from (values {values([(k, *v) for k, v in LOOP_TARGETS.items()], 3)}) t(id, name, geom)"
+LOOP_LINES_SQL = (f"select 'loops' as source, * from (values {values([(k, *v) for k, v in LOOP_LINES.items()], 3)}) "
+                  "l(source_id, name, geom)")
+
+
 @unittest.skipUnless(DB_URL, "set TVT_TEST_DATABASE_URL to a scratch database with PostGIS")
 class GeometryTest(unittest.TestCase):
     @classmethod
@@ -163,6 +194,38 @@ class GeometryTest(unittest.TestCase):
         found, got = self.matched(lm.Rule(35))
         self.assertEqual(got[("p2", "N")]["method"], "buffer35_bearing20")
         self.assertEqual(got[("p2", "N")]["confidence"], 1.0)
+
+    def test_closed_lines_are_measured_by_their_quarters(self):
+        found = {(m["target_id"], m["source_id"]): m for m in lm.match(self.conn, LOOP_LINES_SQL, LOOP_TARGETS_SQL)}
+        self.assertEqual(sorted(found), [("path", "thin"), ("pond", "round"), ("pond", "same")])
+        for key in ("pond", "same"), ("pond", "round"):
+            self.assertEqual(found[key]["method"], "buffer15_bearing20")             # on the closed target's share
+            self.assertGreater(found[key]["chord_m"], 50)                           # a quarter of it, not 0
+            self.assertGreater(found[key]["confidence"], 0.9)
+        self.assertEqual(found[("pond", "same")]["bearing_diff"], 0.0)
+        # A thin closed line along a path matches on its own share; every quarter runs along the path.
+        self.assertEqual(found[("path", "thin")]["method"], "way_in_buffer15_bearing20")
+        # A straight road through a small roundabout never matches it, wherever the loop starts: at
+        # most two quarters can run along the road. (rb2's start-to-halfway chord lies along road2, so
+        # measuring a loop by its halves would have matched it.)
+        cands = {(c["target_id"], c["source_id"]): c for c in lm.candidates(self.conn, LOOP_LINES_SQL, LOOP_TARGETS_SQL)}
+        for key in ("rb", "road"), ("rb2", "road2"):
+            self.assertAlmostEqual(cands[key]["share"], 1.0, places=3)
+            self.assertIsNone(lm.decide(cands[key]))
+
+    def test_without_loops_a_closed_line_has_no_chord(self):
+        # Roads' rule (loops=False), as on Oct 6: the closed lines fail the bearing check; the open one
+        # doesn't help either, since the chord measured is the closed target's.
+        rule = lm.Rule(loops=False)
+        cands = lm.candidates(self.conn, LOOP_LINES_SQL, LOOP_TARGETS_SQL, rule=rule)
+        pond = [c for c in cands if c["target_id"] == "pond"]
+        self.assertEqual(sorted(c["source_id"] for c in pond), ["round", "same"])
+        self.assertEqual({c["chord_m"] for c in pond}, {0.0})
+        self.assertEqual(lm.match(self.conn, LOOP_LINES_SQL, LOOP_TARGETS_SQL, rule), [])
+        # Under the name check the names decide, loops or not.
+        names = lm.match(self.conn, LOOP_LINES_SQL, LOOP_TARGETS_SQL, lm.Rule(10, "name", loops=False))
+        self.assertEqual(sorted((m["target_id"], m["source_id"], m["method"]) for m in names),
+                         [("pond", "round", "buffer10_name"), ("pond", "same", "buffer10_name")])
 
     def test_coverage(self):
         found, _ = self.matched()

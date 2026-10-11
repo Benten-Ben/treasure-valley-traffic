@@ -38,7 +38,8 @@ and on one of two checks, the rule's:
 
 A rule is `Rule(near_m, check)`, and its method name comes from them
 ('buffer15_bearing20', 'buffer10_name'), so the names stored in
-core.segment_match since Oct 6 stay as they are.
+core.segment_match since Oct 6 stay as they are. Its other fields are the
+thresholds below and `loops` (how a closed line is measured).
 
 `share` and `overlap_m` always measure the target: the length of it within
 the line's buffer, and that as a share of it. `confidence` is the matched
@@ -54,6 +55,19 @@ target's share, the line's under the line's) against the chord between the
 nearest points on the other line. When that second chord is less than half
 the first, one line crosses the other rather than running along it, and the
 bearing check fails.
+
+A closed line (its ends meet: a pond loop, a park loop, a roundabout drawn
+as one way) has no chord. Under a rule with `loops` on, the default, a
+closed matched line is cut into quarters along its length, each quarter's
+chord is measured as above, and the worst quarter counts (the one that
+crosses, else the one with the largest bearing difference); its numbers are
+the ones reported. So a loop drawn twice, or followed most of the way round
+by an open line, matches, and so does a thin loop lying along a line with
+both its sides within the buffer; a straight line across a roughly round
+loop (a roundabout) doesn't, since at most two of its quarters can run along
+it. A closed line in several parts that don't join into one is left without
+a chord. Roads turns `loops` off, so its matches stay as they were on Oct 6
+(a closed line fails the bearing check there).
 
 The functions don't write anything: `match()` returns the matches and the
 caller stores them where its plugin keeps them, in the same transaction.
@@ -82,19 +96,23 @@ CHECKS = ("bearing", "name")
 
 @dataclass(frozen=True)
 class Rule:
-    """How close and by which check a target and a line match. The defaults are roads' (Oct 6)."""
+    """How close and by which check a target and a line match. The defaults are roads' (Oct 6),
+    except loops: a closed matched line is measured by its quarters (roads passes loops=False)."""
     near_m: float = 15
     check: str = "bearing"
     min_share: float = MIN_SHARE
     min_line_m: float = MIN_LINE_M
     max_bearing: float = MAX_BEARING
     min_projected: float = MIN_PROJECTED
+    loops: bool = True
 
     def __post_init__(self):
         if self.check not in CHECKS:
             raise ValueError(f"unknown check {self.check!r} (choose from {', '.join(CHECKS)})")
         if not self.near_m > 0:
             raise ValueError(f"the buffer must be more than 0 m, not {self.near_m!r}")
+        if not isinstance(self.loops, bool):
+            raise ValueError(f"loops is True or False, not {self.loops!r}")
 
     @property
     def method(self):
@@ -187,7 +205,8 @@ def decide(c, rule=Rule()):
     c: share (of the target within the line's buffer), line_len and line_share
     (of the line within the target's buffer; None when the target's share
     passed), chord_m and chord_bearing (the matched line's end-to-end chord:
-    the target's under the target's share, the line's under the line's),
+    the target's under the target's share, the line's under the line's; a
+    closed line's worst quarter under rule.loops, as candidates() reports it),
     projected_m and projected_bearing (the chord between the nearest points on
     the other line), target_name, line_name.
     Returns (bearing_diff or None, confidence, method) for a match, else None.
@@ -230,6 +249,8 @@ drop table if exists pg_temp.lm_line, pg_temp.lm_buf, pg_temp.lm_target;
 # Pairs within the line's buffer, then the rule: the target's share, else (a line of
 # 20 m or more, short enough to lie 60% along the target) the line's share. The chord
 # is the matched line's; the projected chord joins the nearest points on the other.
+# A closed matched line (with loops on) also gets its four quarters' chords and
+# projected chords, as arrays; they're null otherwise.
 _CANDIDATES = """
 with ov as (
   select t.id, b.source, b.source_id, sum(ST_Length(ST_Intersection(t.g, b.piece))) as overlap_m
@@ -250,15 +271,39 @@ with ov as (
 )
 select id, source, source_id, overlap_m, target_len, line_len, line_share, target_name, line_name,
        degrees(ST_Azimuth(e.p1, e.p2)), ST_Distance(e.p1, e.p2),
-       degrees(ST_Azimuth(q.q1, q.q2)), ST_Distance(q.q1, q.q2)
+       degrees(ST_Azimuth(q.q1, q.q2)), ST_Distance(q.q1, q.q2),
+       quarters.bearings, quarters.ms, quarters.projected_bearings, quarters.projected_ms
 from rule
 cross join lateral (select case when target_rule then tg else lg end as a,
                            case when target_rule then lg else tg end as other) x
 cross join lateral (select ST_StartPoint(ST_GeometryN(x.a, 1)) as p1,
                            ST_EndPoint(ST_GeometryN(x.a, ST_NumGeometries(x.a))) as p2) e
 cross join lateral (select ST_ClosestPoint(x.other, e.p1) as q1, ST_ClosestPoint(x.other, e.p2) as q2) q
+left join lateral (
+  select array_agg(degrees(ST_Azimuth(k1, k2)) order by i) as bearings, array_agg(ST_Distance(k1, k2) order by i) as ms,
+         array_agg(degrees(ST_Azimuth(ST_ClosestPoint(x.other, k1), ST_ClosestPoint(x.other, k2))) order by i)
+           as projected_bearings,
+         array_agg(ST_Distance(ST_ClosestPoint(x.other, k1), ST_ClosestPoint(x.other, k2)) order by i) as projected_ms
+  from (select ST_LineMerge(x.a) as m) mm
+  cross join lateral (select i, ST_LineInterpolatePoint(mm.m, i / 4.0) as k1,
+                             ST_LineInterpolatePoint(mm.m, (i + 1) / 4.0) as k2 from generate_series(0, 3) i) qt
+  where %(loops)s and ST_Equals(e.p1, e.p2) and ST_GeometryType(mm.m) = 'ST_LineString'
+) quarters on true
 where target_rule or line_share >= %(share)s
 """
+
+
+def _worst_quarter(rule, quarters):
+    """The quarter of a closed line that does worst under `rule`: one that crosses the
+    other line (no chord, or a projected chord under min_projected of it), else the one
+    with the largest bearing difference. Returns its (chord_bearing, chord_m,
+    projected_bearing, projected_m)."""
+    def badness(q):
+        bearing, chord, projected_bearing, projected = q
+        if not chord or (projected or 0.0) < rule.min_projected * chord:
+            return (1, 0.0)
+        return (0, bearing_diff(bearing, projected_bearing) or 0.0)
+    return max(zip(*quarters), key=badness)
 
 
 def candidates(conn, lines_sql, targets_sql, params=None, rule=Rule()):
@@ -269,7 +314,8 @@ def candidates(conn, lines_sql, targets_sql, params=None, rule=Rule()):
     row per id. params fill both queries' %(name)s placeholders. Returns dicts
     with target_id, source, source_id, overlap_m, share, line_len, line_share,
     target_name, line_name, chord_bearing, chord_m, projected_bearing and
-    projected_m. Leaves the temporary tables lm_line and lm_target until commit.
+    projected_m (for a closed matched line under rule.loops, its worst
+    quarter's). Leaves the temporary tables lm_line and lm_target until commit.
     """
     params = dict(params or {})
     near = rule.near_m
@@ -297,9 +343,11 @@ def candidates(conn, lines_sql, targets_sql, params=None, rule=Rule()):
     conn.execute("analyze lm_target")
     out = []
     for row in conn.execute(_CANDIDATES, {"share": rule.min_share, "min_line": rule.min_line_m,
-                                          "near": near}).fetchall():
+                                          "near": near, "loops": rule.loops}).fetchall():
         (target_id, source, source_id, overlap, target_len, line_len, line_share, target_name, line_name,
-         chord_bearing, chord, projected_bearing, projected) = row
+         chord_bearing, chord, projected_bearing, projected, *quarters) = row
+        if quarters[0] is not None:
+            chord_bearing, chord, projected_bearing, projected = _worst_quarter(rule, quarters)
         out.append({"target_id": target_id, "source": source, "source_id": source_id, "overlap_m": overlap,
                     "share": overlap / target_len if target_len else 0.0, "line_len": line_len,
                     "line_share": line_share, "target_name": target_name, "line_name": line_name,

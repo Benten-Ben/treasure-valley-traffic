@@ -12,8 +12,9 @@ in the landscape sprint so trails and water can use it too), with ACHD's
 active segments as the targets. Its rules are unchanged since Oct 6: at least
 60% of the ACHD segment within the line's buffer, or else at least 60% of a
 line of 20 m or more within the segment's buffer ('way_in_' methods), checked
-by bearing (within 20°) or, for the Master Street Map, by street name. Two
-methods, by name:
+by bearing (within 20°) or, for the Master Street Map, by street name, with
+a closed line still failing the bearing check (the matcher's loops=False).
+Two methods, by name:
 
 - buffer15_bearing20: a 15 m buffer and the bearing check (HPMS, COMPASS,
   OpenStreetMap);
@@ -51,8 +52,10 @@ METHODS = {
 }
 
 
+# loops=False: a closed line (a roundabout drawn as one way) has no chord and fails the
+# bearing check, as it has since Oct 6, so roads' matches don't change.
 def _rule(method):
-    return linematch.Rule(**METHODS[method])
+    return linematch.Rule(**METHODS[method], loops=False)
 
 
 def decide(c, method):
@@ -72,7 +75,7 @@ def candidates(conn, lines_sql, params=None, near_m=15, segments_sql=None):
     """
     out = []
     for c in linematch.candidates(conn, lines_sql, segments_sql or SEGMENTS_SQL, params,
-                                  linematch.Rule(near_m=near_m)):
+                                  linematch.Rule(near_m=near_m, loops=False)):
         c = dict(c)
         c["road_segment_id"], c["seg_name"], c["src_name"] = c.pop("target_id"), c.pop("target_name"), c.pop("line_name")
         out.append(c)
