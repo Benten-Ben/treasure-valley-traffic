@@ -1,9 +1,10 @@
 """Load a shrubs build into the database (docs/19 §19.8): `python3 -m ingest shrubs-load --build DIR`.
 
-DIR is what plugins/trees/build/build_shrubs.py wrote: build.json (with the area's outline) and shrubs.geojson. In one
-transaction the build is recorded in trees.shrub_build and the area's shrubs in trees.shrub are replaced by the
-build's. Shrubs have no history of their own: a rebuild replaces them, and trees.shrub_build keeps each build's
-settings and counts. Standard library plus psycopg."""
+DIR is what plugins/trees/build/build_shrubs.py wrote: build.json (with the area's outline, its inputs and their
+licence) and shrubs.geojson. In one transaction the build is recorded in trees.shrub_build and the area's shrubs in
+trees.shrub are replaced by the build's. Shrubs have no history of their own: a rebuild replaces them, and
+trees.shrub_build keeps each build's inputs, licence, settings and counts. The shrubs are published, so a build whose
+republish isn't yes isn't loaded (the build itself refuses such inputs). Standard library plus psycopg."""
 
 import argparse
 import io
@@ -13,6 +14,7 @@ import os
 import sys
 
 LOOKS = ("bush", "sage")
+REPUBLISH = ("yes", "aggregates", "internal", "no")    # plugin.json's, loosest to strictest
 BAND_M = (0.3, 2.4)
 COLUMNS = ("shrub_id", "area", "look", "geom", "ground_m", "height_m", "width_m", "lidar", "fit", "build_id")
 
@@ -22,9 +24,17 @@ def read_build(folder):
     a height in the shrub band and a width, and no id twice."""
     with open(os.path.join(folder, "build.json")) as f:
         build = json.load(f)
-    for k in ("build_id", "area", "started_at", "geom"):
+    for k in ("build_id", "area", "started_at", "geom", "license", "republish", "credit", "inputs"):
         if not build.get(k):
             raise ValueError(f"build.json has no {k}")
+    for k in ("license", "credit"):
+        if not isinstance(build[k], str) or not build[k].strip():
+            raise ValueError(f"build.json's {k} must be a non-empty string")
+    if build["republish"] not in REPUBLISH:
+        raise ValueError(f"build.json's republish {build['republish']!r} isn't one of {', '.join(REPUBLISH)}")
+    if build["republish"] != "yes":
+        raise ValueError(f"the build's republish is {build['republish']!r}: the shrubs are published, so it isn't "
+                         "loaded")
     g = build["geom"]
     if g.get("type") not in ("Polygon", "MultiPolygon") or not g.get("coordinates"):
         raise ValueError("build.json's geom must be the area's outline (a Polygon or MultiPolygon)")
@@ -79,11 +89,15 @@ def load(conn, build, shrubs):
     """Record the build and replace its area's shrubs. Doesn't commit."""
     b = build
     conn.execute(
-        """insert into trees.shrub_build (build_id, area, started_at, finished_at, geom, params, counts)
-           values (%s, %s, %s, %s, ST_Multi(ST_SetSRID(ST_GeomFromGeoJSON(%s), 4326)), %s, %s)
-           on conflict (build_id) do update set area = excluded.area, finished_at = excluded.finished_at,
-             geom = excluded.geom, params = excluded.params, counts = excluded.counts, loaded_at = now()""",
+        """insert into trees.shrub_build (build_id, area, started_at, finished_at, geom, inputs, license, republish,
+             credit, params, counts)
+           values (%s, %s, %s, %s, ST_Multi(ST_SetSRID(ST_GeomFromGeoJSON(%s), 4326)), %s, %s, %s, %s, %s, %s)
+           on conflict (build_id) do update set area = excluded.area, started_at = excluded.started_at,
+             finished_at = excluded.finished_at, geom = excluded.geom, inputs = excluded.inputs,
+             license = excluded.license, republish = excluded.republish, credit = excluded.credit,
+             params = excluded.params, counts = excluded.counts, loaded_at = now()""",
         (b["build_id"], b["area"], b["started_at"], b.get("finished_at"), json.dumps(b["geom"]),
+         json.dumps(b["inputs"]), b["license"], b["republish"], b["credit"],
          json.dumps(b.get("params") or {}), json.dumps(b.get("counts") or {})))
     removed = conn.execute("delete from trees.shrub where area = %s", (b["area"],)).rowcount
     with conn.cursor() as cur:

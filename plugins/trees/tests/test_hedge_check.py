@@ -86,8 +86,9 @@ class DatabaseTest(unittest.TestCase):
             try:
                 ensure_tables(conn)
                 ring = [list(at(e, n)) for e, n in ((0, 0), (200, 0), (200, 200), (0, 200), (0, 0))]
-                conn.execute("insert into trees.shrub_build (build_id, area, started_at, geom) values"
-                             " ('tvt-test-1', 'tvt_test', now(), ST_Multi(ST_SetSRID(ST_GeomFromGeoJSON(%s), 4326)))",
+                conn.execute("insert into trees.shrub_build (build_id, area, started_at, geom, license, republish,"
+                             " credit) values ('tvt-test-1', 'tvt_test', now(),"
+                             " ST_Multi(ST_SetSRID(ST_GeomFromGeoJSON(%s), 4326)), 'public-domain', 'yes', 'USGS')",
                              (json.dumps({"type": "Polygon", "coordinates": [ring]}),))
                 conn.execute("insert into trees.build (build_id, area, started_at) values ('tvt-test-t', 'tvt_test', now())")
                 for i in range(20):                  # a row of bushes along the first hedge, 1 m apart
@@ -115,6 +116,39 @@ class DatabaseTest(unittest.TestCase):
                 self.assertEqual(got["h-nothing"]["verdict"], "not found")
                 s = hedge_check.summary(list(got.values()), len(hedges), "test")
                 self.assertEqual((s["hedges_read"], s["hedges_in_shrub_areas"]), (4, 3))
+            finally:
+                conn.rollback()
+
+    def test_hedges_from_the_fences_plugin(self):
+        """fences.fence as the approved osm-landscape design has it (P10): fence_id, type, geom and active. Made here
+        inside the rolled-back transaction when the fences plugin isn't installed."""
+        import psycopg
+        with psycopg.connect(DB_URL) as conn:
+            try:
+                if conn.execute("select to_regclass('fences.fence')").fetchone()[0] is None:
+                    self.assertIsNone(hedge_check.hedges_from_fences(conn))      # not there yet: the caller says so
+                    conn.execute("create schema fences")
+                    conn.execute("create table fences.fence (fence_id text primary key, kind text, type text,"
+                                 " geom geometry(LineString, 4326), active boolean not null default true)")
+                rows = [("tvt-osm:w1", "hedge", line(0, 0, 10, 0), True),
+                        ("tvt-osm:w2", "fence", line(0, 5, 10, 5), True),
+                        ("tvt-osm:w3", "hedge", line(0, 9, 10, 9), False)]
+                for fid, kind, g, active in rows:
+                    conn.execute("insert into fences.fence (fence_id, type, geom, active)"
+                                 " values (%s, %s, ST_SetSRID(ST_GeomFromGeoJSON(%s), 4326), %s)",
+                                 (fid, kind, json.dumps(g), active))
+                got = [(i, g) for i, g in hedge_check.hedges_from_fences(conn) if i.startswith("tvt-")]
+                self.assertEqual([i for i, _ in got], ["tvt-osm:w1"])
+                self.assertEqual(got[0][1]["type"], "LineString")
+                with conn.transaction():
+                    conn.execute("alter table fences.fence drop column active")
+                    self.assertEqual(sorted(i for i, _ in hedge_check.hedges_from_fences(conn) if i.startswith("tvt-")),
+                                     ["tvt-osm:w1", "tvt-osm:w3"])
+                    conn.execute("alter table fences.fence rename column type to fence_type")
+                    with self.assertRaises(SystemExit) as cm:
+                        hedge_check.hedges_from_fences(conn)
+                    self.assertIn("no type", str(cm.exception))
+                    raise psycopg.Rollback()
             finally:
                 conn.rollback()
 

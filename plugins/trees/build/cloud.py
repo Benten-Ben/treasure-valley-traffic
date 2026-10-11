@@ -8,11 +8,13 @@ and withheld points, keeps those at least GROUND_H above the build's own bare-ea
 the height raster) and spools them to disk per chunk, each chunk with a margin so that neighbours across its edge
 count. Then each chunk gets its features and per-cell sums. Memory stays small whatever the area's size, and a
 finished chunk is kept: a stopped run picks up where it was (the spool and the chunks are kept until every chunk is
-done; then the spool goes).
+done; then the spool goes). The finished chunks are tied to their inputs: the point files, the grid, the settings and
+the bare earth itself (a fingerprint of the raster's values), so a rebuilt DTM is never met with the old chunks.
 
 Grid: the raster's north-west corner (x0, y1), its cell size and shape, in the raster's CRS. Points are read in that
 CRS: PDAL reprojects horizontally (filters.reprojection; give a source's own CRS with in_srs when its files say
 something else, as the EPT copies in EPSG:3857 did)."""
+import hashlib
 import json
 import math
 import os
@@ -141,26 +143,38 @@ def read(sources, rect, out_crs, in_srs=None, batch=1_000_000):
                 if len(arr):
                     yield arr
             continue
-        x0, y0, x1, y1 = rect
-        nx, ny = max(1, math.ceil((x1 - x0) / EPT_PART_M)), max(1, math.ceil((y1 - y0) / EPT_PART_M))
-        xs, ys = np.linspace(x0, x1, nx + 1), np.linspace(y0, y1, ny + 1)
-        for i in range(nx):
-            for j in range(ny):
-                part = (xs[i], ys[j], xs[i + 1], ys[j + 1])
-                stages = [{"type": "readers.ept", "filename": path,
-                           "bounds": _bounds(_ept_bounds(path, part, out_crs, in_srs))},
-                          reproject, {"type": "filters.crop", "bounds": _bounds(part)}]
-                p = pdal.Pipeline(json.dumps(stages))
-                p.execute()
-                for arr in p.arrays:
-                    if not len(arr):
-                        continue
-                    # half-open parts, so a point on a shared edge is read once (the outer edges stay closed)
-                    X, Y = arr["X"], arr["Y"]
-                    ok = ((X >= part[0]) & ((X < part[2]) | (i == nx - 1)) &
-                          (Y >= part[1]) & ((Y < part[3]) | (j == ny - 1)))
-                    if ok.any():
-                        yield arr[ok]
+        for part, close_x, close_y in ept_parts(rect):
+            stages = [{"type": "readers.ept", "filename": path,
+                       "bounds": _bounds(_ept_bounds(path, part, out_crs, in_srs))},
+                      reproject, {"type": "filters.crop", "bounds": _bounds(part)}]
+            p = pdal.Pipeline(json.dumps(stages))
+            p.execute()
+            for arr in p.arrays:
+                if not len(arr):
+                    continue
+                ok = in_part(arr["X"], arr["Y"], part, close_x, close_y)
+                if ok.any():
+                    yield arr[ok]
+
+
+def ept_parts(rect, size_m=EPT_PART_M):
+    """rect (x0, y0, x1, y1) in parts of at most size_m a side, as [(part, close_x, close_y)]. A part holds its west and
+    south edges and not its east and north ones (half-open), except on rect's own east and north edges (close_x,
+    close_y), so that every point of rect falls in exactly one part (in_part)."""
+    x0, y0, x1, y1 = rect
+    nx, ny = max(1, math.ceil((x1 - x0) / size_m)), max(1, math.ceil((y1 - y0) / size_m))
+    xs, ys = np.linspace(x0, x1, nx + 1), np.linspace(y0, y1, ny + 1)
+    return [((float(xs[i]), float(ys[j]), float(xs[i + 1]), float(ys[j + 1])), i == nx - 1, j == ny - 1)
+            for i in range(nx) for j in range(ny)]
+
+
+def in_part(X, Y, part, close_x, close_y):
+    """Which points (X, Y arrays) are in a part of ept_parts: a point on an edge two parts share is the east or north
+    part's, so it is read once."""
+    x0, y0, x1, y1 = part
+    east = X <= x1 if close_x else X < x1
+    north = Y <= y1 if close_y else Y < y1
+    return (X >= x0) & east & (Y >= y0) & north
 
 
 class Spool:
@@ -242,20 +256,32 @@ def chunk_cues(pts, grid, win, knn=KNN, threads=1):
     return n_ag, scat
 
 
+def ground_fingerprint(dtm, dtm_ok):
+    """sha256 of the bare earth the cues are measured from: its values (float32) and which cells have one."""
+    h = hashlib.sha256()
+    h.update(repr(tuple(np.shape(dtm))).encode())
+    h.update(np.ascontiguousarray(dtm, np.float32).tobytes())
+    h.update(np.packbits(np.asarray(dtm_ok, bool)).tobytes())
+    return h.hexdigest()
+
+
 def cues(sources, grid, out_crs, dtm, dtm_ok, work, chunk_m=250.0, pad_m=2.0, knn=KNN, threads=1, in_srs=None,
          log=print):
     """n_ag (uint16) and scat (float32) on the grid, from the point sources. work: a folder for the spool and the
-    finished chunks (reused when the same sources and grid come again). Returns (n_ag, scat, stats)."""
+    finished chunks (reused when the same sources, grid, settings and bare earth come again). Returns (n_ag, scat,
+    stats)."""
     wins = chunks(grid, chunk_m)
     key = {"sources": [os.path.abspath(s) for s in sources], "grid": grid.key(), "chunk_m": chunk_m, "pad_m": pad_m,
-           "knn": knn, "ground_h": GROUND_H, "in_srs": in_srs}
+           "knn": knn, "ground_h": GROUND_H, "in_srs": in_srs, "ground": ground_fingerprint(dtm, dtm_ok)}
     os.makedirs(work, exist_ok=True)
     key_path = os.path.join(work, "cues.json")
     if os.path.exists(key_path):
         with open(key_path) as f:
             old = json.load(f)
         if old.get("key") != key:
-            raise SystemExit(f"{work} holds cues from other inputs; remove it or use another --out")
+            diff = sorted(k for k in set(key) | set(old.get("key") or {}) if (old.get("key") or {}).get(k) != key.get(k))
+            raise SystemExit(f"{work} holds cues from other inputs ({', '.join(diff)} differ); remove it or use "
+                             "another --out")
         state = old
     else:
         state = {"key": key, "spooled": False, "stats": {}}

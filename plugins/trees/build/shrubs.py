@@ -15,19 +15,22 @@ lidar's 0.5 m grid (row 0 at the north):
    ground, with a scatter of 0.25 or more). In the 1 m ring around buildings only green cells count: the rest there
    are roof slivers. The best of 132 settings on three checks at once (RCMAP's shrub cover, shrubs on building edges,
    green cells kept), Oct 8.
-2. Crops. The landscape's crop class comes from farm's fields (decision 15, Oct 8). A shrub clump with at least half
-   its cells inside a crop field is a crop, not shrubs (crop_clumps). The spike's own crop-field rule (field_rule:
-   even, all-green, low 25 m blocks) stays as a check on those fields; it no longer removes anything.
-3. Clumps into shrubs (split): the shrub heights' peaks, tallest first, each dropped when it stands closer to a kept
+2. Clumps into pieces (pieces): the shrub heights' peaks, tallest first, each dropped when it stands closer to a kept
    one than half the two shrubs' model widths (the owner's spacing rule for trees); a watershed from the kept peaks
-   splits each clump into pieces, and a piece much bigger than a model shrub of its height is split again (k-means)
-   into model-sized shrubs. Each shrub: the piece's top as its height, its equal-area width held within twice the
+   splits each clump into pieces.
+3. Crops. The landscape's crop class comes from farm's fields (decision 15, Oct 8). A piece with at least half its
+   cells inside a crop field is a crop, not shrubs (split). Pieces, not whole clumps, so the cut follows the field's
+   edge: a crop clump that touches a hedgerow or a ditch bank's shrubs outside the field leaves them be, and they
+   don't keep it. The spike's own crop-field rule (field_rule: even, all-green, low 25 m blocks) stays as a check on
+   those fields; it no longer removes anything.
+4. Pieces into shrubs (split): a piece much bigger than a model shrub of its height is split again (k-means) into
+   model-sized shrubs. Each shrub: the piece's top as its height, its equal-area width held within twice the
    model's spread, its centre, and its look, bush (mostly green: yard plantings, hedges, riparian thickets) or sage
    (not green: sagebrush, bitterbrush, rabbitbrush). A hedge becomes a row of bushes.
-4. Cleaning, before a piece becomes shrubs (the first images' four false kinds, three here and crops above): a
+5. Cleaning, before a piece becomes shrubs (the first images' four false kinds, three here and crops above): a
    speck (one cell, or two under 0.6 m: lidar striping in grass); a crown's skirt (a cell 2.4 m or taller within 1 m
    of the piece's top stands higher than it); a gap in a crown (its surrounding ring is mostly tree).
-5. Score: the shrubs' domes rebuild the shrub surface, compared with the lidar on the kept cells.
+6. Score: the shrubs' domes rebuild the shrub surface, compared with the lidar on the kept cells.
 
 The rule and its numbers come from the land-cover spike's exp23 (the settings search), exp25c (crops) and exp25d (the
 cleaning), on the ten test areas' central 500 m."""
@@ -59,7 +62,7 @@ SPLIT_AREA_SLACK = 1.3           # a piece is split into round(cells / (1.3 x a 
 WIDTH_CLAMP_SD = 2.0
 BUSH_GREEN_SHARE = 0.5
 # crops (decision 15) and the spike's crop-field rule, now a check
-CROP_CLUMP_SHARE = 0.5
+CROP_PIECE_SHARE = 0.5           # a piece with this share of its cells in a crop field is a crop
 FIELD_BLOCK_CELLS = 50           # 25 m blocks
 FIELD_MIN_BAND_CELLS = 50
 FIELD_BAND_SHARE = 0.15
@@ -142,16 +145,18 @@ def shrub_cells(h, bld, bad, alive, n_ag, scat):
     return shrub, band
 
 
-def crop_clumps(mask, crop):
-    """Shrub clumps (8-connected) with at least half their cells in a crop field: (cells to drop, clumps dropped)."""
-    if crop is None or not (crop & mask).any():
-        return np.zeros(mask.shape, bool), 0
-    lab, n = ndi.label(mask, structure=EIGHT)
-    size = np.bincount(lab.ravel(), minlength=n + 1)
-    inside = np.bincount(lab.ravel(), weights=(crop & mask).ravel(), minlength=n + 1)
-    drop = (inside >= CROP_CLUMP_SHARE * size) & (inside > 0)
-    drop[0] = False
-    return drop[lab], int(drop.sum())
+def crop_pieces(seg, crop):
+    """Which pieces (labels of seg, 0 outside) are crops: at least CROP_PIECE_SHARE of their cells in a crop field. A
+    bool array indexed by label (label 0 never)."""
+    n = int(seg.max())
+    out = np.zeros(n + 1, bool)
+    if crop is None or n == 0:
+        return out
+    size = np.bincount(seg.ravel(), minlength=n + 1)
+    inside = np.bincount(seg.ravel(), weights=(crop & (seg > 0)).ravel(), minlength=n + 1)
+    out = (inside >= CROP_PIECE_SHARE * size) & (inside > 0)
+    out[0] = False
+    return out
 
 
 def field_rule(h, bld, alive):
@@ -259,22 +264,27 @@ def _kmeans(pts, k, seed):
     return lab
 
 
-def split(h, m, alive, treeh, model):
-    """Steps 3 and 4: the shrub cells m into shrubs. treeh: heights with buildings at 0 (only plants make a skirt or a
-    gap). Returns (shrubs, why, dropped): shrubs a list of dicts (row and col of the centre in cells, from the grid's
-    north-west corner; height_m, width_m, look, cells, green, split, model_width_m); why a uint8 array (WHY codes for the
-    cells of m); dropped the pieces dropped by each cleaning rule."""
+def split(h, m, alive, treeh, model, crop=None):
+    """Steps 2 to 5: the shrub cells m into shrubs. treeh: heights with buildings at 0 (only plants make a skirt or a
+    gap). crop: crop fields (bool, or None for none): a piece mostly in them is a crop. Returns (shrubs, why, dropped):
+    shrubs a list of dicts (row and col of the centre in cells, from the grid's north-west corner; height_m, width_m,
+    look, cells, green, split, model_width_m); why a uint8 array (WHY codes for the cells of m); dropped the pieces
+    dropped as crops and by each cleaning rule."""
     lo, hi = BAND_M
     why = np.zeros(h.shape, np.uint8)
-    dropped = {"speck": 0, "skirt": 0, "gap": 0}
+    dropped = {"crop": 0, "speck": 0, "skirt": 0, "gap": 0}
     shrubs = []
     if not m.any():
         return shrubs, why, dropped
     seg = pieces(h, m, alive, model)
+    is_crop = crop_pieces(seg, crop)
+    if is_crop.any():
+        why[is_crop[seg]] = WHY["crop"]
+        dropped["crop"] = int(is_crop.sum())
     objs = ndi.find_objects(seg)
     rows, cols = h.shape
     for sid, sl in enumerate(objs, start=1):
-        if sl is None:
+        if sl is None or is_crop[sid]:
             continue
         yy, xx = np.nonzero(seg[sl] == sid)
         yy = yy + sl[0].start

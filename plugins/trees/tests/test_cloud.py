@@ -83,10 +83,10 @@ class CuesTest(unittest.TestCase):
     def tearDownClass(cls):
         shutil.rmtree(cls.tmp, ignore_errors=True)
 
-    def cues(self, work, chunk_m=10.0, source=None, **kw):
+    def cues(self, work, chunk_m=10.0, source=None, dtm=None, **kw):
         import cloud
         grid = cloud.Grid(X0, Y1, PX, N, N)
-        dtm = np.full((N, N), GROUND, np.float32)
+        dtm = np.full((N, N), GROUND, np.float32) if dtm is None else dtm
         return cloud.cues([source or self.las], grid, "EPSG:6340", dtm, np.ones((N, N), bool),
                           os.path.join(self.tmp, work), chunk_m=chunk_m, pad_m=2.0, log=lambda m: None, **kw)
 
@@ -133,6 +133,20 @@ class CuesTest(unittest.TestCase):
         with self.assertRaises(SystemExit):
             self.cues("d", chunk_m=20.0)
 
+    def test_a_rebuilt_bare_earth_isnt_met_with_the_old_chunks(self):
+        import cloud
+        a, _, _ = self.cues("g")
+        again, _, _ = self.cues("g")                     # the same bare earth: the chunks are reused
+        np.testing.assert_array_equal(a, again)
+        dtm = np.full((N, N), GROUND, np.float32)
+        dtm[20:30, 20:30] += 0.5                         # a fixed ground fill
+        with self.assertRaises(SystemExit) as cm:
+            self.cues("g", dtm=dtm)
+        self.assertIn("ground", str(cm.exception))
+        ok = np.ones((N, N), bool)
+        self.assertNotEqual(cloud.ground_fingerprint(dtm, ok), cloud.ground_fingerprint(dtm, ~ok))
+        self.assertEqual(cloud.ground_fingerprint(dtm, ok), cloud.ground_fingerprint(dtm.astype(np.float64), ok))
+
 
 @unittest.skipIf(np is None, "PDAL/NumPy/pyproj not installed (run in the worker image)")
 class PiecesTest(unittest.TestCase):
@@ -155,6 +169,25 @@ class PiecesTest(unittest.TestCase):
             cover[r0:r1, c0:c1] += 1
         self.assertTrue((cover == 1).all())
         self.assertEqual(cloud.window_rect(g, (0, 45, 0, 30)), g.rect)
+
+    def test_ept_parts_read_every_point_once(self):
+        """An EPT is read in parts of at most 400 m: every point of the area falls in exactly one part, those on an
+        edge two parts share and those on the area's own edges too, and none outside it."""
+        import cloud
+        rect = (566158.0, 4836992.0, 567624.0, 4838452.0)       # 1,466 m x 1,460 m: 4 x 4 parts
+        parts = cloud.ept_parts(rect)
+        self.assertEqual(len(parts), 16)
+        self.assertTrue(all(p[2] - p[0] <= cloud.EPT_PART_M and p[3] - p[1] <= cloud.EPT_PART_M for p, _, _ in parts))
+        xs = sorted({p[0] for p, _, _ in parts} | {p[2] for p, _, _ in parts})
+        ys = sorted({p[1] for p, _, _ in parts} | {p[3] for p, _, _ in parts})
+        self.assertEqual((xs[0], xs[-1], ys[0], ys[-1]), (rect[0], rect[2], rect[1], rect[3]))
+        rng = np.random.default_rng(1)
+        X = np.r_[rng.uniform(rect[0], rect[2], 5000), np.repeat(xs, len(ys)), rect[0] - 0.01, rect[2] + 0.01]
+        Y = np.r_[rng.uniform(rect[1], rect[3], 5000), np.tile(ys, len(xs)), rect[1], rect[3]]
+        hits = sum(cloud.in_part(X, Y, p, cx, cy).astype(int) for p, cx, cy in parts)
+        np.testing.assert_array_equal(hits[:-2], 1)           # every grid corner and edge point, once
+        np.testing.assert_array_equal(hits[-2:], 0)           # just outside the area
+        self.assertEqual(cloud.ept_parts((0.0, 0.0, 100.0, 50.0)), [((0.0, 0.0, 100.0, 50.0), True, True)])
 
     def test_an_ept_is_read_in_its_own_crs(self):
         import cloud

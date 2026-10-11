@@ -1,4 +1,4 @@
-"""The shrub rule, the crop check, the cleaning and the split (docs/19 §19.8) on synthetic height grids. Needs NumPy and
+"""The shrub rule, the crops, the cleaning and the split (docs/19 §19.8) on synthetic height grids. Needs NumPy and
 SciPy: run it in the worker image, where a skip counts as a failure."""
 import json
 import math
@@ -8,7 +8,7 @@ import unittest
 
 try:
     import numpy as np
-    from scipy import ndimage  # noqa: F401
+    from scipy import ndimage
 except ImportError:  # pragma: no cover
     np = None
 
@@ -103,21 +103,55 @@ class ShrubCellsTest(unittest.TestCase):
 
 @unittest.skipIf(np is None, "NumPy/SciPy not installed (run in the worker image)")
 class CropTest(unittest.TestCase):
-    def test_clumps_mostly_in_a_crop_field_are_crop(self):
+    def test_pieces_mostly_in_a_crop_field_are_crop(self):
         import shrubs as S
-        m = np.zeros((40, 40), bool)
-        m[2:10, 2:10] = True                       # all inside
-        m[20:24, 10:20] = True                     # 30% inside
-        m[30:34, 10:20] = True                     # 60% inside
-        crop = np.zeros_like(m)
+        seg = np.zeros((40, 40), np.int32)
+        seg[2:10, 2:10] = 1                        # all inside
+        seg[20:24, 10:20] = 2                      # 30% inside
+        seg[30:34, 10:20] = 3                      # 60% inside
+        seg[36:38, 30:32] = 4                      # none inside
+        crop = np.zeros(seg.shape, bool)
         crop[0:12, 0:12] = True
         crop[20:24, 10:13] = True
         crop[30:34, 10:16] = True
-        drop, n = S.crop_clumps(m, crop)
-        self.assertEqual(n, 2)
-        self.assertTrue(drop[2:10, 2:10].all() and drop[30:34, 10:20].all())
-        self.assertFalse(drop[20:24, 10:20].any())
-        self.assertEqual(S.crop_clumps(m, None)[1], 0)
+        self.assertEqual(S.crop_pieces(seg, crop).tolist(), [False, True, False, True, False])
+        self.assertFalse(S.crop_pieces(seg, None).any())
+
+    def crop_and_shrubs(self, crop_cols, shrub_rows, shrub_cols, seed=4):
+        """An even crop 0.8 m tall over crop_cols (a field), joined into one clump with tall, uneven shrubs over
+        shrub_rows x shrub_cols outside it. Returns (h, m, crop)."""
+        rng = np.random.default_rng(seed)
+        h = np.zeros((60, 120), np.float32)
+        h[10:50, crop_cols] = 0.8 + rng.normal(0, 0.03, (40, crop_cols.stop - crop_cols.start))
+        h[shrub_rows, shrub_cols] = rng.uniform(1.0, 1.8, (shrub_rows.stop - shrub_rows.start,
+                                                           shrub_cols.stop - shrub_cols.start))
+        crop = np.zeros(h.shape, bool)
+        crop[:, crop_cols] = True
+        m = (h >= 0.3) & (h < 2.4)
+        self.assertEqual(ndimage.label(m, structure=np.ones((3, 3)))[1], 1)     # one clump
+        return h, m, crop
+
+    def test_the_crop_cut_follows_the_fields_edge(self):
+        """A big crop clump that touches a hedgerow outside its field: the crop goes and the hedgerow stays (a clump
+        test called the whole clump a crop)."""
+        import shrubs as S
+        h, m, crop = self.crop_and_shrubs(slice(0, 60), slice(27, 33), slice(60, 116))
+        found, why, dropped = S.split(h, m, np.ones(h.shape, bool), h, model(), crop=crop)
+        self.assertGreater(dropped["crop"], 20)
+        self.assertGreater(float((why[12:48, 2:56] == S.WHY["crop"]).mean()), 0.98)
+        self.assertGreaterEqual(len([s for s in found if s["col"] >= 62]), 10)
+        self.assertFalse([s for s in found if s["col"] < 56])
+        self.assertFalse((why[27:33, 62:116] == S.WHY["crop"]).any())
+
+    def test_a_small_field_next_to_big_shrubland_is_still_a_crop(self):
+        """The other way round: a small crop field touching a large shrubland outside it goes (a clump test kept the
+        crop as shrubs, the clump being mostly outside)."""
+        import shrubs as S
+        h, m, crop = self.crop_and_shrubs(slice(0, 20), slice(5, 55), slice(20, 110))
+        found, why, dropped = S.split(h, m, np.ones(h.shape, bool), h, model(), crop=crop)
+        self.assertGreater(float((why[12:48, 0:16] == S.WHY["crop"]).mean()), 0.98)
+        self.assertFalse([s for s in found if s["col"] < 16])
+        self.assertGreater(len([s for s in found if s["col"] >= 22]), 50)
 
     def test_the_field_rule_finds_an_even_green_crop(self):
         import shrubs as S
@@ -161,7 +195,7 @@ class SplitTest(unittest.TestCase):
         self.assertAlmostEqual(s["col"], 20, delta=0.5)
         w0 = float(model().width_m(s["height_m"], "bush"))
         self.assertTrue(w0 * math.exp(-2 * 0.179) - 1e-6 <= s["width_m"] <= w0 * math.exp(2 * 0.179) + 1e-6)
-        self.assertEqual(dropped, {"speck": 0, "skirt": 0, "gap": 0})
+        self.assertEqual(dropped, {"crop": 0, "speck": 0, "skirt": 0, "gap": 0})
 
     def test_not_green_is_sage(self):
         h = dome((40, 40), 20, 20, 0.9, 1.4)
@@ -195,7 +229,7 @@ class SplitTest(unittest.TestCase):
         h[15:25, 15:25] = hole[15:25, 15:25]
         found, why, dropped = self.run_split(h)
         self.assertEqual(found, [])
-        self.assertEqual(dropped, {"speck": 0, "skirt": 0, "gap": 1})
+        self.assertEqual(dropped, {"crop": 0, "speck": 0, "skirt": 0, "gap": 1})
         self.assertEqual(why[20, 20], S.WHY["gap"])
 
     def test_a_hedge_is_a_row_of_bushes(self):

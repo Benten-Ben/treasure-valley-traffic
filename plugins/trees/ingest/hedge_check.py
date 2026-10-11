@@ -17,7 +17,10 @@ Where the hedges come from, the first that applies:
 - --hedges FILE: a GeoJSON FeatureCollection or GeoJSON sequence of OSM hedges (ways as lines, area hedges as
   polygons; the id from @id, id or osm_id), e.g. from `osmium export`;
 - --extract PBF: the held OpenStreetMap extract, filtered by osmium (barrier=hedge ways and areas) here;
-- fences.fence's rows of type 'hedge', once the fences plugin (P10) is built.
+- fences.fence's rows of type 'hedge', once the fences plugin (P10) is built. Its columns are the approved
+  osm-landscape design's (Oct 8): fence_id ('osm:w<id>'), type (fence, wall, ..., hedge), geom (a LineString, WGS84)
+  and active (false once the extract no longer has it); a table without fence_id, type or geom stops the check with
+  what's missing, and one without active has every row read.
 
 Nothing is written to the database: the report is printed, and with --json saved (OSM-derived, ODbL: keep it in the
 archive, not the repository). Standard library plus psycopg (and osmium-tool for --extract, as in the ingest image)."""
@@ -96,11 +99,22 @@ def hedges_from_extract(pbf, workdir):
     return read_hedges(seq)
 
 
+FENCE_COLUMNS = ("fence_id", "type", "geom")   # fences.fence as the osm-landscape design has it; "active" optional
+
+
 def hedges_from_fences(conn):
+    """[(id, GeoJSON geometry)] of fences.fence's active hedges; None when there is no fences.fence yet."""
     if not conn.execute("select to_regclass('fences.fence') is not null").fetchone()[0]:
         return None
-    rows = conn.execute("select fence_id, ST_AsGeoJSON(geom) from fences.fence where type = 'hedge'"
-                        " and coalesce(active, true)").fetchall()
+    cols = {c for (c,) in conn.execute("select column_name from information_schema.columns"
+                                       " where table_schema = 'fences' and table_name = 'fence'").fetchall()}
+    missing = [c for c in FENCE_COLUMNS if c not in cols]
+    if missing:
+        raise SystemExit(f"fences.fence has no {', '.join(missing)} (the hedge check reads fence_id, type and geom): "
+                         "pass --hedges FILE or --extract PBF, or update hedges_from_fences")
+    active = " and coalesce(active, true)" if "active" in cols else ""
+    rows = conn.execute("select fence_id, ST_AsGeoJSON(ST_Transform(geom, 4326)) from fences.fence"
+                        f" where type = 'hedge'{active} order by fence_id").fetchall()
     return [(str(i), json.loads(g)) for i, g in rows]
 
 

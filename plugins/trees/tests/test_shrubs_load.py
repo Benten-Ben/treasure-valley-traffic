@@ -13,16 +13,22 @@ OUTLINE = {"type": "MultiPolygon", "coordinates": [[[[-116.21, 43.62], [-116.19,
                                                      [-116.21, 43.63], [-116.21, 43.62]]]]}
 SHRUB = {"id": "x-5640001-48301002", "look": "bush", "height_m": 1.2, "width_m": 1.5, "ground_m": 820.5,
          "fit": {"cells": 9, "green": 0.9, "split": 1, "model_width_m": 1.55}}
+CREDIT = "U.S. Geological Survey, 3D Elevation Program; USDA NAIP; Contains modified Copernicus Sentinel data 2025"
+INPUTS = {"crop": {"plugin": "farm", "build": "20261011T130710Z", "file": "crop_cover.tif", "sha256": "0" * 64}}
 
 
-def write(folder, shrubs, build_id="x-test", area="x", geom=OUTLINE, at=(-116.2, 43.625)):
-    json.dump({"build_id": build_id, "area": area, "started_at": "2026-10-11T15:00:00Z",
-               "finished_at": "2026-10-11T15:10:00Z", "geom": geom,
-               "params": {"lidar": "USGS 3DEP QL1 lidar"}, "counts": {"shrubs": len(shrubs)}},
-              open(os.path.join(folder, "build.json"), "w"))
-    json.dump({"type": "FeatureCollection", "features": [
-        {"type": "Feature", "geometry": {"type": "Point", "coordinates": [at[0] + i * 1e-5, at[1]]}, "properties": s}
-        for i, s in enumerate(shrubs)]}, open(os.path.join(folder, "shrubs.geojson"), "w"))
+def write(folder, shrubs, build_id="x-test", area="x", geom=OUTLINE, at=(-116.2, 43.625), **extra):
+    b = {"build_id": build_id, "area": area, "started_at": "2026-10-11T15:00:00Z",
+         "finished_at": "2026-10-11T15:10:00Z", "geom": geom, "license": "Copernicus", "republish": "yes",
+         "credit": CREDIT, "inputs": INPUTS, "params": {"lidar": "USGS 3DEP QL1 lidar"},
+         "counts": {"shrubs": len(shrubs)}}
+    b.update(extra)
+    with open(os.path.join(folder, "build.json"), "w") as f:
+        json.dump({k: v for k, v in b.items() if v is not None}, f)
+    with open(os.path.join(folder, "shrubs.geojson"), "w") as f:
+        json.dump({"type": "FeatureCollection", "features": [
+            {"type": "Feature", "geometry": {"type": "Point", "coordinates": [at[0] + i * 1e-5, at[1]]}, "properties": s}
+            for i, s in enumerate(shrubs)]}, f)
 
 
 class ReadBuildTest(unittest.TestCase):
@@ -54,6 +60,14 @@ class ReadBuildTest(unittest.TestCase):
         for geom in (None, {"type": "Point", "coordinates": [0, 0]}):
             with tempfile.TemporaryDirectory() as d:
                 write(d, [SHRUB], geom=geom)
+                with self.assertRaises(ValueError):
+                    shrubs_load.read_build(d)
+
+    def test_refuses_a_build_without_its_licence_or_one_not_to_publish(self):
+        for extra in ({"license": None}, {"republish": None}, {"credit": None}, {"inputs": None}, {"credit": " "},
+                      {"republish": "maybe"}, {"republish": "internal"}):
+            with self.subTest(extra=extra), tempfile.TemporaryDirectory() as d:
+                write(d, [SHRUB], **extra)
                 with self.assertRaises(ValueError):
                     shrubs_load.read_build(d)
 
@@ -113,9 +127,18 @@ class DatabaseTest(unittest.TestCase):
                 self.assertEqual((sid, look, lidar, fit["cells"]), ("tvt-test-3", "bush", "USGS 3DEP QL1 lidar", 9))
                 self.assertAlmostEqual(hgt, 1.2, places=5)
                 self.assertEqual(wkt, "POINT(-116.2 43.625)")
-                [(build_id, shrubs, gtype)] = conn.execute(
-                    "select build_id, shrubs, GeometryType(geom) from trees.shrub_area where area = 'tvt_test'").fetchall()
+                [(build_id, shrubs, gtype, lic, rep, credit)] = conn.execute(
+                    "select build_id, shrubs, GeometryType(geom), license, republish, credit from trees.shrub_area"
+                    " where area = 'tvt_test'").fetchall()
                 self.assertEqual((build_id, shrubs, gtype), ("tvt-test-2", 1, "MULTIPOLYGON"))
+                self.assertEqual((lic, rep, credit), ("Copernicus", "yes", CREDIT))
+                [(inputs,)] = conn.execute("select inputs from trees.shrub_build where build_id = 'tvt-test-2'")
+                self.assertEqual(inputs, INPUTS)
+                for obj in ("trees.shrub_build", "trees.shrub", "trees.shrub_area"):   # plan C3: said on each
+                    [(comment,)] = conn.execute("select obj_description(%s::regclass, 'pg_class')", (obj,))
+                    self.assertIn("republish", comment or "", obj)
+                with self.assertRaises(psycopg.errors.CheckViolation), conn.transaction():
+                    conn.execute("update trees.shrub_build set republish = 'maybe' where build_id = 'tvt-test-2'")
                 self.assertEqual(conn.execute("select count(*) from trees.shrub_build where area = 'tvt_test'")
                                  .fetchone()[0], 2)
                 with self.assertRaises(psycopg.errors.CheckViolation), conn.transaction():
