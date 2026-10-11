@@ -465,10 +465,12 @@ highway ways. 1,811 have no owner: 1,369 proposed, 350 under construction,
 no consumer's classes name (12 raceways, 4 `unclassified_link`, 1 runaway-truck
 `escape`), left out until it's decided who takes them. The 12 lane-tagged
 cycleways, tracks and pedestrian ways osm_valley keeps are the named
-exception. The owners load one extract together, osm_valley first and the
-others only the extract it holds, so a way is never in two of their tables
-or in none; a build that reads `core.osm_way` with `roads.osm_street` (the
-roads build) calls `check_partition()` first.
+exception. The owners load one extract together: osm_valley first, the
+others only the extract it holds, and osm_valley never while a follower that
+holds another extract stays behind. So a way is never in two of their tables
+or in none, unless a follower fails after osm_valley loaded; a build that
+reads `core.osm_way` with `roads.osm_street` (the roads build) calls
+`check_partition()` first, and it refuses until they match again.
 
 ```sql
 -- Each consumer's gate: the extract it loaded last (osm_valley's stays in its file).

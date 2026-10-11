@@ -70,10 +70,13 @@ none (unbuilt, indoor, and 17 raceways and odd classes no consumer names:
 [docs/12](../docs/12-database-schema.md)). The partition holds only while its
 owners hold one extract, so osm_valley loads first and `osm_street`,
 `osm_paving` and `osm_paths` load only the extract it holds: one that would
-load another is held back (`--allow-mixed` overrides it; `--force` doesn't).
-A build that reads their tables together calls `check_partition(conn,
-names)` first, which returns the one extract's MD5 or raises; `--list` and
-each load say when the owners differ. The new consumers' tables are
+load another is held back, and so is osm_valley when a follower that holds
+another extract isn't loading in the same run (`--only osm_valley` on a new
+extract). `--allow-mixed` lifts both holds; `--force` doesn't. They can still
+differ if a follower fails after osm_valley loaded, so a build that reads
+their tables together calls `check_partition(conn, names)` first, which
+returns the one extract's MD5 or raises; `--list` and each load say when the
+owners differ. The new consumers' tables are
 versioned in place (`store_objects`: OpenStreetMap's version and timestamp,
 first and last seen, active, and the shrink guard at any size), with no
 `raw.record` copies.
@@ -107,7 +110,7 @@ it 5 GB: [deploy/README.md](../deploy/README.md)). The other consumers don't
 use osmium's tags-filter, which would need 1.9 GB even on the 32 MB cut: they
 export the cut's tagged objects (about 140 MB) and pick theirs in Python, so a
 consumer on a cut already made is light (`osm_street`: 16 s, under 0.2 GB).
-So a load never makes the cut by surprise: only a run that loads osm_valley,
+So a load never makes the cut by surprise: only a run with osm_valley due,
 `--make-cut` or `--cut-only` makes it, and any other run stops before loading
 when it's missing.
 

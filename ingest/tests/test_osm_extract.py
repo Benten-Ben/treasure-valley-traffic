@@ -577,6 +577,59 @@ class LoadTest(unittest.TestCase):
                               make_cut_ok=True)
         self.assertEqual(result, {"roads.osm_street": "loaded"})
 
+    def test_osm_valley_alone_doesn_t_leave_a_follower_behind(self):
+        """The other way round: --only osm_valley on a new extract would move core.osm_way while
+        roads.osm_street stays on the old one. osm_valley is held back unless the followers that hold
+        another extract come along in the same run (or --allow-mixed)."""
+        every = self.consumers((V, {"own_gate": True}), (S, {}), (P, {}), ("osm_waterways", {}))
+        conn = FakeConn()
+        one, two = hashlib.md5(b"one").hexdigest(), hashlib.md5(b"two").hexdigest()
+        self.load(conn, self.inbox(b"one"), ox.select(every, [V, S]), every=every)   # osm_paving hasn't loaded
+        src = self.inbox(b"two")
+        results = []
+        for chosen in ([V], [V, P], [V, "osm_waterways"]):
+            result, lines = self.load(conn, src, ox.select(every, chosen), every=every)
+            results.append(result)
+            held = next(l for l in lines if l.startswith("roads.osm_valley: held back"))
+            self.assertIn(f"roads.osm_street holds extract {one[:8]}", held)
+            self.assertNotIn("osm_paving", held)            # it holds no extract, so it isn't left behind
+            self.assertIn("--allow-mixed", held)
+        self.assertEqual(results, [{"roads.osm_valley": "held"},
+                                   {"roads.osm_valley": "held", "roads.osm_paving": "held"},   # it waits too
+                                   {"roads.osm_valley": "held", "roads.osm_waterways": "loaded"}])
+        self.assertEqual(len(FakeConsumer.modules[V].runs), 1)
+        self.assertEqual(self.cuts[1:], [os.path.basename(ox.extracts(self.folder)[0])])   # made once, for waterways
+        self.assertFalse(os.path.exists(src))                 # osm_waterways loaded it, so it was archived
+        kept = ox.extracts(self.folder)[0]
+        self.assertTrue(kept.endswith(f"-{two[:8]}.osm.pbf"))
+        self.assertEqual(ox.check_partition(conn, all_consumers=every, folder=self.folder), one)
+        # With the follower in the run, they move together.
+        result, lines = self.load(conn, kept, ox.select(every, [V, S]), every=every, keep=False)
+        self.assertEqual(result, {"roads.osm_valley": "loaded", "roads.osm_street": "loaded"})
+        self.assertFalse(any(l.startswith("partition:") for l in lines))
+        self.assertEqual(ox.check_partition(conn, all_consumers=every, folder=self.folder), two)
+        # osm_valley catching up with followers already on this extract isn't held.
+        FakeConsumer.modules[V].state = {self.folder: one}
+        result, _ = self.load(conn, kept, ox.select(every, [V]), every=every, keep=False)
+        self.assertEqual(result, {"roads.osm_valley": "loaded"})
+        self.assertEqual(ox.check_partition(conn, all_consumers=every, folder=self.folder), two)
+
+    def test_a_follower_whose_module_won_t_import_holds_osm_valley_back(self):
+        """A follower that fails before it can run would stay on the old extract: its gate is still
+        read from ops.osm_consumer, and osm_valley waits with it."""
+        every = self.consumers((V, {"own_gate": True}), (S, {}), ("osm_waterways", {}))
+        conn = FakeConn()
+        one = hashlib.md5(b"one").hexdigest()
+        self.load(conn, self.inbox(b"one"), every)
+        every = self.consumers((V, {"own_gate": True}), (S, {"broken": True}), ("osm_waterways", {}))
+        FakeConsumer.modules[V].state = {self.folder: one}
+        self.assertEqual([m for _, m in ox.partition_gates(conn, every, self.folder)], [one, one])
+        result, lines = self.load(conn, self.inbox(b"two"), every)
+        self.assertEqual(result, {"roads.osm_valley": "held", "roads.osm_street": "failed",
+                                  "roads.osm_waterways": "loaded"})
+        self.assertEqual(FakeConsumer.modules[V].runs, [])
+        self.assertEqual(ox.check_partition(conn, all_consumers=every, folder=self.folder), one)
+
     def test_osm_valley_runs_first_whatever_the_plugin_order(self):
         chosen = self.consumers((T, {}), (S, {}), (V, {"own_gate": True}))
         order = []
@@ -624,8 +677,13 @@ class LoadTest(unittest.TestCase):
         self.load(conn, self.inbox(b"one"), every)
         one, two = hashlib.md5(b"one").hexdigest(), hashlib.md5(b"two").hexdigest()
         self.assertEqual(ox.check_partition(conn, all_consumers=every, folder=self.folder), one)
-        # osm_valley alone moves on (--only osm_valley): the load says the owners differ, and the check refuses.
+        # osm_valley alone can't move on (--only osm_valley): osm_street would stay behind.
         result, lines = self.load(conn, self.inbox(b"two"), ox.select(every, ["osm_valley"]), every=every)
+        self.assertEqual(result, {"roads.osm_valley": "held"})
+        self.assertEqual(ox.check_partition(conn, all_consumers=every, folder=self.folder), one)
+        # With --allow-mixed it does: the load says the owners differ, and the check refuses.
+        result, lines = self.load(conn, self.inbox(b"two"), ox.select(every, ["osm_valley"]), every=every,
+                                  allow_mixed=True)
         self.assertEqual(result, {"roads.osm_valley": "loaded"})
         note = next(l for l in lines if l.startswith("partition:"))
         self.assertIn(f"roads.osm_valley {two[:8]}", note)

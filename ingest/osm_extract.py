@@ -31,8 +31,8 @@ A load:
      with a member in it, whole (lots and water bodies that cross the edge).
      The cut is kept at $TVT_ARCHIVE/osm/cut/valley.osm.pbf, with valley.json
      saying which extract it came from, and reused while that's the extract.
-     Making it is heavy (osmium peaks at about 3.9 GB), so only a run that
-     loads osm_valley (heavy anyway), `--make-cut` or `--cut-only` makes it;
+     Making it is heavy (osmium peaks at about 3.9 GB), so only a run with
+     osm_valley due (heavy anyway), `--make-cut` or `--cut-only` makes it;
      any other run stops before loading anything when it's missing;
   4. runs each consumer, osm_valley first, then in plugin order, each in its
      own transaction with its own ops.fetch row. osm_valley runs its own
@@ -60,10 +60,13 @@ gained a lanes tag would otherwise be in core.osm_way and roads.osm_street
 both, and one that lost it in neither. So they load one extract together:
 osm_valley leads, and osm_street, osm_paving and osm_paths load only the
 extract osm_valley holds (or loaded in the same run). One that would load
-another is held back, unless `--allow-mixed`. If a follower fails after
-osm_valley loaded, the load says the owners differ until it's rerun, `--list`
-says so too, and a build that reads their tables together calls
-`check_partition()` first and refuses a mixed union.
+another is held back, and so is osm_valley when a follower that holds another
+extract isn't coming along in the same run (`--only osm_valley` on a new
+extract), unless `--allow-mixed`. That leaves one way for them to differ: a
+follower that fails after osm_valley loaded. Then the load says the owners
+differ until the follower is rerun, `--list` says so too, and a build that
+reads their tables together calls `check_partition()` first and refuses a
+mixed union.
 
 Versioning (plan C2). osm_valley keeps raw.record versions as before. The new
 consumers make no raw.record copies: their typed tables keep osm_version,
@@ -766,8 +769,14 @@ def partition_gates(conn, all_consumers, folder):
             if c.name == name:
                 try:
                     out.append((c, loaded_md5(conn, c, c.module(), folder)))
-                except Exception:                         # a module that won't import holds nothing we know
-                    out.append((c, None))
+                except Exception:
+                    # A follower whose module won't import still has its row in ops.osm_consumer;
+                    # osm_valley's gate needs its module, so it holds nothing we know.
+                    try:
+                        held = db_state(conn, c.id).get("md5") if conn is not None and c.name != LEADER else None
+                    except Exception:
+                        held = None
+                    out.append((c, held))
     return out
 
 
@@ -815,10 +824,12 @@ def load_extract(conn, path, chosen, *, every=None, force=False, allow_mixed=Fal
 
     The partition's owners load one extract together: osm_valley (the leader) runs first, and
     osm_street, osm_paving and osm_paths load only the extract it holds or loaded in this run; one
-    that would load another is 'held' (unless allow_mixed; force doesn't do it). The valley cut is
-    made when osm_valley is due (that run is heavy anyway) or with make_cut_ok; otherwise a missing
-    cut stops the load before anything runs. A consumer whose module won't import, or whose source
-    row can't be written, fails alone. With keep (--inbox, --file), the file is archived once any
+    that would load another is 'held'. So is the leader, when an installed follower that holds
+    another extract isn't due in this run (not chosen, or its module won't import): it would be
+    left on the old extract. allow_mixed lifts both holds; force doesn't. The valley cut is
+    made when osm_valley is due (that run is heavy anyway, even if it's held) or with make_cut_ok;
+    otherwise a missing cut stops the load before anything runs. A consumer whose module won't
+    import, or whose source row can't be written, fails alone. With keep (--inbox, --file), the file is archived once any
     consumer has loaded it, and the archive pruned to the last two.
     Returns {consumer id: 'loaded' | 'skipped' | 'held' | 'failed'}."""
     if not _suffix(path):
@@ -846,7 +857,22 @@ def load_extract(conn, path, chosen, *, every=None, force=False, allow_mixed=Fal
         else:
             due.append(c)
     due.sort(key=lambda c: c.name != LEADER)                     # the leader first; the rest keep their order
-    leader_due = any(c.name == LEADER for c in due)
+    leader_due = heavy = any(c.name == LEADER for c in due)  # a run with the leader due is heavy, held or not
+    together = (f"Load them together, as the database owner ({LEADER} writes core.osm_way): osm-load without "
+                "--only, or name each of them with --only. Or pass --allow-mixed")
+
+    if leader_due and not allow_mixed:
+        # The leader alone would leave a follower on another extract (--only osm_valley on a new one).
+        coming = {c.name for c in due}
+        behind = [(c, m) for c, m in partition_gates(conn, every, folder)
+                  if c.name != LEADER and c.name not in coming and m and m != md5]
+        if behind:
+            lead = next(c for c in due if c.name == LEADER)
+            result[lead.id] = "held"
+            out(f"{lead.id}: held back: {', '.join(f'{c.id} holds extract {m[:8]}' for c, m in behind)} and "
+                f"isn't loading {md5[:8]} in this run, and the partition's owners load one extract together. "
+                + together)
+            due, leader_due = [c for c in due if c is not lead], False
 
     def held_back(c):
         """Whether c, a follower, must wait for the leader to hold this extract (and say so)."""
@@ -862,8 +888,7 @@ def load_extract(conn, path, chosen, *, every=None, force=False, allow_mixed=Fal
             return False
         result[c.id] = "held"
         out(f"{c.id}: held back: {leader.id} holds {'extract ' + holds[:8] if holds else 'no extract'}, not "
-            f"{md5[:8]}, and the partition's owners load one extract together. Load {leader.id} first (as the "
-            "database owner; it writes core.osm_way), or pass --allow-mixed")
+            f"{md5[:8]}, and the partition's owners load one extract together. " + together)
         return True
 
     if not leader_due:
@@ -874,7 +899,7 @@ def load_extract(conn, path, chosen, *, every=None, force=False, allow_mixed=Fal
         return result
 
     cut_dir = os.path.join(folder, CUT_DIR) if folder else None
-    if not (leader_due or make_cut_ok or cut_ready(cut_dir, md5)):
+    if not (heavy or make_cut_ok or cut_ready(cut_dir, md5)):
         raise SystemExit(f"no valley cut of {name} yet ({cut_dir or 'set TVT_ARCHIVE'}): make it first with "
                          f"'osm-load --cut-only', or add --make-cut, in a heavy job ({CUT_MEMORY}). A consumer's "
                          "load on a cut already made is light (under 0.2 GB)")
@@ -978,12 +1003,12 @@ def main(argv=None):
     ap.add_argument("--allow-shrink", action="store_true",
                     help="retire objects even when this extract has fewer than half the active ones")
     ap.add_argument("--allow-mixed", action="store_true",
-                    help="let osm_street, osm_paving and osm_paths load an extract osm_valley doesn't hold "
-                         "(their tables and core.osm_way then disagree)")
+                    help="let osm_street, osm_paving and osm_paths load an extract osm_valley doesn't hold, "
+                         "or osm_valley load one they don't (their tables and core.osm_way then disagree)")
     ap.add_argument("--cut-only", action="store_true",
                     help=f"just make the valley cut, in $TVT_ARCHIVE/osm/cut/ (heavy: {CUT_MEMORY})")
     ap.add_argument("--make-cut", action="store_true",
-                    help="make the valley cut if it's missing (heavy); a run that loads osm_valley makes it anyway")
+                    help="make the valley cut if it's missing (heavy); a run with osm_valley due makes it anyway")
     ap.add_argument("--list", action="store_true", help="list the consumers and the extract each loaded last")
     args = ap.parse_args(argv)
 

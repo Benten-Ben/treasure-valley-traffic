@@ -364,7 +364,7 @@ What a load does:
 - It cuts the valley box out of the extract once (osmium's `smart` strategy)
   into `$TVT_ARCHIVE/osm/cut/valley.osm.pbf`, with `valley.json` naming the
   extract; every consumer reads the cut, and the ground's mask reads it too.
-  Only a run that loads osm_valley (heavy anyway), `--make-cut` or
+  Only a run with osm_valley due (heavy anyway), `--make-cut` or
   `--cut-only` makes the cut. Any other run stops before loading anything
   when it's missing (on production right after the deploy that brings the
   loader, and on scratch after every refresh) and says to make it first.
@@ -375,11 +375,14 @@ What a load does:
   `osm_paths`, load only the extract osm_valley holds (or loaded in the same
   run): otherwise a way that gained or lost a lanes tag would be in
   `core.osm_way` and `roads.osm_street` both, or in neither. One that would
-  load another extract is **held back** (`--force` doesn't change that;
-  `--allow-mixed` does, and shouldn't be needed). If a follower fails after
-  osm_valley loaded, the load and `--list` say the owners differ, and the
-  roads build refuses to run (`check_partition()`) until the follower is
-  loaded with `--only`.
+  load another extract is **held back**, and so is osm_valley when a
+  follower that holds another extract isn't loading in the same run
+  (`--only osm_valley` on a new extract). `--force` doesn't change that;
+  `--allow-mixed` does, and shouldn't be needed. Load a new extract without
+  `--only`, as the database owner. If a follower fails after osm_valley
+  loaded, the load and `--list` say the owners differ, and the roads build
+  refuses to run (`check_partition()`) until the follower is loaded with
+  `--only`.
 - Afterwards, if any consumer loaded it, the file moves to
   `$TVT_ARCHIVE/osm/` (renamed with the date and the start of its MD5) and
   the last two extracts are kept. Pruning never removes the file just
