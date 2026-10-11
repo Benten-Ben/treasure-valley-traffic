@@ -124,7 +124,7 @@ class Lanes(unittest.TestCase):
                                                     "lanes:both_ways": "1"}, developed=1.0))
         self.assertEqual((xs["lanes_fwd"], xs["lanes_bwd"], xs["centre_turn"]), (2, 2, True))
         self.assertEqual((xs["lanes_source"], xs["width_tier"], xs["markings"]), ("osm", "counted", True))
-        self.assertAlmostEqual(xs["total_w_m"], 5 * 3.66 + 2 * D["gutter"], places=2)
+        self.assertAlmostEqual(xs["total_w_m"], 5 * 3.66 + 2 * D["gutter"], places=2)   # arterials have no floor
         kinds = [k for k, _, _ in X.marking_lines(xs, 0)]
         self.assertEqual(kinds, ["lane", "twltl", "twltl", "lane"])
         lines = X.marking_lines(xs, 0)
@@ -264,6 +264,16 @@ class Widths(unittest.TestCase):
         xs = X.cross_section(p)
         self.assertEqual((xs["width_source"], xs["total_w_m"]), ("achd_bike_network", 9.4 + 2 * D["gutter"]))
         self.assertEqual((xs["bike_r_m"], xs["bike_l_m"]), (1.8, 0.0))
+
+    def test_a_curbed_collector_is_at_least_the_class_pavement(self):
+        xs = X.cross_section(piece("tertiary", tags={"lanes": "2"}, developed=1.0))
+        self.assertEqual((xs["total_w_m"], xs["width_source"], xs["width_tier"]),
+                         (D["collector_pavement_curbed"], "class_default", "estimated"))
+        self.assertTrue(xs["markings"])         # its lines stay where its lanes are, the rest at the curbs
+        self.assertEqual([o for _, _, o in X.marking_lines(xs, 0)], [0.0])
+        # A rural collector keeps its lanes and shoulders.
+        xs = X.cross_section(piece("tertiary", tags={"lanes": "2"}, developed=0.1, county="Canyon"))
+        self.assertAlmostEqual(xs["total_w_m"], 2 * 3.35 + 2 * D["shoulder"]["rural"], places=2)
 
     def test_the_osm_width_tag(self):
         xs = X.cross_section(piece("tertiary", tags={"width": "9"}, developed=1.0))

@@ -1123,15 +1123,14 @@ _REVIEW_SQL = {
       from roads.piece p
       where p.county = 'Ada' and p.road_segment_id is null and p.length_m >= 50 and not p.tunnel
         and p.highway = any(%(ranked)s)""",
-    # An OpenStreetMap bridge along an ACHD segment that isn't elevated, or the other way about.
+    # A piece along an elevated ACHD segment (level 20 at both ends: an overpass) that OpenStreetMap doesn't draw
+    # as a bridge: no deck there. (OpenStreetMap's bridges over canals and creeks are at ACHD's level 10.)
     "deck_mismatch": """
       select p.id, p.osm_id, p.road_segment_id,
              jsonb_build_object('osm_bridge', p.bridge, 'achd_levels', array[s.from_level, s.to_level]),
              ST_LineInterpolatePoint(p.geom, 0.5)
       from roads.piece p join core.road_segment s on s.id = p.road_segment_id
-      where p.length_m >= 15
-        and p.bridge <> (coalesce(s.from_level, 10) = 20 and coalesce(s.to_level, 10) = 20)
-        and (p.bridge or (s.from_level = 20 and s.to_level = 20))""",
+      where p.length_m >= 15 and not p.bridge and s.from_level = 20 and s.to_level = 20""",
     # ACHD's bike network row whose other carriageway's sides are hidden, on a one-way piece.
     "bike_other_carriageway": """
       select p.id, p.osm_id, p.road_segment_id, jsonb_build_object('flags', b.flags),

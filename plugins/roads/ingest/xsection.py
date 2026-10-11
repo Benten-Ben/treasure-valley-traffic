@@ -25,8 +25,9 @@ own conflict flag is carried too.
   two-way segment, or a one-way carriageway's own side (`roadway_m` plus gutters); the way's `width` tag; or
   HPMS's lane width with HPMS's shoulders or a curb.
 - 'counted': lanes from a source, widths from the defaults below.
-- 'estimated': default lanes; local streets get a class pavement width (curbed or rural ⚠️, calibrated in the
-  test windows: build.py's calibrate()).
+- 'estimated': default lanes, or a class pavement width wider than the lanes: local streets' (curbed or rural ⚠️)
+  and a two-way curbed collector's (⚠️), calibrated in the test windows (calibrate.py) against ACHD's measured
+  widths; the pavement the lanes don't fill lies at the edges (parking, bike lanes, gutters we don't know).
 - 'measured' is the photo check's, later.
 Lane width: HPMS's on its sections, else ACHD's lane next to the bike facility, else the class's (§14.7: 3.66 m
 major roads, 3.35 m collectors, 3.05 m local streets). Bike lanes: ACHD's facility where it's in the roadway, else
@@ -76,6 +77,9 @@ DEFAULTS = {
     # segments; the test windows' 9.30-10.82 m bracket it); no measured rural local street lies in the windows, so
     # rural stays 7.3 m (valley-wide ACHD's 244 run 7.32-9.75 m, p25-p75).
     "local_pavement": {"curbed": 9.75, "rural": 7.3},
+    # A curbed collector's pavement where no source gives its width: ACHD's measured curbed collectors' median,
+    # 11.28 m valley-wide (894 segments; 10.21-11.73 m in the test windows) ⚠️. Lanes x 3.35 m alone gives 7.9 m.
+    "collector_pavement_curbed": 11.3,
     "lane_w_min_unmarked": 2.0,                                       # an unmarked street's lanes may share its space
     "half_w_min_estimated": 2.75,                                     # a sidewalk may cut an estimated street to this
     "alley": 5.0,                                                     # ⚠️
@@ -574,10 +578,14 @@ def cross_section(p, d=DEFAULTS):
             lane_w = total / max(1, n_lanes)
         elif hw == "service" and lanes_source == "default":
             total, width_source, tier = d["service"], "class_default", "estimated"
-        elif cls == "local":
+        else:
+            floor = 0.0
             curbs = sum(1 for s in edge.values() if s == "curb")
-            pave = d["local_pavement"]
-            floor = (pave["curbed"] * curbs + pave["rural"] * (2 - curbs)) / 2
+            if cls == "local":
+                pave = d["local_pavement"]
+                floor = (pave["curbed"] * curbs + pave["rural"] * (2 - curbs)) / 2
+            elif cls == "collector" and curbs == 2 and way == 0:
+                floor = d["collector_pavement_curbed"]
             if floor > total:
                 unassigned = floor - total
                 total = floor
