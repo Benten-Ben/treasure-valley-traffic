@@ -14,9 +14,10 @@ import os
 import tempfile
 import unittest
 import urllib.parse
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+from unittest import mock
 
-from ingest import USER_AGENT
+from ingest import USER_AGENT, http
 from plugins.hazards.ingest import wfigs_backfill as wb
 from plugins.hazards.ingest.sources import nifc_wfigs_perimeters as per
 
@@ -103,14 +104,26 @@ class FetchTest(unittest.TestCase):
             self.assertEqual(q["geometry"], [",".join(str(v) for v in wb.common.RING)])
         self.assertEqual(read["geometryPrecision"], [str(per.PRECISION)])
         self.assertTrue(all(u.startswith(per.LAYER + "/query?") for u in server.urls))
-        self.assertEqual((p["count"], p["features"], p["requests"], p["robots"], p["http_status"]),
-                         (4, 4, 2, "no_rules", 200))
+        self.assertEqual((p["count"], p["features"], p["requests"], p["robots_txt_requests"], p["robots"],
+                          p["http_status"]), (4, 4, 2, 0, "no_rules", 200))
         self.assertEqual((p["user_agent"], p["service"], p["approval"]), (USER_AGENT, per.LAYER, wb.APPROVAL))
         self.assertEqual(p["window"]["first_day"], "2025-08-01")
         self.assertEqual(p["window"]["last_day"], "2025-12-31")
-        provenance, features = wb.read(folder)
-        self.assertEqual(provenance, p)
+        provenance, features, window = wb.read(folder)
+        self.assertEqual((provenance, window), (p, wb.AUG_DEC_2025))
         self.assertEqual(len(features), 4)
+
+    def test_robots_txt_is_counted_among_the_requests(self):
+        server = FakeServer(IN_WINDOW)
+        host = "https://" + urllib.parse.urlsplit(per.LAYER).netloc
+
+        def get(url, timeout=None):          # http.get, which reads robots.txt once before the first request
+            http._robots.setdefault(host, None)
+            return server(url)
+
+        with mock.patch.dict(http._robots, clear=True), mock.patch.object(wb.http, "get", side_effect=get):
+            _, p = wb.fetch(self.tmp.name, sleep=lambda s: None, now=READ_AT)
+        self.assertEqual((p["requests"], p["robots_txt_requests"]), (3, 1))
 
     def test_over_the_cap_nothing_is_read(self):
         server = FakeServer(IN_WINDOW, count=401)
@@ -119,12 +132,40 @@ class FetchTest(unittest.TestCase):
         self.assertEqual(len(server.urls), 1)
         self.assertEqual(os.listdir(self.tmp.name), [])
 
-    def test_the_read_needs_one_off(self):
+    def refused(self, *argv):
         err = io.StringIO()
-        with contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as cm:
-            wb.main(["--fetch", "--out", self.tmp.name])
+        with contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as cm, \
+                mock.patch.object(wb, "fetch", side_effect=AssertionError("no read in tests")):
+            wb.main(list(argv))
         self.assertEqual(cm.exception.code, 2)
-        self.assertIn("--one-off", err.getvalue())
+        return err.getvalue()
+
+    def test_the_read_needs_one_off(self):
+        self.assertIn("--one-off", self.refused("--fetch", "--out", self.tmp.name))
+
+    def test_fetch_has_no_dry_run(self):
+        self.assertIn("--dry-run is for --load", self.refused("--fetch", "--one-off", "--out", self.tmp.name, "--dry-run"))
+        self.assertIn("--load takes", self.refused("--load", self.tmp.name, "--one-off"))
+
+    def test_a_window_already_read_isnt_read_again(self):
+        out = self.refused("--fetch", "--one-off", "--out", self.tmp.name)
+        self.assertIn("already made (made at 2026-10-11T12:02:07Z)", out)
+        self.assertIn("--read-again", out)
+        self.assertIn("isn't an approved window",
+                      self.refused("--fetch", "--one-off", "--out", self.tmp.name, "--window", "2025-07-25..2025-07-31"))
+        # A window not yet recorded as read, but with a read under --out, is refused too; --read-again takes it.
+        week = wb.Window(date(2025, 7, 25), date(2025, 7, 31), "a test approval", None)
+        with mock.patch.object(wb, "WINDOWS", wb.WINDOWS + [week]):
+            self.assertIn("--fetch needs --window", self.refused("--fetch", "--one-off", "--out", self.tmp.name))
+            wb.fetch(self.tmp.name, get=FakeServer([]), sleep=lambda s: None, now=READ_AT, window=week)
+            argv = ["--fetch", "--one-off", "--out", self.tmp.name, "--window", "2025-07-25..2025-07-31"]
+            self.assertIn("already made (" + os.path.join(self.tmp.name, "20261011T1305Z"), self.refused(*argv))
+            with mock.patch.object(wb, "fetch", return_value=("f", {"features": 0, "count": 0, "requests": 3,
+                                                                    "robots_txt_requests": 1, "bytes_read": 0,
+                                                                    "robots": "no_rules"})) as read, \
+                    contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(wb.main(argv + ["--read-again"]), 0)
+            self.assertEqual(read.call_args.kwargs["window"], week)
 
     def test_a_changed_file_is_refused(self):
         folder, _ = wb.fetch(self.tmp.name, get=FakeServer(IN_WINDOW), sleep=lambda s: None, now=READ_AT)
@@ -132,6 +173,32 @@ class FetchTest(unittest.TestCase):
             f.write(b" ")
         with self.assertRaises(ValueError):
             wb.read(folder)
+
+    def test_the_kept_read_still_loads(self):
+        # The filter recorded in the read made on Oct 11, 2026 (its provenance.json on the server), character for
+        # character: a change to where() must not strand it.
+        self.assertEqual(wb.where(wb.AUG_DEC_2025),
+                         "(attr_FireDiscoveryDateTime >= TIMESTAMP '2025-08-01 06:00:00' AND attr_FireDiscoveryDateTime "
+                         "< TIMESTAMP '2026-01-01 07:00:00') OR (attr_FireDiscoveryDateTime IS NULL AND "
+                         "poly_PolygonDateTime >= TIMESTAMP '2025-08-01 06:00:00' AND poly_PolygonDateTime < "
+                         "TIMESTAMP '2026-01-01 07:00:00')")
+        self.assertEqual((wb.AUG_DEC_2025.read_at, wb.WINDOWS[0]), ("2026-10-11T12:02:07Z", wb.AUG_DEC_2025))
+
+    def test_a_window_approved_later_goes_beside_the_first(self):
+        week = wb.Window(date(2025, 7, 25), date(2025, 7, 31), "a test approval", None)
+        late_july = [feature(5, "{00000000-0000-4000-8000-0000000000B5}", datetime(2025, 7, 31, 20, tzinfo=UTC))]
+        aug_dec, _ = wb.fetch(os.path.join(self.tmp.name, "a"), get=FakeServer(IN_WINDOW), sleep=lambda s: None,
+                              now=READ_AT)
+        with mock.patch.object(wb, "WINDOWS", wb.WINDOWS + [week]):
+            july, p = wb.fetch(os.path.join(self.tmp.name, "b"), get=FakeServer(late_july + IN_WINDOW),
+                               sleep=lambda s: None, now=READ_AT, window=week)
+            self.assertEqual((p["window"]["first_day"], p["approval"]), ("2025-07-25", "a test approval"))
+            _, features, window = wb.read(july)
+            self.assertEqual(window, week)
+            self.assertEqual(wb.prepare(features, window)[1]["fires"], 1)       # the week's fire only
+            self.assertEqual(wb.read(aug_dec)[2], wb.AUG_DEC_2025)                # the first read still loads
+        with self.assertRaises(ValueError):                                       # a window no one approved
+            wb.read(july)
 
     def test_prepare_keeps_the_window_and_parses_as_the_poller(self):
         parsed, stats = wb.prepare(IN_WINDOW + OUTSIDE)

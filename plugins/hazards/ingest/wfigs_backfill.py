@@ -5,7 +5,9 @@ The perimeter poller (nifc_wfigs_perimeters) started on Oct 7, 2026, and its fir
 2026. A fire from the second half of 2025 is in raw.record only if its record changed in 2026, but the burn scars
 (burn_scars.py) draw every fire after the ground's photo, last flown on Jul 24, 2025. The owner approved one small
 read of the same service for Aug-Dec 2025. This is that read, in two steps, so that one read can be loaded into more
-than one database (the scratch copy now, production at deploy) without asking NIFC twice:
+than one database (the scratch copy now, production at deploy) without asking NIFC twice. **The read was made on
+Oct 11, 2026 at 12:02 UTC** and is kept on the server (plugins/hazards/README.md, "The 2025 backfill"); every
+database loads that folder with `--load`, and `--fetch` refuses to read the window again (see WINDOWS).
 
 1. `--fetch --one-off --out DIR`: one count, then one read of the all-years perimeter service (a few more by ID
    only if the answer is cut at the server's page size): every perimeter touching the ring whose fire was
@@ -14,8 +16,11 @@ than one database (the scratch copy now, production at deploy) without asking NI
    (services3.arcgis.com answers 403, so no rules), our User-Agent, and at least 2 s between requests. Over CAP
    features it stops before reading them (the read is meant to be small). It writes DIR/<UTC time>/features.json
    (the features as the service sent them) and provenance.json (what was asked, where, when, by whom, under which
-   approval, what came back, and the file's sha256). It touches no database.
-2. `--load DIR/<UTC time>`: checks features.json against its provenance, keeps the window's features (in case
+   approval, how many requests including robots.txt, what came back, and the file's sha256). It touches no
+   database. It refuses a window whose read is already made (recorded in WINDOWS, or a provenance.json for it under
+   DIR) unless --read-again, which needs the owner's OK for a second read.
+2. `--load DIR/<UTC time>`: checks features.json against its provenance and the provenance's window against the
+   approved windows (so a window added later never strands an earlier read), keeps the window's features (in case
    the server ignored the filter), parses them exactly as the poller does (nifc_wfigs_perimeters.parse), and stores
    each fire's perimeter as a nifc_wfigs_perimeters version in raw.record. A version already held is left as it
    is. The read is logged once per database as a fetch of the one-off source nifc_wfigs_perimeters_backfill, with
@@ -24,13 +29,13 @@ than one database (the scratch copy now, production at deploy) without asking NI
    No lifecycles (evt.event): these fires are long out, and the poller keeps a fire first seen already out in
    raw.record only.
 
-The window is the approval's, fixed here rather than an option. A fire discovered from Jul 25 to Jul 31, 2025 is
-after the photo but outside the approved window: it's drawn only if the poller holds it (the RANGE fire, Jul 31,
-is held).
+The windows are the approvals', fixed here rather than options (WINDOWS). A fire discovered from Jul 25 to Jul 31,
+2025 is after the photo but outside the approved window: it's drawn only if the poller holds it (the RANGE fire,
+Jul 31, is held). If the owner approves that week too, it's a second window added to WINDOWS beside the first, read
+once with `--fetch --window 2025-07-25..2025-07-31`, and each read loads on its own.
 
-    python3 -m ingest wfigs-backfill --fetch --one-off --out /srv/out
-    python3 -m ingest wfigs-backfill --load /srv/out/20261011T1300Z --dry-run
-    python3 -m ingest wfigs-backfill --load /srv/out/20261011T1300Z
+    python3 -m ingest wfigs-backfill --load /srv/sources/nifc-wfigs-backfill/20261011T1202Z --dry-run
+    python3 -m ingest wfigs-backfill --load /srv/sources/nifc-wfigs-backfill/20261011T1202Z
 
 Standard library plus psycopg.
 """
@@ -41,6 +46,7 @@ import json
 import os
 import sys
 import urllib.parse
+from collections import namedtuple
 from datetime import date, datetime, timezone
 from zoneinfo import ZoneInfo
 
@@ -49,54 +55,87 @@ from . import common
 from .sources import nifc_wfigs_perimeters as perimeters
 
 BOISE = ZoneInfo("America/Boise")
-FIRST_DAY, LAST_DAY = date(2025, 8, 1), date(2025, 12, 31)     # the approved window, Boise days, both included
-CAP = 400                         # the most features the read may bring
+CAP = 400                         # the most features a read may bring
 FEATURES, PROVENANCE = "features.json", "provenance.json"
 APPROVAL = ("owner, Oct 8, 2026: landscape sprint decision 25 ('one small backfill read of the same fire service "
             "for Aug-Dec 2025'); go-ahead to build, Oct 10")
 
+# The approved windows, Boise days, both included, each with its approval and, once made, when its one read was made
+# (UTC). A read is checked against the window its own provenance records, so a window approved later is added here
+# beside the others, never in place of one.
+Window = namedtuple("Window", "first_day last_day approval read_at")
+WINDOWS = [
+    Window(date(2025, 8, 1), date(2025, 12, 31), APPROVAL, "2026-10-11T12:02:07Z"),
+]
+AUG_DEC_2025 = WINDOWS[0]
+
 SOURCE = {
     "name": "nifc_wfigs_perimeters_backfill",
-    "title": "NIFC WFIGS interagency fire perimeters: the one backfill read of Aug-Dec 2025",
+    "title": "NIFC WFIGS interagency fire perimeters: the approved backfill read of Aug-Dec 2025",
     "url": perimeters.LAYER,
     "access": "one_off",
     "license": perimeters.SOURCE["license"],
     "credit": perimeters.SOURCE["credit"],
     "notes": "One read of the all-years perimeter service for fires discovered Aug 1 - Dec 31, 2025 (Boise), "
-             f"approved by the owner ({APPROVAL}). Its records are stored as nifc_wfigs_perimeters versions; each "
-             "version it added points (first_fetch) at this source's fetch row. "
-             "plugins/hazards/ingest/wfigs_backfill.py.",
+             f"approved by the owner ({APPROVAL}), made on Oct 11, 2026. Its records are stored as "
+             "nifc_wfigs_perimeters versions; each version it added points (first_fetch) at this source's fetch "
+             "row. plugins/hazards/ingest/wfigs_backfill.py.",
 }
 
 
 # --- the window ------------------------------------------------------------------------------------
 
-def bounds():
+def window_name(window):
+    return f"{window.first_day.isoformat()}..{window.last_day.isoformat()}"
+
+
+def find_window(first_day, last_day):
+    """The approved window with these days (ISO strings or dates), or None."""
+    days = (str(first_day), str(last_day))
+    return next((w for w in WINDOWS if (w.first_day.isoformat(), w.last_day.isoformat()) == days), None)
+
+
+def bounds(window=AUG_DEC_2025):
     """The window as UTC datetimes: (start, end), the end excluded."""
-    start = datetime.combine(FIRST_DAY, datetime.min.time(), tzinfo=BOISE)
-    end = datetime.combine(date.fromordinal(LAST_DAY.toordinal() + 1), datetime.min.time(), tzinfo=BOISE)
+    start = datetime.combine(window.first_day, datetime.min.time(), tzinfo=BOISE)
+    end = datetime.combine(date.fromordinal(window.last_day.toordinal() + 1), datetime.min.time(), tzinfo=BOISE)
     return start.astimezone(timezone.utc), end.astimezone(timezone.utc)
 
 
-def where():
+def where(window=AUG_DEC_2025):
     """The service filter: discovered in the window, or with no discovery time, a polygon from the window.
     Absolute UTC times (NIFC asks for no relative dates)."""
-    start, end = (f"TIMESTAMP '{t:%Y-%m-%d %H:%M:%S}'" for t in bounds())
+    start, end = (f"TIMESTAMP '{t:%Y-%m-%d %H:%M:%S}'" for t in bounds(window))
     return (f"(attr_FireDiscoveryDateTime >= {start} AND attr_FireDiscoveryDateTime < {end}) OR "
             f"(attr_FireDiscoveryDateTime IS NULL AND poly_PolygonDateTime >= {start} AND poly_PolygonDateTime < {end})")
 
 
-def in_window(attrs):
+def in_window(attrs, window=AUG_DEC_2025):
     """Whether a feature's attributes (or a parsed payload) fall in the window, as where() asks."""
-    start, end = bounds()
+    start, end = bounds(window)
     t = arcgis.esri_date(attrs.get("attr_FireDiscoveryDateTime"))
     if t is None:
         t = arcgis.esri_date(attrs.get("poly_PolygonDateTime"))
     return t is not None and start <= t < end
 
 
-def count_url():
-    q = {"where": where(), "returnCountOnly": "true", "f": "json",
+def reads_in(out_dir, window):
+    """The read folders under out_dir whose provenance is for this window."""
+    found = []
+    for name in sorted(os.listdir(out_dir)) if os.path.isdir(out_dir) else []:
+        path = os.path.join(out_dir, name, PROVENANCE)
+        try:
+            with open(path, encoding="utf-8") as f:
+                w = json.load(f).get("window") or {}
+        except (OSError, ValueError):
+            continue
+        if (w.get("first_day"), w.get("last_day")) == (window.first_day.isoformat(), window.last_day.isoformat()):
+            found.append(os.path.dirname(path))
+    return found
+
+
+def count_url(window=AUG_DEC_2025):
+    q = {"where": where(window), "returnCountOnly": "true", "f": "json",
          "geometry": ",".join(str(v) for v in common.RING), "geometryType": "esriGeometryEnvelope",
          "inSR": "4326", "spatialRel": "esriSpatialRelIntersects"}
     return perimeters.LAYER + "/query?" + urllib.parse.urlencode(q)
@@ -108,8 +147,15 @@ def stamp(t):
     return t.astimezone(timezone.utc).strftime("%Y%m%dT%H%MZ")
 
 
-def fetch(out_dir, get=None, sleep=None, now=None, cap=CAP):
-    """The one read. Writes out_dir/<UTC time>/{features.json, provenance.json}; returns that folder."""
+def _robots_held(url):
+    """Whether ingest/http.py holds robots.txt for url's host (it reads it once a process, before the first request)."""
+    parts = urllib.parse.urlsplit(url)
+    return f"{parts.scheme}://{parts.netloc}" in http._robots
+
+
+def fetch(out_dir, get=None, sleep=None, now=None, cap=CAP, window=AUG_DEC_2025):
+    """A window's one read. Writes out_dir/<UTC time>/{features.json, provenance.json}; returns that folder.
+    (main() refuses a window already read; this doesn't check.)"""
     label = SOURCE["name"]
     calls = []
 
@@ -119,16 +165,18 @@ def fetch(out_dir, get=None, sleep=None, now=None, cap=CAP):
 
     kw = {} if sleep is None else {"sleep": sleep}
     started = now or datetime.now(timezone.utc)
-    _, _, decision, data = arcgis.get_with_retries(count_url(), label, counted, parse=json.loads, **kw)
+    robots_before = get is not None or _robots_held(perimeters.LAYER)
+    _, _, decision, data = arcgis.get_with_retries(count_url(window), label, counted, parse=json.loads, **kw)
     if "error" in data or not isinstance(data.get("count"), int):
         raise RuntimeError(f"{label}: the count came back without a count: {str(data)[:200]}")
     if data["count"] > cap:
         raise RuntimeError(f"{label}: the service counts {data['count']} perimeters in the window, over the cap of "
                            f"{cap}; nothing read (the approval is for a small read)")
     features, nbytes, status, decision = common.query_layer(
-        perimeters.LAYER, label, where=where(), box=common.RING, geometry=True, precision=perimeters.PRECISION,
+        perimeters.LAYER, label, where=where(window), box=common.RING, geometry=True, precision=perimeters.PRECISION,
         page_by_id=True, get=counted, **kw)
     finished = datetime.now(timezone.utc) if now is None else now
+    robots_requests = 0 if robots_before or not _robots_held(perimeters.LAYER) else 1
     if len(features) > cap:
         raise RuntimeError(f"{label}: {len(features)} features came back, over the cap of {cap}; nothing kept")
     folder = os.path.join(out_dir, stamp(started))
@@ -136,20 +184,21 @@ def fetch(out_dir, get=None, sleep=None, now=None, cap=CAP):
     body = json.dumps(features, separators=(",", ":"), sort_keys=True).encode()
     with open(os.path.join(folder, FEATURES), "wb") as f:
         f.write(body)
-    start, end = bounds()
+    start, end = bounds(window)
     provenance = {
-        "what": "NIFC WFIGS interagency fire perimeters: the backfill read of Aug-Dec 2025 (wfigs_backfill.py)",
-        "approval": APPROVAL,
+        "what": f"NIFC WFIGS interagency fire perimeters: the backfill read of {window_name(window)} (wfigs_backfill.py)",
+        "approval": window.approval,
         "service": perimeters.LAYER,
-        "where": where(),
-        "window": {"first_day": FIRST_DAY.isoformat(), "last_day": LAST_DAY.isoformat(), "time_zone": "America/Boise",
-                   "utc": [common.iso(start), common.iso(end)]},
+        "where": where(window),
+        "window": {"first_day": window.first_day.isoformat(), "last_day": window.last_day.isoformat(),
+                   "time_zone": "America/Boise", "utc": [common.iso(start), common.iso(end)]},
         "box": list(common.RING),
         "precision": perimeters.PRECISION,
         "user_agent": USER_AGENT,
         "robots": decision,
         "http_status": status,
-        "requests": len(calls),
+        "requests": len(calls) + robots_requests,     # to the service's host, robots.txt included
+        "robots_txt_requests": robots_requests,
         "started_at": common.iso(started),
         "finished_at": common.iso(finished),
         "count": data["count"],
@@ -169,24 +218,29 @@ def fetch(out_dir, get=None, sleep=None, now=None, cap=CAP):
 # --- step 2: the load -------------------------------------------------------------------------------
 
 def read(folder):
-    """(provenance, features) from a read's folder, the file checked against its sha256."""
+    """(provenance, features, window) from a read's folder: the file checked against its sha256, and the read
+    against the approved window its provenance names (its filter must be that window's)."""
     with open(os.path.join(folder, PROVENANCE), encoding="utf-8") as f:
         provenance = json.load(f)
     with open(os.path.join(folder, provenance.get("file") or FEATURES), "rb") as f:
         body = f.read()
     if hashlib.sha256(body).hexdigest() != provenance.get("sha256"):
         raise ValueError(f"{folder}: {FEATURES} doesn't match the sha256 in {PROVENANCE}")
-    if provenance.get("service") != perimeters.LAYER or provenance.get("where") != where():
+    w = provenance.get("window") or {}
+    window = find_window(w.get("first_day"), w.get("last_day"))
+    if window is None:
+        raise ValueError(f"{folder}: its window ({w.get('first_day')} to {w.get('last_day')}) isn't an approved one")
+    if provenance.get("service") != perimeters.LAYER or provenance.get("where") != where(window):
         raise ValueError(f"{folder}: not this backfill's read (service or filter differ)")
     features = json.loads(body)
     if not isinstance(features, list):
         raise ValueError(f"{folder}: {FEATURES} isn't a list of features")
-    return provenance, features
+    return provenance, features, window
 
 
-def prepare(features):
+def prepare(features, window=AUG_DEC_2025):
     """The poller's parse of the window's features -> ({source_id: (payload, geometry)}, stats)."""
-    kept = [f for f in features if in_window((f or {}).get("attributes") or {})]
+    kept = [f for f in features if in_window((f or {}).get("attributes") or {}, window)]
     parsed, duplicates = perimeters.parse(kept)
     return parsed, {"features": len(features), "outside the window": len(features) - len(kept),
                     "fires": len(parsed), "duplicates": duplicates}
@@ -226,33 +280,60 @@ def store(conn, provenance, parsed, source=perimeters.SOURCE["name"]):
 
 
 def load(conn, folder, source=perimeters.SOURCE["name"]):
-    provenance, features = read(folder)
-    parsed, stats = prepare(features)
+    provenance, features, window = read(folder)
+    parsed, stats = prepare(features, window)
+    stats = {"window": window_name(window), **stats}
     stats.update(store(conn, provenance, parsed, source))
     return stats
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(prog="python3 -m ingest wfigs-backfill",
-                                 description="The approved one read of NIFC's fire perimeters for Aug-Dec 2025, and "
-                                             "its load into raw.record.")
+    ap = argparse.ArgumentParser(
+        prog="python3 -m ingest wfigs-backfill",
+        description="The approved backfill read of NIFC's fire perimeters for Aug-Dec 2025, and its load into "
+                    "raw.record. The read was made on Oct 11, 2026 and is kept on the server: load that folder "
+                    "(--load); don't read again.")
     step = ap.add_mutually_exclusive_group(required=True)
-    step.add_argument("--fetch", action="store_true", help="read the service once (needs --one-off and --out)")
+    step.add_argument("--fetch", action="store_true",
+                      help="read the service once for an approved window not yet read (needs --one-off and --out; "
+                           "the Aug-Dec 2025 read is done)")
     step.add_argument("--load", metavar="DIR", help="load a read's folder (DIR/<UTC time>) into raw.record")
     ap.add_argument("--one-off", action="store_true",
                     help="confirm this is the one approved read, run by hand (required with --fetch)")
     ap.add_argument("--out", metavar="DIR", help="where --fetch writes its folder")
+    ap.add_argument("--window", metavar="FIRST..LAST", help="with --fetch: the approved window to read "
+                    f"(default: the only one; approved: {', '.join(window_name(w) for w in WINDOWS)})")
+    ap.add_argument("--read-again", action="store_true",
+                    help="with --fetch: read a window whose read is already made (only with the owner's OK)")
     ap.add_argument("--dry-run", action="store_true", help="with --load: check and report, then roll back")
     args = ap.parse_args(argv)
     if args.fetch:
+        if args.dry_run:
+            ap.error("--dry-run is for --load; --fetch has no dry run (it reads NIFC's service)")
         if not args.one_off:
             ap.error("--fetch reads NIFC's service: pass --one-off to confirm it's the one approved read")
         if not args.out:
             ap.error("--fetch needs --out DIR")
-        folder, p = fetch(args.out)
-        print(f"wfigs-backfill: {p['features']} features ({p['count']} counted) in {p['requests']} requests, "
-              f"{p['bytes_read']} bytes, robots {p['robots']}: {folder}", flush=True)
+        if args.window:
+            first, _, last = args.window.partition("..")
+            window = find_window(first, last)
+            if window is None:
+                ap.error(f"--window {args.window} isn't an approved window")
+        elif len(WINDOWS) == 1:
+            window = WINDOWS[0]
+        else:
+            ap.error("--fetch needs --window: " + ", ".join(window_name(w) for w in WINDOWS))
+        done = ([f"made at {window.read_at}"] if window.read_at else []) + reads_in(args.out, window)
+        if done and not args.read_again:
+            ap.error(f"the approved read of {window_name(window)} is already made ({'; '.join(done)}): load the kept "
+                     "folder with --load. A second read needs the owner's OK (--read-again).")
+        folder, p = fetch(args.out, window=window)
+        print(f"wfigs-backfill: {p['features']} features ({p['count']} counted) in {p['requests']} requests "
+              f"({p['robots_txt_requests']} for robots.txt), {p['bytes_read']} bytes, robots {p['robots']}: {folder}",
+              flush=True)
         return 0
+    if args.one_off or args.out or args.window or args.read_again:
+        ap.error("--load takes a read's folder and --dry-run only")
     with db.connect() as conn:
         stats = load(conn, args.load)
         if args.dry_run:
