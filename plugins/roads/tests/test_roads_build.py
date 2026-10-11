@@ -8,7 +8,7 @@ laid out in metres east and north of a point in Ada County.
         python3 -m unittest plugins.roads.tests.test_roads_build
 
 The synthetic town (metres):
-- Main St (primary, lanes=4) runs west-east along y = 0 from x = -300 to 300. A signal at (0, 0), where 1st St
+- Main St (primary, lanes=4) runs west-east along y = 0 from x = -300 to 220, then with 6 lanes to 300. A signal at (0, 0), where 1st St
   (residential) crosses; a right-turn slip lane from (40, 0) to (0, 40) leaves an island at the corner.
 - A divided road (two one-way secondary carriageways, x = -160 northbound and x = -140 southbound) crosses Main:
   two nodes 20 m apart, one junction.
@@ -84,7 +84,9 @@ def town(conn):
     conn.execute("delete from core.taz")
     four = {"lanes": "4", "lanes:forward": "2", "lanes:backward": "2", "surface": "asphalt"}
     osm_way(conn, 1001, "primary", [(-300, 0), (-160, 0), (-140, 0), (-80, 0), (0, 0), (10, 0), (40, 0), (150, 0),
-                                    (300, 0)], four, name="Main St")
+                                    (220, 0)], four, name="Main St")
+    six = {"lanes": "6", "lanes:forward": "3", "lanes:backward": "3", "surface": "asphalt"}
+    osm_way(conn, 1008, "primary", [(220, 0), (300, 0)], six, name="Main St")
     osm_way(conn, 1002, "secondary", [(-140, 200), (-140, 0), (-140, -200)], {"lanes": "2", "oneway": "yes"},
             "yes", "Eagle Rd")
     osm_way(conn, 1003, "secondary", [(-160, -200), (-160, 0), (-160, 200)], {"lanes": "2", "oneway": "yes"},
@@ -192,6 +194,15 @@ class BuildTest(unittest.TestCase):
         self.assertEqual(self.q("select seq from roads.piece where osm_id = 1001 and road_segment_id is not null"),
                          [(3,)])
         self.assertTrue(self.one("select seg_same_way from roads.piece where osm_id = 1001 and seq = 3")[0])
+
+    def test_a_lane_added_tapers_over_30_m(self):
+        paved = lambda x, y: self.one(f"select bool_or(ST_Intersects(geom, {self.at(x, y)})) from roads.surface "  # noqa
+                                      "where kind = 'carriageway'")[0]
+        # Six lanes are 11.6 m a side, four 7.9: 5 m past the change the wider pavement isn't there yet, 40 m on it is.
+        self.assertFalse(paved(225, 10.5))
+        self.assertTrue(paved(225, 7.5))
+        self.assertTrue(paved(260, 10.5))
+        self.assertEqual(self.stats["surfaces"]["tapers"], 1)
 
     def test_the_divided_roads_crossing_is_one_junction(self):
         j = self.one(f"""select kind, nodes from roads.junction

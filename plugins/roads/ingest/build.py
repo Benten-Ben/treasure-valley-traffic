@@ -17,7 +17,8 @@ build run (ingest/builds.py: it clears roads-build's marks and marks roads-expor
    road's crossing is one junction) and round roundabouts; each gets a curb-return radius by the classes that meet.
 5. **Surfaces.** Each piece's carriageway (single-sided buffers, flat ends, mitred joins), a disc where two pieces
    meet at an angle, a curbed median strip where HPMS has one; bridges' carriageways are decks (drawn flat with a
-   dark edge in v1: no 3D decks). Tunnels get none.
+   dark edge in v1: no 3D decks). Tunnels get none. Where the lane count changes between two pieces (both from a
+   source), the wider tapers to the narrower over 30 m.
 6. **Islands.** The road graph's enclosed faces (its centrelines polygonized) that are small (channelizing
    islands) or thin (medians, separators), less the carriageways, and roundabouts' centres.
 7. **Closings.** In each junction's disc, its carriageways closed (buffered out by the radius and back in), less
@@ -69,6 +70,8 @@ THIN_M = 15.0                      # a face this thin (2 x area / perimeter) is 
 ISLAND_MIN_M2 = 3.0
 FILL_MIN_M2 = 0.5
 CROSSWALK_DEPTH_M = 3.0            # ⚠️ ten feet
+CROSSWALK_SKEW_DEG = 35.0          # a crossing way more askew to the road than this is drawn square to it instead
+TAPER_M = 30.0                     # a width change where the lane count changes, at most half the wider piece
 CROSSWALK_CLEAR_M = 1.0            # lines stop this far from a crosswalk
 JUNCTION_CLEAR_M = 1.0             # and this far beyond a junction's curb returns
 STOP_BAR_GAP_M = 1.2               # a stop bar this far before a crosswalk
@@ -658,12 +661,60 @@ where not ST_IsEmpty(m.g)
 """.format(z15=z15("m.g"))
 
 
+# Tapers: where two pieces meet end to end and their lane counts differ (both from a source: OpenStreetMap maps a
+# lane added or dropped there), the wider one narrows to the other over its first TAPER_M (at most half its
+# length) instead of stepping. Never a bay of our own: only where the counts change.
+_TAPERS = """
+with ends as (
+  select p.id, p.from_node as node, p.geom as g, p.length_m, p.bridge from roads.piece p where not p.tunnel
+  union all
+  select p.id, p.to_node, ST_Reverse(p.geom), p.length_m, p.bridge from roads.piece p where not p.tunnel
+), pair as (
+  select e1.node, e1.id as wide, e2.id as narrow, e1.g, e1.length_m
+  from ends e1 join ends e2 on e2.node = e1.node and e2.id <> e1.id
+  join rb_node n on n.id = e1.node and n.degree = 2
+  join roads.xsection x1 on x1.piece_id = e1.id join roads.xsection x2 on x2.piece_id = e2.id
+  where e1.bridge = e2.bridge and x1.lanes_source <> 'default' and x2.lanes_source <> 'default'
+    and x1.lanes_fwd + x1.lanes_bwd + x1.centre_turn::int <> x2.lanes_fwd + x2.lanes_bwd + x2.centre_turn::int
+    and x1.total_w_m >= x2.total_w_m + 0.5
+    and %(at_start)s = (e1.g = (select geom from roads.piece where id = e1.id))
+), t as (
+  select pr.wide, n.geom as at, pr.g, least(%(taper)s, 0.5 * pr.length_m) / pr.length_m as f,
+         (select (width_left_m + width_right_m) / 2 from roads.xsection where piece_id = pr.narrow) as hn,
+         (select (width_left_m + width_right_m) / 2 from roads.xsection where piece_id = pr.wide) as hw,
+         (select geom from roads.surface where piece_id = pr.wide and kind in ('carriageway', 'deck')) as ws
+  from pair pr join rb_node n on n.id = pr.node
+), k as (
+  -- the cross-sections: the narrow piece's width at the node, the wide one's where the taper ends
+  select t.*, ST_LineInterpolatePoint(t.g, t.f) as m,
+         ST_Azimuth(t.at, ST_LineInterpolatePoint(t.g, least(1, 2 / ST_Length(t.g)))) as a0,
+         ST_Azimuth(ST_LineInterpolatePoint(t.g, greatest(0, t.f - 2 / ST_Length(t.g))),
+                    ST_LineInterpolatePoint(t.g, least(1, t.f + 2 / ST_Length(t.g)))) as a1
+  from t where t.ws is not null
+), h as (
+  select k.wide,
+         ST_Union(ST_Difference(k.ws, ST_Buffer(ST_LineSubstring(k.g, 0, k.f), 2 * k.hw, 'endcap=flat join=mitre')),
+                  ST_ConvexHull(ST_Collect(array[
+                    ST_Translate(k.at, k.hn * cos(k.a0), -k.hn * sin(k.a0)),
+                    ST_Translate(k.at, -k.hn * cos(k.a0), k.hn * sin(k.a0)),
+                    ST_Translate(k.m, k.hw * cos(k.a1), -k.hw * sin(k.a1)),
+                    ST_Translate(k.m, -k.hw * cos(k.a1), k.hw * sin(k.a1))]))) as g
+  from k
+)
+update roads.surface s
+set geom = ST_Multi(ST_CollectionExtract(ST_MakeValid(h.g), 3)),
+    geom_z15 = {z15}
+from h where s.piece_id = h.wide and s.kind in ('carriageway', 'deck') and not ST_IsEmpty(h.g)
+""".format(z15=z15("ST_Multi(ST_CollectionExtract(ST_MakeValid(h.g), 3))"))
+
+
 def surfaces(conn):
     run_sql(conn, _JOINTS)
     conn.execute(_CARRIAGEWAYS)
     conn.execute(_MEDIANS)
     conn.execute("analyze roads.surface")
-    return dict(conn.execute("select kind, count(*) from roads.surface group by 1").fetchall())
+    tapers = sum(conn.execute(_TAPERS, {"at_start": first, "taper": TAPER_M}).rowcount for first in (True, False))
+    return dict(conn.execute("select kind, count(*) from roads.surface group by 1").fetchall()) | {"tapers": tapers}
 
 
 # ---- 6. islands ------------------------------------------------------------------------------------
@@ -796,7 +847,7 @@ from (
 _ISLAND_SURFACES = """
 insert into roads.surface (id, kind, junction_id, material, tier, layer, geom, geom_z15)
 select (select coalesce(max(id), 0) from roads.surface) + row_number() over (order by i.id),
-       'island', j.id, 'concrete', 'estimated', 0, ST_Multi(i.g), {z15}
+       'island', j.id, 'unknown', 'estimated', 0, ST_Multi(i.g), {z15}
 from rb_island i
 cross join lateral (select rj.id from rb_junc rj where rj.geom && i.g and ST_Intersects(rj.geom, i.g)
                     order by ST_Distance(rj.geom, ST_PointOnSurface(i.g)) limit 1) j
@@ -923,18 +974,24 @@ with n as (
   order by n.osm_id, ST_Distance(p.geom, n.g), p.id
 ), dir as (
   select o.*,
-         coalesce(
-           (select ST_Azimuth(ST_StartPoint(c.g), ST_EndPoint(c.g))
-            from (select ST_Transform(v.geom, %(srid)s) as g from roads.osm_paving v
-                  where v.osm_id = any(o.ways) and v.active and v.kind = 'crossing') c
-            where ST_Length(c.g) > 1
-            order by ST_Distance(c.g, o.g) limit 1),
-           ST_Azimuth(ST_LineInterpolatePoint(o.pg, greatest(0, ST_LineLocatePoint(o.pg, o.g) - 1 / ST_Length(o.pg))),
-                      ST_LineInterpolatePoint(o.pg, least(1, ST_LineLocatePoint(o.pg, o.g) + 1 / ST_Length(o.pg))))
-             + pi() / 2) as az
+         ST_Azimuth(ST_LineInterpolatePoint(o.pg, greatest(0, ST_LineLocatePoint(o.pg, o.g) - 1 / ST_Length(o.pg))),
+                    ST_LineInterpolatePoint(o.pg, least(1, ST_LineLocatePoint(o.pg, o.g) + 1 / ST_Length(o.pg))))
+           as road_az,
+         (select ST_Azimuth(ST_LineInterpolatePoint(c.g, greatest(0, ST_LineLocatePoint(c.g, o.g) - 2 / ST_Length(c.g))),
+                            ST_LineInterpolatePoint(c.g, least(1, ST_LineLocatePoint(c.g, o.g) + 2 / ST_Length(c.g))))
+          from (select ST_Transform(v.geom, %(srid)s) as g from roads.osm_paving v
+                where v.osm_id = any(o.ways) and v.active and v.kind = 'crossing') c
+          where ST_Length(c.g) > 1
+          order by ST_Distance(c.g, o.g) limit 1) as way_az
   from on_piece o
 ), r as (
-  select d.*, greatest(d.total_w_m * 2.5, 12) as len from dir d
+  -- Along the crossing way where it crosses the road within CROSSWALK_SKEW_DEG of square, else square; as long as
+  -- the road is wide that way, and 2 m more.
+  select d.*, a.az, least(d.total_w_m / greatest(abs(sin(a.az - d.road_az)), 0.5) + 2, 2 * d.total_w_m + 2) as len
+  from dir d
+  cross join lateral (select case when d.way_az is not null
+                                   and abs(sin(d.way_az - d.road_az)) >= cos(radians(%(skew)s))
+                              then d.way_az else d.road_az + pi() / 2 end as az) a
 )
 select r.osm_id, r.piece_id, r.layer,
        ST_Buffer(ST_MakeLine(ST_Translate(r.g, -sin(r.az) * r.len / 2, -cos(r.az) * r.len / 2),
@@ -962,7 +1019,7 @@ where c.cw is not null and ST_Area(c.cw) >= 1
 
 
 def crosswalks(conn):
-    conn.execute(_CROSSWALKS, {"srid": SRID, "half": CROSSWALK_DEPTH_M / 2})
+    conn.execute(_CROSSWALKS, {"srid": SRID, "half": CROSSWALK_DEPTH_M / 2, "skew": CROSSWALK_SKEW_DEG})
     conn.execute(_CROSSWALK_ROWS)
     n, nodes = conn.execute("select (select count(*) from roads.marking where kind = 'crosswalk'), "
                             "(select count(*) from rb_xwalk)").fetchone()

@@ -362,12 +362,18 @@ county a piece is in) and developed land (the CDL, `roads.developed_land`).
    at an angle; a curbed or barrier median strip where HPMS has one on a
    single way; **bridges are decks** (`kind` 'deck', with their `layer`),
    drawn flat with a dark edge in v1: no 3D decks. Tunnels get none.
+   **Tapers:** where two pieces meet end to end and their lane counts differ
+   (both from a source: a lane added or dropped is mapped there), the wider
+   narrows to the other over its first 30 m (at most half its length)
+   instead of stepping. A bay is never given a length of our own.
 6. **Islands:** the road graph's enclosed faces (its at-grade centrelines
    polygonized) that are small (under 2,000 m²: channelizing islands, tiny
    blocks), thin (twice the area over the perimeter under 15 m: medians,
    frontage-road separators) or a roundabout's centre, less the carriageways
-   over them. Small ones and roundabout centres near a junction are stored
-   (`kind` 'island'); thin ones only keep the closings out. `area:highway`
+   over them. Small ones (and the medians between a divided road's crossings,
+   when they're that small) and roundabout centres near a junction are stored
+   (`kind` 'island', material `unknown`: grass, concrete or planted, the map
+   doesn't know); thin longer ones only keep the closings out. `area:highway`
    islands aren't loaded by any consumer (it would be a new tag set: an
    owner item), so islands come from the graph.
 7. **Closings (curb returns):** for each pair of arms side by side around a
@@ -386,8 +392,9 @@ county a piece is in) and developed land (the CDL, `roads.developed_land`).
    known and a soft edge where it's estimated (decision 10).
 9. **Crosswalks** at marked crossing nodes only (`roads.osm_walk_node` where
    `kind = 'crossing' and marked`; rail crossings are never marked, P8): 3 m
-   deep ⚠️, across the road along the crossing way's chord (else square to
-   the road), clipped to the surfaces.
+   deep ⚠️, across the road along the crossing way where it crosses (if
+   that's within 35° of square to the road; else square), as long as the
+   road is wide that way and 2 m more, clipped to the surfaces.
 10. **Markings**, where the cross-section says so (below): lane, centre,
     edge, two-way turn lane and bike-lane lines offset from the centreline;
     cut back from each junction by the length of the piece inside the other
