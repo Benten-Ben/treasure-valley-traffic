@@ -180,10 +180,14 @@ def rollup(report, t):
     had, made, failed = videos(os.path.dirname(heavy.STATUS_DIR), day)
     missing = had - made - failed
     counts = f"{made} of {had} camera-day videos made for {day.isoformat()}" + (f", {failed} failed" if failed else "")
+    tonight = heavy.NIGHT[0] <= t.time() < heavy.DAY[0]
+    finished, why = heavy.rollup_finished(t, statuses)
     if going:
         late = t.time() >= heavy.DAY[0]
         text = f"going ({', '.join(going)}): {counts}" + ("; it holds heavy jobs until it ends" if late else "")
         (report.look if late else report.ok)("roll-up", text)
+    elif tonight and not finished and had:
+        report.ok("roll-up", f"tonight's hasn't finished yet ({why}): {counts}")
     elif had == 0:
         report.look("roll-up", f"no camera JPEGs for {day.isoformat()} in the archive")
     elif missing or failed:

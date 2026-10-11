@@ -170,6 +170,17 @@ class TheVm(Base):
         code, out = self.run_status()
         self.assertIn("finished: 1 of 1 camera-day videos made for 2026-10-10", out)
 
+    def test_just_after_five_past_midnight_the_roll_up_is_only_due(self):
+        self.t = dt.datetime.fromisoformat("2026-10-12 00:07").replace(tzinfo=self.heavy.TZ)
+        self.heavy.OFFSET = self.t.timestamp() - time.time()
+        self.statuses(ages=(10, 200))                   # regional's last check was before 00:05
+        self.camera_day(652, "2026-10-11", video=False)
+        code, out = self.run_status()
+        self.assertEqual(code, 0, out)
+        self.assertIn("  roll-up:  tonight's hasn't finished yet (regional-cameras hasn't reported since its first "
+                      "roll-up check after 00:05", out)
+        self.assertIn("0 of 1 camera-day videos made for 2026-10-11", out)
+
     def test_usage(self):
         code, _ = self.run_status(["--bogus"])
         self.assertEqual(code, 2)
