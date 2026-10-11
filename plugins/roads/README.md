@@ -418,7 +418,7 @@ county a piece is in) and developed land (the CDL, `roads.developed_land`).
 | Time | 456-528 s, as a light job (2 GB, 2 CPUs, `tvt_build`): matching 90 s, cross-sections 35-90 s, closings 140 s, edges 85 s; a rebuild over the last build takes no longer. The build's container peaked at 0.56 GB; the database's at 1 GB (its cap is 2) |
 | Size | 192 MB with indexes, freshly built: `roads.surface` 74 MB, `roads.edge` 53, `roads.xsection` 25, `roads.piece` 25, `roads.marking` 9, `roads.junction` 6, the rest under 2. A rebuild deletes and writes every row, so up to about twice that until vacuumed |
 | Export | 164 MB of FlatGeobuf, about 15 s |
-| Bake | the export alone baked to 30.6 MB (21,475 tiles, z14-16) in 346 s at one CPU and under 1 GB (a light worker job); the largest z16 tile downtown is 20 KB, a third of the 60 KB budget |
+| Bake | the export alone baked to 31.4 MB (21,475 tiles, z14-16; 513,722 features) in 365 s at one CPU and under 1 GB (a light worker job); the largest z16 tile downtown is 20 KB (20,059 bytes), a third of the 60 KB budget |
 
 ### Cross-sections
 
