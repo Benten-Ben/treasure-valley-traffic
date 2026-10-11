@@ -6,11 +6,13 @@ DIR is what plugins/soils/build/prepare.py wrote (package.py describes it). Stan
     python3 -m ingest soils-load --from DIR --areas ID001,ID665 [--force] [--dry-run]
 
 Whole survey areas at a time, in one transaction: an area whose saverest (when NRCS established its version) is what
-the database already has is skipped unless --force; any other area's rows are replaced. For each area it loads the map
-units, components, horizons and polygons, then works out in PostGIS each polygon's area (on the ellipsoid) and area
-inside the box, its simplified geometry (geom_lo, 5 m in UTM 11N, for z12 and out) and its label point (the centre of
-the largest circle inside it), each map unit's area in the box and polygon count, and the ground types' counts and
-areas. Ground types no map unit uses any more are removed. The run is recorded in soils.build (its inputs' sha256 and
+the database already has is skipped unless --force; any other area's rows are replaced. For each area it loads its
+boundary, map units, components, horizons and polygons, then works out in PostGIS each polygon's area (on the
+ellipsoid) and area inside the box, its simplified geometry (geom_lo, 5 m in UTM 11N, for z12-13) and its label point
+(the centre of the largest circle inside it); each map unit's area in the box, polygon count and generalised geometry
+for the valley zooms (geom_z8 at 100 m, geom_z10 at 25 m, collapsed parts dropped); the boundary's simplified copy
+(20 m); and the ground types' counts, areas, fragment cover and dry albedo. A new ground type gets the next integer
+key (gid); a type already there keeps its own. Ground types no map unit uses any more are removed. The run is recorded in soils.build (its inputs' sha256 and
 its counts) and logged in ops.fetch under the source `ssurgo`, and it gives the Soils layer's tiles a new version
 (core.layer_version, 'soils.units') in the same transaction as its data.
 
@@ -27,7 +29,10 @@ from . import package
 from .sources import ssurgo
 
 TILE_LAYERS = ("soils.units",)       # the toggled layer whose tiles show these tables (/api/soils/tiles/units)
-SIMPLIFY_M = 5.0                     # geom_lo's tolerance, in metres (UTM 11N)
+SIMPLIFY_M = 5.0                     # soils.polygon.geom_lo's tolerance, in metres (UTM 11N): z12-13
+SIMPLIFY_Z8_M = 100.0                # soils.map_unit.geom_z8's: z8-9 (a pixel is about 110 m at z9, 512 px tiles)
+SIMPLIFY_Z10_M = 25.0                # soils.map_unit.geom_z10's: z10-11 (about 28 m at z11)
+SIMPLIFY_BOUNDS_M = 20.0             # soils.survey_area.geom_lo's: the survey bounds at z8-11
 BOX_STEP_DEG = 0.001                 # the box's edges are densified so they follow their parallels on the ellipsoid
 
 COPY_ROW_COLUMNS = ("id", "areasymbol", "mukey", "gj")
@@ -82,7 +87,15 @@ COMPONENT_COLUMNS = (
 HORIZON_COLUMNS = (
     "chkey", "cokey", "hzname", "top_cm", "bottom_cm", "texture", "texcl", "sand", "silt", "clay", "om", "ph", "caco3",
     "gypsum", "ec", "sar", "awc", "ksat", "kwfact", "frag_gt10", "frag_3to10")
-GROUND_TYPE_COLUMNS = ("id", "series", "texture", "texcl", "modifier", "misc")
+# Ground types (package.derive's id, series, texture, texcl, modifier, misc). A type already there keeps its row and
+# gid; only a new one takes the next gid. (An insert ... on conflict would draw a gid from the sequence for every type
+# on every load, and they are never given back.)
+UPSERT_GROUND_TYPE = """
+with up as (update soils.ground_type set series = %(series)s, texture = %(texture)s, texcl = %(texcl)s,
+                   modifier = %(modifier)s, misc = %(misc)s
+            where id = %(id)s returning 1)
+insert into soils.ground_type (id, series, texture, texcl, modifier, misc)
+select %(id)s, %(series)s, %(texture)s, %(texcl)s, %(modifier)s, %(misc)s where not exists (select 1 from up)"""
 
 
 def load(conn, pkg, areas=None, force=False, now=None):
@@ -97,7 +110,8 @@ def load(conn, pkg, areas=None, force=False, now=None):
     inputs = {name: info["sha256"] for name, info in sorted(pkg.meta["files"].items())}
     inputs.update({f"source:{k}": v for k, v in sorted((pkg.meta.get("inputs") or {}).items())})
     params = {"from": os.path.abspath(pkg.folder), "areas": todo, "force": force,
-              "prepared_at": pkg.meta.get("made_at"), "simplify_m": SIMPLIFY_M}
+              "prepared_at": pkg.meta.get("made_at"), "simplify_m": SIMPLIFY_M, "simplify_z8_m": SIMPLIFY_Z8_M,
+              "simplify_z10_m": SIMPLIFY_Z10_M, "simplify_bounds_m": SIMPLIFY_BOUNDS_M}
     box = package.BOX
 
     with conn.cursor() as cur:
@@ -106,16 +120,31 @@ def load(conn, pkg, areas=None, force=False, now=None):
                values (%s, 'load', %s, %s::jsonb, %s::jsonb, %s, 'yes', %s)""",
             (bid, now, json.dumps(params), json.dumps(inputs), ssurgo.SOURCE["license"], ssurgo.SOURCE["credit"]))
         cur.execute("delete from soils.survey_area where areasymbol = any(%s)", (todo,))     # cascades to its rows
+
+        # Survey areas, with their boundary pieces (soilsa_a) joined into one valid MultiPolygon each.
+        cur.execute("create temporary table if not exists soils_area_in (areasymbol text, gj text) on commit drop")
+        cur.execute("truncate soils_area_in")
+        with cur.copy("copy soils_area_in (areasymbol, gj) from stdin") as cp:
+            for area, gj in pkg.survey_areas(set(todo)):
+                cp.write_row((area, gj))
         cur.executemany(
-            """insert into soils.survey_area (areasymbol, areaname, saverest, saversion, scale, source_url, build_id)
-               values (%s, %s, %s, %s, %s, %s, %s)""",
+            """insert into soils.survey_area (areasymbol, areaname, saverest, saversion, scale, source_url, build_id,
+                                              geom)
+               select %s, %s, %s, %s, %s, %s, %s,
+                      ST_Multi(ST_CollectionExtract(ST_Union(
+                        ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON(gj), 4326))), 3))
+               from soils_area_in where areasymbol = %s having count(*) > 0""",
             [(a, pkg.areas[a]["areaname"], pkg.areas[a]["saverest"], pkg.areas[a].get("saversion"),
-              pkg.areas[a].get("scale"), pkg.areas[a].get("source_url"), bid) for a in todo])
-        cur.executemany(
-            f"""insert into soils.ground_type ({", ".join(GROUND_TYPE_COLUMNS)}) values ({", ".join(["%s"] * 6)})
-                on conflict (id) do update set series = excluded.series, texture = excluded.texture,
-                  texcl = excluded.texcl, modifier = excluded.modifier, misc = excluded.misc""",
-            [tuple(g[c] for c in GROUND_TYPE_COLUMNS) for g in d.ground_types.values()])
+              pkg.areas[a].get("scale"), pkg.areas[a].get("source_url"), bid, a) for a in todo])
+        have = {r[0] for r in cur.execute("select areasymbol from soils.survey_area where areasymbol = any(%s)",
+                                          (todo,))}
+        if missing_areas := sorted(set(todo) - have):
+            raise package.PackageError(f"{package.SURVEY_AREAS} has no boundary for {', '.join(missing_areas)}")
+        cur.execute(
+            """update soils.survey_area set geom_lo = ST_Multi(ST_CollectionExtract(ST_MakeValid(ST_Transform(
+                 ST_SimplifyPreserveTopology(ST_Transform(geom, 32611), %s), 4326)), 3))
+               where areasymbol = any(%s)""", (SIMPLIFY_BOUNDS_M, todo))
+        cur.executemany(UPSERT_GROUND_TYPE, list(d.ground_types.values()))
         _insert(cur, "soils.map_unit", d.map_units, MAP_UNIT_COLUMNS)
         _insert(cur, "soils.component", d.components, COMPONENT_COLUMNS, json_columns=("restrictions", "crop_yields"))
         _insert(cur, "soils.horizon", d.horizons, HORIZON_COLUMNS)
@@ -156,17 +185,38 @@ def load(conn, pkg, areas=None, force=False, now=None):
                                                   4326), ST_PointOnSurface(p.geom))
                from b where p.areasymbol = any(%s)""",
             (*box, BOX_STEP_DEG, SIMPLIFY_M, todo))
+        # Each map unit's polygons generalised for the valley zooms: each simplified and made valid, then joined
+        # into one MultiPolygon. ST_Simplify (not the topology-preserving kind) drops the parts that collapse, which
+        # are under a pixel there.
         cur.execute(
-            """update soils.map_unit m set area_in_box_ha = s.m2 / 1e4, n_polygons = s.n
-               from (select mukey, sum(area_in_box_m2) as m2, count(*) as n from soils.polygon
-                     where areasymbol = any(%s) group by mukey) s
-               where m.mukey = s.mukey""", (todo,))
+            """with p as (
+                 select mukey, area_in_box_m2,
+                        ST_CollectionExtract(ST_MakeValid(ST_Simplify(ST_Transform(geom, 32611), %s)), 3) as z8,
+                        ST_CollectionExtract(ST_MakeValid(ST_Simplify(ST_Transform(geom, 32611), %s)), 3) as z10
+                 from soils.polygon where areasymbol = any(%s)
+               ), s as (
+                 select mukey, sum(area_in_box_m2) as m2, count(*) as n,
+                        ST_UnaryUnion(ST_Collect(z8) filter (where not ST_IsEmpty(z8))) as z8,
+                        ST_UnaryUnion(ST_Collect(z10) filter (where not ST_IsEmpty(z10))) as z10
+                 from p group by mukey
+               )
+               update soils.map_unit m set area_in_box_ha = s.m2 / 1e4, n_polygons = s.n,
+                 geom_z8 = ST_Multi(ST_Transform(ST_CollectionExtract(s.z8, 3), 4326)),
+                 geom_z10 = ST_Multi(ST_Transform(ST_CollectionExtract(s.z10, 3), 4326))
+               from s where m.mukey = s.mukey""", (SIMPLIFY_Z8_M, SIMPLIFY_Z10_M, todo))
         cur.execute(
-            """update soils.ground_type g set n_mapunits = s.n, area_ha = s.ha, frag_cover_pct = s.frag
+            """update soils.map_unit set geom_z8 = case when not ST_IsEmpty(geom_z8) then geom_z8 end,
+                                         geom_z10 = case when not ST_IsEmpty(geom_z10) then geom_z10 end
+               where areasymbol = any(%s) and (ST_IsEmpty(geom_z8) or ST_IsEmpty(geom_z10))""", (todo,))
+        cur.execute(
+            """update soils.ground_type g set n_mapunits = s.n, area_ha = s.ha, frag_cover_pct = s.frag,
+                 albedo_dry = s.albedo
                from (select m.ground_type, count(*) as n, sum(m.area_in_box_ha) as ha,
                             sum(c.surf_frag_cover_pct * m.area_in_box_ha)
                               / nullif(sum(m.area_in_box_ha) filter (where c.surf_frag_cover_pct is not null), 0)
-                              as frag
+                              as frag,
+                            sum(c.albedodry_r * m.area_in_box_ha)
+                              / nullif(sum(m.area_in_box_ha) filter (where c.albedodry_r is not null), 0) as albedo
                      from soils.map_unit m left join soils.component c on c.cokey = m.dom_cokey
                      where m.ground_type is not null group by 1) s
                where g.id = s.ground_type""")
@@ -176,16 +226,22 @@ def load(conn, pkg, areas=None, force=False, now=None):
 
         counts = dict(zip(
             ("survey_areas", "map_units", "components", "horizons", "polygons", "ground_types",
-             "ground_types_ada_canyon", "area_in_box_ha", "empty_geom_lo"),
+             "ground_types_ada_canyon", "ground_types_misc", "area_in_box_ha", "area_not_surveyed_ha",
+             "empty_geom_lo", "map_units_without_z8"),
             cur.execute(
                 """select (select count(*) from soils.survey_area), (select count(*) from soils.map_unit),
                           (select count(*) from soils.component), (select count(*) from soils.horizon),
                           (select count(*) from soils.polygon), (select count(*) from soils.ground_type),
                           (select count(distinct ground_type) from soils.map_unit
                            where areasymbol in ('ID001', 'ID665')),
+                          (select count(*) from soils.ground_type where misc is not null),
                           (select round(sum(area_in_box_m2)::numeric / 1e4) from soils.polygon),
-                          (select count(*) from soils.polygon where geom_lo is null or ST_IsEmpty(geom_lo))""").fetchone()))
+                          (select coalesce(round(sum(m.area_in_box_ha)::numeric), 0) from soils.map_unit m
+                           join soils.ground_type g on g.id = m.ground_type where g.misc = 'nodata'),
+                          (select count(*) from soils.polygon where geom_lo is null or ST_IsEmpty(geom_lo)),
+                          (select count(*) from soils.map_unit where geom_z8 is null)""").fetchone()))
         counts["area_in_box_ha"] = float(counts["area_in_box_ha"] or 0)
+        counts["area_not_surveyed_ha"] = float(counts["area_not_surveyed_ha"] or 0)
         counts.update(loaded=todo, skipped=skipped, polygons_loaded=n, polygons_repaired=repaired,
                       ground_types_dropped=dropped)
         cur.execute("update soils.build set finished_at = clock_timestamp(), counts = %s::jsonb where build_id = %s",

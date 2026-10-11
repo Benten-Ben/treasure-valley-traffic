@@ -6,6 +6,8 @@ plugins/soils/build/prepare.py (the worker image, GDAL) turns the Web Soil Surve
                         source URL, counts), each output file's sha256 and rows, each input file's sha256
     polygons.geojsonl   one GeoJSON Feature per line: a map-unit polygon touching the map box, kept whole, in WGS 84
                         (EPSG:4326, 7 decimals), properties {id, areasymbol, fid, mukey, musym}; id = areasymbol:fid
+    survey_areas.geojsonl  one GeoJSON Feature per line: a piece of a survey area's boundary polygon (soilsa_a), whole,
+                        in WGS 84 (7 decimals), properties {areasymbol, fid}; an area may have several pieces
     tabular/<table>.csv the rows of each table below for the map units those polygons belong to, with a header row:
                         `areasymbol`, then the table's SSURGO columns (named as in its mdstattabcols)
 
@@ -22,9 +24,10 @@ import re
 from collections import defaultdict
 from datetime import datetime
 
-FORMAT = "tvt-soils-prepared/1"
+FORMAT = "tvt-soils-prepared/2"     # 2: survey_areas.geojsonl (Oct 11)
 BOX = (-117.05, 43.0, -115.95, 43.85)      # the map box (basemap/build.sh; /srv/tvt/tiles/manifest.json)
 POLYGONS = "polygons.geojsonl"
+SURVEY_AREAS = "survey_areas.geojsonl"
 MANIFEST = "prepare.json"
 
 # The SSURGO tables (2.3.3) a prepared package carries, and the columns the loader reads from each. prepare.py copies
@@ -69,6 +72,9 @@ AWS_BREAKS_CM = (5, 10, 15, 20)
 HSG = {"A": 0, "B": 1, "C": 2, "D": 3}
 MISC = (("water", "water"), ("urban", "urban"), ("rock outcrop", "rock"), ("badland", "badland"),
         ("rubble", "rubble"), ("pit", "pits"))
+# NRCS's symbol, and its only component's name, for a map unit with no survey data ("No Digital Data Available"): in
+# the box, 4,250 ha of Malheur's OR645. Not a soil: misc 'nodata', every code unrated.
+NOTCOM = "NOTCOM"
 
 
 class PackageError(ValueError):
@@ -113,16 +119,26 @@ def slug(s):
 
 
 def ground_type_id(series, texture):
-    """'purdam:silt-loam': the dominant component's name and its surface texture with modifier, as one key.
-    Miscellaneous areas have no texture: 'water', 'urban-land'."""
+    """'purdam:silt-loam': the dominant component's name and its surface texture with modifier, as one key. A soil
+    with no surface texture is its name alone ('xeric-torriorthents'), and so is every miscellaneous area, whatever
+    texture NRCS gives it (derive() passes none): 'water', 'rock-outcrop', 'pits', 'notcom'. Tell miscellaneous areas
+    apart by soils.ground_type.misc, never by the key's shape."""
     s, t = slug(series), slug(texture)
     if not s:
         return None
     return f"{s}:{t}" if t else s
 
 
+def is_notcom(*values):
+    """A map unit (or component) with no survey data: NRCS's NOTCOM ("No Digital Data Available")."""
+    return any((text(v) or "").upper() == NOTCOM for v in values)
+
+
 def misc_kind(compname, compkind):
-    """For a miscellaneous area (Water, Urban land, Rock outcrop, Badland, Rubble land, Pits, ...): its kind."""
+    """For a miscellaneous area (Water, Urban land, Rock outcrop, Badland, Rubble land, Pits, ...): its kind;
+    'nodata' for NOTCOM, which has no survey data; None for a soil."""
+    if is_notcom(compname):
+        return "nodata"
     if (text(compkind) or "").lower() != "miscellaneous area":
         return None
     name = (compname or "").lower()
@@ -233,6 +249,21 @@ class Package:
                     continue
                 yield p["id"], p["areasymbol"], str(p["mukey"]), json.dumps(geom, separators=(",", ":"))
 
+    def survey_areas(self, areas=None):
+        """(areasymbol, geometry as GeoJSON text) for each piece of the survey areas' boundary polygons."""
+        with open(self.path(SURVEY_AREAS), encoding="utf-8") as f:
+            for n, line in enumerate(f, 1):
+                if not line.strip():
+                    continue
+                feat = json.loads(line)
+                p = feat.get("properties") or {}
+                geom = feat.get("geometry") or {}
+                if geom.get("type") not in ("Polygon", "MultiPolygon"):
+                    raise PackageError(f"{SURVEY_AREAS} line {n}: a {geom.get('type')}, not a polygon")
+                if areas is not None and p.get("areasymbol") not in areas:
+                    continue
+                yield p["areasymbol"], json.dumps(geom, separators=(",", ":"))
+
 
 def read(folder, check=True):
     """Open a prepared folder. With check, every file listed in prepare.json must match its sha256, and every
@@ -243,11 +274,12 @@ def read(folder, check=True):
     except (OSError, ValueError) as err:
         raise PackageError(f"{folder}: no readable {MANIFEST} ({err}); run plugins/soils/build/prepare.py first")
     if meta.get("format") != FORMAT:
-        raise PackageError(f"{folder}: format {meta.get('format')!r}, expected {FORMAT!r}")
+        raise PackageError(f"{folder}: format {meta.get('format')!r}, expected {FORMAT!r} (run "
+                           "plugins/soils/build/prepare.py again)")
     if [round(x, 6) for x in meta.get("box", [])] != list(BOX):
         raise PackageError(f"{folder}: prepared for the box {meta.get('box')}, not {list(BOX)}")
     files = meta.get("files") or {}
-    needed = [POLYGONS] + [f"tabular/{t}.csv" for t in TABLES]
+    needed = [POLYGONS, SURVEY_AREAS] + [f"tabular/{t}.csv" for t in TABLES]
     if missing := [n for n in needed if n not in files]:
         raise PackageError(f"{folder}: prepare.json lists no {', '.join(missing)}")
     if not meta.get("areas"):
@@ -425,7 +457,9 @@ def derive(pkg, areas):
             "dom_cokey": dom["cokey"] if dom else None, "ground_type": None,
             "restr_kind": None, "restr_top_cm": None, "restr_hard": None, "c_restr": None, "pat": None,
         }
-        if dom:
+        # NOTCOM: no survey data. Its own ground type (misc 'nodata'), every code unrated.
+        nodata = is_notcom(mu["musym"]) or (dom is not None and is_notcom(dom["compname"]))
+        if dom and not nodata:
             rs = restrictions(res.get(dom["cokey"], []))
             if rs:
                 row.update(restr_kind=rs[0]["kind"], restr_top_cm=rs[0]["top_cm"], restr_hard=rs[0]["hard"])
@@ -436,14 +470,21 @@ def derive(pkg, areas):
                 top = limiting[0]["top_cm"] if limiting else None
                 row["c_restr"] = depth_code(top if top is not None and top < DEPTH_BREAKS_CM[-1] else None)
                 row["pat"] = restriction_class(limiting[0]["kind"]) if limiting and top < 50 else "none"
-            desc, cls, modifier = texture_of(surface(hz.get(dom["cokey"], [])))
-            series = text(dom["compname"])
+        if dom or nodata:
+            series = NOTCOM if nodata else text(dom["compname"])
+            misc = "nodata" if nodata else misc_kind(series, dom["compkind"])
+            # A miscellaneous area is one type whatever texture NRCS gives it (Pits, Badland, Rock outcrop, ...).
+            desc, cls, modifier = (None, None, None) if misc else texture_of(surface(hz.get(dom["cokey"], [])))
             gid = ground_type_id(series, desc)
             if gid:
                 row["ground_type"] = gid
                 if gid not in out.ground_types:
                     out.ground_types[gid] = {"id": gid, "series": series, "texture": desc, "texcl": cls,
-                                             "modifier": modifier, "misc": misc_kind(series, dom["compkind"])}
+                                             "modifier": modifier, "misc": misc}
+        if nodata:
+            out.map_units.append(dict(row, c_drain=None, c_aws=None, c_farm=None, farm_cond=None, c_hsg=None,
+                                      hsg_dual=None))
+            continue
         row["c_drain"] = drainage_code(row["drclassdcd"])
         row["c_aws"] = aws_code(row["aws0100wta"])
         row["c_farm"], row["farm_cond"] = farm_code(row["farmlndcl"])

@@ -4,6 +4,7 @@ Run: python3 -m unittest plugins.soils.tests.test_package
 """
 
 import contextlib
+import copy
 import io
 import json
 import os
@@ -39,11 +40,15 @@ class ReadTest(Prepared):
         pkg = package.read(self.dir)
         self.assertEqual(sorted(pkg.areas), ["ZZ001", "ZZ002"])
         self.assertEqual(pkg.areas["ZZ001"]["saverest"], "2026-08-31T21:54:36")
-        self.assertEqual([r["mukey"] for r in pkg.table("mapunit")], ["1001", "1002", "1003", "2001"])
+        self.assertEqual([r["mukey"] for r in pkg.table("mapunit")], ["1001", "1002", "1003", "2001", "2002", "2003"])
         polys = list(pkg.polygons())
-        self.assertEqual([p[0] for p in polys], ["ZZ001:0", "ZZ001:1", "ZZ001:2", "ZZ002:0"])
+        self.assertEqual([p[0] for p in polys], ["ZZ001:0", "ZZ001:1", "ZZ001:2", "ZZ002:0", "ZZ002:1", "ZZ002:2"])
         self.assertEqual(json.loads(polys[2][3])["type"], "MultiPolygon")
-        self.assertEqual([p[0] for p in pkg.polygons({"ZZ002"})], ["ZZ002:0"])
+        self.assertEqual([p[0] for p in pkg.polygons({"ZZ002"})], ["ZZ002:0", "ZZ002:1", "ZZ002:2"])
+        bounds = list(pkg.survey_areas())
+        self.assertEqual([b[0] for b in bounds], ["ZZ001", "ZZ002", "ZZ002"])           # ZZ002 in two pieces
+        self.assertEqual(json.loads(bounds[0][1])["type"], "MultiPolygon")
+        self.assertEqual([b[0] for b in pkg.survey_areas({"ZZ001"})], ["ZZ001"])
 
     def test_refuses_a_changed_file(self):
         with open(os.path.join(self.dir, "tabular", "component.csv"), "a", encoding="utf-8") as f:
@@ -55,8 +60,8 @@ class ReadTest(Prepared):
     def test_refuses_a_missing_column_another_box_or_format(self):
         meta_path = os.path.join(self.dir, package.MANIFEST)
         meta = read_json(meta_path)
-        for change, message in (({"format": "v0"}, "format"), ({"box": [-117, 43, -116, 44]}, "box"),
-                                ({"areas": []}, "no survey areas")):
+        for change, message in (({"format": "tvt-soils-prepared/1"}, "format.*prepare.py again"),
+                                ({"box": [-117, 43, -116, 44]}, "box"), ({"areas": []}, "no survey areas")):
             with self.subTest(message):
                 write_json(meta_path, dict(meta, **change))
                 with self.assertRaisesRegex(package.PackageError, message):
@@ -69,6 +74,14 @@ class ReadTest(Prepared):
         meta["files"]["tabular/chorizon.csv"]["sha256"] = package.sha256(path)
         write_json(meta_path, meta)
         with self.assertRaisesRegex(package.PackageError, "chorizon.csv: no column.*ph1to1h2o_r"):
+            package.read(self.dir)
+
+    def test_needs_the_survey_areas(self):
+        meta_path = os.path.join(self.dir, package.MANIFEST)
+        meta = read_json(meta_path)
+        del meta["files"][package.SURVEY_AREAS]
+        write_json(meta_path, meta)
+        with self.assertRaisesRegex(package.PackageError, "lists no survey_areas.geojsonl"):
             package.read(self.dir)
 
     def test_no_manifest(self):
@@ -123,7 +136,35 @@ class DeriveTest(Prepared):
         self.assertEqual(m["ground_type"], "purdam:silt-loam")
         self.assertEqual((m["c_restr"], m["pat"], m["c_drain"], m["c_aws"], m["c_farm"], m["c_hsg"]),
                          (0, "none", 0, 4, None, 0))
-        self.assertEqual(sorted(self.d.ground_types), ["chilcott:gravelly-silt-loam", "purdam:silt-loam", "water"])
+        self.assertEqual(sorted(self.d.ground_types),
+                         ["chilcott:gravelly-silt-loam", "notcom", "purdam:silt-loam", "rock-outcrop", "water"])
+
+    def test_notcom_is_no_survey_not_a_soil(self):
+        m = self.mu["2002"]
+        self.assertEqual((m["ground_type"], m["dom_cokey"]), ("notcom", "2002-1"))
+        self.assertEqual(self.d.ground_types["notcom"], {"id": "notcom", "series": "NOTCOM", "texture": None,
+                                                         "texcl": None, "modifier": None, "misc": "nodata"})
+        for k in ("c_restr", "pat", "c_drain", "c_aws", "c_farm", "farm_cond", "c_hsg", "hsg_dual", "restr_kind"):
+            self.assertIsNone(m[k], k)
+
+    def test_notcom_by_its_symbol_alone(self):
+        tables = copy.deepcopy(synthetic.TABLES)
+        tables["component"] = [c for c in tables["component"] if c["mukey"] != "2002"]
+        tables["mapunit"] = [dict(r, farmlndcl="Not prime farmland") if r["mukey"] == "2002" else r
+                             for r in tables["mapunit"]]
+        with tempfile.TemporaryDirectory() as d:
+            synthetic.write_prepared(d, tables=tables)
+            mu = {m["mukey"]: m for m in package.derive(package.read(d), ["ZZ002"]).map_units}
+        self.assertEqual((mu["2002"]["ground_type"], mu["2002"]["dom_cokey"], mu["2002"]["c_farm"]),
+                         ("notcom", None, None))
+
+    def test_a_miscellaneous_area_is_one_type_whatever_its_texture(self):
+        m = self.mu["2003"]
+        self.assertEqual(m["ground_type"], "rock-outcrop")                 # not 'rock-outcrop:bedrock'
+        g = self.d.ground_types["rock-outcrop"]
+        self.assertEqual((g["misc"], g["texture"], g["texcl"], g["modifier"]), ("rock", None, None, None))
+        self.assertEqual((m["c_restr"], m["pat"], m["c_hsg"]), (4, "bedrock", 3))   # rated: bedrock at 0 cm
+        self.assertEqual(self.hz["h10"]["texture"], "Bedrock")                # the horizon keeps its texture
 
     def test_component_card_fields(self):
         c = self.co["1001-1"]
@@ -143,12 +184,12 @@ class DeriveTest(Prepared):
         self.assertEqual((self.hz["h3"]["texture"], self.hz["h3"]["texcl"]), ("Cemented material", "Cemented material"))
         self.assertEqual((self.hz["h1"]["top_cm"], self.hz["h1"]["bottom_cm"], self.hz["h1"]["kwfact"]), (0, 25, 0.49))
         self.assertNotIn("h7", self.hz)                                   # map unit 1004 was left out
-        self.assertEqual(len(self.d.horizons), 8)
+        self.assertEqual(len(self.d.horizons), 9)
 
     def test_one_area_only(self):
         d = package.derive(package.read(self.dir), ["ZZ002"])
-        self.assertEqual([m["mukey"] for m in d.map_units], ["2001"])
-        self.assertEqual(sorted(c["cokey"] for c in d.components), ["2001-1", "2001-2"])
+        self.assertEqual([m["mukey"] for m in d.map_units], ["2001", "2002", "2003"])
+        self.assertEqual(sorted(c["cokey"] for c in d.components), ["2001-1", "2001-2", "2002-1", "2003-1"])
 
 
 class RulesTest(unittest.TestCase):
@@ -198,9 +239,14 @@ class RulesTest(unittest.TestCase):
         self.assertEqual(package.ground_type_id("Urban land", None), "urban-land")
         self.assertIsNone(package.ground_type_id("", "Loam"))
         self.assertEqual([package.misc_kind(n, "Miscellaneous area") for n in
-                          ("Water", "Urban land", "Rock outcrop", "Badland", "Rubble land", "Pits, gravel", "Dumps")],
-                         ["water", "urban", "rock", "badland", "rubble", "pits", "other"])
+                          ("Water", "Urban land", "Rock outcrop", "Badland", "Rubble land", "Pits, gravel", "Dumps",
+                           "Pits and Dumps", "Riverwash")],
+                         ["water", "urban", "rock", "badland", "rubble", "pits", "other", "pits", "other"])
         self.assertIsNone(package.misc_kind("Purdam", "Series"))
+        self.assertIsNone(package.misc_kind("Xeric Torriorthents", "Taxon above family"))
+        self.assertEqual([package.misc_kind("NOTCOM", k) for k in ("", None, "Miscellaneous area")], ["nodata"] * 3)
+        self.assertTrue(package.is_notcom("Purdam", " notcom "))
+        self.assertFalse(package.is_notcom(None, "", "Notcomish"))
 
     def test_saverest(self):
         self.assertEqual(package.saverest("08/31/2026 21:54:36"), "2026-08-31T21:54:36")
@@ -221,7 +267,7 @@ class PlanAndCommandTest(Prepared):
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             self.assertEqual(load.main(["--from", self.dir, "--dry-run"]), 0)
-        self.assertIn("ZZ001, ZZ002: 4 map units, 7 components, 8 horizons, 4 polygons, 3 ground types", out.getvalue())
+        self.assertIn("ZZ001, ZZ002: 6 map units, 9 components, 9 horizons, 6 polygons, 5 ground types", out.getvalue())
 
     def test_a_bad_package_is_an_error_not_a_traceback(self):
         os.remove(os.path.join(self.dir, package.MANIFEST))

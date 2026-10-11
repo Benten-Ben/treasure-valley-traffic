@@ -52,12 +52,24 @@ class PrepareTest(unittest.TestCase):
         pkg = package.read(self.out)
         polys = {p[0]: (p[2], json.loads(p[3])) for p in pkg.polygons()}
         # ZZ001:3 lies outside; ZZ001:4 only shares the box's edge.
-        self.assertEqual(sorted(polys), ["ZZ001:0", "ZZ001:1", "ZZ001:2", "ZZ002:0"])
+        self.assertEqual(sorted(polys), ["ZZ001:0", "ZZ001:1", "ZZ001:2", "ZZ002:0", "ZZ002:1", "ZZ002:2"])
         mukey, geom = polys["ZZ002:0"]
         self.assertEqual((mukey, geom["type"]), ("2001", "MultiPolygon"))
         xs = [x for x, _ in geom["coordinates"][0][0]]
         self.assertEqual((min(xs), max(xs)), (-117.06, -117.04))          # whole, not clipped at -117.05
         self.assertEqual(len(polys["ZZ001:2"][1]["coordinates"]), 2)
+
+    def test_carries_each_survey_areas_boundary_whole(self):
+        pkg = package.read(self.out)
+        got = [(a, json.loads(g)) for a, g in pkg.survey_areas()]
+        want = [(a, json.loads(g)) for a, g in package.read(self.expected).survey_areas()]
+
+        def corners(geom):                    # the shapefile turns rings clockwise: compare the vertices only
+            return sorted({tuple(xy) for poly in geom["coordinates"] for ring in poly for xy in ring})
+
+        self.assertEqual([(a, corners(g)) for a, g in got], [(a, corners(g)) for a, g in want])
+        self.assertEqual([a for a, _ in got], ["ZZ001", "ZZ002", "ZZ002"])   # ZZ002's two pieces, as they are
+        self.assertEqual({g["type"] for _, g in got}, {"MultiPolygon"})
 
     def test_tables_follow_the_kept_map_units_and_keep_every_column(self):
         for table in package.TABLES:
@@ -79,8 +91,10 @@ class PrepareTest(unittest.TestCase):
         self.assertEqual(a["ZZ001"]["source_url"],
                          "https://websoilsurvey.sc.egov.usda.gov/DSD/Download/Cache/SSA/wss_SSA_ZZ001_%5B2026-08-31%5D.zip")
         self.assertEqual(a["ZZ002"]["areaname"], "Synthetic Area, Oregon")
-        self.assertEqual(meta["files"]["tabular/component.csv"]["rows"], 7)
+        self.assertEqual(meta["files"]["tabular/component.csv"]["rows"], 9)
+        self.assertEqual(meta["files"][package.SURVEY_AREAS]["rows"], 3)
         self.assertIn("ZZ001/spatial/soilmu_a_zz001.shp", meta["inputs"])
+        self.assertIn("ZZ002/spatial/soilsa_a_zz002.shp", meta["inputs"])
         self.assertIn("ZZ001/tabular/comp.txt", meta["inputs"])
         self.assertEqual(meta["format"], package.FORMAT)
 
@@ -102,6 +116,10 @@ class PrepareTest(unittest.TestCase):
             self.prepare.prepare(self.sources, out, log=lambda *a: None)
         with self.assertRaisesRegex(SystemExit, "no survey area ZZ009"):
             self.prepare.prepare(self.sources, os.path.join(self.tmp.name, "x"), only=["ZZ009"])
+        for ext in (".shp", ".shx", ".dbf", ".prj"):
+            os.remove(os.path.join(self.sources, "ZZ002", "spatial", "soilsa_a_zz002" + ext))
+        with self.assertRaisesRegex(SystemExit, "ZZ002: no survey area boundary"):
+            self.prepare.prepare(self.sources, os.path.join(self.tmp.name, "y"), log=lambda *a: None)
 
 
 if __name__ == "__main__":

@@ -3,11 +3,13 @@
     python plugins/soils/build/prepare.py --sources $TVT_SOURCES/ssurgo/data --out $TVT_ARCHIVE/soils/prepared/<stamp>
     python plugins/soils/build/prepare.py --sources DIR --areas ID001,ID665 --out DIR
 
---sources holds one folder per survey area, as unzipped from the Web Soil Survey (<AREA>/spatial/soilmu_a_<area>.shp
-and <AREA>/tabular/*.txt, SSURGO 2.3.3). For each area it keeps the map-unit polygons touching the map box, whole, and
-the tabular rows of their map units, and writes into --out (new or empty):
+--sources holds one folder per survey area, as unzipped from the Web Soil Survey (<AREA>/spatial/soilmu_a_<area>.shp,
+<AREA>/spatial/soilsa_a_<area>.shp and <AREA>/tabular/*.txt, SSURGO 2.3.3). For each area it keeps the map-unit
+polygons touching the map box, whole, the area's boundary, and the tabular rows of those map units, and writes into
+--out (new or empty):
 
     polygons.geojsonl     one Feature per line, WGS 84 (EPSG:4326, 7 decimals): {id, areasymbol, fid, mukey, musym}
+    survey_areas.geojsonl the survey areas' boundaries (soilsa_a), whole, one Feature per piece: {areasymbol, fid}
     tabular/<table>.csv   every column of mapunit, muaggatt, component, corestrictions, cosurffrags, copmgrp, copm,
                           cogeomordesc, coecoclass, cocropyld, chorizon, chtexturegrp, chtexture and chtexturemod for
                           those map units, with a header row (`areasymbol`, then SSURGO's column names)
@@ -156,7 +158,9 @@ def prepare(sources, out, only=None, log=print):
         return writers[table]
 
     polygons_path = os.path.join(out, package.POLYGONS)
-    with open(polygons_path, "w", encoding="utf-8") as poly_out:
+    bounds_path = os.path.join(out, package.SURVEY_AREAS)
+    n_bounds = 0
+    with open(polygons_path, "w", encoding="utf-8") as poly_out, open(bounds_path, "w", encoding="utf-8") as sa_out:
         for sym, folder in areas.items():
             tab = Tabular(os.path.join(folder, "tabular"))
             cat = next(tab("sacatalog"))
@@ -187,6 +191,30 @@ def prepare(sources, out, only=None, log=print):
                 keep["polygons"].add(mukey)
                 n_poly += 1
             ds = None
+
+            # The area's boundary, whole: one or more pieces.
+            sa = os.path.join(folder, "spatial", f"soilsa_a_{sym.lower()}.shp")
+            if not os.path.exists(sa):
+                raise SystemExit(f"prepare: {sym}: no survey area boundary ({os.path.relpath(sa, sources)})")
+            for ext in (".shp", ".shx", ".dbf", ".prj"):
+                p = sa[:-4] + ext
+                if os.path.exists(p):
+                    inputs[os.path.relpath(p, sources)] = file_sha256(p)
+            ds = ogr.Open(sa)
+            pieces = 0
+            for f in ds.GetLayer(0):
+                g = f.GetGeometryRef()
+                if g is None:
+                    continue
+                feat = {"type": "Feature", "properties": {"areasymbol": sym, "fid": f.GetFID()},
+                        "geometry": json.loads(ogr.ForceToMultiPolygon(g.Clone()).ExportToJson(
+                            [f"COORDINATE_PRECISION={PRECISION}"]))}
+                sa_out.write(json.dumps(feat, separators=(",", ":")) + "\n")
+                pieces += 1
+            ds = None
+            if not pieces:
+                raise SystemExit(f"prepare: {sym}: its survey area boundary has no polygon")
+            n_bounds += pieces
 
             # The tables, each following the keys kept before it.
             counts = {}
@@ -229,7 +257,8 @@ def prepare(sources, out, only=None, log=print):
         f.close()
 
     files = {package.POLYGONS: {"sha256": file_sha256(polygons_path),
-                                "rows": sum(a["polygons"] for a in meta_areas)}}
+                                "rows": sum(a["polygons"] for a in meta_areas)},
+             package.SURVEY_AREAS: {"sha256": file_sha256(bounds_path), "rows": n_bounds}}
     for table in package.TABLES:
         files[f"tabular/{table}.csv"] = {"sha256": file_sha256(os.path.join(out, "tabular", f"{table}.csv")),
                                          "rows": rows_out[table]}

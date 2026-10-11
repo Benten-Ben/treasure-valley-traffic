@@ -9,6 +9,11 @@ values are invented to exercise the rules (ties, organic horizons, restrictions,
           1003 "W"    Water (a miscellaneous area, no horizons)
           1004 "99"   only outside the box: dropped with its component, horizon and yields
     ZZ002 2001 "7"    Purdam silt loam again (the same ground type as 1001), crossing the box's west edge
+          2002 "NOTCOM" No Digital Data Available: no survey (NRCS's NOTCOM), one component of no kind
+          2003 "RO"   Rock outcrop: a miscellaneous area with a "Bedrock" texture and lithic bedrock at 0 cm
+
+Each survey area's boundary (soilsa_a) is a rectangle around its polygons; ZZ002's comes in two pieces sharing an
+edge.
 """
 
 import csv
@@ -37,7 +42,15 @@ POLYGONS = [
     ("ZZ001", 3, "1004", "99", [square(-117.20, 43.50, -117.19, 43.51)], False),          # outside the box
     ("ZZ001", 4, "1001", "141", [square(-117.06, 43.50, -117.05, 43.51)], False),         # shares only an edge
     ("ZZ002", 0, "2001", "7", [square(-117.06, 43.60, -117.04, 43.61)], True),            # half inside
+    ("ZZ002", 1, "2002", "NOTCOM", [square(-116.10, 43.70, -116.09, 43.71)], True),
+    ("ZZ002", 2, "2003", "RO", [square(-116.08, 43.70, -116.07, 43.71)], True),
 ]
+
+# Each survey area's boundary pieces (soilsa_a), whole.
+SURVEY_AREAS = {
+    "ZZ001": [[square(-117.25, 43.45, -116.25, 43.55)]],
+    "ZZ002": [[square(-117.10, 43.55, -116.50, 43.75)], [square(-116.50, 43.55, -116.00, 43.75)]],
+}
 
 # The columns of each table: the loader's (package.TABLES) plus a few it doesn't read, which prepare must copy too.
 EXTRA = {"mapunit": ("muacres", "lkey"), "component": ("localphase",), "chorizon": ("dbthirdbar_r",)}
@@ -60,6 +73,10 @@ TABLES = {
              muacres="10", lkey="9001"),
         _row(mukey="2001", musym="7", muname="Purdam silt loam, 0 to 2 percent slopes", mukind="Consociation",
              farmlndcl="", muacres="500", lkey="9002"),
+        _row(mukey="2002", musym="NOTCOM", muname="No Digital Data Available", mukind="", farmlndcl="",
+             muacres="900", lkey="9002"),
+        _row(mukey="2003", musym="RO", muname="Rock outcrop", mukind="Consociation", farmlndcl="Not prime farmland",
+             muacres="60", lkey="9002"),
     ],
     "muaggatt": [
         _row(mukey="1001", slopegraddcp="1", aws025wta="4.2", aws050wta="7.9", aws0100wta="11.8",
@@ -76,6 +93,11 @@ TABLES = {
         _row(mukey="2001", slopegraddcp="1", aws025wta="4.0", aws050wta="7.5", aws0100wta="20.5",
              drclassdcd="Excessively drained", hydgrpdcd="A", flodfreqdcd="None", pondfreqprs="0", brockdepmin="",
              wtdepannmin="", iccdcd="", niccdcd="", hydclprs="0"),
+        _row(mukey="2002", slopegraddcp="", aws025wta="", aws050wta="", aws0100wta="", drclassdcd="", hydgrpdcd="",
+             flodfreqdcd="", pondfreqprs="", brockdepmin="", wtdepannmin="", iccdcd="", niccdcd="", hydclprs=""),
+        _row(mukey="2003", slopegraddcp="40", aws025wta="0", aws050wta="0", aws0100wta="0",
+             drclassdcd="", hydgrpdcd="D", flodfreqdcd="None", pondfreqprs="0", brockdepmin="0",
+             wtdepannmin="", iccdcd="", niccdcd="8", hydclprs="0"),
     ],
 }
 
@@ -101,6 +123,12 @@ TABLES["component"] = [
     _component("1004-1", "1004", "Outside", "Series", "100", "Yes"),
     _component("2001-1", "2001", "Purdam", "Series", "85", "Yes"),
     _component("2001-2", "2001", "Urban land", "Miscellaneous area", "15", "No "),
+    _component("2002-1", "2002", "NOTCOM", "", "100", "Yes", hydgrp="", drainagecl="", irrcapcl="", irrcapscl="",
+               nirrcapcl="", nirrcapscl="", taxclname="", taxorder="", earthcovkind1="", ffd_r="", albedodry_r="",
+               elev_r="", map_r=""),
+    _component("2003-1", "2003", "Rock outcrop", "Miscellaneous area", "100", "Yes", hydgrp="D", drainagecl="",
+               irrcapcl="", irrcapscl="", nirrcapcl="8", nirrcapscl="", taxclname="", taxorder="",
+               albedodry_r="0.30"),
 ]
 
 
@@ -123,6 +151,7 @@ TABLES["chorizon"] = [
     _horizon("h7", "1004-1", "A", "0", "30"),
     _horizon("h8", "2001-1", "A", "0", "30"),
     _horizon("h9", "1002-1", "A", "0", "15"),
+    _horizon("h10", "2003-1", "R", "0", "150"),
 ]
 TABLES["chtexturegrp"] = [
     _row(chtgkey="g1", chkey="h1", texture="SIL", texdesc="Silt loam", rvindicator="Yes"),
@@ -135,6 +164,7 @@ TABLES["chtexturegrp"] = [
     _row(chtgkey="g7", chkey="h7", texture="L", texdesc="Loam", rvindicator="Yes"),
     _row(chtgkey="g8", chkey="h8", texture="SIL", texdesc="Silt loam", rvindicator="Yes"),
     _row(chtgkey="g9", chkey="h9", texture="L", texdesc="Loam", rvindicator="Yes"),
+    _row(chtgkey="g10", chkey="h10", texture="BR", texdesc="Bedrock", rvindicator="Yes"),
 ]
 TABLES["chtexture"] = [
     _row(chtkey="t1", chtgkey="g1", texcl="Silt loam", lieutex=""),
@@ -147,6 +177,7 @@ TABLES["chtexture"] = [
     _row(chtkey="t7", chtgkey="g7", texcl="Loam", lieutex=""),
     _row(chtkey="t8", chtgkey="g8", texcl="Silt loam", lieutex=""),
     _row(chtkey="t9", chtgkey="g9", texcl="Loam", lieutex=""),
+    _row(chtkey="t10", chtgkey="g10", texcl="", lieutex="Bedrock"),
 ]
 TABLES["chtexturemod"] = [_row(chtkey="t5", texmod="Gravelly")]
 TABLES["corestrictions"] = [
@@ -156,6 +187,8 @@ TABLES["corestrictions"] = [
     _row(corestrictkey="r3", cokey="1002-2", reskind="Abrupt textural change", reshard="", resdept_r="8",
          resdepb_r=""),
     _row(corestrictkey="r4", cokey="1004-1", reskind="Duripan", reshard="Indurated", resdept_r="40", resdepb_r="80"),
+    _row(corestrictkey="r5", cokey="2003-1", reskind="Lithic bedrock", reshard="Indurated", resdept_r="0",
+         resdepb_r=""),
 ]
 TABLES["cosurffrags"] = [
     _row(cokey="1002-2", sfragcov_r="2"),
@@ -211,13 +244,13 @@ def _cokey_area(k):
 
 
 def _chkey_area(k):
-    return "ZZ002" if k == "h8" else "ZZ001"
+    return "ZZ002" if k in ("h8", "h10") else "ZZ001"
 
 
 _AREA_BY_KEY = {
     "mukey": _mukey_area, "cokey": _cokey_area, "chkey": _chkey_area,
-    "chtgkey": lambda k: "ZZ002" if k == "g8" else "ZZ001",
-    "chtkey": lambda k: "ZZ002" if k == "t8" else "ZZ001",
+    "chtgkey": lambda k: "ZZ002" if k in ("g8", "g10") else "ZZ001",
+    "chtkey": lambda k: "ZZ002" if k in ("t8", "t10") else "ZZ001",
     "copmgrpkey": lambda k: "ZZ001",
 }
 
@@ -250,11 +283,12 @@ def feature(area, fid, mukey, musym, polys):
             "geometry": {"type": "MultiPolygon", "coordinates": polys}}
 
 
-def write_prepared(folder, tables=None, polygons=None, areas=None):
-    """What prepare.py would write for this survey, without GDAL. tables, polygons and areas replace the module's
-    (a test's variant of the survey)."""
+def write_prepared(folder, tables=None, polygons=None, areas=None, bounds=None):
+    """What prepare.py would write for this survey, without GDAL. tables, polygons, areas and bounds replace the
+    module's (a test's variant of the survey)."""
     from plugins.soils.ingest import package
     tables, polygons, areas = tables or TABLES, polygons or POLYGONS, areas or AREAS
+    bounds = SURVEY_AREAS if bounds is None else bounds
     os.makedirs(os.path.join(folder, "tabular"), exist_ok=True)
     files = {}
     path = os.path.join(folder, package.POLYGONS)
@@ -266,6 +300,16 @@ def write_prepared(folder, tables=None, polygons=None, areas=None):
                     f.write(json.dumps(feature(a, fid, mukey, musym, polys), separators=(",", ":")) + "\n")
                     n += 1
     files[package.POLYGONS] = {"sha256": _sha(path), "rows": n}
+    path = os.path.join(folder, package.SURVEY_AREAS)
+    with open(path, "w", encoding="utf-8") as f:
+        n = 0
+        for area in sorted(areas):
+            for fid, polys in enumerate(bounds.get(area, [])):
+                f.write(json.dumps({"type": "Feature", "properties": {"areasymbol": area, "fid": fid},
+                                    "geometry": {"type": "MultiPolygon", "coordinates": polys}},
+                                   separators=(",", ":")) + "\n")
+                n += 1
+    files[package.SURVEY_AREAS] = {"sha256": _sha(path), "rows": n}
     for table in package.TABLES:
         cols = columns(table)
         path = os.path.join(folder, "tabular", f"{table}.csv")
@@ -349,5 +393,17 @@ def write_raw(sources):
             geom = {"type": "MultiPolygon", "coordinates": polys} if len(polys) > 1 else \
                 {"type": "Polygon", "coordinates": polys[0]}
             f.SetGeometry(ogr.CreateGeometryFromJson(json.dumps(geom)))
+            layer.CreateFeature(f)
+        ds = None
+
+        ds = drv.CreateDataSource(os.path.join(spatial, f"soilsa_a_{area.lower()}.shp"))
+        layer = ds.CreateLayer(f"soilsa_a_{area.lower()}", srs, ogr.wkbPolygon)
+        for name in ("AREASYMBOL", "SPATIALVER", "LKEY"):
+            layer.CreateField(ogr.FieldDefn(name, ogr.OFTString))
+        for polys in SURVEY_AREAS[area]:
+            f = ogr.Feature(layer.GetLayerDefn())
+            for k, v in (("AREASYMBOL", area), ("SPATIALVER", "3"), ("LKEY", "9001")):
+                f.SetField(k, v)
+            f.SetGeometry(ogr.CreateGeometryFromJson(json.dumps({"type": "Polygon", "coordinates": polys[0]})))
             layer.CreateFeature(f)
         ds = None
