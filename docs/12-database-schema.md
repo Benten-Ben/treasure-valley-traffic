@@ -104,7 +104,8 @@ create table ops.fetch (
 - `ops.schema_migration` records which migration files have run.
 - **Builds and staleness** (migration 0021, landscape sprint M1). Builds
   (`roads-build`, `water-build`, the base bake, ...) never run inside the
-  scheduled collector loop. `ops.build_run` logs each build run as
+  scheduled collector loop (the daily `intersections` rebuild, about 10 s,
+  predates the rule and is the one exception). `ops.build_run` logs each build run as
   `ops.fetch` logs fetches (started, finished, ok, a note, the error, and
   `covers`: the marks pending when it started). `ops.build_pending` holds
   one row per build and marker (a source, a command, or `by hand: <who>`)
@@ -115,7 +116,9 @@ create table ops.fetch (
   schedule: fresh until a schedule plus a grace of a quarter of it, at
   least 15 min; late for two more schedules; then stale; never without a
   good fetch; with the failed attempts since) and `ops.build_status` (each
-  build: running, pending, failed or built, its age and its marks). A
+  build's state, age and marks: running; failed when its newest run failed
+  or was killed, even while it's marked (killed: unfinished, and no session
+  holds the advisory lock it took); pending when marked; else built). A
   source taken out of every manifest keeps its row and schedule, and would
   read stale for good: set its `schedule` to null by hand when it's retired.
 

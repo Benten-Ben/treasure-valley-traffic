@@ -69,9 +69,10 @@ export interface LayerBuild {
 export type SourceState = 'fresh' | 'late' | 'stale' | 'never';
 
 /**
- * A build (ops.build_status): `pending` (a source marked it out of date and
- * no run has covered that yet), `running`, `failed` (its newest run failed
- * and nothing is marked), `built`. Builds run by hand, never inside the
+ * A build (ops.build_status), by its newest run first: `running`; `failed`
+ * (its newest run failed, or was killed before it could say so; it may still
+ * be marked: `pendingSince`); `pending` (a source marked it out of date and no
+ * run has covered that yet); `built`. Builds run by hand, never inside the
  * scheduled collector loop.
  */
 export type BuildState = 'built' | 'pending' | 'running' | 'failed';
@@ -94,9 +95,9 @@ export interface BuildStatus {
 	state: BuildState;
 	/** When its last good run finished (epoch s); null: never built. */
 	lastOkAt: number | null;
-	/** Its oldest mark no run has covered (epoch s); null: not marked. */
+	/** Its oldest mark no run has covered (epoch s); null: not marked. A failed build can be marked too. */
 	pendingSince: number | null;
-	/** When its newest run started (epoch s); null: never run. */
+	/** When its newest run started (epoch s); null: never run. For a running build, how long it has gone. */
 	lastRunAt: number | null;
 }
 
@@ -110,7 +111,7 @@ export interface DataStatus {
 	sources: Record<SourceState, number> & { failing: number };
 	/** The sources that aren't fresh or are failing, worst first (stale, never, late, then failing; oldest first), at most 20. */
 	attention: SourceStatus[];
-	/** Builds that have run or are marked: running, pending (oldest mark first), failed, then built; at most 40. */
+	/** Builds that have run or are marked: failed, running, pending (oldest mark first), then built; at most 40. */
 	builds: BuildStatus[];
 }
 

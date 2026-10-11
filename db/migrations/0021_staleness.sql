@@ -10,7 +10,8 @@
 --   trails-match, the exports, the base bake, ...) never run inside `ingest serve`: a source
 --   whose new data a build should take in marks it, in the same transaction as its data, and the
 --   build runs by hand (under heavy when it's heavy). A mark stays until a build run that saw it
---   succeeds (ingest/builds.py).
+--   succeeds (ingest/builds.py). The one exception predates the rule: the daily `intersections`
+--   source rebuilds core.intersection (about 10 s) inside `ingest serve`.
 -- * ops.source_status: each scheduled source's last good fetch against its schedule.
 -- * ops.build_status: each build's age, and whether it's marked, running or failed.
 --
@@ -29,6 +30,10 @@ create table ops.build_run (
   -- The marks pending when it started, as [{"id": <ops.build_pending.id>, "marks": <its count>}]:
   -- the ones it clears if it succeeds. A mark made after it started stays for the next run.
   covers       jsonb not null default '[]' check (jsonb_typeof(covers) = 'array'),
+  -- Its process holds the build's advisory lock while it runs (builds.Run does; `start` and
+  -- `finish`, split across processes, can't): unfinished while no session holds that lock, it
+  -- was killed (SIGKILL, the OOM killer) or lost its connection, and ops.build_status says so.
+  locked       boolean not null default false,
   note         text,                   -- what it built: counts, versions, an export folder
   error        text,
   check (finished_at is null or finished_at >= started_at)
@@ -98,25 +103,33 @@ left join lateral (
     and f.started_at > coalesce(good.started_at, '-infinity')) failed on true
 where s.schedule is not null;
 
--- Each build that has run or is marked:
---   running  its newest run hasn't finished (or was killed: see last_run_at);
---   pending  marked, and no run going;
---   failed   its newest run failed and nothing is marked;
+-- Each build that has run or is marked, by its newest run first:
+--   running  its newest run hasn't finished, and is alive as far as the database can tell (a run
+--            that holds the build's lock still holds it; a `start`/`finish` run can't be told
+--            from a killed one: see last_run_at);
+--   failed   its newest run failed, or ended without logging its end (no session holds the lock
+--            of a run that took it: killed, or its connection lost). It may still be marked
+--            (pending_since): a failed run clears nothing, and the failure is what needs a look;
+--   pending  marked, and its newest run (if any) succeeded;
 --   built    its newest run succeeded and nothing is marked since.
 -- age is the time since its last good run finished; pending_since its oldest uncovered mark.
+-- The lock is ingest/builds.py's session advisory lock on hashtextextended('tvt build ' ||
+-- build, 0), which pg_locks shows split into classid (its high half) and objid (its low half).
 create view ops.build_status as
 select b.build,
-       case when last.started_at is not null and last.finished_at is null then 'running'
+       case when last.dead then 'failed'
+            when last.started_at is not null and last.finished_at is null then 'running'
+            when last.finished_at is not null and not last.ok then 'failed'
             when p.since is not null then 'pending'
-            when not last.ok then 'failed'
             else 'built' end                    as state,
        good.finished_at                         as last_ok_at,
        now() - good.finished_at                 as age,
        good.note                                as last_ok_note,
        last.started_at                          as last_run_at,
        last.finished_at                         as last_run_finished_at,
-       last.ok                                  as last_run_ok,
-       case when last.finished_at is not null and not last.ok then last.error end as last_error,
+       case when last.finished_at is not null or last.dead then last.ok end as last_run_ok,
+       case when last.dead then 'ended without logging its end (killed, or its connection was lost)'
+            when last.finished_at is not null and not last.ok then last.error end as last_error,
        p.since                                  as pending_since,
        p.marks                                  as pending_marks,
        p.marked_by                              as pending_by,
@@ -127,7 +140,14 @@ left join lateral (
   where r.build = b.build and r.ok
   order by r.started_at desc, r.id desc limit 1) good on true
 left join lateral (
-  select r.started_at, r.finished_at, r.ok, r.error from ops.build_run r
+  select r.started_at, r.finished_at, r.ok, r.error,
+         coalesce(r.finished_at is null and r.locked and not exists (
+           select 1 from pg_locks l
+           where l.locktype = 'advisory' and l.granted and l.objsubid = 1
+             and l.database = (select d.oid from pg_database d where d.datname = current_database())
+             and ((l.classid::bigint << 32) | l.objid::bigint) = hashtextextended('tvt build ' || r.build, 0)),
+           false)                               as dead
+  from ops.build_run r
   where r.build = b.build
   order by r.started_at desc, r.id desc limit 1) last on true
 left join lateral (
@@ -145,4 +165,4 @@ comment on table ops.build_pending is
 comment on view ops.source_status is
   'Each scheduled source''s last good fetch against its schedule: fresh, late, stale or never';
 comment on view ops.build_status is
-  'Each build''s age, and whether it is marked (pending), running or failed';
+  'Each build''s age, and whether it is running, failed (or killed), marked (pending) or built';

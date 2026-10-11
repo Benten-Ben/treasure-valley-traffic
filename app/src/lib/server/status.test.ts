@@ -38,7 +38,7 @@ describe('status for /api/meta', () => {
 		expect(s.builds).toEqual([]);
 	});
 
-	it('orders builds running, pending (oldest mark first), failed, built, and keeps no reasons', () => {
+	it('orders builds failed, running, pending (oldest mark first), built, and keeps no reasons', () => {
 		const s = summarize(
 			[],
 			[
@@ -47,18 +47,21 @@ describe('status for /api/meta', () => {
 				bld('trails-match', 'pending', { pending_since: 300 }),
 				bld('landscape-bake', 'running', { last_run_at: 700 }),
 				bld('soils-build', 'failed', { last_ok_at: 10, last_run_at: 600 }),
+				bld('farm-build', 'failed', { pending_since: 200, last_run_at: 650 }),
 				bld('weird', 'unheard-of')
 			]
 		);
 		expect(s.builds.map((b) => [b.build, b.state])).toEqual([
+			['farm-build', 'failed'],
+			['soils-build', 'failed'],
 			['landscape-bake', 'running'],
 			['trails-match', 'pending'],
 			['roads-build', 'pending'],
-			['soils-build', 'failed'],
 			['water-build', 'built']
 		]);
 		expect(Object.keys(s.builds[0]).sort()).toEqual(['build', 'lastOkAt', 'lastRunAt', 'pendingSince', 'state']);
-		expect(s.builds[2]).toEqual({ build: 'roads-build', state: 'pending', lastOkAt: 50, pendingSince: 500, lastRunAt: null });
+		expect(s.builds[0]).toEqual({ build: 'farm-build', state: 'failed', lastOkAt: null, pendingSince: 200, lastRunAt: 650 });
+		expect(s.builds[4]).toEqual({ build: 'roads-build', state: 'pending', lastOkAt: 50, pendingSince: 500, lastRunAt: null });
 	});
 
 	it('trims long lists', () => {

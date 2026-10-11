@@ -39,6 +39,10 @@ describe.skipIf(!URL)('status views (database)', () => {
 				await tx`insert into ops.build_pending (build, marked_by, reason) values (${b + '-roads'}, 'osm_street', 'a reason')`;
 				await tx`insert into ops.build_run (build, started_at, finished_at, ok, note) values
 				         (${b + '-water'}, now() - interval '2 h', now() - interval '1 h', true, '12 reaches')`;
+				// Marked, then its run failed (a failed run clears nothing): failed, still marked.
+				await tx`insert into ops.build_pending (build, marked_by, reason) values (${b + '-bake'}, 'roads-build', 'roads built')`;
+				await tx`insert into ops.build_run (build, started_at, finished_at, ok, error) values
+				         (${b + '-bake'}, now() - interval '20 min', now() - interval '10 min', false, 'MemoryError: out of memory')`;
 				// Only this test's rows: a copy of production (the scratch database) has its own late sources,
 				// which could push these past the attention list's cap.
 				const rows = await readStatusRows(tx as unknown as postgres.Sql);
@@ -56,11 +60,14 @@ describe.skipIf(!URL)('status views (database)', () => {
 				expect(mine[0].lastOkAt).toBeNull();
 				const builds = s.builds.filter((x) => x.build.startsWith(b));
 				expect(builds.map((x) => [x.build.slice(b.length + 1), x.state])).toEqual([
+					['bake', 'failed'],
 					['roads', 'pending'],
 					['water', 'built']
 				]);
 				expect(builds[0].pendingSince).toBeGreaterThan(Date.now() / 1000 - 3600);
-				expect(JSON.stringify(s)).not.toMatch(/secret|HTTPError|a reason|12 reaches/);
+				expect(builds[0].lastRunAt).toBeGreaterThan(Date.now() / 1000 - 21 * 60);
+				expect(builds[1].pendingSince).toBeGreaterThan(Date.now() / 1000 - 3600);
+				expect(JSON.stringify(s)).not.toMatch(/secret|HTTPError|a reason|12 reaches|MemoryError|roads built/);
 				const whole = await readStatus(tx as unknown as postgres.Sql);
 				const scheduled = await tx`select count(*)::int as n from ops.source where schedule is not null`;
 				const { failing, ...states } = whole.sources;

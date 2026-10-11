@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { BuildStatus, DataStatus, SourceStatus } from '#lib/contracts/meta.js';
-import { LINES_MAX, PENDING_LATE_S, span, statusChip } from './summary.js';
+import { LINES_MAX, PENDING_LATE_S, RUNNING_LATE_S, span, statusChip } from './summary.js';
 
 const NOW = 1_760_000_000;
 const counts = (over: Partial<DataStatus['sources']> = {}) => ({ fresh: 40, late: 0, stale: 0, never: 0, failing: 0, ...over });
@@ -87,6 +87,30 @@ describe('the status chip', () => {
 			'landscape-bake: running for 20 min; last built 24 h ago',
 			'soils-build: its last run failed; last built 3 days ago'
 		]);
+	});
+
+	it('raises a build whose run failed while it was marked, the usual way a build fails', () => {
+		const c = chip({
+			sources: counts(),
+			attention: [],
+			builds: [
+				build('landscape-bake', 'failed', { pendingSince: NOW - 3600, lastRunAt: NOW - 600, lastOkAt: NOW - 9 * 86_400 }),
+				build('roads-build', 'built', { lastOkAt: NOW - 7200 })
+			]
+		});
+		expect([c.level, c.shape, c.headline]).toEqual(['late', '▲', '1 build failed']);
+		expect(c.lines).toEqual(['landscape-bake: its last run failed; marked 60 min ago; last built 9 days ago']);
+	});
+
+	it('raises a run that has gone on longer than any should', () => {
+		const going = (agoS: number) =>
+			chip({ sources: counts(), attention: [], builds: [build('landscape-bake', 'running', { lastRunAt: NOW - agoS })] });
+		const normal = going(3 * 3600);
+		expect([normal.level, normal.headline]).toEqual(['fresh', 'Data fresh']);
+		expect(normal.lines).toEqual(['landscape-bake: running for 3 h; never built']);
+		const long = going(RUNNING_LATE_S + 60);
+		expect([long.level, long.shape, long.headline]).toEqual(['late', '▲', '1 build running long']);
+		expect(long.lines).toEqual(['landscape-bake: running for 18 h, longer than a run should take; never built']);
 	});
 
 	it('keeps the headline and the tooltip short', () => {

@@ -17,7 +17,7 @@ const SOURCE_STATES: readonly SourceState[] = ['fresh', 'late', 'stale', 'never'
 const BUILD_STATES: readonly BuildState[] = ['built', 'pending', 'running', 'failed'];
 /** Attention order: worst first. */
 const SOURCE_RANK: Record<SourceState, number> = { stale: 0, never: 1, late: 2, fresh: 3 };
-const BUILD_RANK: Record<BuildState, number> = { running: 0, pending: 1, failed: 2, built: 3 };
+const BUILD_RANK: Record<BuildState, number> = { failed: 0, running: 1, pending: 2, built: 3 };
 
 const num = (v: unknown) => (v === null || v === undefined ? null : Number(v));
 

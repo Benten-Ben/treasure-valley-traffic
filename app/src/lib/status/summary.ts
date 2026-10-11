@@ -11,8 +11,8 @@ import type { BuildStatus, DataMeta, SourceStatus } from '#lib/contracts/meta.js
  *
  * | Level | Shape | When |
  * |---|---|---|
- * | fresh | ● | every scheduled source fresh, nothing failed, no build waiting long |
- * | late | ▲ | a source late or failing, a build failed, or a build waiting over 2 days |
+ * | fresh | ● | every scheduled source fresh, nothing failed, no build waiting or running long |
+ * | late | ▲ | a source late or failing; a build failed (marked or not; a killed run reads failed too), waiting over 2 days, or running over 18 h |
  * | stale | ■ | a source stale, or never fetched |
  * | unknown | ◌ | no status (no database, before migration 0021, or an older server) |
  *
@@ -36,6 +36,14 @@ export interface StatusChip {
 
 /** A marked build waiting longer than this raises the chip to ▲ (s). */
 export const PENDING_LATE_S = 2 * 86_400;
+/**
+ * A run going longer than this raises the chip to ▲ (s): longer than heavy's
+ * day window (06:00-23:15), so no run under heavy can still be going. The
+ * likeliest case is a worker step logged with `start` whose process was
+ * killed: a killed `builds.Run` reads failed at once (it no longer holds its
+ * lock), but a `start` run can't be told from a live one.
+ */
+export const RUNNING_LATE_S = 18 * 3600;
 /** At most this many lines in the tooltip; the rest are counted. */
 export const LINES_MAX = 8;
 
@@ -70,16 +78,23 @@ function sourceLine(s: SourceStatus, now: number): string {
 function buildLine(b: BuildStatus, now: number): string {
 	const built = b.lastOkAt === null ? 'never built' : `last built ${span(now - b.lastOkAt)} ago`;
 	switch (b.state) {
-		case 'running':
-			return `${b.build}: running for ${b.lastRunAt === null ? '?' : span(now - b.lastRunAt)}; ${built}`;
+		case 'running': {
+			const long = runningLong(b, now) ? ', longer than a run should take' : '';
+			return `${b.build}: running for ${b.lastRunAt === null ? '?' : span(now - b.lastRunAt)}${long}; ${built}`;
+		}
 		case 'pending':
 			return `${b.build}: waiting ${b.pendingSince === null ? '' : `${span(now - b.pendingSince)} `}for a run; ${built}`;
-		case 'failed':
-			return `${b.build}: its last run failed; ${built}`;
+		case 'failed': {
+			const marked = b.pendingSince === null ? '' : `; marked ${span(now - b.pendingSince)} ago`;
+			return `${b.build}: its last run failed${marked}; ${built}`;
+		}
 		default:
 			return `${b.build}: ${built}`;
 	}
 }
+
+const runningLong = (b: BuildStatus, now: number) =>
+	b.state === 'running' && b.lastRunAt !== null && now - b.lastRunAt > RUNNING_LATE_S;
 
 /** The chip for /api/meta's answer (null: it didn't answer). `now` in epoch s. */
 export function statusChip(meta: Pick<DataMeta, 'status'> | null | undefined, now = Date.now() / 1000): StatusChip {
@@ -97,11 +112,16 @@ export function statusChip(meta: Pick<DataMeta, 'status'> | null | undefined, no
 	const waiting = st.builds.filter((b) => b.state === 'pending');
 	const failedBuilds = st.builds.filter((b) => b.state === 'failed');
 	const longWait = waiting.some((b) => b.pendingSince !== null && now - b.pendingSince > PENDING_LATE_S);
+	const longRuns = st.builds.filter((b) => runningLong(b, now));
 	// Failing sources that are still fresh (the late, stale and never ones are counted as such).
 	const failingFresh = attention.filter((s) => s.state === 'fresh' && s.failures > 0).length;
 
 	const level: StatusLevel =
-		n.stale + n.never > 0 ? 'stale' : n.late + n.failing + failedBuilds.length > 0 || longWait ? 'late' : 'fresh';
+		n.stale + n.never > 0
+			? 'stale'
+			: n.late + n.failing + failedBuilds.length + longRuns.length > 0 || longWait
+				? 'late'
+				: 'fresh';
 
 	const parts: string[] = [];
 	if (n.stale) parts.push(`${plural(n.stale, 'source')} stale`);
@@ -109,6 +129,7 @@ export function statusChip(meta: Pick<DataMeta, 'status'> | null | undefined, no
 	if (n.late) parts.push(`${plural(n.late, 'source')} late`);
 	if (failingFresh) parts.push(`${plural(failingFresh, 'source')} failing`);
 	if (failedBuilds.length) parts.push(`${plural(failedBuilds.length, 'build')} failed`);
+	if (longRuns.length) parts.push(`${plural(longRuns.length, 'build')} running long`);
 	if (waiting.length) parts.push(`${plural(waiting.length, 'build')} waiting`);
 	const headline = parts.length ? parts.slice(0, 2).join(' · ') + (parts.length > 2 ? ' · …' : '') : 'Data fresh';
 

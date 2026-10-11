@@ -108,16 +108,34 @@ class ViewsTest(unittest.TestCase):
         self.conn.execute(run, (f"{b}-again", 30, 30, "1 min", True, None, None))
         self.conn.execute("insert into ops.build_pending (build, marked_by, reason) values (%s, 'nhd', 'new NHD')",
                           (f"{b}-again",))
-        # running: started, not finished (marked too)
+        # failed while marked: a source marked it, its run failed (and cleared nothing)
+        self.conn.execute("insert into ops.build_pending (build, marked_by, reason, first_at) "
+                          "values (%s, 'osm_street', 'new extract', now() - interval '4 h')", (f"{b}-refailed",))
+        self.conn.execute(run, (f"{b}-refailed", 2, 2, "3 min", False, None, "MemoryError: "))
+        # running: started, not finished (marked too); a `start` run holds no lock
         self.conn.execute("insert into ops.build_run (build, started_at) values (%s, now() - interval '20 min')",
                           (f"{b}-running",))
         self.conn.execute("insert into ops.build_pending (build, marked_by, reason) values (%s, 'x', 'y')",
                           (f"{b}-running",))
+        # killed: a Run's row, unfinished, and no session holds its lock
+        self.conn.execute(run, (f"{b}-killed", 30, 30, "1 min", True, "ok then", None))
+        self.conn.execute("insert into ops.build_run (build, started_at, locked) values (%s, now() - interval '2 h', true)",
+                          (f"{b}-killed",))
         cur = self.conn.execute("select * from ops.build_status where build like %s order by build", (b + "-%",))
         cols = [c.name for c in cur.description]
         s = {r[0][len(b) + 1:]: dict(zip(cols, r)) for r in cur.fetchall()}
         self.assertEqual({k: v["state"] for k, v in s.items()},
-                         {"built": "built", "failed": "failed", "never": "pending", "again": "pending", "running": "running"})
+                         {"built": "built", "failed": "failed", "never": "pending", "again": "pending", "running": "running",
+                          "refailed": "failed", "killed": "failed"})
+        r = s["refailed"]
+        self.assertEqual((r["last_run_ok"], r["last_error"], r["pending_marks"], r["pending_by"]),
+                         (False, "MemoryError: ", 1, ["osm_street"]))
+        self.assertIsNone(r["age"])                         # never built
+        k = s["killed"]
+        self.assertEqual((k["last_run_ok"], k["last_run_finished_at"], k["last_ok_note"]), (False, None, "ok then"))
+        self.assertEqual(k["last_error"], "ended without logging its end (killed, or its connection was lost)")
+        self.assertIsNone(s["running"]["last_run_ok"])
+        self.assertTrue(s["built"]["last_run_ok"])
         self.assertEqual(s["built"]["last_ok_note"], "42 pieces")
         self.assertEqual(round(s["built"]["age"].total_seconds() / 60), 30 * 60 - 12)
         self.assertIsNone(s["built"]["pending_since"])
