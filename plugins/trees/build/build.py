@@ -12,7 +12,8 @@ Then `python3 -m ingest trees-load --build <dir>` loads it.
    (the genus says conifer or broadleaf). It is fixed: the placer builds around it. Otherwise it is an estimated tree,
    sized from Boise's measured trees of its genus (Urban Tree Database) by trunk diameter.
 2. The placer fills the rest (place.py), then repairs. Each placed crown's size and shape come from the width curve that
-   explains the lidar best; its type comes from the narrow rule (narrow_rule below), not from that curve.
+   explains the lidar best. Whether it is narrow comes from the narrow rule (narrow_rule below), not from that curve;
+   the curve's conifer call stands for now (KEEP_WIDTH_CONIFER).
 3. Writes trees.geojson (WGS84 points with the tree's fields), log.jsonl (one event per line) and build.json.
 
 The area's inputs for the pilot are the land-cover spike's lidar products (0.5 m DSM and DTM in UTM 11N) and its
@@ -33,22 +34,29 @@ CONIFER_GENERA = {"abies", "calocedrus", "cedrus", "chamaecyparis", "cryptomeria
                   "thuja", "tsuga"}
 TRUNK_H_CELLS, TRUNK_REACH_CELLS = 3, 5   # crown top within 1.5 m of the trunk point; centre within 2.5 m
 # The narrow rule (docs/19 §19.3), from the owner's 100 labelled trees (Oct 8): a narrow crown falls 45% of its height
-# within 3 m of its top, but not all the way to the ground (a crown that ends within 3 m is too small for the cue to
-# tell), from an even top (where the heights within 1 m of the top vary by a fifth of its height, the top is a broken
+# within 3 m of its top, but not all the way to the ground (a crown that ends within 3 m leaves the cue nothing to
+# measure), from an even top (where the heights within 1 m of the top vary by a fifth of its height, the top is a broken
 # crown edge or sits between crowns, and the fall measured from it isn't the crown's shape). Only where a typical
-# broadleaf crown as tall reaches 3 m out (about 8.3 m tall): below that, what lies 3 m out is the neighbourhood, not
-# the crown, and the tree stays broadleaf.
+# broadleaf crown with that top reaches 3 m out (a top of about 8.3 m; the width curves were fitted on the lone trees'
+# tops): below that, what lies 3 m out is the neighbourhood, not the crown. And only from the tree's own top: the
+# profile's top is the highest unsmoothed cell, buildings left in, and one more than 2 m above the tree's height (the
+# smoothed surface's, usually under 1 m lower) is a neighbour's crown or a roof.
 NARROW_REACH_M = 3.0
 NARROW_DROP_3M = (0.45, 0.95)
 NARROW_ROUGH_MAX = 0.2
+NARROW_OWN_TOP_M = 2.0
+# Pending the owner (docs/DECISIONS.md): a placed tree the narrow rule doesn't call narrow keeps the width curve's
+# conifer call. That call is weak (of the 14 labelled trees the Oct 8 build called conifer, one was); False would leave
+# conifers to a catalogue's genus until the spring Sentinel-2 cue (docs/19 §19.3).
+KEEP_WIDTH_CONIFER = True
 
 
 def model_for(cm):
     """One rule everywhere (owner, Oct 8: no classification by place): every tree tries the three width curves from the
     lone trees and keeps the one that explains its crown best. Broadleaf takes the valley broadleaf curve (which includes
     the small trees), conifer the mountain conifers' (pointed, narrow crowns), narrow the valley conifers' and columnar
-    trees'. Conifers and narrow trees share the narrow top shape. The curve sets the crown's size and shape only: a
-    placed tree's type comes from the narrow rule (crown_profile, narrow_rule)."""
+    trees'. Conifers and narrow trees share the narrow top shape. The curve sets the crown's size and shape; whether a
+    placed tree is narrow comes from the narrow rule (crown_profile, narrow_rule, placed_type)."""
     W, Sh = cm["width"], cm["shape"]
     crowded = cm["crowded_shape_a"]
     narrow_shapes = [(Sh["narrow"]["a"], Sh["narrow"]["n"]), (crowded["narrow"], Sh["narrow"]["n"])]
@@ -92,29 +100,39 @@ def crown_profile(h, y, x, reach):
 
 
 def narrow_min_top(model):
-    """The height (m) from which a typical broadleaf crown reaches NARROW_REACH_M out, where the 3 m fall can tell."""
+    """The top (m) from which a typical broadleaf crown reaches NARROW_REACH_M out, where the 3 m fall can tell."""
     a, b = model.widths["broadleaf"]
     return (2 * NARROW_REACH_M / a) ** (1 / b)
 
 
-def narrow_rule(p, model):
-    """True when a crown's profile (crown_profile) says narrow: its top is tall enough for the cue (narrow_min_top), it
-    falls 45% of its height within 3 m of the top but still stands above the ground there, and the top is even. Scored
-    on the owner's 100 labelled trees (docs/19 §19.3)."""
+def narrow_rule(p, H, model):
+    """True when a crown's profile (crown_profile) says narrow: the top is the tree's own (under NARROW_OWN_TOP_M above
+    its height H), tall enough for the cue (narrow_min_top; the floor is on the top, not on H), the crown falls 45% of
+    the top's height within 3 m of it but still stands above the ground there, and the top is even. Scored on the
+    owner's 100 labelled trees (docs/19 §19.3)."""
     if p is None:
         return False
     lo, hi = NARROW_DROP_3M
-    return p["top_m"] >= narrow_min_top(model) and lo <= p["drop_3m"] < hi and p["rough"] < NARROW_ROUGH_MAX
+    return (p["top_m"] - H < NARROW_OWN_TOP_M and p["top_m"] >= narrow_min_top(model)
+            and lo <= p["drop_3m"] < hi and p["rough"] < NARROW_ROUGH_MAX)
+
+
+def placed_type(p, H, width_curve, model):
+    """A placed tree's type from its profile, its height and the width curve that sized its crown. Narrow when the
+    narrow rule says so. Otherwise conifer when that curve was the conifer one and KEEP_WIDTH_CONIFER (pending the
+    owner), else broadleaf. The curve's narrow call isn't kept: on the labels, 2 of its 23 narrow calls on real trees
+    were narrow trees (Oct 8: neighbours squeeze crowns, so width is a cue to the type only on lone trees)."""
+    if narrow_rule(p, H, model):
+        return "narrow"
+    return "conifer" if KEEP_WIDTH_CONIFER and width_curve == "conifer" else "broadleaf"
 
 
 def type_placed(h, t, model):
-    """A placed tree's type and fit. Narrow when its profile passes the narrow rule, else broadleaf: the width curve
-    that fitted its crown isn't a cue to its type (Oct 8: it called most of the owner's conifers broadleaf and put
-    narrow and conifer crowns on broadleaf trees). Conifers come from a catalogue's genus for now (spring Sentinel-2
-    next, docs/19 §19.3). The fit keeps the curve and the profile; its width is compared with the type's typical one."""
+    """A placed tree's type and fit (placed_type). The fit keeps the width curve and the profile; its width is compared
+    with the typical width on the curve that sized it, as the placer's size cost is."""
     prof = crown_profile(h, t["y"], t["x"], 0.6 * t["R"])
-    typ = "narrow" if narrow_rule(prof, model) else "broadleaf"
-    z = math.log(t["R"] / model.radius_cells(t["H"], typ)) / model.sd
+    typ = placed_type(prof, round(t["H"], 2), t["type"], model)      # the height as stored, so a build can be retyped
+    z = math.log(t["R"] / model.radius_cells(t["H"], t["type"])) / model.sd
     crowded = t["a"] < 0.6 if t["type"] == "broadleaf" else t["a"] < 0.8      # the curve's crowded top shape
     return typ, {"width_vs_typical_sd": round(z, 2), "crowded": crowded, "width_curve": t["type"], "profile": prof}
 
@@ -286,7 +304,8 @@ def main(argv=None):
              "params": {"theta": a.theta, "lam": a.lam, "sweeps": a.sweeps, "lidar": a.lidar, "lidar_date": a.lidar_date,
                         "window": a.window, "model": cm["source"][:200],
                         "narrow_rule": {"drop_3m": list(NARROW_DROP_3M), "rough_max": NARROW_ROUGH_MAX,
-                                        "min_top_m": round(narrow_min_top(model), 2)}},
+                                        "min_top_m": round(narrow_min_top(model), 2), "own_top_m": NARROW_OWN_TOP_M},
+                        "conifer_from_width_curve": KEEP_WIDTH_CONIFER},
              "counts": {"trees": len(out_trees), "catalogued": n_cat, "estimated": n_est, "placed": n_placed,
                         "types": {k: sum(1 for tr in out_trees if tr["type"] == k) for k in ("broadleaf", "conifer", "narrow")},
                         "surface_mae_m": round(float(err.mean()), 3) if err.size else None,

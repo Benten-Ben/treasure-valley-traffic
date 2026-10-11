@@ -46,13 +46,15 @@ How wide a crown can be for its height and type, and the shape of its top.
   height class).
 - **Type:** on lone trees, width for height separates narrow from wide
   crowns; the photo's near-infrared and the fitted dome's shape didn't
-  (Oct 8). Among other trees it doesn't: neighbours squeeze crowns, and the
-  width fit's narrow and conifer calls fell mostly on broadleaf trees. So a
-  placed tree's type comes from how fast its crown falls away from its top
-  (the narrow rule, §19.3), and the width curve only sizes and shapes it.
-  In the mountains, narrow means conifer. In the valley it is its own type
-  ("narrow": spruce, young street trees, poplars) unless a catalogue says
-  otherwise. Only about 1% of the North End's street trees are conifers.
+  (Oct 8). Among other trees it doesn't: neighbours squeeze crowns, and on
+  the owner's labelled trees the width fit's narrow and conifer calls were
+  mostly wrong. So whether a placed tree is narrow comes from how fast its
+  crown falls away from its top (the narrow rule, §19.3); the width curve
+  sizes and shapes the crown, and for now still makes the conifer call
+  (pending, §19.3). In the mountains, narrow means conifer. In the valley
+  it is its own type ("narrow": spruce, young street trees, poplars) unless
+  a catalogue says otherwise. Only about 1% of the North End's street trees
+  are conifers.
 - **Catalogued trees** also get their species' Urban Tree Database curves
   for Boise (crown diameter and height from trunk diameter), which size the
   estimated kind and guide the measured one.
@@ -104,27 +106,59 @@ of a bigger tree and 6 not a tree. What that showed:
   all trees, mostly small ones no test covers yet.
 - **Narrow trees** fall away fast: a crown that drops 45% of its height
   within 3 m of its top caught all 8 (and 12 of 66 others).
-- **The narrow rule, tightened (Oct 11).** A placed tree is narrow when
-  its crown falls 45% of its height within 3 m of its top but stops short
-  of the ground there (under 95%: a crown that ends within 3 m is too
-  small for the cue), from an even top (the heights within 1 m of it vary
-  by under a fifth of its height; a broken crown edge or a top between
-  crowns overstates the fall), and only where a typical broadleaf crown
-  as tall reaches 3 m out (about 8.3 m; below that, what lies 3 m out is
-  the neighbourhood, not the crown). Every other placed tree is broadleaf:
-  the width curve still sizes and shapes the crown, but it isn't a cue to
-  the type. Rebuilt on the eight labelled areas' central 500 m (the
-  placement itself unchanged: the same 10,992 trees), the rule calls 7 of
-  the 8 narrow trees narrow and 2 of the 65 others (one broadleaf, one
-  conifer), where the width fit called 2 and 21. It types 51 of the 73
-  real trees the build finds rightly (the width fit: 35), and 6% of all
-  the trees come out narrow. Trees under 8.3 m have no labels yet.
-- **Conifers have no cue yet.** The crown-width fit calls them broadleaf
-  (of the 14 labelled trees it called conifer, one was), and the
-  photo's darkness only looked like a cue because the forest area's photo
-  is darker. So placed trees aren't called conifer; only a catalogue's
-  genus says so. A spring Sentinel-2 image (evergreens green while
-  broadleaf trees are bare) is the next thing to try.
+- **The narrow rule, tightened (Oct 11).** A placed tree is narrow when its
+  crown falls 45% of its height within 3 m of its top but stops short of
+  the ground there (under 95%), from an even top (the heights within 1 m of
+  it vary by under a fifth of its height; a broken crown edge or a top
+  between crowns overstates the fall). The top is the crown's highest lidar
+  point, unsmoothed. It must be the tree's own: less than 2 m above the
+  tree's height, which comes from the smoothed surface and usually sits
+  under 1 m lower (a higher top is a neighbour's crown or a roof). And it
+  must be 8.3 m or more, where a typical broadleaf crown with that top
+  reaches 3 m out (the width curves were fitted on the lone trees' tops);
+  below that, what lies 3 m out is the neighbourhood, not the crown. So a
+  narrow tree's height, as the map gives it, can be under 8.3 m (down to
+  about 6.3 m). The width curve that fits a crown still sizes and shapes
+  it, but its narrow call isn't kept: on the labels, 2 of its 23 narrow
+  calls were narrow trees.
+- **How well it does.** Rebuilt on the eight labelled areas' central 500 m
+  (the placement itself unchanged: the same 10,992 trees), the rule calls 7
+  of the 8 narrow trees narrow and 2 of the 65 others (one broadleaf, one
+  conifer), where the width fit called 2 and 21; the build types 51 of the
+  73 real trees it finds rightly (the width fit: 35, the Oct 8 rule: 46).
+  These scores are in-sample: the 95% cap and the even-top limit were
+  chosen on the same trees. Choosing the cut-offs on 73 of the real
+  labelled trees and typing the one left out, in turn, catches 4 to 6 of
+  the 8 narrow trees (depending on which of the equally good cut-offs is
+  taken) and calls 2 of the 66 others narrow. With only 8 narrow trees,
+  that is a rough guide. In the windows 6% of the trees come out narrow;
+  179 of the 649 are under 8.3 m tall (the lowest 6.7 m), all with tops of
+  8.3 m or more. The own-top check took out 27 narrow calls whose top stood
+  2–10 m above the tree; no labelled tree was among them.
+- **Where it can't tell.** Tops under 8.3 m (too few labelled trees are
+  that short to set a cue there, so short junipers and young columnar trees
+  aren't called narrow; one labelled juniper with a 7 m top is missed),
+  tops that aren't the tree's own, and crowns that end within 3 m. By the
+  model's curves a lone narrow crown ends within 3 m up to about 14 m tall,
+  and a lone mountain conifer up to about 16 m, so a lone yard spruce or an
+  open-stand conifer below those heights isn't called narrow either: in the
+  windows, 166 of the 3,418 trees with their own top of 8.3 m or more.
+  These trees are broadleaf, or conifer where the conifer curve sized them
+  (next point). Letting the width fit's narrow call stand for crowns that
+  end within 3 m was tried: on the labels it typed no more trees rightly
+  and called two more conifers narrow, so it isn't used.
+- **Conifers: pending (Oct 11).** No cue tells conifers yet. The photo's
+  darkness only looked like one because the forest area's photo is darker,
+  and the width fit's conifer call is weak: of the 14 labelled trees the
+  Oct 8 build called conifer, one was (ten weren't trees of their own). It
+  puts cones on 7–8% of the North End's and downtown's trees 8 m and
+  taller, where about 1% of the North End's street trees are conifers, and
+  on 71 of Bogus Basin's 598. Until the owner decides
+  ([DECISIONS](DECISIONS.md#pending-owner-to-decide)), a placed tree the
+  narrow rule doesn't call narrow keeps that call. Proposed: drop it, so
+  that only a catalogue's genus says conifer until the next cue is in, a
+  spring Sentinel-2 image (evergreens green while broadleaf trees are
+  bare). On the labels both ways type 51 of the 73 real trees rightly.
 
 ## 19.4 Data
 
@@ -134,9 +168,9 @@ lidar-derived data:
 - `trees.tree`: one row per tree: area, kind, type, point (the crown
   centre), ground elevation, height, crown radius, crown shape, the lidar
   it came from, the catalogue and catalogue id if any, the fit (how well it
-  explains the surface, the width curve that sized it and how its crown
-  falls from its top, or how far it sits from its trunk point), and the
-  build it came from.
+  explains the surface, the width curve that sized it and its width
+  against that curve's typical one, and how its crown falls from its top;
+  or how far it sits from its trunk point), and the build it came from.
 - `trees.tree_log`: what we know about each tree over time, one entry per
   event: measured by the 2023 lidar, matched to the catalogue, placed with
   a fit, and later a 2005 Forest Service measurement or a removal seen in
