@@ -14,8 +14,8 @@ In one transaction:
   code per year;
 - the long axis of each outline (its minimum-area rectangle in UTM 11N) gives the row bearing the ground textures
   crops along;
-- fields of an older edition (or another revision of this one) that this one doesn't have are closed (valid_to), and
-  linked to the fields that now cover them (successor); nothing is deleted;
+- fields of an older edition, another revision of this one or this one's earlier load that the file doesn't have are
+  closed (valid_to), and linked to the fields that now cover them (successor); nothing is deleted;
 - then derive.py: letters, growth, plats, the z8-10 dissolves and a new tile version.
 The load is logged in ops.fetch under the source nass_csb (no request is made). Loading an edition older than one
 already loaded is refused.
@@ -222,11 +222,11 @@ def load(conn, path, edition, published=None, last_modified=None, source_url=Non
                            from farm.field where edition = %s) e) s
                where f.field_id = s.field_id""", (edition,))
         cur.execute("update farm.field set bearing = 0 where edition = %s and bearing >= 180", (edition,))
-        # Older editions' fields this one doesn't have: closed, and linked to what covers them now.
+        # Fields this file doesn't have, of this edition or an older one: closed, and linked to what covers them now.
         closed = cur.execute(
             """with gone as (
                  select f.field_id from farm.field f join farm.edition e on e.edition = f.edition
-                 where f.valid_to is null and f.edition <> %(edition)s and e.last_year <= %(last)s
+                 where f.valid_to is null and e.last_year <= %(last)s
                    and not exists (select 1 from farm_csb_in i where i.field_id = f.field_id)),
                succ as (
                  select o.field_id, array_agg(n.field_id order by ST_Area(ST_Intersection(o.geom, n.geom)) desc)
@@ -241,7 +241,7 @@ def load(conn, path, edition, published=None, last_modified=None, source_url=Non
             {**args, "last": last, "share": SUCCESSOR_MIN_SHARE, "kept": SUCCESSORS_KEPT}).rowcount
         counts = {"fields": len(rows), "repaired": repaired, "closed": closed,
                   "acres": round(sum(r["acres"] or 0 for r in rows))}
-        stats = {"edition": edition, "fields": len(rows), "repaired": repaired, "closed (older editions)": closed}
+        stats = {"edition": edition, "fields": len(rows), "repaired": repaired, "closed": closed}
         stats.update(derive.run(conn, f"farm-csb-load {edition}", f"farm-csb-load {edition}", classes))
         counts.update({k: v for k, v in stats.items() if k in ("built over", "being built")})
         cur.execute("update farm.edition set counts = %s::jsonb where edition = %s", (json.dumps(counts), edition))

@@ -66,7 +66,7 @@ class DbTest(unittest.TestCase):
 class CsbLoadTest(DbTest):
     def test_loads_the_fields(self):
         stats = self.load()
-        self.assertEqual((stats["fields"], stats["repaired"], stats["closed (older editions)"]), (3, 1, 0))
+        self.assertEqual((stats["fields"], stats["repaired"], stats["closed"]), (3, 1, 0))
         self.assertEqual(self.one("select count(*) from farm.field where valid_to is null")[0], 3)
         ed = self.one("select first_year, last_year, published, sha256, counts from farm.edition where edition = %s",
                       (EDITION,))
@@ -191,8 +191,18 @@ class CsbLoadTest(DbTest):
         self.load()
         ids = dict(self.conn.execute("select field_id, id from farm.field"))
         stats = self.load()
-        self.assertEqual((stats["upserted"], stats["closed (older editions)"]), (3, 0))
+        self.assertEqual((stats["upserted"], stats["closed"]), (3, 0))
         self.assertEqual(dict(self.conn.execute("select field_id, id from farm.field")), ids)
+
+    def test_a_reload_without_a_field_closes_it(self):
+        self.load()
+        path = S.write_gpkg(os.path.join(self.tmp.name, "two.gpkg"), S.fields()[:2])
+        stats = self.load(path)
+        self.assertEqual(stats["closed"], 1)
+        self.assertEqual(self.one("select valid_to from farm.field where field_id = %s", (S.F3,))[0], date(2026, 3, 27))
+        self.assertEqual(self.one("select count(*) from farm.crop_fields")[0], 2)
+        self.load()                                        # the full file again reopens it
+        self.assertIsNone(self.one("select valid_to from farm.field where field_id = %s", (S.F3,))[0])
 
     def test_a_new_edition_closes_the_fields_it_lacks(self):
         self.load()
@@ -202,7 +212,7 @@ class CsbLoadTest(DbTest):
                  S.field("161926000000003", old[S.F3]["_polygons"], [24, 24, 41, 41, 42, 1, 122, 122], years=years)]
         path = S.write_gpkg(os.path.join(self.tmp.name, "csb1926.gpkg"), newer, years=years)
         stats = self.load(path, "csb-2019-2026")
-        self.assertEqual(stats["closed (older editions)"], 3)
+        self.assertEqual(stats["closed"], 3)
         rows = {r[0]: r[1:] for r in self.conn.execute("select field_id, valid_to, successor from farm.field")}
         self.assertEqual(rows[S.F1], (date(2026, 3, 27), ["161926000000001"]))
         self.assertEqual(rows[S.F2], (date(2026, 3, 27), None))       # vanished: kept, closed, no successor
