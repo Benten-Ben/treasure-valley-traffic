@@ -2,7 +2,8 @@
 
     docker run --rm --memory 5g --memory-swap 5g --user $(id -u):$(id -g) -v "$PWD":/repo -v /srv/tvt:/srv/tvt \\
       -w /repo tvt-worker python plugins/trees/build/build.py --area c --dsm .../dsm.tif --dtm .../dtm.tif \\
-      --mask .../zero_mask_c.npy --anchors .../anchors_c.csv --out $TVT_ARCHIVE/trees/<build-id>
+      --mask .../zero_mask_c.npy --anchors .../anchors_c.csv --spring .../sentinel2/april2025 \\
+      --summer .../sentinel2/july2025 --out $TVT_ARCHIVE/trees/<build-id>
 
 Then `python3 -m ingest trees-load --build <dir>` loads it.
 
@@ -12,20 +13,29 @@ Then `python3 -m ingest trees-load --build <dir>` loads it.
    (the genus says conifer or broadleaf). It is fixed: the placer builds around it. Otherwise it is an estimated tree,
    sized from Boise's measured trees of its genus (Urban Tree Database) by trunk diameter.
 2. The placer fills the rest (place.py), then repairs. Each placed crown's size and shape come from the width curve that
-   explains the lidar best. Whether it is narrow comes from the narrow rule (narrow_rule below), not from that curve;
-   the curve's conifer call stands for now (KEEP_WIDTH_CONIFER).
+   explains the lidar best. Its type: narrow by the narrow rule (narrow_rule below), not by that curve; else conifer
+   when the spring Sentinel-2 cue sees an evergreen crown (--spring and --summer: Seasons, evergreen below); else the
+   curve's conifer call stands for now (KEEP_WIDTH_CONIFER), and broadleaf otherwise.
 3. Writes trees.geojson (WGS84 points with the tree's fields), log.jsonl (one event per line) and build.json.
 
 The area's inputs for the pilot are the land-cover spike's lidar products (0.5 m DSM and DTM in UTM 11N) and its
-building mask (aligned footprints, zeroed with a buffer)."""
-import argparse, csv, datetime as dt, json, math, os, sys, time
+building mask (aligned footprints, zeroed with a buffer). The spring cue reads the early-April 2025 and July 2025
+Sentinel-2 NDVI products on the ground's 10 m grid (basemap/ground/grid.py; "Contains modified Copernicus Sentinel data
+2025"). The build never reads a catalogue unless --anchors names one."""
+import argparse, csv, datetime as dt, hashlib, json, math, os, sys, time
 import numpy as np
 import rasterio
-from pyproj import Transformer
+from pyproj import CRS, Transformer
+from rasterio.windows import Window
 from scipy import ndimage
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from place import Model, Placer, PX  # noqa: E402
+
+REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+if REPO not in sys.path:
+    sys.path.append(REPO)                                        # basemap.ground's grid, when run as a script
+from basemap.ground import grid  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 MODEL_DIR = os.path.join(os.path.dirname(HERE), "model")
@@ -45,10 +55,27 @@ NARROW_REACH_M = 3.0
 NARROW_DROP_3M = (0.45, 0.95)
 NARROW_ROUGH_MAX = 0.2
 NARROW_OWN_TOP_M = 2.0
-# Pending the owner (docs/DECISIONS.md): a placed tree the narrow rule doesn't call narrow keeps the width curve's
-# conifer call. That call is weak (of the 14 labelled trees the Oct 8 build called conifer, one was); False would leave
-# conifers to a catalogue's genus until the spring Sentinel-2 cue (docs/19 §19.3).
+# Pending the owner (docs/DECISIONS.md): a placed tree that neither the narrow rule nor the spring cue types keeps the
+# width curve's conifer call. That call is weak (of the 14 labelled trees the Oct 8 build called conifer, one was);
+# False would leave conifers to the spring cue and a catalogue's genus (docs/19 §19.3).
 KEEP_WIDTH_CONIFER = True
+# The spring cue (docs/19 §19.3; decision 24, Oct 8): an early-April 2025 Sentinel-2 image against July's. Evergreen
+# crowns are green in early April and broadleaf crowns are still bare. But by then the valley's lawns and pastures are
+# green too, under the crowns and around them, and a yard tree is a fraction of a 10 m cell, so in the valley a bare
+# crown reads about as green as an evergreen one: there the image can't tell. Over snow it can: the ground reads white,
+# so only evergreen foliage is green. So a crown is evergreen when at least half the clear April views of the cells
+# within 50 m of it were snow, the crown is at least half a 10 m cell (so its cells' colour is mostly its own), and its
+# April NDVI over its cells is 0.2 or more. The cue is one-sided: a crown that reads dark over snow may be a snow-laden
+# or misregistered conifer (two of the owner's labelled conifers do), so it says nothing about it. Scored on the owner's
+# 100 labelled trees (Oct 11).
+SPRING_NEAR_M = 50.0
+SPRING_SNOW_MIN = 0.5
+SPRING_MIN_CROWN_M2 = 50.0
+SPRING_NDVI_MIN = 0.2
+SPRING_FILES = {"apr": ("spring", "ndvi_median.tif"), "clear": ("spring", "clear_count.tif"),
+                "snow": ("spring", "snow_count.tif"), "jul": ("summer", "ndvi_median.tif")}
+SENTINEL2_CREDIT = "Contains modified Copernicus Sentinel data 2025"
+LIDAR_CREDIT = "U.S. Geological Survey, 3D Elevation Program"
 
 
 def model_for(cm):
@@ -117,24 +144,135 @@ def narrow_rule(p, H, model):
             and lo <= p["drop_3m"] < hi and p["rough"] < NARROW_ROUGH_MAX)
 
 
-def placed_type(p, H, width_curve, model):
-    """A placed tree's type from its profile, its height and the width curve that sized its crown. Narrow when the
-    narrow rule says so. Otherwise conifer when that curve was the conifer one and KEEP_WIDTH_CONIFER (pending the
-    owner), else broadleaf. The curve's narrow call isn't kept: on the labels, 2 of its 23 narrow calls on real trees
-    were narrow trees (Oct 8: neighbours squeeze crowns, so width is a cue to the type only on lone trees)."""
+def can_tell_spring(c):
+    """True when the spring cue (Seasons.cue, or a stored fit's spring) can tell: an April view under snow around the
+    crown, and a crown big enough for its cells' colour to be its own."""
+    return (bool(c) and c.get("apr_ndvi") is not None and c.get("snow_share") is not None
+            and c["snow_share"] >= SPRING_SNOW_MIN and c["crown_m2"] >= SPRING_MIN_CROWN_M2)
+
+
+def evergreen(c):
+    """True when the spring cue sees an evergreen crown: it can tell (can_tell_spring), and the crown's April NDVI is at
+    least SPRING_NDVI_MIN, green over the snow. False says nothing: the cue is one-sided."""
+    return can_tell_spring(c) and c["apr_ndvi"] >= SPRING_NDVI_MIN
+
+
+def placed_type(p, H, width_curve, model, spring=None):
+    """A placed tree's type from its profile, its height, the width curve that sized its crown and its spring cue.
+    Narrow when the narrow rule says so (first: one labelled narrow tree was sized by the conifer curve). Otherwise
+    conifer when the spring cue sees an evergreen crown. Otherwise conifer when that curve was the conifer one and
+    KEEP_WIDTH_CONIFER (pending the owner), else broadleaf. The curve's narrow call isn't kept: on the labels, 2 of its
+    23 narrow calls on real trees were narrow trees (Oct 8: neighbours squeeze crowns, so width is a cue to the type
+    only on lone trees)."""
     if narrow_rule(p, H, model):
         return "narrow"
+    if evergreen(spring):
+        return "conifer"
     return "conifer" if KEEP_WIDTH_CONIFER and width_curve == "conifer" else "broadleaf"
 
 
-def type_placed(h, t, model):
-    """A placed tree's type and fit (placed_type). The fit keeps the width curve and the profile; its width is compared
-    with the typical width on the curve that sized it, as the placer's size cost is."""
+def type_placed(h, t, model, spring=None):
+    """A placed tree's type and fit (placed_type). The fit keeps the width curve, the profile and the spring cue (None
+    when the build had no Sentinel-2 inputs); its width is compared with the typical width on the curve that sized it,
+    as the placer's size cost is."""
     prof = crown_profile(h, t["y"], t["x"], 0.6 * t["R"])
-    typ = placed_type(prof, round(t["H"], 2), t["type"], model)      # the height as stored, so a build can be retyped
+    typ = placed_type(prof, round(t["H"], 2), t["type"], model, spring)  # the height as stored, so a build can be retyped
     z = math.log(t["R"] / model.radius_cells(t["H"], t["type"])) / model.sd
     crowded = t["a"] < 0.6 if t["type"] == "broadleaf" else t["a"] < 0.8      # the curve's crowded top shape
-    return typ, {"width_vs_typical_sd": round(z, 2), "crowded": crowded, "width_curve": t["type"], "profile": prof}
+    return typ, {"width_vs_typical_sd": round(z, 2), "crowded": crowded, "width_curve": t["type"], "profile": prof,
+                 "spring": spring}
+
+
+def horizontal_epsg(crs):
+    """The EPSG code of a raster CRS's horizontal part (the QL1 lidar's products can open as NAD83(2011) / UTM 11N plus
+    NAVD88 heights), or None."""
+    c = CRS.from_user_input(crs.to_wkt())
+    if c.is_compound:
+        c = c.sub_crs_list[0]
+    return c.to_epsg()
+
+
+def sha256(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+class Seasons:
+    """The spring cue's inputs around one area: the early-April 2025 Sentinel-2 NDVI median with its clear and snow
+    view counts (spring_dir: ndvi_median.tif, clear_count.tif, snow_count.tif) and the July 2025 NDVI median (summer_dir:
+    ndvi_median.tif), all on the ground's 10 m grid (basemap/ground/grid.py), read once as a window around the area's
+    bounds (metres in UTM 11N: the lidar's NAD83 coordinates are the grid's under the null datum shift)."""
+
+    def __init__(self, spring_dir, summer_dir, bounds):
+        west, south, east, north = bounds
+        res, pad = grid.BASE_RES, SPRING_NEAR_M + grid.BASE_RES
+        self.col0 = math.floor((west - pad - grid.ORIGIN_X) / res)
+        self.row0 = math.floor((grid.ORIGIN_Y - north - pad) / res)
+        cols = math.ceil((east + pad - grid.ORIGIN_X) / res) - self.col0
+        rows = math.ceil((grid.ORIGIN_Y - south + pad) / res) - self.row0
+        self.west, self.north = grid.ORIGIN_X + self.col0 * res, grid.ORIGIN_Y - self.row0 * res
+        self.a, self.nodata, self.files, self.tags = {}, {}, {}, {}
+        for key, (which, name) in SPRING_FILES.items():
+            path = os.path.join(spring_dir if which == "spring" else summer_dir, name)
+            with rasterio.open(path) as ds:
+                t = ds.transform
+                if horizontal_epsg(ds.crs) != grid.EPSG or (t.a, t.e) != (res, -res) or t.b or t.d:
+                    raise ValueError(f"{path}: not on the ground's 10 m grid (EPSG:{grid.EPSG})")
+                c, r = (t.c - grid.ORIGIN_X) / res, (grid.ORIGIN_Y - t.f) / res
+                if abs(c - round(c)) > 1e-6 or abs(r - round(r)) > 1e-6:
+                    raise ValueError(f"{path}: its cells aren't the ground grid's")
+                win = Window(self.col0 - round(c), self.row0 - round(r), cols, rows)
+                fill = ds.nodata if ds.nodata is not None else 0
+                self.a[key] = ds.read(1, window=win, boundless=True, fill_value=fill)
+                self.nodata[key] = ds.nodata
+                self.tags[which] = self.tags.get(which) or ds.tags()
+            self.files[f"{which}/{name}"] = {"bytes": os.path.getsize(path), "sha256": sha256(path)}
+        k = int(math.ceil(SPRING_NEAR_M / res)) + 1
+        self.near_i, self.near_j = (v.ravel() for v in np.mgrid[-k:k + 1, -k:k + 1])
+
+    def about(self):
+        """What the build records of its Sentinel-2 inputs (no paths): acquisitions, credit, files' bytes and sha256."""
+        return {"april": self.tags["spring"].get("ACQUISITIONS"), "july": self.tags["summer"].get("ACQUISITIONS"),
+                "credit": SENTINEL2_CREDIT, "files": self.files,
+                "rule": {"near_m": SPRING_NEAR_M, "snow_min": SPRING_SNOW_MIN, "min_crown_m2": SPRING_MIN_CROWN_M2,
+                         "ndvi_min": SPRING_NDVI_MIN}}
+
+    def cue(self, x, y, R):
+        """The spring cue for a crown of radius R (m) centred at (x, y) (metres): its April and July NDVI (the cells its
+        disc covers, weighted by its area in each, sampled every 0.5 m), the snow share of the clear April views of the
+        cells within SPRING_NEAR_M of its centre, its fewest clear April views, its area and whether it's evergreen."""
+        rows, cols = self.a["apr"].shape
+        res = grid.BASE_RES
+        n = int(math.ceil(R / PX))
+        off = np.arange(-n, n + 1) * PX
+        dx, dy = np.meshgrid(off, off)
+        inside = dx * dx + dy * dy <= R * R
+        cc = np.floor((x + dx[inside] - self.west) / res).astype(int)
+        rr = np.floor((self.north - (y + dy[inside])) / res).astype(int)
+        ok = (rr >= 0) & (rr < rows) & (cc >= 0) & (cc < cols)
+        if not ok.any():
+            return None
+        cells, w = np.unique(rr[ok] * cols + cc[ok], return_counts=True)
+        r_i, c_i = cells // cols, cells % cols
+        out = {}
+        for key, name in (("apr", "apr_ndvi"), ("jul", "jul_ndvi")):
+            v = self.a[key][r_i, c_i].astype(float)
+            good = v != self.nodata[key]
+            out[name] = round(float((v[good] * w[good]).sum() / w[good].sum()) / 1e4, 3) if good.any() else None
+        out["april_views"] = int(self.a["clear"][r_i, c_i].min())
+        rr = int(math.floor((self.north - y) / res)) + self.near_i
+        cc = int(math.floor((x - self.west) / res)) + self.near_j
+        near = (np.hypot(self.west + (cc + 0.5) * res - x, self.north - (rr + 0.5) * res - y) <= SPRING_NEAR_M)
+        near &= (rr >= 0) & (rr < rows) & (cc >= 0) & (cc < cols)
+        clear = self.a["clear"][rr[near], cc[near]].astype(float)
+        snow = self.a["snow"][rr[near], cc[near]][clear > 0]
+        out["snow_share"] = round(float((snow / clear[clear > 0]).mean()), 2) if (clear > 0).any() else None
+        out["crown_m2"] = round(math.pi * R * R, 1)
+        out["evergreen"] = evergreen(out)
+        return out
 
 
 def utd_size(utd, genus, dbh_in, conifer):
@@ -163,6 +301,32 @@ def read_anchors(path, to_rc, shape, lidar_ms):
     return out
 
 
+def sources(a, seasons):
+    """The outside data a build read, for build.json's params: the lidar and Sentinel-2 by their names in
+    plugins/trees/plugin.json (its manual sources), and a catalogue's trunk points when --anchors gave them (from a
+    private plugin; sized with the Urban Tree Database)."""
+    out = [{"source": "trees/usgs_3dep_lidar", "credit": LIDAR_CREDIT, "version": a.lidar}]
+    if seasons:
+        ab = seasons.about()
+        out.append({"source": "trees/sentinel2", "credit": SENTINEL2_CREDIT,
+                    "version": f"early April 2025 ({ab['april']}); July 2025 ({ab['july']})"})
+    if a.anchors:
+        out.append({"source": "catalogue", "credit": "the catalogue's (--anchors; a private plugin's, never stored here)",
+                    "version": "trunk points, genus, trunk diameter and planting date"})
+        out.append({"source": "urban_tree_database",
+                    "credit": "US Forest Service Urban Tree Database (McPherson, van Doorn & Peper 2016)",
+                    "version": "Boise's trees by genus (model/utd_boise.json), for estimated trees"})
+    return out
+
+
+def spring_counts(trees):
+    """Among placed trees: how many the spring cue could tell, how many it saw evergreen, and how many it typed."""
+    placed = [t for t in trees if t["kind"] == "placed"]
+    return {"can_tell": sum(1 for t in placed if can_tell_spring(t["fit"].get("spring"))),
+            "evergreen": sum(1 for t in placed if evergreen(t["fit"].get("spring"))),
+            "conifer": sum(1 for t in placed if evergreen(t["fit"].get("spring")) and t["type"] == "conifer")}
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--area", required=True)
@@ -176,8 +340,13 @@ def main(argv=None):
     ap.add_argument("--lam", type=float, default=40.0, help="per-tree cost (metres x cells); 40 from the owner's 100 labelled trees (Oct 8)")
     ap.add_argument("--sweeps", type=int, default=2)
     ap.add_argument("--window", help="row0,col0,rows,cols: build only this part (tests)")
+    ap.add_argument("--spring", help="the early-April Sentinel-2 folder (ndvi_median.tif, clear_count.tif, snow_count.tif)"
+                                     " for the spring cue; with --summer")
+    ap.add_argument("--summer", help="the July Sentinel-2 folder (ndvi_median.tif); with --spring")
     ap.add_argument("--out", required=True)
     a = ap.parse_args(argv)
+    if bool(a.spring) != bool(a.summer):
+        ap.error("--spring and --summer go together")
     t0 = time.time(); started = dt.datetime.now(dt.timezone.utc)
     cm = json.load(open(os.path.join(MODEL_DIR, "crown_model.json")))
     utd = json.load(open(os.path.join(MODEL_DIR, "utd_boise.json")))
@@ -193,6 +362,13 @@ def main(argv=None):
         r0, c0, nr, nc = (int(v) for v in a.window.split(","))
         sl = (slice(r0, r0 + nr), slice(c0, c0 + nc))
         h, bld, bad, dtm = h[sl], bld[sl], bad[sl], dtm[sl]
+    seasons = None
+    if a.spring:
+        epsg = horizontal_epsg(crs)
+        if epsg is None or not grid.same_coordinates(epsg):
+            sys.exit(f"--spring: the lidar's CRS ({crs}) isn't UTM 11N, so it can't be read on the Sentinel-2 grid")
+        (xa, ya), (xb, yb) = tf * (c0, r0), tf * (c0 + h.shape[1], r0 + h.shape[0])
+        seasons = Seasons(a.spring, a.summer, (min(xa, xb), min(ya, yb), max(xa, xb), max(ya, yb)))
     s = ndimage.gaussian_filter(np.where(bld, 0, h), 1.0)
     valid = ~bld & ~bad
     model = model_for(cm)
@@ -274,7 +450,8 @@ def main(argv=None):
                                    "trunk_to_crown_m": round(off, 2)}})
         else:
             tid = f"{a.area}-{int(round(x_m))}-{int(round(y_m))}"
-            typ, fit = type_placed(h, t, model)
+            spring = seasons.cue(x_m, y_m, t["R"] * PX) if seasons else None
+            typ, fit = type_placed(h, t, model, spring)
             out_trees.append({"id": tid, "kind": "placed", "type": typ, **common, "catalogue": None, "catalogue_id": None,
                               "fit": fit})
             log.append({"tree_id": tid, "at": flight_at, "event": "placed",
@@ -305,9 +482,11 @@ def main(argv=None):
                         "window": a.window, "model": cm["source"][:200],
                         "narrow_rule": {"drop_3m": list(NARROW_DROP_3M), "rough_max": NARROW_ROUGH_MAX,
                                         "min_top_m": round(narrow_min_top(model), 2), "own_top_m": NARROW_OWN_TOP_M},
-                        "conifer_from_width_curve": KEEP_WIDTH_CONIFER},
+                        "conifer_from_width_curve": KEEP_WIDTH_CONIFER,
+                        "spring": seasons.about() if seasons else None, "sources": sources(a, seasons)},
              "counts": {"trees": len(out_trees), "catalogued": n_cat, "estimated": n_est, "placed": n_placed,
                         "types": {k: sum(1 for tr in out_trees if tr["type"] == k) for k in ("broadleaf", "conifer", "narrow")},
+                        "spring": spring_counts(out_trees) if seasons else None,
                         "surface_mae_m": round(float(err.mean()), 3) if err.size else None,
                         "surface_within_1_5m": round(float((err <= 1.5).mean()), 3) if err.size else None,
                         "seconds": round(time.time() - t0)}}

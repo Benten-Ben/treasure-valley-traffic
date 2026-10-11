@@ -252,6 +252,12 @@ class BuildTest(unittest.TestCase):
                                                        "min_top_m": round(build.narrow_min_top(m), 2),
                                                        "own_top_m": build.NARROW_OWN_TOP_M})
         self.assertEqual(bj["params"]["conifer_from_width_curve"], build.KEEP_WIDTH_CONIFER)
+        # without --spring there is no spring cue: no Sentinel-2 source, and no tree's fit has one
+        self.assertIsNone(bj["params"]["spring"])
+        self.assertIsNone(bj["counts"]["spring"])
+        self.assertEqual(bj["params"]["sources"], [{"source": "trees/usgs_3dep_lidar", "credit": build.LIDAR_CREDIT,
+                                                    "version": "synthetic"}])
+        self.assertTrue(all(t["fit"]["spring"] is None for t in trees))
         self.assertEqual(sum(bj["counts"]["types"].values()), len(trees))
 
 
