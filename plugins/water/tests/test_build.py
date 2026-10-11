@@ -182,6 +182,15 @@ class ConflationTest(unittest.TestCase):
         self.assertEqual(self.counts["gauges_linked"], 1)
         self.assertEqual(self.q("select count(*) from water.reach where id >= 2 ^ 53"), [(0,)])
 
+    def test_exported_rows_have_no_nulls(self):
+        # PostGIS 3.6.4's ST_AsFlatGeobuf shifts the column after a NULL into the NULL's place.
+        from plugins.water.ingest import export
+        for rows in (export.REACHES_ROWS, export.BODIES_ROWS):
+            cur = self.conn.execute(f"select * from ({rows}) q", {"build": self.build_id})
+            cols = [c.name for c in cur.description]
+            for row in cur.fetchall():
+                self.assertNotIn(None, row, dict(zip(cols, row)))
+
     def test_export(self):
         from basemap.ground import manifest as M
         from plugins.water.ingest import export

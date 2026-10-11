@@ -6,8 +6,8 @@ manifest.json last, from the newest water-build, read in one snapshot. As a run 
 
 | Layer | File | Base | What |
 |---|---|---|---|
-| `reaches` | reaches.fgb | yes | every drawn line, EPSG:32611: `id` (water.reach.id, stable across builds: the canal season's feature-state), `kind`, `name`, `width_m`, `intermittent`, `piped`, `nhd_only`, `canal` (water.canal.id, or null), `minzoom` (the bake's directive) |
-| `bodies` | bodies.fgb | yes | every drawn area: `id`, `kind`, `name`, `intermittent`, `nhd_only`, `minzoom` |
+| `reaches` | reaches.fgb | yes | every drawn line, EPSG:32611: `id` (water.reach.id, stable across builds: the canal season's feature-state), `kind`, `name` ('' for none), `width_m`, `intermittent`, `piped`, `nhd_only`, `canal` (water.canal.id, 0 for none), `minzoom` (the bake's directive) |
+| `bodies` | bodies.fgb | yes | every drawn area: `id`, `kind`, `name` ('' for none), `intermittent`, `nhd_only`, `minzoom` |
 | `mask` | mask.fgb | no | the ground's confident water (inputs.USES `water/mask`): every body but wetlands, and the reaches OSM draws or both sources agree on, buffered to their widths, with piped water and intermittent channels left out; `kind` |
 
 Only what the map draws goes into the base: cards read the rest (sources, evidence, canals, gauges, IDWR's side
@@ -37,16 +37,20 @@ THEN = ("landscape-bake",)
 COMMAND = "python3 -m ingest water-export"
 MIN_FEATURES = {"reaches": 1000, "bodies": 1000}     # far fewer would be a broken build, not the valley
 
-REACHES_SQL = """
-select ST_AsFlatGeobuf(q, true, 'geom') from (
-  select id, kind, name, width_m::float8 width_m, intermittent, piped, geometry_from = 'nhd' nhd_only,
-         canal_id canal, minzoom::int minzoom, ST_Transform(geom, 32611) geom
-  from water.reach where build_id = %(build)s order by id) q"""
-BODIES_SQL = """
-select ST_AsFlatGeobuf(q, true, 'geom') from (
-  select id, kind, name, intermittent, geometry_from = 'nhd' nhd_only, minzoom::int minzoom,
-         ST_Multi(ST_Transform(geom, 32611)) geom
-  from water.body where build_id = %(build)s and not ST_IsEmpty(geom) order by id) q"""
+# No column may be NULL: PostGIS 3.6.4's ST_AsFlatGeobuf writes the next column's value under a NULL column's index
+# (GDAL then reads the canal id as the name, or fails on the feature), so names are '' when there's none and the canal
+# 0. ROWS_* are the rows, so a test can check them.
+REACHES_ROWS = """
+  select id, kind, coalesce(name, '') as name, width_m::float8 as width_m, intermittent, piped,
+         geometry_from = 'nhd' as nhd_only, coalesce(canal_id, 0) as canal, minzoom::int as minzoom,
+         ST_Transform(geom, 32611) as geom
+  from water.reach where build_id = %(build)s order by id"""
+BODIES_ROWS = """
+  select id, kind, coalesce(name, '') as name, intermittent, geometry_from = 'nhd' as nhd_only,
+         minzoom::int as minzoom, ST_Multi(ST_Transform(geom, 32611)) as geom
+  from water.body where build_id = %(build)s and not ST_IsEmpty(geom) order by id"""
+REACHES_SQL = f"select ST_AsFlatGeobuf(q, true, 'geom') from ({REACHES_ROWS}) q"
+BODIES_SQL = f"select ST_AsFlatGeobuf(q, true, 'geom') from ({BODIES_ROWS}) q"
 MASK_SQL = """
 select ST_AsFlatGeobuf(q, true, 'geom') from (
   select kind, geom from (
@@ -126,13 +130,13 @@ def export(conn, archive, build=None, min_features=None):
              "inputs": base_inputs, "base": True, "minzoom": 8, "maxzoom": 16,
              "title": "Rivers, creeks, canals, laterals, ditches and drains",
              "note": "id: water.reach.id (stable across builds); minzoom: each line's first zoom; nhd_only: in NHD "
-                     "only (topo-era, drawn lighter); canal: water.canal.id; width_m estimated ⚠️ unless OSM tags "
-                     "it"},
+                     "only (topo-era, drawn lighter); canal: water.canal.id, 0 for none; name: '' for none; width_m "
+                     "estimated ⚠️ unless OSM tags it"},
             {"name": "bodies", "file": "bodies.fgb", "format": "FlatGeobuf", "geometry": "MultiPolygon",
              "inputs": ["osm", "nhd"], "base": True, "minzoom": 8, "maxzoom": 16,
              "title": "Rivers drawn as areas, lakes, reservoirs, ponds, basins, wetlands and pools",
              "note": "id: water.body.id (an OSM way's 2 x id, a relation's 2 x id + 1, NHD-only 2^51 + a hash); "
-                     "pools from z15, wetlands from z14"},
+                     "name: '' for none; pools from z15, wetlands from z14"},
             {"name": "mask", "file": "mask.fgb", "format": "FlatGeobuf", "geometry": "MultiPolygon",
              "inputs": ["osm", "nhd"], "base": False, "title": "Confident water, for the ground",
              "note": "every body but wetlands, and the reaches OSM draws or both sources agree on, buffered to "
