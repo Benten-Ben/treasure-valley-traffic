@@ -15,7 +15,7 @@ Exit 0: yes (notes on stderr); 1: refused (why, on stdout); 2: usage. Settings c
 environment lib.sh exports: HEAVY (the installed heavy), WORK, CAMERA_STATUS_DIR,
 SCRATCH_ROOT, PROD_ARCHIVE, COLD_MOUNT, DUMP_ROOT, PRIVATE_DIRS (colon-separated).
 
-Tests: deploy/scratch/tests (they load heavy from deploy/bin/heavy, which F7 adds).
+Tests: deploy/scratch/tests (they load heavy from deploy/bin/heavy).
 """
 import datetime as dt
 import importlib.machinery

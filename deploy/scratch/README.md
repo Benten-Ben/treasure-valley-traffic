@@ -17,11 +17,12 @@ runbook, and its loads run as `tvt_build` too.
 | [`grant-checks.sql`](grant-checks.sql) | What `tvt_build` can and can't do, checked as `tvt_build` |
 | [`tests/`](tests/) | `python3 -m unittest discover -s deploy/scratch/tests` (with `TVT_TEST_DATABASE_URL`, a superuser on a test cluster, the SQL runs too) |
 
-**F6 depends on F7.** The scripts run their heavy jobs under F7's
+**F6 builds on F7.** The scripts run their heavy jobs under F7's
 `/srv/tvt/work/bin/heavy` and ask it for the time windows, the camera roll-up
 and a planned VM restart, so those rules live in one place. Its source is
-`deploy/bin/heavy`, which F7 adds: merge F7 first (or with F6). The tests
-load it from there and fail without it.
+[`../bin/heavy`](../bin/heavy) (F7, merged first); the tests load it from
+there and fail without it. A change to `heavy`'s rules changes the scratch
+jobs' too: run both test folders (`deploy/tests`, `deploy/scratch/tests`).
 
 ## The scratch database
 

@@ -3,8 +3,8 @@ planned restart) on top of F7's heavy, and which folders a scratch job may mount
 
     python3 -m unittest discover -s deploy/scratch/tests
 
-They load heavy from deploy/bin/heavy, which F7 adds (or from TVT_HEAVY): F6 merges after
-or with F7, and without heavy these tests fail rather than skip.
+They load heavy from deploy/bin/heavy (F7's), or from TVT_HEAVY (e.g. the copy installed on the
+VM); without it they fail rather than skip.
 """
 import datetime as dt
 import os
@@ -25,8 +25,8 @@ h = None
 def setUpModule():
     global h, TZ
     if not os.path.isfile(HEAVY):
-        raise RuntimeError(f"F6's scratch rules use F7's heavy, and there's none at {HEAVY}: "
-                           "merge wp/f7 first, or set TVT_HEAVY to a copy of deploy/bin/heavy")
+        raise RuntimeError(f"the scratch rules use F7's heavy, and there's none at {HEAVY}: "
+                           "set TVT_HEAVY to a copy of deploy/bin/heavy")
     h = scratchq.load_heavy(HEAVY)
     h.boot_time = lambda: None          # no leftover-restart logic from this machine's boot
     TZ = h.TZ
