@@ -151,6 +151,8 @@ create table roads.surface (
   check (kind <> 'junction' or junction_id is not null)
 );
 create index surface_geom on roads.surface using gist (geom);
+create index surface_piece on roads.surface (piece_id);
+create index surface_junction on roads.surface (junction_id);
 
 comment on table roads.surface is
   'Real-width roads: surfaces (roads-build). License ODbL (© OpenStreetMap contributors) with ACHD''s and ITD''s widths (none stated); republish: internal';
@@ -167,6 +169,7 @@ create table roads.edge (
   geom            geometry(MultiLineString, 32611) not null
 );
 create index edge_geom on roads.edge using gist (geom);
+create index edge_piece on roads.edge (piece_id);
 
 comment on table roads.edge is
   'Real-width roads: surface edges (roads-build). License ODbL (© OpenStreetMap contributors) with ACHD''s and ITD''s widths (none stated); republish: internal';
@@ -187,6 +190,7 @@ create table roads.marking (
   check (kind = 'crosswalk' or GeometryType(geom) in ('LINESTRING', 'MULTILINESTRING'))
 );
 create index marking_geom on roads.marking using gist (geom);
+create index marking_piece on roads.marking (piece_id);
 
 comment on table roads.marking is
   'Real-width roads: markings and crosswalks (roads-build). License ODbL (© OpenStreetMap contributors) with ACHD''s and ITD''s lane counts (none stated); republish: internal';
@@ -221,6 +225,7 @@ create table roads.review (
   geom            geometry(Point, 32611)
 );
 create index review_kind on roads.review (kind);
+create index review_piece on roads.review (piece_id);
 
 comment on table roads.review is
   'Real-width roads: the mismatch review list (roads-build). License ODbL (© OpenStreetMap contributors) with ACHD''s and ITD''s values (none stated); republish: internal';

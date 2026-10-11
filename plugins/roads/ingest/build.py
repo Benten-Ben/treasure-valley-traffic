@@ -439,6 +439,7 @@ def cross_sections(conn):
                 tiers[xs["width_tier"]] = tiers.get(xs["width_tier"], 0) + 1
                 sources[xs["lanes_source"]] = sources.get(xs["lanes_source"], 0) + 1
                 cp.write_row([p["id"]] + [json.dumps(xs[c]) if c == "sources" else xs[c] for c in XS_COLUMNS[1:]])
+    conn.execute("analyze roads.xsection")
     stats = {"tiers": tiers, "lane sources": sources,
              "markings": sum(1 for xs, _, _ in out.values() if xs["markings"])}
     return stats, out, reviews
@@ -573,6 +574,8 @@ def junctions(conn, xsections):
         with cur.copy("copy rb_junc (id, r, disc_r) from stdin") as cp:
             for d in discs:
                 cp.write_row(d)
+    conn.execute("analyze roads.junction")
+    conn.execute("analyze roads.piece")
     conn.execute("update rb_junc r set geom = ST_Buffer(j.geom, r.disc_r, 'quad_segs=8') from roads.junction j "
                  "where j.id = r.id")
     conn.execute("create index on rb_junc using gist (geom)")
@@ -634,6 +637,7 @@ from d where s.piece_id = d.piece and s.kind in ('carriageway', 'deck')
 
 def surfaces(conn):
     conn.execute(_CARRIAGEWAYS)
+    conn.execute("analyze roads.surface")
     conn.execute(_MEDIANS)
     conn.execute(_JOINTS)
     conn.execute("delete from roads.surface where ST_IsEmpty(geom)")
@@ -830,24 +834,25 @@ def closings(conn):
 # Each surface's outline, less every surface it meets (2 cm), so a seam between two surfaces isn't an edge.
 # Meets: at grade, two at-grade surfaces that touch; a deck, the decks and surfaces of pieces sharing its nodes.
 _EDGES = """
+create temp table rb_surf on commit drop as
+select s.id, s.kind, s.piece_id, s.junction_id, s.tier, s.layer, s.geom, s.kind = 'deck' as deck,
+       p.from_node, p.to_node
+from roads.surface s left join roads.piece p on p.id = s.piece_id
+where s.kind in ('carriageway', 'deck', 'junction');
+create index on rb_surf using gist (geom);
+analyze rb_surf;
 create temp table rb_edge on commit drop as
-with s as (
-  select s.id, s.kind, s.piece_id, s.junction_id, s.tier, s.layer, s.geom,
-         s.kind = 'deck' as deck, p.from_node, p.to_node
-  from roads.surface s left join roads.piece p on p.id = s.piece_id
-  where s.kind in ('carriageway', 'deck', 'junction')
-)
 select s.id, s.kind, s.piece_id, s.junction_id, s.tier, s.layer,
        ST_CollectionExtract(ST_MakeValid(ST_Difference(ST_Boundary(s.geom), coalesce(
          (select ST_Union(ST_Buffer(ST_ClipByBox2D(o.geom, ST_Expand(ST_Envelope(s.geom), 1)), 0.02, 'quad_segs=2'))
-          from s o
+          from rb_surf o
           where o.id <> s.id and o.geom && s.geom and ST_Intersects(o.geom, s.geom)
             and ((not s.deck and not o.deck)
                  or (s.from_node is not null and o.from_node is not null
                      and (o.from_node in (s.from_node, s.to_node) or o.to_node in (s.from_node, s.to_node)))
                  or (s.deck and o.deck and o.layer = s.layer))),
          ST_GeomFromText('GEOMETRYCOLLECTION EMPTY', 32611)))), 2) as g
-from s
+from rb_surf s
 """
 
 _EDGE_ROWS = """
@@ -872,7 +877,7 @@ from (
 
 
 def edges(conn):
-    conn.execute(_EDGES)
+    run_sql(conn, _EDGES)
     conn.execute(_EDGE_ROWS)
     return dict(conn.execute("select kind, count(*) from roads.edge group by 1").fetchall())
 
