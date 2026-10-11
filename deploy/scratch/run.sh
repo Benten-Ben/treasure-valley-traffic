@@ -253,7 +253,15 @@ ended() {                                           # $1: exit code; logs the en
 	printf '%s\t%s\t%s\t%s\t%s\t\t\t\tend\texit %s after %s s\n' "$(boise '+%F %T')" "$name" "$mode" "$user" "$db" "$1" "$(( $(date +%s) - t0 ))" >> "$log"
 	say "$name $mode: exit $1 after $(( $(date +%s) - t0 )) s"
 }
-trap 'stop interrupted; wait "$pid" 2>/dev/null; ended 130; exit 130' INT TERM HUP
+interrupted() {                                     # heavy's SIGTERM at its deadline counts as the deadline
+	local c=130
+	[ -n "${HEAVY_DEADLINE_EPOCH:-}" ] && [ "$(date +%s)" -ge $((HEAVY_DEADLINE_EPOCH - 5)) ] && c=124
+	stop "$( [ $c = 124 ] && echo "heavy's deadline" || echo interrupted )"
+	wait "$pid" 2>/dev/null
+	ended $c
+	exit $c
+}
+trap interrupted INT TERM HUP
 trap 'stop "its time is up"' USR1
 docker "${args[@]}" &
 pid=$!
