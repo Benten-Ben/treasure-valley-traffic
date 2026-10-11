@@ -72,9 +72,20 @@ def key(attrs):
     return f"sg:{sg.upper()}" if sg else None
 
 
+def is_final(p):
+    """Whether a perimeter payload is a fire's final perimeter (poly_FeatureCategory), not a daily one."""
+    return "final" in (arcgis.text(p.get("poly_FeatureCategory")) or "").lower()
+
+
+def is_valid(p):
+    """Whether a perimeter payload still stands: not withdrawn as invalid, deleted or hidden by its publisher."""
+    return (p.get("attr_IsValid", 1) not in (0, "0")
+            and (arcgis.text(p.get("poly_DeleteThis")) or "").lower() != "yes"
+            and (arcgis.text(p.get("poly_IsVisible")) or "").lower() != "no")
+
+
 def _rank(p):
-    final = "final" in (arcgis.text(p.get("poly_FeatureCategory")) or "").lower()
-    return (final, p.get("poly_DateCurrent") or 0, p.get("attr_ModifiedOnDateTime_dt") or 0, p.get("_geom") or "")
+    return (is_final(p), p.get("poly_DateCurrent") or 0, p.get("attr_ModifiedOnDateTime_dt") or 0, p.get("_geom") or "")
 
 
 def parse(features):
@@ -104,9 +115,7 @@ def row_of(sid, p, geom, at):
         acres = arcgis.number(p.get("attr_IncidentSize"))
     stamps = [d for d in (t(p.get("attr_ModifiedOnDateTime_dt")), t(p.get("poly_DateCurrent"))) if d]
     modified = max(stamps) if stamps else None
-    valid = (p.get("attr_IsValid", 1) not in (0, "0")
-             and (arcgis.text(p.get("poly_DeleteThis")) or "").lower() != "yes"
-             and (arcgis.text(p.get("poly_IsVisible")) or "").lower() != "no")
+    valid = is_valid(p)
     start, end = common.declared(discovered, out)
     row = {
         "source_id": sid,

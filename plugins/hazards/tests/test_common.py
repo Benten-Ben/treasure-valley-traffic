@@ -222,21 +222,28 @@ class ManifestTest(unittest.TestCase):
     def test_the_manifest_loads_and_matches_its_modules(self):
         plugin = manifest.load(PLUGIN)
         self.assertEqual((plugin.name, plugin.visibility, plugin.order, plugin.depends), ("hazards", "public", 60, []))
-        self.assertEqual(plugin.manifest["tables"], [])          # raw.record and evt.event are core's
+        # The sources' records are core's (raw.record and evt.event); the burn scars derived from them are its own.
+        self.assertEqual(plugin.manifest["tables"], ["hazards.burn_scar", "hazards.burn_scar_shown"])
         names = []
         for entry in plugin.manifest["sources"]:
             m = importlib.import_module(f"plugins.hazards.{entry['module']}")
-            self.assertEqual((m.SOURCE["name"], m.SOURCE["license"], m.SOURCE["credit"], entry["kind"]),
-                             (entry["name"], entry["license"], entry["credit"], "source"))
-            self.assertEqual(m.SOURCE["access"], "open")
-            self.assertTrue(callable(m.run))
+            self.assertEqual((m.SOURCE["name"], m.SOURCE["license"], m.SOURCE["credit"]),
+                             (entry["name"], entry["license"], entry["credit"]))
+            if entry["kind"] == "manual":                # the backfill: one read by hand, never scheduled
+                self.assertEqual((m.SOURCE["access"], m.SOURCE.get("schedule")), ("one_off", None))
+            else:
+                self.assertEqual((entry["kind"], m.SOURCE["access"]), ("source", "open"))
+                self.assertTrue(callable(m.run))
             names.append(entry["name"])
         self.assertEqual(names, ["idl_fire_restrictions", "nifc_wfigs_incidents", "nifc_wfigs_perimeters",
-                                 "nasa_firms", "nws_wwa", "usgs_quakes"])
+                                 "burn_scars", "nifc_wfigs_perimeters_backfill", "nasa_firms", "nws_wwa",
+                                 "usgs_quakes"])
 
     def test_schedules_are_ten_minutes_or_more(self):
         units = {"minute": 1, "minutes": 1, "hour": 60, "hours": 60, "day": 1440, "days": 1440}
         for entry in manifest.load(PLUGIN).manifest["sources"]:
+            if entry["kind"] == "manual":
+                continue
             s = importlib.import_module(f"plugins.hazards.{entry['module']}").SOURCE["schedule"]
             n, unit = re.fullmatch(r"(\d+) (\w+)", s).groups()
             self.assertGreaterEqual(int(n) * units[unit], 10, entry["name"])
