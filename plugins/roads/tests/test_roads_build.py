@@ -566,12 +566,15 @@ class ClassRuleTest(unittest.TestCase):
         self.assertTrue(B.class_fits("service", rank["Local"], None))
         self.assertTrue(B.class_fits("motorway_link", rank["Interstate"], None))
         self.assertTrue(B.class_fits("residential", None, None))                     # a class we don't know
-        # HPMS: interstate, US and state routes by their system; any other route a collector's.
+        # HPMS: interstate, US and state routes by their system; any other route a local street's (Boise's alleys
+        # are HPMS routes: '32nd Alley St N').
         self.assertEqual((B.hpms_rank("01990ASH055"), B.hpms_rank("02070AUS020"), B.hpms_rank("00084AIN084"),
-                          B.hpms_rank("12785AOH000")), (4, 4, 5, 2))
+                          B.hpms_rank("12785AOH000")), (4, 4, 5, 1))
         self.assertFalse(B.class_fits("residential", B.hpms_rank("02070AUS020"), None))   # 'US 20 Main'
-        self.assertTrue(B.class_fits("residential", B.hpms_rank("12785AOH000"), True))
-        self.assertFalse(B.class_fits("service", B.hpms_rank("54755AOH000"), None))
+        self.assertFalse(B.class_fits("service", B.hpms_rank("02070AUS020"), None))
+        self.assertTrue(B.class_fits("residential", B.hpms_rank("12785AOH000"), False))
+        self.assertTrue(B.class_fits("service", B.hpms_rank("48503AOH000"), None))      # an alley on HPMS's alley
+        self.assertTrue(B.class_fits("primary_link", B.hpms_rank("43906AIN084"), None))  # a ramp on the interstate's
         # A state route OpenStreetMap tags as a lesser road agrees by its ref.
         self.assertTrue(B.names_agree("SH 45 Main", "12th Avenue Road", "ID 45"))
         self.assertTrue(B.names_agree("US 20 Main", "Chinden Boulevard", "US 20;US 26"))

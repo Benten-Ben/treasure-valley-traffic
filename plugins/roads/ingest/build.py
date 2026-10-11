@@ -69,15 +69,15 @@ HPMS_KINDS = ("through_lanes", "lane_width", "shoulders", "median")
 LOCK_WAIT = "2min"                 # how long the build waits for its tables (a reader holding them)
 
 # Classes, to keep a piece off a segment or a section far above it (an alley beside an interstate, a frontage
-# street beside a state route) unless their names agree. ACHD's functional classes; OpenStreetMap's highway=*;
-# an HPMS section's by its route's system (interstate, US and state routes; any other route is at least a
-# collector's, since HPMS covers federal-aid roads).
+# street beside a state route) unless their names agree. ACHD's functional classes; OpenStreetMap's highway=* (a
+# link as its road); an HPMS section's by its route's system (interstate, US and state routes; any other route as
+# a local street's, since HPMS's other routes include alleys).
 ACHD_RANK = {"Interstate": 5, "Ramp": 4, "Principal Arterial": 4, "Minor Arterial": 3, "Collector": 2, "Local": 1,
              "Parks": 1, "Alley": 0, "Driveway": 0}
-OSM_RANK = {"motorway": 5, "motorway_link": 4, "trunk": 4, "primary": 4, "trunk_link": 3, "primary_link": 3,
-            "secondary": 3, "secondary_link": 2, "tertiary": 2, "tertiary_link": 1, "service": 0}
+OSM_RANK = {"motorway": 5, "motorway_link": 4, "trunk": 4, "primary": 4, "trunk_link": 4, "primary_link": 4,
+            "secondary": 3, "secondary_link": 3, "tertiary": 2, "tertiary_link": 2, "service": 0}
 HPMS_RANK = {"IN": 5, "US": 4, "SH": 4}
-HPMS_OTHER_RANK = 2
+HPMS_OTHER_RANK = 1                # HPMS's other routes run down to Boise's alleys ('32nd Alley St N')
 CLASS_GAP = 2                      # a target this many classes above the piece needs the names to agree
 
 # Developed land either side (the curbs): a band from LAND_NEAR_M to LAND_FAR_M out on each side. The CDL counts a
@@ -341,8 +341,8 @@ def match_achd(conn):
 def match_hpms(conn):
     """ITD HPMS sections along each piece: through lanes where no ACHD segment gives a count, and lane widths,
     shoulders and medians everywhere, of the sections its class allows (class_fits: an interstate's, a US or a
-    state route's two classes above a local street, an alley's or a service way's above any route's) and the
-    rest listed (rb_mismatch). rb_hpms: (piece_id, kind, source_id, confidence, overlap_m, same_way)."""
+    state route's, two classes or more above a local street, a collector or a service way) and the rest listed
+    (rb_mismatch). rb_hpms: (piece_id, kind, source_id, confidence, overlap_m, same_way)."""
     _mismatch_table(conn)
     conn.execute("""create temp table rb_hpms (piece_id int, kind text, source_id text, confidence real,
                       overlap_m real, same_way boolean) on commit drop""")
@@ -441,20 +441,24 @@ def sidewalks(conn):
 
 
 # Each piece's bands either side, LAND_NEAR_M to LAND_FAR_M out (a one-sided buffer less the road's own), on NASS's
-# grid (equal-area, like developed.measure(); made valid again after the transform, which can fold a sliver), and the
-# share of each that's developed land, rounded as developed.measure() rounds.
+# grid (equal-area, like developed.measure()), and the share of each that's developed land, rounded as
+# developed.measure() rounds. Step by step (materialized: an expression used twice is worked out once), and made
+# valid only where a step left it invalid (a transform can fold a sliver).
 _LAND_BANDS = """
 create temp table rb_band on commit drop as
-select p.id as piece_id, s.side, b.g
-from rb_piece p
-cross join (values ('l'), ('r')) s(side)
-cross join lateral (select ST_SimplifyPreserveTopology(p.geom, %(simplify)s) as g) q
-cross join lateral (
-  select ST_CollectionExtract(ST_MakeValid(ST_Transform(ST_CollectionExtract(ST_MakeValid(ST_Difference(
-           ST_MakeValid(ST_Buffer(q.g, %(far)s, case s.side when 'l' then 'side=left quad_segs=2'
-                                                 else 'side=right quad_segs=2' end)),
-           ST_Buffer(q.g, %(near)s, 'quad_segs=2'))), 3), %(land_srid)s)), 3) as g) b
-where not ST_IsEmpty(b.g) and ST_Area(b.g) > 0;
+with q as materialized (
+  select id, ST_SimplifyPreserveTopology(geom, %(simplify)s) as g from rb_piece
+), s as materialized (
+  select q.id, x.side, ST_Buffer(q.g, %(far)s, x.style) as outer_, ST_Buffer(q.g, %(near)s, 'quad_segs=2') as inner_
+  from q cross join (values ('l', 'side=left quad_segs=2'), ('r', 'side=right quad_segs=2')) x(side, style)
+), d as materialized (
+  select id, side, ST_Transform(ST_CollectionExtract(ST_Difference(
+           case when ST_IsValid(outer_) then outer_ else ST_MakeValid(outer_) end, inner_), 3), %(land_srid)s) as t
+  from s
+)
+select id as piece_id, side, case when ST_IsValid(t) then t else ST_CollectionExtract(ST_MakeValid(t), 3) end as g
+from d where not ST_IsEmpty(t);
+delete from rb_band where ST_IsEmpty(g) or ST_Area(g) = 0;
 create index on rb_band using gist (g);
 analyze rb_band;
 create temp table rb_land on commit drop as
