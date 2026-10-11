@@ -35,7 +35,8 @@ COLD_MOUNT=${COLD_MOUNT:-}
 # Each scratch database's archive (TVT_ARCHIVE in its jobs): $ARCHIVES/<db>/. A refresh replaces it.
 ARCHIVES=$SCRATCH_ROOT/archive
 LOCKS=$SCRATCH_ROOT/locks
-# Archive folders a refresh seeds from production's (the held OSM extracts and their load state).
+# Archive folders a refresh seeds: production's held files now, and the load state (state/ and
+# top-level *.json) from the dump's snapshot, taken before the dump (seedarchive.py).
 SEED_ARCHIVE_DIRS=${SEED_ARCHIVE_DIRS:-osm}
 # tvt_build's connection limit on the scratch server (production's is set when the role is made there).
 SCRATCH_CONN_LIMIT=${SCRATCH_CONN_LIMIT:-30}
@@ -63,6 +64,9 @@ scratchq() {
 	PROD_ARCHIVE=$PROD_ARCHIVE COLD_MOUNT=$COLD_MOUNT DUMP_ROOT=$DUMP_ROOT PRIVATE_DIRS=$PRIVATE_DIRS \
 		python3 "$SCRATCH_BIN/scratchq.py" "$@"
 }
+
+# seedarchive <command...>: seedarchive.py (each database's archive and its load state).
+seedarchive() { python3 "$SCRATCH_BIN/seedarchive.py" "$@"; }
 
 # Free bytes on a filesystem, exact (df rounds -BG up).
 free_bytes() { df -P -B1 "${1:-/}" | awk 'NR == 2 { print $4 }'; }

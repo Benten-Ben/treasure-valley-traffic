@@ -23,7 +23,8 @@ recreate=0
 case ${1:-} in --recreate) recreate=1 ;; "") ;; *) sed -n '2,15p' "$0" >&2; exit 2 ;; esac
 
 mkdir -p "$SCRATCH_ROOT"/{bin,trees,runs,slots,archive,logs,locks}
-install -m 755 "$HERE"/lib.sh "$HERE"/setup.sh "$HERE"/run.sh "$HERE"/refresh.sh "$HERE"/scratchq.py "$SCRATCH_ROOT/bin/"
+install -m 755 "$HERE"/lib.sh "$HERE"/setup.sh "$HERE"/run.sh "$HERE"/refresh.sh "$HERE"/scratchq.py \
+	"$HERE"/seedarchive.py "$SCRATCH_ROOT/bin/"
 install -m 644 "$HERE/../tvt_build.sql" "$SCRATCH_ROOT/bin/tvt_build.sql"
 install -m 644 "$HERE/grant-checks.sql" "$SCRATCH_ROOT/bin/grant-checks.sql"
 install -m 644 "$HERE/README.md" "$SCRATCH_ROOT/bin/README-repo.md"

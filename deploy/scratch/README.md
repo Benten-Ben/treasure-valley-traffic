@@ -13,6 +13,7 @@ runbook, and its loads run as `tvt_build` too.
 | [`run.sh`](run.sh) | Runs a builder's command against scratch ([below](#running-a-job)) |
 | [`lib.sh`](lib.sh) | Their shared settings, locks and memory accounting |
 | [`scratchq.py`](scratchq.py) | The light-job rules and the mount rule, on top of F7's `heavy` (the windows, the roll-up, a planned restart) |
+| [`seedarchive.py`](seedarchive.py) | Each database's archive: production's held extracts, and the load state from the dump's snapshot ([Load state](#load-state)) |
 | [`../tvt_build.sql`](../tvt_build.sql) | The `tvt_build` role: its caps and grants, idempotent, ending with a check |
 | [`grant-checks.sql`](grant-checks.sql) | What `tvt_build` can and can't do, checked as `tvt_build` |
 | [`tests/`](tests/) | `python3 -m unittest discover -s deploy/scratch/tests` (with `TVT_TEST_DATABASE_URL`, a superuser on a test cluster, the SQL runs too) |
@@ -94,7 +95,7 @@ Inside a job:
 | Variable | Value |
 |---|---|
 | `DATABASE_URL` | `postgresql://tvt_build@tvt-scratch-db:5432/<db>` (the password is in `PGPASSWORD`; libpq and GDAL's PostgreSQL driver read `PGHOST`, `PGUSER`, `PGDATABASE`) |
-| `TVT_ARCHIVE` | `/srv/archive`: **the archive of the job's database**, `/srv/tvt/work/scratch/archive/<db>/`: inboxes, exports (`<plugin>/export/<build>/`), build files and **load state**. Its `osm/` holds a copy of production's held extract and its load state (`last-loaded.json`, and per-consumer state in `osm/` or `osm/state/`). It follows its database: a refresh replaces both. Never production's archive |
+| `TVT_ARCHIVE` | `/srv/archive`: **the archive of the job's database**, `/srv/tvt/work/scratch/archive/<db>/`: inboxes, exports (`<plugin>/export/<build>/`), build files and **load state**. Its `osm/` holds a copy of production's held extracts and the **load state that matches the database** (see [Load state](#load-state)). It follows its database: a refresh replaces both. Never production's archive |
 | `TVT_PROD_ARCHIVE` | `/srv/archive-prod`: production's archive, read-only |
 | `TVT_SOURCES` | `/srv/sources`: `/srv/tvt/work/sources` (downloaded sources: CDL, CSB, NHD, SSURGO, Sentinel-2, HydroShare), read-only |
 | `TVT_COLD` | the cold drive, read-only, when it's mounted (the scratch dumps hidden) |
@@ -172,6 +173,33 @@ restore one with its own archive: `refresh.sh --db tvt_<pkg> --from-dump
 latest` (heavy, about 0.6 GB of disk plus the archive's 0.13 GB; at most four)
 and pass `--db tvt_<pkg>`; `refresh.sh --drop tvt_<pkg>` removes it.
 
+### Load state
+
+A loader that skips "the same extract as the last load" keeps that state as a
+file in its archive folder: `osm/last-loaded.json` for `osm_valley`. That file
+has to describe the database beside it, or a load is skipped against rows the
+database doesn't have. So each database has its own archive (a load into
+`tvt_s1` never touches `tvt`'s state), and a refresh gives the database the load
+state **as it was when its dump began**: `refresh.sh` snapshots production's
+state before it dumps (`archive-state/` in the dump folder), and the new
+archive gets that snapshot, with production's held extracts as they are then.
+The state can only be older than the copy, never newer: a load production
+finished during or after the dump runs again on scratch (as with `--force`),
+and a load the copy already has is skipped, as it would be on production. A
+dump made before Oct 11's fix has no snapshot: the archive then gets no load
+state, and each loader's next load runs.
+
+What counts as load state in an archive folder: its `state/` folder and the
+`*.json` files at its top (`deploy/scratch/seedarchive.py`). Everything else at
+its top is a held file (an extract, its `.md5`); `inbox/` starts empty, and
+other folders (a loader's temporary work) aren't copied. A loader that keeps
+its gate in a file (S1's consumers, if they don't keep it in the database) puts
+it there; state kept in the database follows the database by itself.
+
+If you undo a load by hand (drop a plugin's tables, restore one table), its
+state still says it's loaded: pass `--force` to the next load, or delete the
+state file under `/srv/archive/osm/` in a job.
+
 Every job, `psql` session and `grants` run holds its database's lock
 (`locks/<db>.lock`) shared; a refresh or drop of that database holds it
 exclusively, announcing itself first (`locks/<db>.refresh`) so no new job
@@ -241,8 +269,10 @@ docker exec -i tvt-db-1 psql -X -v ON_ERROR_STOP=1 -U tvt -d tvt -f - < /srv/tvt
 ## Refreshing
 
 By hand, under the heavy lock (it runs itself under `heavy --deadline
---runtime --peak 3 --cold 1 -w 60`), in a day window or overnight once the
-camera roll-up has finished:
+--runtime --peak 3 --cold 1 -w 60`). A fresh dump reads production, so it runs
+in a day window only (06:00–23:15 Boise; plan §4.4); restoring an earlier dump
+(`--from-dump`) touches only scratch and may also run overnight once the camera
+roll-up has finished:
 
 ```bash
 /srv/tvt/work/scratch/bin/refresh.sh --deadline 22:30                # dump production, restore, swap
@@ -252,15 +282,17 @@ camera roll-up has finished:
 ```
 
 It reads production only (as its owner over the db container's socket): first
-the kept raw.record rows (`COPY`), then `pg_dump -Fc` of the rest, leaving out
+a snapshot of its archive's load state ([Load state](#load-state)), then the
+kept raw.record rows (`COPY`), then `pg_dump -Fc` of the rest, leaving out
 the private plugins' schemas, to a folder named by the UTC time on the cold
 drive, readable by the server's user only (the last two kept; `heavy` refuses
 it without the cold drive, with under 200 GB free there, or under 15 GB free
 on `/`). It restores into `<db>_restore` (`timescaledb_pre_restore()`,
 `pg_restore --no-privileges`, the raw rows, skipping any whose fetch came after
 the dump), removes the private plugins' migration rows, and stops there if
-anything private came along. It stages the database's new archive (a copy of
-production's `osm/`: the held extracts and their load state). Then it waits for
+anything private came along. It stages the database's new archive
+(production's held OSM extracts, and the load state from the dump's
+snapshot; `meta.json` says whether a load finished during the dump). Then it waits for
 that database's jobs and sessions (15 minutes at most; no new ones start) and
 swaps: the old database's background workers stop
 (`timescaledb_pre_restore()`), it's dropped, the new one renamed, the old
@@ -272,10 +304,12 @@ the dump (the collectors keep running) differ, nothing else should.
 
 A refresh **throws away everything builders put in that database and its
 archive** (loads, builds, exports, load state): they run `migrate` and their
-loads again. Stopped early (deadline or error), it leaves the old database and
+loads again. A load the copy already has (production's, as of the dump) is
+skipped; their own loads run. Stopped early (deadline or error), it leaves the old database and
 archive as they were, unless it was in the swap's quick steps.
 
-Measured on the first refresh (Oct 11, 02:39 Boise, after the roll-up): the
+Measured on the first refresh (Oct 11, 02:39 Boise, after the roll-up, before
+fresh dumps were kept to day windows): the
 dump took 10 s (a 65 MB `pg_dump` and 16 MB of raw rows, zstd), the restore
 56 s, the whole refresh 91 s. The copy is a 584 MB database (157,183 raw.record
 rows; production is 1.7 GB), and the volume about 1.2 GB with its WAL, which

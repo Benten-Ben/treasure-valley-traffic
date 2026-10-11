@@ -5,7 +5,8 @@
 #   refresh.sh --drop NAME          drop a package's copy and its archive (not tvt)
 #
 #   --deadline HH:MM   Boise time; everything stops there (heavy's windows: day by 23:15;
-#                      overnight, once the camera roll-up has finished, by 05:45)
+#                      overnight, once the camera roll-up has finished, by 05:45). A fresh dump
+#                      of production runs in a day window only (06:00-23:15; plan §4.4)
 #   --runtime MIN      the expected time (default 30); it must fit before the deadline
 #   --from-dump DIR    restore a dump made earlier (a folder under $DUMP_ROOT, or "latest") instead
 #                      of dumping production again
@@ -14,19 +15,21 @@
 #   --keep N           dumps kept on the cold drive (default 2)
 #
 # What it does, under /srv/tvt/work/heavy.lock (it runs itself under F7's heavy):
-#   1. Production, read only (as its owner, over the db container's socket): raw.record's rows
-#      for the sources builders read ($KEEP_RAW_SOURCES), then pg_dump -Fc of everything else:
-#      no rows from raw.record or restricted.*, and no private plugin's schema (city_trees,
-#      private_*, and each plugin folder in $PRIVATE_PLUGINS_DIR). To $DUMP_ROOT/<UTC stamp>/ on
-#      the cold drive (mode 700: production's data), with meta.json.
+#   1. Production, read only (as its owner, over the db container's socket): first a snapshot of
+#      its archive's load state (osm/last-loaded.json and the like: seedarchive.py), then
+#      raw.record's rows for the sources builders read ($KEEP_RAW_SOURCES), then pg_dump -Fc of
+#      everything else: no rows from raw.record or restricted.*, and no private plugin's schema
+#      (city_trees, private_*, and each plugin folder in $PRIVATE_PLUGINS_DIR). To
+#      $DUMP_ROOT/<UTC stamp>/ on the cold drive (mode 700: production's data), with meta.json.
 #   2. The scratch server: a new database <db>_restore: timescaledb_pre_restore(), pg_restore
 #      (no grants), the raw rows (any whose fetch isn't in the dump is skipped and counted), the
 #      private plugins' migration rows removed, and a check that nothing private came along.
 #   3. The swap, once <db>'s jobs have finished (it waits up to 15 minutes; none start meanwhile):
 #      the old <db> is dropped and <db>_restore renamed, timescaledb_post_restore(), ANALYZE,
 #      the tvt_build grants; and <db>'s archive (TVT_ARCHIVE in its jobs) is replaced by one
-#      seeded from production's (the held OSM extracts and their load state), the old one kept
-#      in archive/.before-refresh/ until the next refresh.
+#      holding production's held OSM extracts and the load state from the dump's snapshot (so
+#      it describes the restored database: a loader skips only what the copy has), the old one
+#      kept in archive/.before-refresh/ until the next refresh.
 #   4. Row counts against production, refresh.json, and the old dumps pruned.
 #
 # A refresh throws away everything builders put in that database and its archive (their
@@ -98,8 +101,18 @@ if [ "$db" != tvt ] && ! db_exists "$db"; then
 	                            and datname not in ('postgres', 'tvt') and datname not like '%\_restore'")
 	[ "$copies" -lt "$MAX_COPIES" ] || die "already $copies package copies (at most $MAX_COPIES): drop one first (refresh.sh --drop NAME)"
 fi
+# A fresh dump reads production: day windows only (plan §4.4). A restore of an earlier dump
+# touches only scratch, so heavy's windows apply (overnight once the roll-up has finished).
+day_only() {
+	local q=0
+	[ -z "$from" ] || return 0
+	scratchq quiet || q=$?
+	[ $q != 0 ] || die "a fresh dump of production runs in a day window (06:00-23:15 Boise; plan §4.4): wait, or restore the last dump (--from-dump latest)"
+	[ $q = 1 ] || die "can't tell the time window (scratchq quiet: exit $q)"
+}
 if [ -z "${SCRATCH_IN_HEAVY:-}" ]; then
 	[ -x "$HEAVY" ] || die "no $HEAVY (F7's heavy)"
+	day_only
 	say "heavy checks the window, the disk and a planned restart, and waits for heavy.lock if it's busy"
 	# heavy (F7) stops this script (SIGTERM: it ends our database sessions) at the deadline, or
 	# 10 minutes before a planned VM restart.
@@ -166,12 +179,16 @@ t0=$(date +%s)
 P() { docker exec -i -e PGAPPNAME=$APP "$PROD_DB_CONTAINER" psql -X -v ON_ERROR_STOP=1 -U tvt -d tvt -At "$@"; }
 sources_sql="'{$(echo $KEEP_RAW_SOURCES | tr ' ' ',')}'::text[]"
 
-# 1. The dump. raw.record's rows go first: every fetch they point to is then in the dump's ops.fetch.
+# 1. The dump. The archives' load state goes first, so it can only be older than the dumped
+# database (a load that lands meanwhile runs again on scratch; it's never skipped against rows
+# the copy lacks). Then raw.record's rows: every fetch they point to is then in the dump's ops.fetch.
 if [ -z "$from" ]; then
+	day_only
 	from=$DUMP_ROOT/$(date -u +%Y%m%dT%H%MZ)
 	mkdir -p -m 700 "$from"
 	chmod 700 "$from"
 	say "dumping production to $from"
+	seedarchive snapshot "$PROD_ARCHIVE" "$from/archive-state" $SEED_ARCHIVE_DIRS
 	P -c "copy (select * from raw.record where source = any($sources_sql)) to stdout" | zstd -q -3 > "$from/raw-record.copy.zst.part"
 	mv "$from/raw-record.copy.zst.part" "$from/raw-record.copy.zst"
 	# pg_dump writes to stdout here: the file lands on the cold drive, outside the container.
@@ -179,17 +196,28 @@ if [ -z "$from" ]; then
 		"${exclude[@]}" --exclude-table-data='restricted.*' --exclude-table-data=raw.record \
 		> "$from/tvt.dump.part"
 	mv "$from/tvt.dump.part" "$from/tvt.dump"
+	# Did a load finish during the dump? The earlier snapshot stays either way; this only says so.
+	seedarchive snapshot "$PROD_ARCHIVE" "$from/archive-state.after" $SEED_ARCHIVE_DIRS
+	state_changed=0
+	changed=$(seedarchive same "$from/archive-state" "$from/archive-state.after") || state_changed=$?
+	rm -rf "$from/archive-state.after"
+	[ $state_changed -le 1 ] || die "couldn't compare the load state's snapshots (seedarchive same: exit $state_changed)"
+	[ $state_changed = 0 ] || say "production's load state changed during the dump ($changed): a load finished meanwhile; the copy keeps the earlier state, so that load runs again on scratch"
 	P -F $'\t' -c "select version(), (select extversion from pg_extension where extname = 'timescaledb'),
 	                      (select extversion from pg_extension where extname = 'postgis'),
 	                      pg_database_size(current_database()), now()" > "$from/production.tsv"
-	python3 - "$from" "$KEEP_RAW_SOURCES" "${private_schemas[*]}" <<'PY'
+	python3 - "$from" "$KEEP_RAW_SOURCES" "${private_schemas[*]}" "$SEED_ARCHIVE_DIRS" "$state_changed" <<'PY'
 import json, os, sys
-d, keep, private = sys.argv[1], sys.argv[2].split(), sys.argv[3].split()
+d, keep, private, seed_dirs, changed = sys.argv[1], sys.argv[2].split(), sys.argv[3].split(), sys.argv[4].split(), sys.argv[5]
 version, ts, postgis, size, at = open(os.path.join(d, "production.tsv")).read().rstrip("\n").split("\t")
 meta = {"dumped_at": at, "server": version, "timescaledb": ts, "postgis": postgis, "production_bytes": int(size),
         "raw_record_sources": keep,
         "left_out": ["raw.record's other rows", "restricted.* rows", "schemas private_*"] + [f"schema {s}" for s in private],
-        "files": {f: os.path.getsize(os.path.join(d, f)) for f in ("tvt.dump", "raw-record.copy.zst")}}
+        "files": {f: os.path.getsize(os.path.join(d, f)) for f in ("tvt.dump", "raw-record.copy.zst")},
+        "archive_state": {"dirs": seed_dirs, "taken": "before the dump",
+                          "files": sorted(os.path.relpath(os.path.join(p, f), os.path.join(d, "archive-state"))
+                                          for p, _, fs in os.walk(os.path.join(d, "archive-state")) for f in fs),
+                          "changed_during_dump": changed != "0"}}
 json.dump(meta, open(os.path.join(d, "meta.json"), "w"), indent=1)
 PY
 	touch "$from/COMPLETE"
@@ -221,16 +249,19 @@ leak=$(S -d "$new" -c "select string_agg(nspname, ', ') from pg_namespace
 say "restored in $(( $(date +%s) - t1 )) s; raw.record: $raw_rows rows ($raw_skipped skipped: their fetch came after the dump)"
 [ -z "$stopped" ] || exit 124
 
-# The new archive, staged beside the old: production's OSM folder, that is the held extracts and
-# their load state (the files at its top, and a state/ folder), without its inbox, other folders
-# (a loader's temporary work) or partial files.
+# The new archive, staged beside the old: production's held files in its OSM folder as they are
+# now (the extracts and their .md5), an empty inbox, and the load state from the dump's
+# snapshot (not production's now: a load since the dump isn't in this copy). A dump made before
+# the snapshot existed has none: then each loader's next load runs.
+state=$from/archive-state
+if [ -d "$state" ]; then
+	archive_state="from the dump's snapshot"
+else
+	state=- archive_state="none: the dump has no snapshot"
+	say "$from has no snapshot of the archives' load state (made before Oct 11's fix): $db's archive gets none, so each loader's next load runs"
+fi
 staged=$ARCHIVES/.staged-$db-$$
-mkdir -p "$staged"
-for d in $SEED_ARCHIVE_DIRS; do
-	[ -d "$PROD_ARCHIVE/$d" ] || continue
-	mkdir -p "$staged/$d/inbox"
-	rsync -a --exclude='.*' --exclude='*.part' --include='/state/***' --exclude='/*/' "$PROD_ARCHIVE/$d/" "$staged/$d/"
-done
+seedarchive stage "$PROD_ARCHIVE" "$state" "$staged" $SEED_ARCHIVE_DIRS
 chmod -R u+rwX,go-rwx "$staged"
 [ -z "$stopped" ] || exit 124
 
@@ -272,15 +303,15 @@ count_sql() {
 count_sql | P -F $'\t' -f - > "$SCRATCH_ROOT/logs/counts-production.tsv"
 count_sql | S -d "$db" -F $'\t' -f - > "$SCRATCH_ROOT/logs/counts-scratch.tsv"
 python3 - "$SCRATCH_ROOT" "$from" "$db" "$raw_rows" "$raw_skipped" "$(( $(date +%s) - t0 ))" \
-	"$(S -d postgres -c "select pg_database_size('$db')")" <<'PY'
+	"$(S -d postgres -c "select pg_database_size('$db')")" "$archive_state" <<'PY'
 import json, os, sys
-root, dump, db, raw_rows, raw_skipped, secs, size = sys.argv[1:]
+root, dump, db, raw_rows, raw_skipped, secs, size, archive_state = sys.argv[1:]
 read = lambda p: dict(l.rstrip("\n").split("\t") for l in open(os.path.join(root, "logs", p)) if l.strip())
 prod, scratch = read("counts-production.tsv"), read("counts-scratch.tsv")
 diff = {t: {"production": int(prod.get(t, -1)), "scratch": int(n)} for t, n in scratch.items() if prod.get(t) != n}
 meta = json.load(open(os.path.join(dump, "meta.json")))
 out = {"db": db, "dump": dump, "dumped_at": meta["dumped_at"], "refresh_seconds": int(secs), "bytes": int(size),
-       "tables_checked": len(scratch), "tables_differing": diff,
+       "tables_checked": len(scratch), "tables_differing": diff, "archive_load_state": archive_state,
        "raw_record": {"sources": meta["raw_record_sources"], "rows": int(raw_rows), "skipped": int(raw_skipped)}}
 if db == "tvt":
     json.dump(out, open(os.path.join(root, "refresh.json"), "w"), indent=1)
