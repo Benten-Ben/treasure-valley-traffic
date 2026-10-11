@@ -184,7 +184,11 @@ How the pieces plug in:
   each statement limited to 20 s and the relink to 60 s, then left to the
   build), in their own try block with their own `ops.fetch` row
   (`trails_match`), so that a closure the City posts shows within the hour;
-  the full rematch, `trails-match`, is a build like the others.
+  the full rematch, `trails-match`, is a build like the others. Not a
+  build: the water plugin's hourly `canal_season` source fetches nothing
+  but turns gauge readings and the districts' dates into lifecycles, as a
+  poller turns its readings into episodes, because its 48-hour "unknown"
+  rule needs a clock (P5; under a second, each statement limited to 30 s).
 - **Base layers, baked** (landscape sprint, Oct 2026): what draws for
   every viewer (water, paving, road surfaces and markings, paved paths)
   isn't cut live. A plugin marks those layers `base: true` in its export
@@ -249,7 +253,7 @@ sampler.
 | `parcels` | Ada County Assessor parcels and characteristics, aggregates by corridor | `development` | **private** |
 | `hazards` | Fire and warnings (ch. 17 Wave A, Oct 7): IDL's fire-restriction stages, NIFC's WFIGS incidents and perimeters, NASA FIRMS detections, NWS watches, warnings and advisories (person alerts dropped), USGS quakes | — | public (IDL stages internal) |
 | `air` | Smoke: NOAA's HMS smoke polygons (AirNow waits on the owner's form) | — | public |
-| `water` | Rivers and snow: NWPS gauges (37 in the ring), SNOTEL hourly, Boise's E. coli results and river hazards, the Drought Monitor by county. The water network (landscape sprint): OpenStreetMap's waterways with NHD's facts, HydroShare's canal names, canals and their topology, gauges; IDWR's irrigation organizations and season of use for canal cards | — | public (Boise's and IDWR's layers internal) |
+| `water` | Rivers and snow: NWPS gauges (37 in the ring), SNOTEL hourly, Boise's E. coli results and river hazards, the Drought Monitor by county. The water network (landscape sprint): OpenStreetMap's waterways with NHD's facts, HydroShare's canal names, canals and their topology, gauges; IDWR's irrigation organizations and season of use for canal cards; the canal season (on, off or unknown per canal, from the New York Canal's gauge, the districts' dates and IDWR's legal season) | — | public (Boise's and IDWR's layers internal) |
 | `trails` | Ridge to Rivers trail conditions and the Greenbelt's closures and detours; OpenStreetMap's paths, tracks and trail routes (landscape sprint), with the City's lines linked onto them (`trails-match`) | — | public, aggregates until the City answers (the links too) |
 | `lands` | Forest orders (Region 4) and IDPR's route closures and area restrictions | — | public, IDPR aggregates |
 | `weather` | Aviation Weather Center METARs for the ring's airports | — | public |

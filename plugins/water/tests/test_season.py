@@ -189,6 +189,13 @@ class SeasonalTest(unittest.TestCase):
 class RulesTest(unittest.TestCase):
     """The timeline from Jan 1, 2026 to Jan 1, 2028 (the window as of Oct 2026)."""
 
+    def test_legal_end(self):
+        self.assertEqual(S.legal_end(LEGAL, 2026), boise(2026, 11, 16))
+        self.assertIsNone(S.legal_end(None, 2026))
+        self.assertIsNone(S.legal_end(((11, 16), (4, 30), "11/16 - 4/30", 9), 2026))      # across New Year
+        feb29 = ((1, 1), (2, 29), "1/1 - 2/29", 9)
+        self.assertEqual((S.legal_end(feb29, 2027), S.legal_end(feb29, 2028)), (boise(2027, 3, 1), boise(2028, 3, 1)))
+
     def test_window(self):
         self.assertEqual((SINCE, UNTIL), (boise(2026, 1, 1), boise(2028, 1, 1)))
         self.assertEqual(S.window(utc(2027, 1, 1, 7))[1], boise(2029, 1, 1))
@@ -304,6 +311,9 @@ class RowTest(unittest.TestCase):
         self.assertNotIn("Geological Survey", " ".join(a["credit"]))   # BSEI1's NWPS record names no USGS site
         self.assertEqual(gauge_off["geom"], self.CANAL.head)
         json.dumps(rows, default=str)                                 # the rows serialize as events.upsert does
+        stale = self.rows(S.canal_rules(LEGAL, [], G, S.gauge_spans(G, rs, rs[-1].t + 3 * S.STALE)))[-1]
+        self.assertEqual((stale["severity"], stale["start"], stale["end"]), ("unknown", rs[-1].t + S.STALE, None))
+        self.assertEqual(stale["description"], "Test Canal: unknown (gauge BSEI1: no reading for 48 hours)")
 
     def test_district_and_always_rows(self):
         entry = D.entry(spec(republish="internal"), 0)

@@ -53,7 +53,10 @@ def serve(check_every_s):
     committed (plugins/trails/ingest/match.py, `trails_match`: at most 40
     lines, about 2 s; each statement limited to 20 s and the relink to 60 s,
     then left to the trails-match build), which the landscape plan's P6-data
-    row asks for so that a closure the City posts shows within the hour."""
+    row asks for so that a closure the City posts shows within the hour.
+    Water's hourly `canal_season` source is no build: it fetches nothing but
+    turns gauge readings and dates into lifecycles (plan P5), as a poller
+    turns its readings into episodes, since its 48-hour rule needs a clock."""
     os.environ[builds.SERVE_ENV] = "1"
     print(f"ingest serve: checking every {check_every_s} s", flush=True)
     while True:

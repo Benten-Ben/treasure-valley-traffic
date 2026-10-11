@@ -263,6 +263,8 @@ def legal_end(legal, year):
     (sm, sd), (em, ed), _, _ = legal
     if (em, ed) < (sm, sd):                    # a window across New Year: no end inside one season's year
         return None
+    if (em, ed) == (2, 29) and not (year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)):
+        return _midnight(date(year, 3, 1))     # as the evaluator reads it: no Feb 29 that year
     return _midnight(date(year, em, ed) + timedelta(days=1))
 
 
@@ -360,7 +362,7 @@ def description(canal, value, rule):
     name, state, basis = canal.name, value["state"], value["basis"]
     if basis == "gauge":
         if state == "unknown":
-            return f"{name}: unknown (no reading from gauge {value['gauge']} for 48 hours)"
+            return f"{name}: unknown (gauge {value['gauge']}: {_silent(STALE)})"
         return f"{name}: {'water on' if state == 'on' else 'off'} (gauge {value['gauge']}, {value['gauge_name']})"
     if basis == "district":
         return f"{name}: {'water on' if state == 'on' else 'off'} ({value['district']}'s dates)"

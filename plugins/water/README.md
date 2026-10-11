@@ -20,11 +20,12 @@ and the IDWR layers to the map box.
 
 | Source | Runs | License | Credit | Republish |
 |---|---|---|---|---|
-| `nwps_gauges` | every 30 min: 1 list call + at most 4 per-gauge calls | US government work | NOAA NWS (NWPS, NWRFC); observations courtesy of USGS | yes |
+| `nwps_gauges` | every 30 min: 1 list call + at most 4 per-gauge calls | US government work | NOAA NWS (NWPS, NWRFC); observations courtesy of USGS where NWPS names a USGS site | yes |
 | `nrcs_snotel` | hourly, 1 call | US government work; public domain assumed ⚠️ | USDA NRCS (SNOTEL) | yes |
 | `boise_ecoli` | every 12 h, 2 small calls | none stated (City disclaimer only) | City of Boise Parks and Recreation | internal: courtesy note due |
 | `boise_river_hazards` | hourly, 2 small calls | none stated | Boise Fire Department and City of Boise (Float the Boise) | internal: courtesy note due |
 | `usdm_drought` | every 12 h, 1 call | free to reproduce with the required credit | NDMC (UNL), USDA, NOAA and NASA; map courtesy of NDMC | aggregates, with the credit line |
+| `canal_season` | hourly, no request: derived ([below](#the-canal-season)) | derived (NWPS, the water network, the districts' dates, IDWR) | each lifecycle names its own | each lifecycle says; IDWR's are internal |
 
 Every request goes through `ingest/http.py` (robots.txt checked, our
 User-Agent) with at least 2 s between requests to one host. Each run is
@@ -42,8 +43,11 @@ logged in `ops.fetch`.
 - **What:** 37 gauges in the ring on Oct 7, 2026: the Boise (Twin Springs
   to Parma, Glenwood Bridge BIGI1 among them), Payette, Snake, Malheur,
   Owyhee and Weiser rivers, creeks, the New York Canal, and pool levels at
-  Arrowrock, Lake Lowell and C.J. Strike. Observations are USGS's
-  (Reclamation's at the dams); forecasts are NWRFC's.
+  Arrowrock, Lake Lowell and C.J. Strike. Observations are USGS's where
+  NWPS names a USGS site: 23 of the 37 gauges. The other 14, the New York
+  Canal's BSEI1 among them, name no USGS site (`usgsId` is empty) and no
+  `dataAttribution` in the metadata we keep (checked Oct 11, 2026);
+  Reclamation's at the dams ⚠️. Forecasts are NWRFC's.
 - **Cadence:** each run lists every gauge's latest observation and flood
   category (37 KB). Per-gauge calls, most urgent first: a flooding gauge's
   forecast every 3 h; each gauge's metadata and 30-day series weekly
@@ -148,7 +152,7 @@ logged in `ops.fetch`.
 ## Commands
 
 ```bash
-python3 -m ingest run nwps_gauges nrcs_snotel boise_ecoli boise_river_hazards usdm_drought
+python3 -m ingest run nwps_gauges nrcs_snotel boise_ecoli boise_river_hazards usdm_drought canal_season
 python3 -m ingest serve                  # with every other scheduled source
 python3 -m unittest discover -s plugins/water/tests -t .
 ```
@@ -166,7 +170,8 @@ One water network for the map (landscape sprint package P4-data, Oct 11,
 carrying NHD's facts**, NHD-only pieces kept and drawn lighter, canals with
 their topology, the gauges that measure them, and the base layers and the
 ground's water mask exported for the base bake and the ground. The Water
-layer and its cards are P4-app's; the canal season is P5's.
+layer and its cards are P4-app's; the canal season's data side is
+[below](#the-canal-season) (P5), its drawing P5-app's.
 
 | Source | Kind | What | Licence | Republish |
 |---|---|---|---|---|
@@ -175,6 +180,7 @@ layer and its cards are P4-app's; the canal season is P5's.
 | `osm_waterways` | OpenStreetMap consumer | waterways, water areas, wetlands, springs, reservoirs and basins, swimming pools (decision 2b) | ODbL; "© OpenStreetMap contributors" | yes |
 | `idwr_irrigation_orgs` | every 30 days | IDWR's irrigation organizations: 59 service areas touching the box, without the `Owner` field | none stated (IDWR's disclaimer); credit IDWR | **internal** |
 | `idwr_season_of_use` | every 90 days | IDWR's season of use: the legal irrigation season's 4 zones touching the box | none stated (IDWR's disclaimer); credit IDWR | **internal** |
+| `canal_dates` | by hand | the districts' canal dates, in the versioned [`ingest/canal_dates.json`](ingest/canal_dates.json) (empty until the owner asks for the lookups) | facts, each cited to the district's page | yes, unless an entry says otherwise |
 
 - **NHD**: the HU4 zip was downloaded once more on Oct 11 with the owner's
   OK (19c), from the same S3 URL (same ETag and sha256 as Oct 8), to keep
@@ -210,7 +216,7 @@ layer and its cards are P4-app's; the canal season is P5's.
   IDWR covering both is drafted with the private files for the owner to
   send.
 
-### Tables (migration 0001)
+### Tables (migrations 0001 and 0002)
 
 | Table | What | Licence |
 |---|---|---|
@@ -228,6 +234,7 @@ layer and its cards are P4-app's; the canal season is P5's.
 | `water.canal` | one row per named canal (its connected reaches of one name): kind (main canal, canal, lateral, ditch, drain), length, piped length, head reach and structure, source (river, reservoir, canal, unknown), gauge, sources | ODbL |
 | `water.gauge` | each NWPS gauge in the box and the reach, body or canal it measures (OSM-derived ids, matched by OSM's and NHD's names: the strictest input's licence, C3) | ODbL |
 | `water.canal_org`, `water.canal_season` | the IDWR service areas each canal runs through (share of its length; whether its head is in it), and the legal season at its head | **internal** |
+| `water.canal_date` | 0002: the districts' dates as `canal-dates-load` last loaded them from canal_dates.json, one row per entry, with its page and the day it was read | as each entry says |
 
 Evidence lives in `water.reach_evidence`, not `core.source_link`: that
 table's key allows one entity per source record, and one NHD flowline runs
@@ -340,6 +347,92 @@ fails on the feature; names export as '' and canals as 0.
 A trial bake on scratch (Oct 11, `--threads 1`, about a minute): 17.5 MB,
 z8–16, the largest tile 21 KB at z10 and under 2 KB at z16.
 
+### The canal season
+
+Whether each canal has water: on, off or unknown (landscape sprint
+package P5, data side, Oct 11, 2026; the owner's decision 18). The app
+draws a canal filled when on, hollow when off and neither when unknown,
+through feature-state on the baked reaches (their `canal` field): that's
+P5-app's. Here, each canal's season becomes lifecycles in `evt.event`
+([`ingest/season.py`](ingest/season.py)), from core's rules-by-date
+evaluator ([`ingest/seasons.py`](../../ingest/seasons.py)) over one rule
+set per canal. Strongest first:
+
+1. **Its gauge.** The New York Canal (the upper canal, from the Boise
+   Diversion Dam) follows BSEI1, "New York Canal Diversion at Boise", from
+   the readings `nwps_gauges` keeps (stage in ft, flow in kcfs):
+   - a flow of 10 cfs or more is **on**, any lower flow **off**;
+   - with no flow (BSEI1 reports none once the canal is off), a stage of
+     7.3 ft or more is on, and 3.7 ft or less (plus 0.2 ft, as the empty
+     canal's level drifts) off;
+   - in between, the canal is filling or draining, and the state before
+     holds.
+
+   The levels are the two seen at the head ⚠️ (one season's shut-off):
+   7.33–8.34 ft at 1,660–2,090 cfs from Sep 7 to Sep 27, 2026, then a
+   3.5-hour ramp down on the morning of Sep 28 (the last flow 126 cfs at
+   3.85 ft) to 3.69–3.73 ft with no flow. **48 hours without a reading,
+   the canal is "unknown"**, not on or off: from 48 hours after the last
+   reading, and between two readings more than 48 hours apart. The gauge's
+   claim starts at its first on or off reading; before it, the rules below
+   apply.
+2. **The district's dates**, from [`ingest/canal_dates.json`](ingest/canal_dates.json),
+   a versioned file that `canal-dates-load` loads into `water.canal_date`
+   ([`ingest/sources/canal_dates.py`](ingest/sources/canal_dates.py)). It
+   is empty until the owner asks for the lookups; each entry is one
+   district's season as its own page states it, looked up by hand (never
+   scraped), with the page and the day it was read. Within its year an
+   entry is off before its `on`, on from `on` to `off`, and off from
+   `off`; while no shut-off is announced, the water runs to the end of
+   the canal's legal season. Canals are named as the district names them
+   (`water.canal` names, matched without case or punctuation), and
+   `"branches": true` adds the canals fed from them. A later entry wins
+   over an earlier one, and the gauge over both, its "unknown" included.
+3. **IDWR's legal season of use** at the canal's head
+   (`water.canal_season`): on within it, off outside it, always labelled
+   as the legal window, not delivery dates.
+4. Nothing: no lifecycle, which reads as unknown.
+
+**Never off:** drains, and canal-class lines named for a creek, river,
+slough or gulch without a canal word (Fivemile Creek, Mason Creek, Purdam
+Gulch; but Mason Creek Feeder and Dry Creek Canal are canals): one
+lifecycle each, on, basis `always`. Unnamed reaches belong to no canal
+and get none.
+
+**Where it runs.** `canal_season` is a source, every hour inside `ingest
+serve` (after `nwps_gauges`), and by hand (`canal-season`;
+`canal-dates-load` runs it after a load). It fetches nothing and builds
+nothing: it turns readings and dates into lifecycles, as `nwps_gauges`
+turns its readings into flood episodes, and the 48-hour rule needs a
+clock, or a gauge that fell silent would leave its canal "on". Each
+statement is limited to 30 s. It writes only when a lifecycle changed: a
+state change at the gauge, the 48-hour rule, a new water build, a new
+dates file, the new year. `ops.source_status` (M1) shows it like any
+scheduled source, and its run notes when `canal_dates.json` differs from
+what was last loaded.
+
+**Lifecycles** (`evt.event`, source and kind `canal_season`), from Jan 1,
+2026 to the end of next year:
+
+| Column | What |
+|---|---|
+| `source_id` | `<canal id>@<start, UTC ISO>` (`water.canal.id`, which follows the build) |
+| `declared` | [start, end): end null for the gauge's current span (it holds until a reading changes it, or 48 hours pass without one) and for `always` |
+| `severity` | the state: `on`, `off` or `unknown` |
+| `description` | the card's words: "New York Canal: off (gauge BSEI1, New York Canal Diversion at Boise)", "...: in IDWR's legal irrigation season (3/1 - 11/15), not delivery dates" |
+| `geom` | the canal's head (its head reach's start) |
+| `attributes` | `canal_id`, `canal`, `canal_kind`, `state`, `basis` (`gauge`, `district`, `legal`, `always`), `why`, `credit` (a list), `republish`; for a gauge `gauge`, `gauge_name`; for a district `entry`, `district`, `words`, `source`, `read`, `off_announced`; for the legal window `season`, `objectid` |
+| `active` | false once a lifecycle leaves the derivation (a build renumbers a canal, late readings fill a silence): read active rows |
+
+**Licences.** A gauge's lifecycles are NWPS's (public domain) on the
+water network's canals (ODbL): republish yes. BSEI1's NWPS record names no
+USGS site and no other source, so its credit is NWPS's alone. A district's
+are facts with their page cited: republish yes unless the entry says
+otherwise. The legal window's are IDWR's: **internal**, like the window
+itself; the source's own row says internal, the strictest. The canal
+season is never in the base bake (`basemap/landscape/plan.py` refuses
+`water/canal_season`): it's drawn as feature-state.
+
 ### Commands
 
 ```bash
@@ -353,6 +446,8 @@ python3 -m ingest osm-load --only water.osm_waterways        # on the valley cut
 python3 -m ingest run idwr_irrigation_orgs idwr_season_of_use
 python3 -m ingest water-build [--dry-run]
 python3 -m ingest water-export
+python3 -m ingest canal-season [--dry-run [--as-of TIME]] [--canal NAME]   # the canal season now (hourly in serve)
+python3 -m ingest canal-dates-load [--dry-run] [--file PATH]   # after editing canal_dates.json; then the season
 python3 -m unittest discover -s plugins/water -t .           # with TVT_TEST_DATABASE_URL for the database tests
 /srv/tvt/work/bin/worker-test -C <checkout> plugins.water.tests.test_prepare
 ```
@@ -363,12 +458,19 @@ python3 -m unittest discover -s plugins/water -t .           # with TVT_TEST_DAT
 NHD zip and its PROVENANCE moving to `$TVT_ARCHIVE/water/nhd/`; then
 nhd-load, hydroshare-load, `osm-load --only water.osm_waterways` (light on
 the cut production holds), the two IDWR sources once, water-build,
-water-export, and the base bake. After a new extract, `osm-load` reloads
-the water consumer with the rest, and water-build follows (the refresh
-cascade).
+water-export, and the base bake. Migration water 0002 adds the canal
+season's dates table; `canal_season` then runs by itself every hour (it
+waits for a water build), and `canal-dates-load` once the dates file has
+entries. After a new extract, `osm-load` reloads the water consumer with
+the rest, and water-build follows (the refresh cascade); the canal season
+follows the new build within the hour.
 
 **Limits ⚠️**: widths are estimates; NHD-only canals are topo-era and some
 are piped or gone (they draw lighter, and the card says so); 1,139 of OSM's
 canal ways are culverts or pipes; OSM's names vary ("A line Canal");
 `canal_org` lists the service areas a canal runs through, not who runs it,
-and service areas overlap; the main-canal threshold is ours.
+and service areas overlap; the main-canal threshold is ours. The canal
+season: one gauge (BSEI1) for one canal, its thresholds from one season's
+shut-off; other canals have IDWR's legal window (not delivery dates) until
+district dates are entered; laterals fed by the New York Canal don't
+follow its gauge.
