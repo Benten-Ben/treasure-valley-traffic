@@ -221,7 +221,7 @@ and fails, changing nothing, if that's more. On both servers:
 | Read: `core`, `obs`, `evt`, `raw`, `ops`, `public` and the plugin schemas below | `USAGE` on the schema; `SELECT` on every table, view and sequence; the same for tables `tvt` makes there later (default privileges). No `CREATE` in any |
 | Write: plugin schemas `roads`, `soils`, `farm`, `water`, `trails`, `fences`, `hazards`, `trees` (those that exist) | `INSERT`, `UPDATE`, `DELETE`, `TRUNCATE`, `MAINTAIN` (ANALYZE, VACUUM, REFRESH MATERIALIZED VIEW) on every table; `USAGE`, `UPDATE` on their sequences; default privileges likewise. No `CREATE`: tables come from migrations |
 | Append only: `trees.tree_log` (a tree's history, which survives rebuilds) | `INSERT` only |
-| Write: shared tables the core helpers log to | `ops.source`, `ops.fetch`, `ops.layer_signature`, `raw.record`, `evt.event`: `INSERT`, `UPDATE`; `core.source_link`, `ops.build_pending` (M1): `INSERT`, `UPDATE`, `DELETE`; `core.layer_version` (S2, append-only history): `INSERT` only; `USAGE` on their sequences |
+| Write: shared tables the core helpers log to | `ops.source`, `ops.fetch`, `ops.layer_signature`, `raw.record`, `evt.event`: `INSERT`, `UPDATE`; `core.source_link`, `ops.build_pending` (M1): `INSERT`, `UPDATE`, `DELETE`; `ops.build_run` (M1, a build's log): `INSERT`, `UPDATE`; `core.layer_version` (S2, append-only history): `INSERT` only; `USAGE` on their sequences |
 | Never | `restricted` (people in crashes), private plugins' schemas (`city_trees`, `private_*`), anything not listed; DDL; other roles |
 
 A new schema gets its grants when the script runs again: the scratch wrapper's

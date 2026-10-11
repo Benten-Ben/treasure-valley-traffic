@@ -28,6 +28,7 @@ DECLARE
     'core.source_link',    'INSERT,UPDATE,DELETE',                  'TRUNCATE',
     'core.layer_version',  'INSERT',                                'UPDATE,DELETE,TRUNCATE,MAINTAIN',
     'ops.build_pending',   'INSERT,UPDATE,DELETE',                  'TRUNCATE',
+    'ops.build_run',       'INSERT,UPDATE',                         'DELETE,TRUNCATE',
     'core.intersection',   '',                                      'INSERT,UPDATE,DELETE,TRUNCATE,MAINTAIN',
     'trees.tree',          'INSERT,UPDATE,DELETE,TRUNCATE,MAINTAIN', 'REFERENCES,TRIGGER',
     'trees.build',         'INSERT,UPDATE,DELETE,TRUNCATE,MAINTAIN', 'REFERENCES,TRIGGER',
@@ -159,14 +160,15 @@ BEGIN
   FOR rel IN SELECT c.oid::regclass FROM pg_class c JOIN pg_namespace ns ON ns.oid = c.relnamespace
               WHERE ns.nspname = ANY (read_schemas) AND c.relkind IN ('r', 'p', 'v', 'm', 'f')
                 AND ns.nspname || '.' || c.relname <> ALL (ARRAY['ops.source', 'ops.fetch', 'ops.layer_signature', 'raw.record',
-                                                        'evt.event', 'core.source_link', 'core.layer_version', 'ops.build_pending']) LOOP
+                                                        'evt.event', 'core.source_link', 'core.layer_version', 'ops.build_pending',
+                                                        'ops.build_run']) LOOP
     IF has_table_privilege(rel, 'INSERT') OR has_table_privilege(rel, 'UPDATE')
        OR has_table_privilege(rel, 'DELETE') OR has_table_privilege(rel, 'TRUNCATE') THEN
       failures := failures || format('a write on %s', rel);
     ELSE passed := passed + 1; END IF;
   END LOOP;
   -- The shared tables' id sequences can be drawn from.
-  FOREACH v IN ARRAY ARRAY['ops.fetch', 'core.source_link', 'core.layer_version', 'ops.build_pending'] LOOP
+  FOREACH v IN ARRAY ARRAY['ops.fetch', 'core.source_link', 'core.layer_version', 'ops.build_pending', 'ops.build_run'] LOOP
     CONTINUE WHEN to_regclass(v) IS NULL;
     FOR seq IN SELECT pg_get_serial_sequence(v, a.attname) FROM pg_attribute a
                 WHERE a.attrelid = to_regclass(v) AND a.attnum > 0 AND NOT a.attisdropped

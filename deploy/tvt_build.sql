@@ -80,7 +80,8 @@ DECLARE
     'evt.event',           'INSERT, UPDATE',           -- ingest/events.py: lifecycles (the canal season)
     'core.source_link',    'INSERT, UPDATE, DELETE',   -- match evidence (water, trails)
     'core.layer_version',  'INSERT',                   -- S2: append-only history; each build adds its row
-    'ops.build_pending',   'INSERT, UPDATE, DELETE'    -- M1: a build clears its mark
+    'ops.build_pending',   'INSERT, UPDATE, DELETE',   -- M1: a load marks a build; a build clears its marks
+    'ops.build_run',       'INSERT, UPDATE'            -- M1: ingest/builds.py logs each build run
   ];
   table_writes constant text := 'INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER, MAINTAIN';
   build_writes constant text := 'INSERT, UPDATE, DELETE, TRUNCATE, MAINTAIN';
