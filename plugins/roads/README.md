@@ -473,7 +473,7 @@ source-layers `roads.<layer>`:
 
 | Layer | Zooms | Geometry | Fields |
 |---|---|---|---|
-| `lines` | 14-16 (alleys and service ways from 15) | LineString | `class`, `w` (the pavement's width, m), `material`, `tier`, `deck`, `tunnel`, `layer` |
+| `lines` | 14-16 (alleys and service ways from 15) | LineString | `class`, `w` (the pavement's width, m), `material`, `tier`, `lanes`, `marked`, `conflict` (▲), `deck`, `tunnel`, `layer` |
 | `surfaces_z15` | 15 | MultiPolygon | `kind` (carriageway, junction, deck, median, island), `material`, `tier`, `layer`: generalised |
 | `surfaces` | 16 | MultiPolygon | the same, full detail |
 | `edges` | 16 | MultiLineString | `kind` (curb, shoulder, deck), `tier`, `layer` |

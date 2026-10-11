@@ -8,7 +8,7 @@ features start at different zooms, an integer `minzoom`. The bake names each sou
 
 | Layer | Zooms | Geometry | Fields |
 |---|---|---|---|
-| `lines` | 14-16 | LineString | the pieces' centrelines: `class` (highway=*), `w` (the pavement's width, m), `material`, `tier` (the width's: inventoried, measured, counted, estimated), `deck`, `tunnel`, `layer`; alleys and service ways from z15 |
+| `lines` | 14-16 | LineString | the pieces' centrelines: `class` (highway=*), `w` (the pavement's width, m), `material`, `tier` (the width's: inventoried, measured, counted, estimated), `lanes` (both ways and a centre turn lane), `marked` (lines drawn), `conflict` (the sources disagree: ▲), `deck`, `tunnel`, `layer`; alleys and service ways from z15 |
 | `surfaces_z15` | 15 | MultiPolygon | the surfaces generalised for z15 (0.5 m; the smallest left out): `kind` (carriageway, junction, deck, median, island), `material`, `tier`, `layer` |
 | `surfaces` | 16 | MultiPolygon | the same at full detail (overzoomed past z16) |
 | `edges` | 16 | MultiLineString | the surfaces' outer edges: `kind` (curb, shoulder, deck), `tier`, `layer` |
@@ -59,6 +59,8 @@ _MINZOOM_LINES = "case when p.highway = 'service' then 15 else 14 end"
 LAYERS = (
     Layer("lines", "LineString", f"""
       select p.id, p.highway as class, round(x.total_w_m::numeric, 1)::float4 as w, x.material, x.width_tier as tier,
+             (x.lanes_fwd + x.lanes_bwd + x.centre_turn::int)::int as lanes, x.markings as marked,
+             'conflict' = any(x.flags) as conflict,
              p.bridge as deck, p.tunnel, p.layer::int as layer, ({_MINZOOM_LINES})::int as minzoom, p.geom
       from roads.piece p join roads.xsection x on x.piece_id = p.id order by p.id""",
           "Real-width roads: the pieces' centrelines with their widths", 14, 16,
