@@ -165,9 +165,12 @@ as the derived source `burn_scars`, hourly in `ingest serve` and logged in
   (and more than five) is refused without `--force`: `raw.record` keeps every
   version, so that would mean something upstream is wrong.
 
-On Oct 11, 2026, before the backfill, 63 of the 116 fires in `raw.record`
-touched the box, the earliest the RANGE fire (discovered Jul 31, 2025, about
-27,000 acres).
+On the scratch copy, Oct 11, 2026: before the backfill, 63 of the 116 fires
+in `raw.record` touched the box, the earliest the RANGE fire (discovered
+Jul 31, 2025, about 27,000 acres). The backfill read brought 27 more fires
+(Aug–Dec 2025, in the ring), 21 of them in the box: 84 scars in all, 22 from
+2025, 5 cut at the box's edge, about 59,000 acres in the box, under 1 MB with
+the low-zoom copy. A refresh with nothing new takes about 2 s.
 
 **The 2025 backfill** ([`ingest/wfigs_backfill.py`](ingest/wfigs_backfill.py)).
 The poller started on Oct 7, 2026, and its first run read what had changed in
