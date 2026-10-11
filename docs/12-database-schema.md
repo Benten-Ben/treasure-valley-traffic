@@ -457,7 +457,7 @@ read by each plugin's consumers (`osm_consumers` in its manifest). No
 highway way has two owners; the owner is decided by its tags alone:
 osm_valley's keep rule above, unchanged, then the other streets and alleys
 (`roads.osm_street`), then sidewalks, crossings and the other service ways
-(`roads.osm_paving`, later), then paths (`trails.osm_paths`, later). On the
+(`roads.osm_paving`, roads 0002), then paths (`trails.osm_paths`, later). On the
 Oct 5 extract that's 13,917 / 22,785 / 124,582 / 22,263 of the box's 185,358
 highway ways. 1,811 have no owner: 1,369 proposed, 350 under construction,
 65 indoor corridors and 10 other ways that aren't built or aren't roads
@@ -469,8 +469,10 @@ exception. The owners load one extract together: osm_valley first, the
 others only the extract it holds, and osm_valley never while a follower that
 holds another extract stays behind. So a way is never in two of their tables
 or in none, unless a follower fails after osm_valley loaded; a build that
-reads `core.osm_way` with `roads.osm_street` (the roads build) calls
-`check_partition()` first, and it refuses until they match again.
+reads `core.osm_way` with `roads.osm_street` or `roads.osm_paving` (the
+roads build) calls `check_partition()` first, and it refuses until they
+match again. On scratch, Oct 11, no active way was in two of the three
+tables.
 
 ```sql
 -- Each consumer's gate: the extract it loaded last (osm_valley's stays in its file).
@@ -494,6 +496,36 @@ create table roads.osm_street (
   geom geometry(LineString, 4326) not null, osm_version int, osm_timestamp timestamptz,
   active boolean not null, first_seen timestamptz not null, last_seen timestamptz not null
 );
+
+-- roads 0002: the paving (the osm_paving consumer), versioned in place like osm_street.
+-- material: asphalt, concrete, gravel, dirt or unknown; material_source 'surface' (the tag),
+-- 'default' (the kind's, estimated) or null (unknown). Untagged service ways and lots take
+-- their default only on CDL 2025 developed land (developed: the share on classes 122-124).
+create table roads.osm_paving (                   -- service ways but alleys, and walkways
+  osm_id bigint primary key, kind text not null,  -- service, driveway, parking_aisle, drive_through,
+                                                  -- emergency_access, sidewalk, crossing, access_aisle, traffic_island
+  highway text not null, service text, footway text, name text, area boolean not null,
+  surface text, material text not null, material_source text, developed real,
+  width_m real, width_est_m real not null, width_source text not null,   -- 'tagged' or 'default'
+  oneway text, access text, crossing text, crossing_markings text,
+  marked boolean, marked_from text,               -- crossing ways: 'way' or 'node'
+  layer smallint, bridge boolean not null, tunnel boolean not null, tags jsonb not null,
+  geom geometry(LineString, 4326) not null, ...   -- versions as osm_street
+);
+create table roads.osm_parking (                  -- lots and stalls drawn as areas
+  osm_type char(1), osm_id bigint, primary key (osm_type, osm_id),   -- 'w' or 'r' (a multipolygon)
+  kind text not null,                             -- lot or space
+  parking text, name text, operator text, access text, fee text, capacity int, surface text,
+  material text not null, material_source text, developed real, layer smallint, building text,
+  area_m2 real not null, tags jsonb not null, geom geometry(MultiPolygon, 4326) not null, ...
+);
+create table roads.osm_walk_node (                -- crossing and kerb nodes
+  osm_id bigint primary key, kind text not null,  -- crossing or kerb
+  crossing text, crossing_markings text, marked boolean, signals boolean not null,
+  kerb text, tactile_paving text, railway text,
+  ways bigint[] not null,                         -- the roads.osm_paving ways through it
+  tags jsonb not null, geom geometry(Point, 4326) not null, ...
+);
 ```
 
 The new consumers' tables keep OpenStreetMap's version and timestamp, the
@@ -501,7 +533,9 @@ loads that first and last saw each object, and `active`; an object missing
 from a load is retired, never deleted, and the archive keeps the last two
 extracts (an exception to the Oct 5 rule for these tables only, owner Oct 8).
 Their license is ODbL, republish yes, recorded in the table's comment and the
-manifest. `roads.osm_street` held 22,785 ways (11 MB) on scratch on Oct 11.
+manifest. `roads.osm_street` held 22,785 ways (11 MB) on scratch on Oct 11;
+`roads.osm_paving` 124,582 ways (53 MB), `roads.osm_parking` 4,387 lots and
+stalls (2 MB) and `roads.osm_walk_node` 65,617 nodes (20 MB).
 
 **COMPASS (built Oct 6, 2026, migration 0012).** Crashes are `obs.crash`,
 one row per ITD serial number. `crashed_at` is the reported local time, so

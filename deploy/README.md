@@ -397,6 +397,13 @@ What a load does:
   active objects (at any size) refuses to retire the rest. Check the file, or
   pass `--allow-shrink`. A consumer's load that brings nothing while anything
   is active is always refused.
+- `roads.osm_paving` reads the Cropland Data Layer for its materials (plan
+  C11): before its first production load, copy
+  `/srv/tvt/work/sources/cdl/out/cdl_2025_10m.tif` (10 MB, public domain) to
+  `/srv/tvt/archive/roads/cdl/`, where the load finds it as
+  `$TVT_ARCHIVE/roads/cdl/cdl_2025_10m.tif`. Without it the consumer fails
+  alone and says so (the others load); copy the file, then load it with
+  `--only roads.osm_paving`.
 - Then the refresh cascade (plan §6): the builds that read the new tables
   (`roads-build`, `water-build`, `trails-match`), the exports, the bake.
 
