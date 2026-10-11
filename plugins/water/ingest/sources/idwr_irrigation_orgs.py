@@ -57,6 +57,7 @@ def run(conn):
     with db.Fetch(conn, SOURCE["name"]) as f:
         features, f.bytes, f.http_status, f.robots = idwr.fetch(LAYER, SOURCE["name"], FIELDS)
         got = rows(features, f.started_at)
-        stats = idwr.store(conn, SOURCE["name"], TABLE, INSERT, got, f.id, f.started_at, "IDWR irrigation organizations")
+        stats = idwr.store(conn, SOURCE["name"], TABLE, INSERT, got, f.id, f.started_at,
+                           "IDWR irrigation organizations")
         f.records = len(got)
     return stats

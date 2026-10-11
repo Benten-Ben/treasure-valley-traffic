@@ -1,8 +1,8 @@
 """Prepare the water plugin's two held files for loading (plan P4-data). Worker image (GDAL), no network:
 
     python plugins/water/build/prepare.py nhd --zip $TVT_SOURCES/nhd/download/NHD_H_1705_HU4_GDB.zip --out DIR
-    python plugins/water/build/prepare.py hydroshare --zip $TVT_SOURCES/hydroshare/24a5f761bf4f41fb9b872b130d9d1a3f.zip \
-        --out DIR
+    python plugins/water/build/prepare.py hydroshare \
+        --zip $TVT_SOURCES/hydroshare/24a5f761bf4f41fb9b872b130d9d1a3f.zip --out DIR
 
 Each writes into --out (new or empty) one GeoPackage and prepare.json (written last: the input's sha256, each layer's
 count, the output's sha256). Then `python3 -m ingest nhd-load --from DIR/nhd.gpkg` and `hydroshare-load --from
@@ -20,11 +20,12 @@ features touching the map box (not clipped), 2D, in NAD83 as published (EPSG:426
 with `ftype_name` and `fcode_desc` from the lookup, and the canal, pipeline and hydrographic-category words of each
 FCode. The same shape as the copy cut on Oct 8 (sources/nhd/nhd_mapbox.gpkg), plus `flow`.
 
-**hydroshare**: the Treasure Valley Irrigation System (HydroShare, CC BY 4.0, doi:10.4211/hs.24a5f761bf4f41fb9b872b130d9d1a3f),
-a zipped BagIt bag holding a 7z of one shapefile. Untrusted: the bag is unpacked with bsdtar into a new empty folder
-under --out, its payload checked against the bag's MD5 manifest, the 7z unpacked into another new empty folder, and
-the shapefile read with OGR. Its lines touching the map box, 2D, WGS 84, become the layer `canal` (id = the record's
-number, call_number, name, type). The unpacked folders are removed afterwards. The bag's own XML isn't parsed.
+**hydroshare**: the Treasure Valley Irrigation System (HydroShare, CC BY 4.0,
+doi:10.4211/hs.24a5f761bf4f41fb9b872b130d9d1a3f), a zipped BagIt bag holding a 7z of one shapefile. Untrusted: the
+bag is unpacked with bsdtar into a new empty folder under --out, its payload checked against the bag's MD5 manifest,
+the 7z unpacked into another new empty folder, and the shapefile read with OGR. Its lines touching the map box, 2D,
+WGS 84, become the layer `canal` (id = the record's number, call_number, name, type). The unpacked folders are
+removed afterwards. The bag's own XML isn't parsed.
 """
 
 import argparse

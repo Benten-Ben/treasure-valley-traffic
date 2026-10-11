@@ -16,7 +16,8 @@ and the mask reads only OSM's and NHD's geometry, both republishable (the ground
 
 Licences: the reaches and bodies carry OSM's geometry and NHD's facts, and HydroShare's names on some canals: ODbL,
 republish yes, credited "© OpenStreetMap contributors; USGS National Hydrography Dataset; Tatum, Bittmann, Stone and
-Kaiser (2022), HydroShare (CC BY 4.0; modified)". The mask is ODbL from OSM and NHD. Widths are estimates ⚠️ (rules.py).
+Kaiser (2022), HydroShare (CC BY 4.0; modified)". The mask is ODbL from OSM and NHD. Widths are estimates ⚠️
+(rules.py).
 Standard library plus psycopg (and basemap/ground, which the ingest image carries).
 """
 

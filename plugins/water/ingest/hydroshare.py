@@ -6,8 +6,8 @@ Irrigation System's lines touching the map box, in WGS 84. Standard library plus
 ops.fetch under `hydroshare_canals`, and water-build marked out of date. A file already loaded (same sha256) is
 skipped unless --force. No request is made: the network was downloaded once by hand (sources/hydroshare_canals.py).
 
-Licence CC BY 4.0: credit Tatum, Bittmann, Stone and Kaiser (2022), HydroShare, doi:10.4211/hs.24a5f761bf4f41fb9b872b130d9d1a3f,
-and say "modified" on what we derive.
+Licence CC BY 4.0: credit Tatum, Bittmann, Stone and Kaiser (2022), HydroShare,
+doi:10.4211/hs.24a5f761bf4f41fb9b872b130d9d1a3f, and say "modified" on what we derive.
 """
 
 import argparse

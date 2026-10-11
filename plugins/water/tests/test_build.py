@@ -59,7 +59,8 @@ class ConflationTest(unittest.TestCase):
         def flowline(pid, geom, cls_, name=None, category=None, order=None):
             c.execute("""insert into water.nhd_flowline (permanent_identifier, gnis_name, class, hydrographiccategory,
                            streamorder, flowdir, visibilityfilter, geom, load_id)
-                         values (%s, %s, %s, %s, %s, 1, 24000, ST_Multi(ST_SetSRID(ST_GeomFromGeoJSON(%s), 4326)), %s)""",
+                         values (%s, %s, %s, %s, %s, 1, 24000,
+                                 ST_Multi(ST_SetSRID(ST_GeomFromGeoJSON(%s), 4326)), %s)""",
                       (pid, name, cls_, category, order, geom, load))
 
         osm("w", BASE + 1, "line", "canal", line((0, 0), (500, 0), (1000, 0)), waterway="canal")
@@ -88,7 +89,8 @@ class ConflationTest(unittest.TestCase):
                   (line((100, 5), (100, 15)), load))
         x, y = S.at(50, 2)
         c.execute("""insert into raw.record (source, source_id, version_hash, payload, geom, first_seen, last_seen)
-                     values ('nwps_gauges', 'TSTI1', '\\x00', %s::jsonb, ST_SetSRID(ST_MakePoint(%s, %s), 4326), %s, %s)""",
+                     values ('nwps_gauges', 'TSTI1', '\\x00', %s::jsonb, ST_SetSRID(ST_MakePoint(%s, %s), 4326),
+                             %s, %s)""",
                   (json.dumps({"lid": "TSTI1", "name": "Test Main Canal Diversion at Nowhere"}), x, y, T0, T0))
         c.execute("""insert into water.idwr_org (objectid, name, geom, fetched_at)
                      values (1, 'TEST IRRIGATION DISTRICT', ST_Multi(ST_SetSRID(ST_GeomFromGeoJSON(%s), 4326)), %s)""",
@@ -126,7 +128,8 @@ class ConflationTest(unittest.TestCase):
                          ("lateral", "Test Lateral", "nhd", 13, 2.5, False))
         # The pieces within 20 m of the canal are matched; the run's start is carried onto the OSM canal.
         self.assertTrue(595 <= length <= 605, length)
-        start = self.q("""select round(ST_Distance(ST_Transform(ST_StartPoint(n.geom), 32611), ST_Transform(o.geom, 32611)))
+        start = self.q("""select round(ST_Distance(ST_Transform(ST_StartPoint(n.geom), 32611),
+                                                ST_Transform(o.geom, 32611)))
                           from water.reach n, water.reach o where n.id = %s and o.id = %s""", rid, BASE + 1)
         self.assertEqual(start, [(0,)])
         self.assertGreaterEqual(rid, 2 ** 51)

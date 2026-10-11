@@ -34,7 +34,7 @@ names didn't change, so `ops.source` and `ops.fetch` carry on:
 | [development](../plugins/development) | `compass_growth`, `compass_plats` | |
 | [hazards](../plugins/hazards) | `idl_fire_restrictions`, `nifc_wfigs_incidents`, `nifc_wfigs_perimeters`, `nasa_firms`, `nws_wwa`, `usgs_quakes` | |
 | [air](../plugins/air) | `noaa_hms_smoke` | |
-| [water](../plugins/water) | `nwps_gauges`, `nrcs_snotel`, `boise_ecoli`, `boise_river_hazards`, `usdm_drought` | |
+| [water](../plugins/water) | `nwps_gauges`, `nrcs_snotel`, `boise_ecoli`, `boise_river_hazards`, `usdm_drought`, `idwr_irrigation_orgs`, `idwr_season_of_use`; by hand `nhd_hr`, `hydroshare_canals`, and (OpenStreetMap consumer) `osm_waterways` | `nhd-load`, `hydroshare-load`, `water-build`, `water-export` |
 | [trails](../plugins/trails) | `r2r_trails`, `boise_greenbelt_closures`; manual `osm_paths` (an `osm-load` consumer), `trails_match` | `trails-match` |
 | [lands](../plugins/lands) | `usfs_r4_orders`, `idpr_route_closures`, `idpr_area_restrictions` | |
 | [weather](../plugins/weather) | `awc_metar` | |
@@ -93,6 +93,7 @@ osmium export makes areas only from a/ expressions, so a lot or a lake needs
 | `roads.osm_valley` | highway ways; signal, crossing-signal and level-crossing nodes | as below (unchanged; its own pipeline over the cut) |
 | `roads.osm_street` | residential, unclassified, living_street, road, busway and alleys that osm_valley doesn't keep | `roads.osm_street` |
 | `roads.osm_paving` | the other service ways, sidewalks, crossings, access aisles and traffic islands; parking lots and stalls drawn as areas (multipolygons too); crossing and kerb nodes. Untagged service ways and lots get a default material only on the Cropland Data Layer's developed land, traced in the worker image and measured in PostGIS ([plugins/roads](../plugins/roads/README.md#paving-service-ways-sidewalks-crossings-and-lots)) | `roads.osm_paving`, `roads.osm_parking`, `roads.osm_walk_node` |
+| `water.osm_waterways` | waterways (lines and nodes), water areas, wetlands, springs, reservoirs and basins, swimming pools (not part of the highway partition) | `water.osm_feature` |
 
 ```bash
 python3 -m ingest osm-load --inbox                  # a new extract: every consumer (a heavy job: see below)

@@ -16,7 +16,8 @@ Conflation, in PostGIS, in UTM 11N (EPSG:32611) metres:
    or more of whose length lies within 20 m of NHD is `confirmed`.
 3. A run of unmatched NHD pieces 100 m or longer becomes an NHD-only reach (geometry_from 'nhd'), drawn lighter and
    a zoom later. Where it leaves or rejoins an OSM way it was matched to, its end is carried onto that way, so a
-   lateral OSM lacks starts on the canal OSM draws. Artificial paths through lakes and rivers (the bodies draw those) and connectors are left out.
+   lateral OSM lacks starts on the canal OSM draws. Artificial paths through lakes and rivers (the bodies draw those)
+   and connectors are left out.
 4. HydroShare's canal network names the reaches that OSM and NHD leave unnamed, where it runs along half of one
    within 20 m, and counts as evidence.
 5. Kinds, flow, widths and first zooms come from rules.py. Named canal reaches that touch (within 50 m) form one
@@ -107,7 +108,8 @@ create index on o_area using gist (g);
 analyze o_area"""),
     ("nhd parts", f"""
 create temp table n_part on commit drop as
-select f.permanent_identifier pid, coalesce(d.path[1], 1) part, f.class, f.gnis_name, f.hydrographiccategory, f.streamorder,
+select f.permanent_identifier pid, coalesce(d.path[1], 1) part, f.class, f.gnis_name, f.hydrographiccategory,
+       f.streamorder,
        f.visibilityfilter, f.reachcode, f.flowdir, f.wbarea_permanent_identifier wbarea,
        coalesce(wb.ftype_name = 'Canal/Ditch', false) in_canal, d.geom g, 0::real len, 1 n
 from water.nhd_flowline f
@@ -165,7 +167,8 @@ from o_line o where o.osm_id = r.next_osm and ST_DWithin(o.g, ST_EndPoint(r.g), 
     ("osm pieces matched to nhd", f"""
 create temp table o_match on commit drop as
 with o as (select osm_id, g, greatest(1, ceil(ST_Length(g) / {PIECE_M}))::int n from o_line),
-piece as (select o.osm_id, o.n, i, ST_LineInterpolatePoint(o.g, (i + 0.5) / o.n) mid from o, generate_series(0, o.n - 1) i)
+piece as (select o.osm_id, o.n, i, ST_LineInterpolatePoint(o.g, (i + 0.5) / o.n) mid
+           from o, generate_series(0, o.n - 1) i)
 select pc.osm_id, pc.n, pc.i, m.pid, m.d
 from piece pc
 left join lateral (select np.pid, ST_Distance(pc.mid, np.g) d from n_sub np
@@ -226,7 +229,8 @@ piece as (select x.id, x.n, i, ST_LineInterpolatePoint(x.g, (i + 0.5) / x.n) mid
 m as (select pc.id, pc.n, h.hid, h.d from piece pc
       join lateral (select hs.id hid, ST_Distance(pc.mid, hs.g) d from hs where ST_DWithin(pc.mid, hs.g, {MATCH_M})
                     order by pc.mid <-> hs.g limit 1) h on true),
-best as (select distinct on (id) id, hid, count(*)::real / max(n) share, percentile_cont(0.5) within group (order by d) d
+best as (select distinct on (id) id, hid, count(*)::real / max(n) share,
+                percentile_cont(0.5) within group (order by d) d
          from m group by id, hid order by id, count(*) desc, hid)
 update r set hs_id = b.hid, hs_name = hs.name, hs_type = hs.type, hs_call = hs.call_number, hs_share = b.share,
              hs_d = b.d
@@ -247,8 +251,8 @@ select canal_id, kind, sum(length_m), count(*),
 from r where canal_id is not null group by canal_id, kind"""
 
 REACH_INSERT = """
-insert into water.reach (id, kind, name, name_from, intermittent, flow, piped, width_m, width_from, stream_order, minzoom,
-  geometry_from, confirmed, osm_id, nhd_pid, reachcode, canal_id, flow_known, length_m, geom, build_id)
+insert into water.reach (id, kind, name, name_from, intermittent, flow, piped, width_m, width_from, stream_order,
+  minzoom, geometry_from, confirmed, osm_id, nhd_pid, reachcode, canal_id, flow_known, length_m, geom, build_id)
 select id, kind, name, name_from, intermittent, flow, piped, width_m, width_from,
        case when kind in ('river', 'stream') then streamorder end, minzoom, geometry_from,
        confirmed, osm_id, nhd_pid, reachcode, canal_id, flow_known, length_m, geom, %(build)s
@@ -307,7 +311,8 @@ update b set area_m2 = ST_Area(g);
 create index on b using gist (g);
 create temp table n_poly on commit drop as
 select permanent_identifier pid, layer, ftype_name, gnis_name, hydrographiccategory, reservoirtype,
-       ST_CollectionExtract(ST_Intersection(ST_Transform(ST_CollectionExtract(ST_MakeValid(geom), 3), 32611), box.g), 3) g
+       ST_CollectionExtract(ST_Intersection(ST_Transform(ST_CollectionExtract(ST_MakeValid(geom), 3), 32611),
+                                            box.g), 3) g
 from water.nhd_polygon, box
 where ftype_name in ('Lake/Pond', 'Reservoir', 'Swamp/Marsh', 'Playa', 'Stream/River', 'Canal/Ditch');
 delete from n_poly where ST_IsEmpty(g);
@@ -336,7 +341,8 @@ where c.covered < 0.5 * c.area and not ST_IsEmpty(n.g)"""
 
 STRUCTURES = f"""
 create temp table s on commit drop as
-select 4 * osm_id + case osm_type when 'n' then 0 when 'w' then 1 else 2 end id, kind, name, 'osm_waterways'::text source,
+select 4 * osm_id + case osm_type when 'n' then 0 when 'w' then 1 else 2 end id, kind, name,
+       'osm_waterways'::text source,
        osm_type || osm_id source_id, null::text gauge_lid,
        case when shape = 'point' then geom else ST_PointOnSurface(ST_MakeValid(geom)) end geom
 from (select distinct on (osm_type, osm_id) * from water.osm_feature
@@ -412,6 +418,8 @@ from water.canal c join water.reach rr on rr.id = c.head_reach_id
 join water.idwr_season s on ST_Intersects(ST_StartPoint(rr.geom), s.geom)
 order by c.id, s.objectid"""
 
+RULE_COLUMNS = ("id, geometry_from, src_kind, name, osm_intermittent, piped, osm_width, nhd_class, nhd_category, "
+                "streamorder, visibilityfilter, hs_type")
 DRAWN_TABLES = ("water.canal_season", "water.canal_org", "water.gauge", "water.reach_evidence", "water.reach_link",
                 "water.structure", "water.body", "water.canal", "water.reach")
 
@@ -628,8 +636,7 @@ def build(conn, out=None):
         step(label, sql)
 
     # Kinds, flow and names first (the canals group by name), then the canals, then widths and zooms.
-    rows = _fetch_dicts(conn, """select id, geometry_from, src_kind, name, osm_intermittent, piped, osm_width, nhd_class,
-                                        nhd_category, streamorder, visibilityfilter, hs_type from r""")
+    rows = _fetch_dicts(conn, f"select {RULE_COLUMNS} from r")
     first = {r["id"]: reach_rules(r, set()) for r in rows}
     _set(conn, "r", "id", [("kind", "text"), ("flow", "text"), ("intermittent", "boolean"), ("name_key", "text")],
          [(i, v["kind"], v["flow"], v["intermittent"], v["name_key"]) for i, v in first.items()])
@@ -640,8 +647,7 @@ def build(conn, out=None):
     canals = canal_kinds(conn.execute(summary).fetchall())
     out(f"water-build: canals ({time.monotonic() - t0:.1f} s)")
     main = {cid for cid, (kind, _, _) in canals.items() if kind == "main_canal"}
-    rows = _fetch_dicts(conn, """select id, geometry_from, src_kind, name, osm_intermittent, piped, osm_width, nhd_class,
-                                        nhd_category, streamorder, visibilityfilter, hs_type, canal_id from r""")
+    rows = _fetch_dicts(conn, f"select {RULE_COLUMNS}, canal_id from r")
     final = {r["id"]: reach_rules(r, main) for r in rows}
     _set(conn, "r", "id", [("kind", "text"), ("width_m", "real"), ("width_from", "text"), ("minzoom", "smallint")],
          [(i, v["kind"], v["width_m"], v["width_from"], v["minzoom"]) for i, v in final.items()])
@@ -738,7 +744,8 @@ select id, kind, name, source, source_id, reach_id, gauge_lid, minzoom, geom, %(
     # Each canal's source and head structure.
     step("canal sources", f"""
 update water.canal c set source_kind = x.kind, source_reach_id = x.reach_id, source_canal_id = x.canal_id
-from (select distinct on (c.id) c.id, case when a.kind = 'river' or a.kind = 'stream' then 'river' else 'canal' end kind,
+from (select distinct on (c.id) c.id,
+             case when a.kind = 'river' or a.kind = 'stream' then 'river' else 'canal' end kind,
              a.id reach_id, a.canal_id
       from water.canal c join water.reach_link l on l.to_reach = c.head_reach_id
       join r a on a.id = l.from_reach and a.canal_id is distinct from c.id
@@ -758,7 +765,8 @@ from (select distinct on (c.id) c.id, x.kind, x.reach_id
 where x.id = c.id;
 update water.canal c set head_structure_id = (
   select s.id from s join r h on h.id = c.head_reach_id
-  where s.kind in ('dam', 'weir', 'sluice_gate', 'lock_gate') and ST_DWithin(s.p, ST_StartPoint(h.g), {HEAD_STRUCTURE_M})
+  where s.kind in ('dam', 'weir', 'sluice_gate', 'lock_gate')
+    and ST_DWithin(s.p, ST_StartPoint(h.g), {HEAD_STRUCTURE_M})
   order by s.p <-> ST_StartPoint(h.g) limit 1)""")
     step("evidence", EVIDENCE)
 
