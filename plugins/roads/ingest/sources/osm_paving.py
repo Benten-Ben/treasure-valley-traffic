@@ -20,8 +20,10 @@ the valley box:
     access and untagged and other service ways; and footway=sidewalk, crossing,
     access_aisle or traffic_island on a footway, path or cycleway. osm_valley
     keeps any of them tagged with lanes. Lines, kept whole across the box's
-    edge. A way drawn as an area (area=yes) keeps its outline, with area true;
-    an alley drawn as one is the paving's too (osm_street takes lines only).
+    edge. A closed way tagged area=yes keeps its outline, with area true. An
+    alley tagged area=yes is the paving's too, closed or not, and so is one
+    whose service value isn't exactly 'alley' (osm_street takes the others):
+    the table checks the partition's own test, on the raw tags.
   - roads.osm_parking: parking lots (amenity=parking) and mapped stalls
     (amenity=parking_space) drawn as areas: closed ways and multipolygons. The
     smart cut keeps a multipolygon whole when any member is in the box, so a
@@ -35,17 +37,20 @@ or dirt (MATERIALS; surface=paved takes the kind's paved material). Untagged,
 or tagged with a value we don't read, an object takes its kind's default
 (KIND_DEFAULTS), marked 'default' (the card says "surface estimated"). Service
 ways and lots take theirs only on developed land: at least half of the way's
-length, or of the lot's area, on the Cropland Data Layer 2025's developed
-classes (cdl.py; `developed` holds the share). Off it, they're 'unknown': farm
-lanes, private roads and trailhead lots are often gravel, and we don't guess.
-Walkways take their kind's default anywhere. Underground lots get no material.
+length, or of the lot's area, on the Cropland Data Layer's developed classes
+(`developed` holds the share). Off it, they're 'unknown': farm lanes, private
+roads and trailhead lots are often gravel, and we don't guess. Walkways take
+their kind's default anywhere. Underground lots get no material.
 
-Where the CDL comes from: $TVT_CDL (a path, or 'none' to load without it, every
-untagged service way and lot then 'unknown'), else
-$TVT_ARCHIVE/roads/cdl/cdl_2025_10m.tif (production's copy), else
-$TVT_SOURCES/cdl/out/cdl_2025_10m.tif (the downloaded sources, mounted on the
-scratch database's jobs). Without any, the load fails rather than mark every
-untagged service way unknown by surprise.
+Developed land is a vector input: the CDL's developed classes traced into
+polygons in the worker image (plugins/roads/build/developed.py, from farm's
+archived copy of the CDL) and loaded into roads.developed_land by
+`python3 -m ingest roads-developed-load` (../developed.py). The raster is
+never read here (rasters are decoded in the worker: docs/17 §17.8 Q9). Each
+load measures its service ways and lots against the current build in PostGIS
+(measure()), and loading a new build measures the stored ones again
+(remeasure()). With no build loaded, the load still runs: untagged service
+ways and lots are 'unknown' until one is, and the counts say so.
 
 Widths (⚠️ estimates until measured): the width tag where it reads as metres,
 else a kind's default (WIDTHS, the landscape design's; a one-way parking aisle
@@ -56,24 +61,33 @@ marked, zebra or uncontrolled, or crossing_ref=zebra; false for
 crossing:markings=no or crossing=unmarked|no; otherwise null (not known; at
 signals, crossing=traffic_signals alone says nothing about paint). A crossing
 way with nothing on it takes its crossing nodes' (marked_from 'node'). Rail
-crossings (a railway tag) are never crosswalks: marked stays null. Crosswalks
-are drawn only where marked is true (decision 10; P7 builds them).
+crossings (railway=crossing, level_crossing, tram_crossing or
+tram_level_crossing) are never crosswalks: marked stays null, and a rail
+crossing way doesn't take its nodes'. Another railway value (abandoned,
+disused: a rail trail) doesn't make a crossing a rail crossing. Crosswalks are
+drawn only where marked is true (decision 10; P7 builds them).
 
 Versioned in place (plan C2): no raw.record copies; osm_version and
 osm_timestamp, first_seen and last_seen, and objects missing from a load
 become inactive. A load that changed anything marks roads-build (M1).
 
 License ODbL: credit "© OpenStreetMap contributors". Its own tables, so other
-sources' tables aren't pulled under the ODbL. `developed` also reads the CDL
-(USDA NASS, public domain), which changes neither.
+sources' tables aren't pulled under the ODbL. `developed`, and the materials
+resting on it, also read the CDL (USDA NASS, public domain; credit "USDA NASS
+Cropland Data Layer <year>"), which changes neither: an export of them lists
+the CDL as an input, with the current build's year and sha256
+(roads.developed_build).
+
+A build that reads core.osm_way with roads.osm_street and roads.osm_paving
+together calls osm_extract.check_partition(conn, ("osm_valley", "osm_street",
+"osm_paving")) first: its default names only the first two.
 """
 
 import json
-import os
 from collections import Counter
 
 from ingest import builds, osm_extract
-from .. import cdl
+from .. import developed
 from .osm_valley import _text, effective_oneway, parse_bridge, parse_layer, parse_width
 
 SOURCE = {
@@ -88,7 +102,8 @@ SOURCE = {
              "sidewalks, crossings, access aisles and traffic islands; parking lots and stalls drawn as areas; "
              "crossing and kerb nodes, cut to the valley box. roads.osm_paving, roads.osm_parking and "
              "roads.osm_walk_node, its own tables (ODbL), versioned in place. Untagged service ways and lots "
-             "take a default material only on the Cropland Data Layer 2025's developed land (USDA NASS).",
+             "take a default material only on the Cropland Data Layer's developed land (USDA NASS, public domain: "
+             "roads.developed_land, loaded by roads-developed-load).",
 }
 
 WAYS, LOTS, NODES = "roads.osm_paving", "roads.osm_parking", "roads.osm_walk_node"
@@ -142,7 +157,8 @@ KIND_DEFAULTS = {
     "lot": ("asphalt", True), "space": ("asphalt", True),
 }
 STRUCTURES = {"multi-storey": "concrete", "rooftop": "concrete", "underground": None}   # parking=*: no land rule
-DEVELOPED_SHARE = 0.5      # on developed land: at least half of it (cdl.py)
+DEVELOPED_SHARE = 0.5      # on developed land: at least half of it (developed.py measures it)
+LAND_WAY_KINDS = tuple(k for k, (_, land) in KIND_DEFAULTS.items() if land and k not in ("lot", "space"))
 
 
 def surface_value(tags):
@@ -160,16 +176,17 @@ def kind_default(kind, parking=None):
     return KIND_DEFAULTS[kind]
 
 
-def material(kind, tags, developed=None):
+def material(kind, tags, share=None):
     """(material, material_source): from the surface tag ('surface'), else the kind's default
-    ('default'; service ways and lots only when developed >= DEVELOPED_SHARE), else ('unknown', None)."""
+    ('default'; service ways and lots only when their share of developed land, `developed`, is at
+    least DEVELOPED_SHARE), else ('unknown', None). share None: not measured."""
     s = surface_value(tags)
     if s in MATERIALS:
         return MATERIALS[s], "surface"
     default, land = kind_default(kind, tags.get("parking"))
     if s == PAVED:
         return default or "concrete", "surface"
-    if default is None or (land and (developed is None or developed < DEVELOPED_SHARE)):
+    if default is None or (land and (share is None or share < DEVELOPED_SHARE)):
         return "unknown", None
     return default, "default"
 
@@ -196,11 +213,18 @@ def width(kind, tags):
 MARKED = {"marked", "zebra", "uncontrolled"}       # crossing=*: painted (uncontrolled: marked, no signals)
 UNMARKED = {"unmarked", "no"}
 SIGNALS = {"traffic_signals"}
+RAIL_CROSSINGS = {"crossing", "level_crossing", "tram_crossing", "tram_level_crossing"}   # railway=*
+
+
+def rail_crossing(tags):
+    """A crossing of a railway or tramway (railway=crossing, level_crossing, ...); not a rail trail's
+    railway=abandoned or disused."""
+    return str(tags.get("railway") or "").strip().lower() in RAIL_CROSSINGS
 
 
 def marked(tags):
     """Whether a crossing (node or way) is painted: True, False or None (not known, or a rail crossing)."""
-    if tags.get("railway"):
+    if rail_crossing(tags):
         return None
     m = _text(tags.get("crossing:markings"))
     if m:
@@ -264,21 +288,21 @@ def outline(geom):
     return {"type": "LineString", "coordinates": ring}
 
 
-def way_row(f, land=None, area=False):
+def way_row(f, area=False):
     """One paving way (osm_extract's feature dict) as a list: WAY_COLUMNS' values, then the geometry
     as GeoJSON. area: f is a polygon feature (its outline is kept); a closed line tagged area=yes is
-    an area too. land: a cdl.Developed, or None (no measurement: untagged service ways are unknown)."""
+    an area too. `developed` is left for with_land(): until then a service way's default needs land
+    it hasn't been measured on, so untagged it's 'unknown'."""
     tags = f["tags"]
     kind = way_kind(tags)
     geom = outline(f["geom"]) if area else f["geom"]
     area = area or (tags.get("area") == "yes" and osm_extract.closed(geom))
-    developed = land.line_share(geom["coordinates"]) if land is not None and kind_default(kind)[1] else None
-    mat, source = material(kind, tags, developed)
+    mat, source = material(kind, tags)
     width_m, est, width_source = width(kind, tags)
     crossing = kind == "crossing"
     m = marked(tags) if crossing else None
     return [f["osm_id"], kind, tags["highway"], _text(tags.get("service")), _text(tags.get("footway")),
-            _text(tags.get("name")), area, _text(tags.get("surface")), mat, source, developed, width_m, est,
+            _text(tags.get("name")), area, _text(tags.get("surface")), mat, source, None, width_m, est,
             width_source, effective_oneway(tags), _text(tags.get("access")),
             _text(tags.get("crossing")) if crossing else None,
             _text(tags.get("crossing:markings")) if crossing else None, m, "way" if m is not None else None,
@@ -286,19 +310,18 @@ def way_row(f, land=None, area=False):
             json.dumps(tags, ensure_ascii=False), f["osm_version"], f["osm_timestamp"], json.dumps(geom)]
 
 
-def lot_row(f, land=None):
-    """One lot or stall (an area feature) as a list: LOT_COLUMNS' values, then the geometry."""
+def lot_row(f):
+    """One lot or stall (an area feature) as a list: LOT_COLUMNS' values, then the geometry.
+    `developed` and area_m2 are left for with_land()."""
     tags, polygons = f["tags"], f["geom"]["coordinates"]
     if f["geom"]["type"] == "Polygon":
         polygons = [polygons]
     kind = lot_kind(tags)
-    parking = _text(tags.get("parking"))
-    developed = land.area_share(polygons) if land is not None else None
-    mat, source = material(kind, tags, developed)
-    return [f["type"], f["osm_id"], kind, parking, _text(tags.get("name")), _text(tags.get("operator")),
-            _text(tags.get("access")), _text(tags.get("fee")), capacity(tags.get("capacity")),
-            _text(tags.get("surface")), mat, source, developed, parse_layer(tags.get("layer")),
-            _text(tags.get("building")), round(cdl.area_m2(polygons), 1), json.dumps(tags, ensure_ascii=False),
+    mat, source = material(kind, tags)
+    return [f["type"], f["osm_id"], kind, _text(tags.get("parking")), _text(tags.get("name")),
+            _text(tags.get("operator")), _text(tags.get("access")), _text(tags.get("fee")),
+            capacity(tags.get("capacity")), _text(tags.get("surface")), mat, source, None,
+            parse_layer(tags.get("layer")), _text(tags.get("building")), None, json.dumps(tags, ensure_ascii=False),
             f["osm_version"], f["osm_timestamp"], json.dumps({"type": "MultiPolygon", "coordinates": polygons})]
 
 
@@ -313,38 +336,14 @@ def node_row(f):
             f["osm_version"], f["osm_timestamp"], json.dumps(f["geom"])]
 
 
-# ---- the CDL ---------------------------------------------------------------
-
-CDL_ENV = "TVT_CDL"
-CDL_NAME = "cdl_2025_10m.tif"
-CDL_PLACES = (("TVT_ARCHIVE", ("roads", "cdl", CDL_NAME)), ("TVT_SOURCES", ("cdl", "out", CDL_NAME)))
-
-
-def cdl_path(environ=None):
-    """The CDL raster's path, or None when $TVT_CDL is 'none'. Raises RuntimeError when there's none."""
-    environ = os.environ if environ is None else environ
-    v = environ.get(CDL_ENV)
-    if v:
-        if v.strip().lower() == "none":
-            return None
-        if not os.path.isfile(v):
-            raise RuntimeError(f"{CDL_ENV}={v}: no such file")
-        return v
-    for var, parts in CDL_PLACES:
-        if environ.get(var) and os.path.isfile(p := os.path.join(environ[var], *parts)):
-            return p
-    raise RuntimeError(f"no Cropland Data Layer for the material defaults (plan C11): put {CDL_NAME} in "
-                       f"$TVT_ARCHIVE/roads/cdl/ or $TVT_SOURCES/cdl/out/, set {CDL_ENV} to it, or set "
-                       f"{CDL_ENV}=none to leave every untagged service way and lot 'unknown'")
-
-
 # ---- the load --------------------------------------------------------------
 
-def rows_from(features, land=None, counts=None):
+def rows_from(features, counts=None):
     """Sort a consumer's features into (way rows, lot rows, node rows), as lists, and link them:
-    each node's paving ways, and each unmarked-unknown crossing way's marking from its nodes."""
+    each node's paving ways, and each unmarked-unknown crossing way's marking from its nodes (not a
+    rail crossing's). Land isn't measured here (with_land, measure)."""
     counts = Counter() if counts is None else counts
-    ways, lots, nodes, way_nodes = {}, {}, {}, {}
+    ways, lots, nodes, way_nodes, rail = {}, {}, {}, {}, set()
     for f in features:
         tags = f["tags"]
         if f["geometry"] == "point":
@@ -353,16 +352,20 @@ def rows_from(features, land=None, counts=None):
             else:
                 counts["skipped: points that aren't crossings or kerbs"] += 1
         elif f["geometry"] == "linestring" and f["type"] == "w" and "highway" in tags:
-            ways[f["osm_id"]] = way_row(f, land)
+            ways[f["osm_id"]] = way_row(f)
             way_nodes[f["osm_id"]] = f.get("way_nodes") or ()
         elif f["geometry"] == "polygon" and lot_kind(tags):
-            lots[(f["type"], f["osm_id"])] = lot_row(f, land)
+            lots[(f["type"], f["osm_id"])] = lot_row(f)
+            continue
         elif f["geometry"] == "polygon" and f["type"] == "w" and "highway" in tags:
             if f["osm_id"] not in ways:                        # the line, when osmium gave both
-                ways[f["osm_id"]] = way_row(f, land, area=True)
+                ways[f["osm_id"]] = way_row(f, area=True)
                 way_nodes.setdefault(f["osm_id"], ())
         else:
             counts[f"skipped: {f['geometry']}s of type {f['type']} with no paving tags"] += 1
+            continue
+        if f["type"] == "w" and rail_crossing(tags):
+            rail.add(f["osm_id"])
     ways_at = {}
     for wid, refs in way_nodes.items():
         for nid in refs:
@@ -374,11 +377,101 @@ def rows_from(features, land=None, counts=None):
     i_kind, i_marked, i_from = (_col(WAY_COLUMNS, c) for c in ("kind", "marked", "marked_from"))
     n_kind, n_marked = _col(NODE_COLUMNS, "kind"), _col(NODE_COLUMNS, "marked")
     for wid, row in ways.items():
-        if row[i_kind] == "crossing" and row[i_marked] is None:
+        if row[i_kind] == "crossing" and row[i_marked] is None and wid not in rail:
             m = from_nodes(nodes[n][n_marked] for n in way_nodes[wid] if n in nodes and nodes[n][n_kind] == "crossing")
             if m is not None:
                 row[i_marked], row[i_from] = m, "node"
     return list(ways.values()), list(lots.values()), list(nodes.values())
+
+
+def needs_land(row):
+    """A way row whose kind takes its default only on developed land (it's measured)."""
+    return row[_col(WAY_COLUMNS, "kind")] in LAND_WAY_KINDS
+
+
+def with_land(ways, lots, way_shares=None, lot_measures=None):
+    """Set `developed`, and the material resting on it, from measured shares (in place):
+    way_shares {osm_id: share} for the ways that need land; lot_measures {(osm_type, osm_id):
+    (share, area_m2)} for every lot (area_m2 is set from it too). A share of None: not measured."""
+    way_shares, lot_measures = way_shares or {}, lot_measures or {}
+    for rows, columns, key, get in (
+            (ways, WAY_COLUMNS, lambda r: r[0], lambda k: (way_shares.get(k), None)),
+            (lots, LOT_COLUMNS, lambda r: (r[0], r[1]), lambda k: lot_measures.get(k, (None, None)))):
+        i_kind, i_tags, i_dev, i_mat, i_src = (_col(columns, c) for c in
+                                               ("kind", "tags", "developed", "material", "material_source"))
+        i_area = _col(columns, "area_m2") if columns is LOT_COLUMNS else None
+        for r in rows:
+            if columns is WAY_COLUMNS and not needs_land(r):
+                continue
+            share, m2 = get(key(r))
+            r[i_dev] = share
+            r[i_mat], r[i_src] = material(r[i_kind], json.loads(r[i_tags]), share)
+            if i_area is not None:
+                r[i_area] = m2
+
+
+def measure(conn, ways, lots):
+    """Measure the rows' land in PostGIS (developed.measure) and set it (with_land): the ways that
+    need it and every lot (whose area_m2 comes from here too). Returns the current developed land's
+    build (a dict), or None when none is loaded (then nothing is measured, and lots get only their area)."""
+    land = developed.current(conn)
+    shares = {}
+    if land is not None:
+        need = [("w", r[0], r[-1]) for r in ways if needs_land(r)]
+        shares = {i: v for (_, i), v in developed.measure(conn, need).items()} if need else {}
+    lot_measures = {}
+    if lots:
+        lot_measures = developed.measure(conn, [(r[0], r[1], r[-1]) for r in lots], area=True, land=land is not None)
+    with_land(ways, lots, shares, lot_measures)
+    return land
+
+
+def remeasure(conn, by=SOURCE["name"], reason=None):
+    """Measure every active service way and lot against the current developed land again (after
+    roads-developed-load), and update `developed` and the material resting on it where they changed.
+    Marks roads-build when any did. Doesn't commit. Returns stats."""
+    land = developed.current(conn)
+    stats = {}
+    for table, columns, query, area, key in (
+            (WAYS, WAY_COLUMNS, f"select 'w'::char(1) as t, osm_id as id, geom from {WAYS} "
+                                "where active and kind = any(%s)", False, ("osm_id",)),
+            (LOTS, LOT_COLUMNS, f"select osm_type as t, osm_id as id, geom from {LOTS} where active", True,
+             ("osm_type", "osm_id"))):
+        params = (list(LAND_WAY_KINDS),) if table == WAYS else ()
+        got = developed.measure(conn, query=query, params=params, area=area, land=land is not None)
+        cols = ", ".join(key)
+        where = "active and kind = any(%s)" if table == WAYS else "active"
+        changed = []
+        for row in conn.execute(f"select {cols}, kind, tags, developed, material, material_source from {table} "
+                                f"where {where}", params).fetchall():
+            k, (kind, tags, dev, mat, src) = row[:len(key)], row[len(key):]
+            m = got[("w", k[0]) if table == WAYS else tuple(k)]
+            share = m[0] if area else m
+            new = (share, *material(kind, tags, share))
+            old = (round(dev, developed.DIGITS) if dev is not None else None, mat, src)
+            if new != old:
+                changed.append((*k, *new))
+        if changed:
+            conn.execute("drop table if exists pg_temp.roads_remeasure")
+            types = ", ".join(f"{c} {t}" for c, t in columns if c in key)
+            conn.execute(f"create temp table roads_remeasure ({types}, developed real, material text, "
+                         "material_source text) on commit drop")
+            with conn.cursor() as cur:
+                with cur.copy(f"copy roads_remeasure ({cols}, developed, material, material_source) from stdin") as cp:
+                    for r in changed:
+                        cp.write_row(r)
+            join = " and ".join(f"t.{c} = c.{c}" for c in key)
+            conn.execute(f"""update {table} t set developed = c.developed, material = c.material,
+                                    material_source = c.material_source
+                               from roads_remeasure c where {join}""")
+            conn.execute("drop table pg_temp.roads_remeasure")
+        stats[f"{table.split('.')[1]} remeasured"] = len(changed)
+    stats["developed land"] = developed.describe(land)
+    if any(v for k, v in stats.items() if k.endswith("remeasured")) and _builds_ready(conn):
+        builds.mark(conn, "roads-build", by=by,
+                    reason=f"{reason or 'developed land'}: {stats['osm_paving remeasured']} service ways and "
+                           f"{stats['osm_parking remeasured']} lots remeasured")
+    return stats
 
 
 def _tally(rows, columns, *names, where=None):
@@ -403,16 +496,11 @@ def summary(ways, lots, nodes):
 
 def consume(conn, run):
     """Store this consumer's ways, lots and nodes from the loader's cut (run.features(): its tags,
-    the box and the partition already applied). Doesn't commit: the loader does, with its gate."""
-    path = cdl_path()
-    raster = cdl.Raster(path) if path else None
-    try:
-        land = cdl.Developed(raster) if raster else None
-        counts = getattr(run, "counts", Counter())
-        ways, lots, nodes = rows_from(run.features(), land, counts)
-    finally:
-        if raster:
-            raster.close()
+    the box and the partition already applied), measured against the current developed land.
+    Doesn't commit: the loader does, with its gate."""
+    counts = getattr(run, "counts", Counter())
+    ways, lots, nodes = rows_from(run.features(), counts)
+    land = measure(conn, ways, lots)
     stats = {"objects": len(ways) + len(lots) + len(nodes)}
     for table, columns, rows, key in ((WAYS, WAY_COLUMNS, ways, ("osm_id",)),
                                       (LOTS, LOT_COLUMNS, lots, ("osm_type", "osm_id")),
@@ -427,8 +515,7 @@ def consume(conn, run):
         for k in ("new", "changed", "retired", "reactivated"):
             stats[k] = stats.get(k, 0) + got[k]
     stats.update(summary(ways, lots, nodes))
-    stats["developed land"] = (f"{cdl.CREDIT} ({os.path.basename(path)}, sha256 {osm_extract.sha256_file(path)[:12]})"
-                               if path else f"none ({CDL_ENV}=none): untagged service ways and lots unknown")
+    stats["developed land"] = developed.describe(land)
     if any(stats[k] for k in ("new", "changed", "retired", "reactivated")) and _builds_ready(conn):
         builds.mark(conn, "roads-build", by=SOURCE["name"],
                     reason=f"extract {getattr(run, 'md5', '?')[:8]}: {stats['new']} new, {stats['changed']} changed, "

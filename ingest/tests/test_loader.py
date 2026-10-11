@@ -77,7 +77,7 @@ class RegistryTest(unittest.TestCase):
             module = (registry.SOURCES.get(name) or registry.STREAMS[name]).__name__
             self.assertTrue(module.startswith(f"plugins.{plugin}.ingest."), module)
         self.assertEqual([e["name"] for _, e in registry.MANUAL if _.name == "roads"],
-                         ["osm_valley", "osm_street", "osm_paving"])
+                         ["osm_valley", "osm_street", "osm_paving", "cdl_developed"])
         self.assertEqual([e["name"] for _, e in registry.MANUAL if _.name == "soils"], ["ssurgo"])
         self.assertEqual([e["name"] for _, e in registry.MANUAL if _.name == "hazards"],
                          ["nifc_wfigs_perimeters_backfill"])
@@ -113,8 +113,8 @@ class RegistryTest(unittest.TestCase):
     def test_commands_resolve_and_keep_clear_of_the_built_ins(self):
         self.assertEqual(sorted(registry.COMMANDS),
                          ["burn-scars", "farm-cdl-load", "farm-csb-load", "farm-derive", "farm-export",
-                          "farm-fields-load", "match-intersections", "match-routes", "rollup", "route-colors",
-                          "segment-match", "soils-export", "soils-load", "transit-progress", "transit-ribbons",
+                          "farm-fields-load", "match-intersections", "match-routes", "roads-developed-load", "rollup",
+                          "route-colors", "segment-match", "soils-export", "soils-load", "transit-progress", "transit-ribbons",
                           "trees-load", "wfigs-backfill"])
         self.assertFalse(set(registry.COMMANDS) & (set(BUILTINS) | set(CORE_COMMANDS)))
         for name in registry.COMMANDS:

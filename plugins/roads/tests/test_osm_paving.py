@@ -1,14 +1,17 @@
-"""Tests for roads' osm_paving consumer (plugins/roads/ingest/sources/osm_paving.py) and its
-developed-land reader (plugins/roads/ingest/cdl.py).
+"""Tests for roads' osm_paving consumer (plugins/roads/ingest/sources/osm_paving.py) and the
+developed land it measures against (plugins/roads/ingest/developed.py).
 
-Offline: the manifest entry (its tags take every way the partition gives it, and the partition
-gives it exactly the shared fixture's paving ways), the rules (kinds, material and the CDL rule,
-widths, markings), the rows and their links, the Albers projection against PROJ's, and the
-raster reader on synthetic GeoTIFFs (cdl_tiff.py). With osmium-tool, the synthetic fixture
-(fixtures/osm_paving.osm: invented ids, names and coordinates) goes through the loader's smart
-cut and this consumer's features, a lot across the box's edge included. Database tests run only
-against a scratch database named by TVT_TEST_DATABASE_URL (with roads 0002), inside a transaction
-that is rolled back.
+Offline: the manifest entries (its tags take every way the partition gives it, and the partition
+gives it exactly the shared fixture's paving ways; the CDL's source entry and command), the rules
+(kinds, material and the land rule, widths, markings and rail crossings), the rows and their
+links, measured shares applied to them, and reading a developed-land build (developed_build.py
+writes synthetic ones). Database tests run only against a scratch database named by
+TVT_TEST_DATABASE_URL (with roads 0002), inside a transaction that is rolled back: loading a
+build, measuring in PostGIS, a load with and without developed land, measuring again after a new
+build, and what the tables refuse. With osmium-tool, the synthetic fixture (fixtures/
+osm_paving.osm: invented ids, names and coordinates) goes through the loader's smart cut and this
+consumer's features, a lot across the box's edge and the alley cases included. The worker step
+that makes builds from the CDL is tested in the worker image (test_developed_build.py).
 
 Run: python3 -m unittest discover -s plugins -t .
 """
@@ -25,9 +28,9 @@ from datetime import datetime, timezone
 from unittest import mock
 
 from ingest import manifest, osm_extract
-from plugins.roads.ingest import cdl
+from plugins.roads.ingest import developed
 from plugins.roads.ingest.sources import osm_paving as pv
-from plugins.roads.tests import cdl_tiff
+from plugins.roads.tests import developed_build
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 FIXTURE = os.path.join(HERE, "fixtures", "osm_paving.osm")
@@ -91,12 +94,36 @@ class ManifestTest(unittest.TestCase):
     def test_no_network_code_and_not_scheduled(self):
         for name in ("run", "download", "http", "urllib", "USER_AGENT"):
             self.assertFalse(hasattr(pv, name), name)
-        for module in (pv, cdl):
+        for module in (pv, developed):
             with open(module.__file__, encoding="utf-8") as f:
                 self.assertNotIn("urllib", f.read())
         from ingest.sources import SOURCES, STREAMS
-        self.assertNotIn("osm_paving", SOURCES)
-        self.assertNotIn("osm_paving", STREAMS)
+        for name in ("osm_paving", "cdl_developed"):
+            self.assertNotIn(name, SOURCES)
+            self.assertNotIn(name, STREAMS)
+
+    def test_the_cdl_is_a_source_of_its_own(self):
+        """The developed land's licence and credit are listed in the manifest (a manual source) and
+        in ops.source (developed.SOURCE), where the exports' inputs are looked up."""
+        roads = next(p for p in manifest.find() if p.name == "roads")
+        entry = next(e for e in roads.manifest["sources"] if e["name"] == "cdl_developed")
+        self.assertEqual((entry["kind"], entry["module"], entry["license"], entry["credit"], entry["republish"]),
+                         ("manual", "ingest.developed", developed.LICENSE, developed.SOURCE["credit"], "yes"))
+        self.assertEqual(developed.SOURCE["name"], "cdl_developed")
+        self.assertIsNone(developed.SOURCE["schedule"])
+        self.assertEqual(developed.credit(2025), "USDA NASS Cropland Data Layer 2025")
+        from ingest.sources import COMMANDS, command
+        self.assertEqual(COMMANDS["roads-developed-load"][0].name, "roads")
+        self.assertIs(command("roads-developed-load"), developed.main)
+        self.assertLessEqual({"roads.developed_build", "roads.developed_land"}, set(roads.manifest["tables"]))
+
+    def test_no_raster_is_read_in_the_ingest_image(self):
+        """docs/17 §17.8 Q9: rasters are decoded in the worker. The ingest side reads polygons only."""
+        for module in (pv, developed):
+            with open(module.__file__, encoding="utf-8") as f:
+                text = f.read()
+            for word in ("zlib", "struct", "osgeo", "numpy", "basemap.ground"):
+                self.assertNotIn(f"import {word}", text, (module.__name__, word))
 
 
 class PartitionRowsTest(unittest.TestCase):
@@ -181,9 +208,16 @@ class RulesTest(unittest.TestCase):
                            ({"crossing:markings": "no", "crossing": "uncontrolled"}, False),
                            ({"crossing:markings": "zebra", "crossing": "unmarked"}, True),
                            ({"crossing_ref": "zebra"}, True),
-                           ({"railway": "crossing", "crossing": "uncontrolled"}, None)]:
+                           ({"railway": "crossing", "crossing": "uncontrolled"}, None),
+                           ({"railway": "level_crossing", "crossing:markings": "zebra"}, None),
+                           ({"railway": "tram_crossing", "crossing": "marked"}, None),
+                           ({"railway": "abandoned", "crossing": "marked"}, True),      # a rail trail
+                           ({"railway": "disused", "crossing": "unmarked"}, False)]:
             with self.subTest(tags):
                 self.assertIs(pv.marked(tags), want)
+        self.assertTrue(pv.rail_crossing({"railway": " Level_Crossing "}))
+        self.assertFalse(pv.rail_crossing({"railway": "abandoned"}))
+        self.assertFalse(pv.rail_crossing({}))
         self.assertTrue(pv.at_signals({"crossing": "traffic_signals"}))
         self.assertTrue(pv.at_signals({"highway": "traffic_signals", "crossing": "marked"}))
         self.assertFalse(pv.at_signals({"crossing": "marked"}))
@@ -191,46 +225,24 @@ class RulesTest(unittest.TestCase):
         self.assertIs(pv.from_nodes([False, None]), False)
         self.assertIs(pv.from_nodes([False, True]), True)
 
-    def test_the_cdl_is_found_or_the_load_says_how(self):
-        with tempfile.TemporaryDirectory() as d:
-            sources = os.path.join(d, "sources", "cdl", "out")
-            archive = os.path.join(d, "archive", "roads", "cdl")
-            os.makedirs(sources)
-            os.makedirs(archive)
-            env = {"TVT_SOURCES": os.path.join(d, "sources"), "TVT_ARCHIVE": os.path.join(d, "archive")}
-            with self.assertRaises(RuntimeError) as cm:
-                pv.cdl_path(env)
-            self.assertIn("TVT_CDL=none", str(cm.exception))
-            open(os.path.join(sources, pv.CDL_NAME), "wb").close()
-            self.assertEqual(pv.cdl_path(env), os.path.join(sources, pv.CDL_NAME))
-            open(os.path.join(archive, pv.CDL_NAME), "wb").close()
-            self.assertEqual(pv.cdl_path(env), os.path.join(archive, pv.CDL_NAME))        # production's copy first
-            self.assertEqual(pv.cdl_path({**env, "TVT_CDL": os.path.join(sources, pv.CDL_NAME)}),
-                             os.path.join(sources, pv.CDL_NAME))
-            self.assertIsNone(pv.cdl_path({**env, "TVT_CDL": "none"}))
-            with self.assertRaises(RuntimeError):
-                pv.cdl_path({"TVT_CDL": os.path.join(d, "missing.tif")})
+    def test_the_partition_s_alleys(self):
+        """An alley is osm_street's only as a line exactly tagged service=alley and not area=yes:
+        the table's check (roads 0002) tests the same raw tags."""
+        self.assertEqual(osm_extract.owner({"highway": "service", "service": "alley"}), "osm_street")
+        for tags in ({"highway": "service", "service": "alley", "area": "yes"},
+                     {"highway": "service", "service": "alley "}, {"highway": "service", "service": "Alley"}):
+            with self.subTest(tags):
+                self.assertEqual(osm_extract.owner(tags), "osm_paving")
 
 
 class RowsTest(unittest.TestCase):
-    """rows_from over synthetic features, with a synthetic CDL (developed west of -116.275)."""
+    """rows_from over synthetic features, and measured shares applied with with_land()."""
 
-    @classmethod
-    def setUpClass(cls):
-        cls.tmp = tempfile.TemporaryDirectory()
-        cls.path = os.path.join(cls.tmp.name, "cdl.tif")
-        cdl_tiff.synthetic_cdl(cls.path)
-        cls.raster = cdl.Raster(cls.path)
-        cls.land = cdl.Developed(cls.raster)
-
-    @classmethod
-    def tearDownClass(cls):
-        cls.raster.close()
-        cls.tmp.cleanup()
-
-    def rows(self, features, land="cdl"):
+    def rows(self, features, way_shares=None, lot_measures=None, measured=True):
         counts = Counter()
-        ways, lots, nodes = pv.rows_from(features, self.land if land == "cdl" else land, counts)
+        ways, lots, nodes = pv.rows_from(features, counts)
+        if measured:
+            pv.with_land(ways, lots, way_shares, lot_measures)
         return ({r[0]: as_dict(r, pv.WAY_COLUMNS) for r in ways}, {(r[0], r[1]): as_dict(r, pv.LOT_COLUMNS) for r in lots},
                 {r[0]: as_dict(r, pv.NODE_COLUMNS) for r in nodes}, counts, (ways, lots, nodes))
 
@@ -240,26 +252,35 @@ class RowsTest(unittest.TestCase):
             way(2, -116.27, highway="service"),
             way(3, -116.27, highway="service", surface="asphalt"),
             way(4, highway="footway", footway="sidewalk", name="  Fixture   Walk ", layer="1", bridge="yes"),
-            way(5, -116.27, highway="footway", footway="sidewalk")])
+            way(5, -116.27, highway="footway", footway="sidewalk"),
+            way(6, highway="service", service="parking_aisle")],
+            way_shares={1: 1.0, 2: 0.0, 3: 0.0, 4: 1.0, 6: 0.49})
         self.assertEqual((ways[1]["kind"], ways[1]["material"], ways[1]["material_source"], ways[1]["developed"]),
                          ("driveway", "concrete", "default", 1.0))
         self.assertEqual((ways[2]["material"], ways[2]["material_source"], ways[2]["developed"]), ("unknown", None, 0.0))
         self.assertEqual((ways[3]["material"], ways[3]["material_source"]), ("asphalt", "surface"))
         self.assertEqual(ways[3]["developed"], 0.0)                         # measured for every service way
         self.assertEqual((ways[4]["material"], ways[4]["developed"], ways[4]["name"], ways[4]["layer"], ways[4]["bridge"]),
-                         ("concrete", None, "Fixture Walk", 1, True))
+                         ("concrete", None, "Fixture Walk", 1, True))      # walkways aren't measured
         self.assertEqual(ways[5]["material"], "concrete")                   # walkways: anywhere
+        self.assertEqual((ways[6]["material"], ways[6]["developed"]), ("unknown", 0.49))
         self.assertEqual((ways[4]["width_est_m"], ways[4]["width_source"], ways[4]["oneway"]), (1.5, "default", "no"))
         self.assertEqual(json.loads(raw[0][-1])["type"], "LineString")
         self.assertEqual(len(raw[0]), len(pv.WAY_COLUMNS) + 1)
+        self.assertEqual([pv.needs_land(r) for r in raw], [True, True, True, False, False, True])
 
-    def test_without_the_cdl_untagged_service_ways_are_unknown(self):
+    def test_without_land_untagged_service_ways_and_lots_are_unknown(self):
         ways, lots, _, _, _ = self.rows([way(1, highway="service", service="driveway"),
                                          way(2, highway="footway", footway="sidewalk"),
-                                         area(3, amenity="parking")], land=None)
+                                         area(3, amenity="parking"), area(4, amenity="parking", parking="rooftop")],
+                                        lot_measures={("w", 3): (None, 8970.0), ("w", 4): (None, 10.0)})
         self.assertEqual((ways[1]["material"], ways[1]["developed"]), ("unknown", None))
         self.assertEqual(ways[2]["material"], "concrete")
-        self.assertEqual(lots[("w", 3)]["material"], "unknown")
+        self.assertEqual((lots[("w", 3)]["material"], lots[("w", 3)]["area_m2"]), ("unknown", 8970.0))
+        self.assertEqual(lots[("w", 4)]["material"], "concrete")          # a structure: anywhere
+        unmeasured, lots, _, _, _ = self.rows([way(1, highway="service"), area(3, amenity="parking")], measured=False)
+        self.assertEqual((unmeasured[1]["material"], unmeasured[1]["developed"], lots[("w", 3)]["area_m2"]),
+                         ("unknown", None, None))                         # rows_from leaves the land to measure()
 
     def test_crossings_take_their_nodes_markings_and_nodes_their_ways(self):
         ways, _, nodes, _, _ = self.rows([
@@ -284,6 +305,24 @@ class RowsTest(unittest.TestCase):
         self.assertEqual((nodes[19]["kind"], nodes[19]["kerb"], nodes[19]["marked"], nodes[19]["signals"]),
                          ("kerb", "lowered", None, False))
 
+    def test_rail_crossings_and_rail_trails(self):
+        """A rail crossing is never a crosswalk, and a rail crossing way doesn't take its nodes'
+        marking; a rail trail's crossing (railway=abandoned) is an ordinary crossing."""
+        ways, _, nodes, _, _ = self.rows([
+            node(11, highway="crossing", crossing="marked"),
+            node(21, highway="crossing", crossing="marked", railway="abandoned"),
+            node(31, railway="level_crossing", crossing="uncontrolled"),
+            way(1, highway="footway", footway="crossing", railway="crossing"),             # mistagged, through 11
+            way(2, highway="footway", footway="crossing", crossing="marked", railway="abandoned"),
+            way(3, highway="footway", footway="crossing", railway="disused")])             # through 31
+        ways_nodes = {1: [11], 2: [21], 3: [31]}
+        self.assertEqual((ways[1]["marked"], ways[1]["marked_from"]), (None, None))
+        self.assertEqual((ways[2]["marked"], ways[2]["marked_from"]), (True, "way"))
+        self.assertEqual((ways[3]["marked"], ways[3]["marked_from"]), (None, None))        # its node: a rail crossing
+        self.assertEqual((nodes[21]["marked"], nodes[21]["railway"]), (True, "abandoned"))
+        self.assertEqual((nodes[31]["marked"], nodes[31]["railway"]), (None, "level_crossing"))
+        self.assertEqual(ways_nodes, {w: [n for n in nodes if w in nodes[n]["ways"]] for w in ways_nodes})
+
     def test_lots(self):
         _, lots, _, counts, (_, raw, _) = self.rows([
             area(1, amenity="parking", parking="surface", capacity="40", name="Fixture Lot"),
@@ -291,14 +330,15 @@ class RowsTest(unittest.TestCase):
             area(3, -116.26, -116.259, kind="r", type="multipolygon", amenity="parking", surface="gravel"),
             area(4, amenity="parking_space"),
             area(5, amenity="parking", parking="underground", layer="-1", capacity="many"),
-            node(6, amenity="parking")])
+            node(6, amenity="parking")],
+            lot_measures={("w", 1): (1.0, 8970.4), ("w", 2): (0.0, 8970.4), ("r", 3): (0.0, 8970.4),
+                          ("w", 4): (0.5, 8970.4), ("w", 5): (1.0, 8970.4)})
         one = lots[("w", 1)]
-        self.assertEqual((one["kind"], one["material"], one["material_source"], one["developed"], one["capacity"]),
-                         ("lot", "asphalt", "default", 1.0, 40))
-        self.assertAlmostEqual(one["area_m2"], 80.74 * 111.10, delta=5)    # 0.001 x 0.001 degrees at 43.6 N
+        self.assertEqual((one["kind"], one["material"], one["material_source"], one["developed"], one["capacity"],
+                          one["area_m2"]), ("lot", "asphalt", "default", 1.0, 40, 8970.4))
         self.assertEqual((lots[("w", 2)]["material"], lots[("w", 2)]["developed"]), ("unknown", 0.0))
         self.assertEqual((lots[("r", 3)]["material"], lots[("r", 3)]["material_source"]), ("gravel", "surface"))
-        self.assertEqual(lots[("w", 4)]["kind"], "space")
+        self.assertEqual((lots[("w", 4)]["kind"], lots[("w", 4)]["material"]), ("space", "asphalt"))
         self.assertEqual((lots[("w", 5)]["material"], lots[("w", 5)]["capacity"], lots[("w", 5)]["layer"]),
                          ("unknown", None, -1))
         self.assertEqual(len(lots), 5)                                      # the point lot isn't kept
@@ -316,113 +356,89 @@ class RowsTest(unittest.TestCase):
         lot_too, lots, _, _, _ = self.rows([area(8, highway="service", amenity="parking"), way(8, highway="service")])
         self.assertEqual((list(lot_too), list(lots)), ([8], [("w", 8)]))    # a service way that's also a lot: both
 
+    def test_alleys_as_the_partition_gives_them(self):
+        """What osmium gives this consumer for the alleys the partition sends it: a closed line
+        (its export makes areas only of lots), an open one, a stray space in the value."""
+        ring = [[-116.30, 43.603], [-116.299, 43.603], [-116.299, 43.604], [-116.30, 43.604], [-116.30, 43.603]]
+        closed = {**way(21, highway="service", service="alley", area="yes"),
+                  "geom": {"type": "LineString", "coordinates": ring}}
+        ways, _, _, _, _ = self.rows([closed, way(22, highway="service", service="alley", area="yes"),
+                                      way(23, highway="service", service="alley ")])
+        self.assertEqual((ways[21]["area"], ways[22]["area"], ways[23]["service"]), (True, False, "alley"))
+
     def test_summary(self):
         ways, lots, nodes = pv.rows_from([way(1, highway="service"), way(2, highway="footway", footway="crossing",
                                                                          crossing="marked"),
-                                          node(3, kerb="flush"), area(4, amenity="parking")], self.land)
+                                          node(3, kerb="flush"), area(4, amenity="parking")])
+        pv.with_land(ways, lots, {1: 1.0}, {("w", 4): (1.0, 100.0)})
         s = pv.summary(ways, lots, nodes)
         self.assertEqual(s["ways by kind"], "service 1 / crossing 1")
         self.assertEqual(s["crossing ways marked"], "True:way 1")
         self.assertEqual(s["lots by material"], "asphalt:default 1")
 
 
-class AlbersTest(unittest.TestCase):
-    # PROJ's EPSG:4269 -> EPSG:5070 (pyproj in the worker image, Oct 11, 2026)
-    REFERENCE = [((-116.3, 43.6), (-1619433.451846304, 2463320.1230126396)),
-                 ((-117.05, 43.0), (-1693019.0811799911, 2410975.971675459)),
-                 ((-115.95, 43.85), (-1586114.5536070275, 2484687.6847388907)),
-                 ((-116.2023, 43.615), (-1611404.3015286708, 2463295.4776527914)),
-                 ((-96.0, 23.0), (0.0, 0.0)),
-                 ((-120.0, 50.0), (-1731861.3844999608, 3217670.2851711377))]
+class BuildFileTest(unittest.TestCase):
+    """Reading a developed-land build (developed.read_build, pieces) as the worker writes it."""
 
-    def test_matches_proj_to_a_millimetre(self):
-        for (lon, lat), (x, y) in self.REFERENCE:
-            with self.subTest((lon, lat)):
-                gx, gy = cdl.to_albers(lon, lat)
-                self.assertAlmostEqual(gx, x, delta=0.001)
-                self.assertAlmostEqual(gy, y, delta=0.001)
-
-    def test_area(self):
-        # 0.01 x 0.01 degrees at 43.6 N on GRS 80: 807.4 m (the parallel) x 1111.0 m (the meridian)
-        self.assertAlmostEqual(cdl.area_m2(square(0, -116.31, -116.30, 43.6, 43.61)["coordinates"]), 897_020, delta=200)
-        hole = [[[-116.31, 43.6], [-116.30, 43.6], [-116.30, 43.61], [-116.31, 43.61], [-116.31, 43.6]],
-                [[-116.306, 43.604], [-116.304, 43.604], [-116.304, 43.606], [-116.306, 43.606], [-116.306, 43.604]]]
-        self.assertAlmostEqual(cdl.area_m2([hole]), 897_020 * 0.96, delta=200)
-
-
-class RasterTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
 
-    def raster(self, rows, **kwargs):
-        path = os.path.join(self.tmp.name, f"r{len(os.listdir(self.tmp.name))}.tif")
-        cdl_tiff.write(path, rows, -1000.0, 2000.0, 10.0, **kwargs)
-        r = cdl.Raster(path)
-        self.addCleanup(r.close)
-        return r
+    def folder(self, name="20261011T120000Z"):
+        return os.path.join(self.tmp.name, name)
 
-    def pattern(self, width=300, height=270):
-        return [bytes((r * 7 + c * 3) % 250 + 1 for c in range(width)) for r in range(height)]
-
-    def test_every_layout_reads_the_same(self):
-        rows = self.pattern()
-        layouts = [{}, {"tile": 64}, {"tile": 64, "predictor": 2}, {"tile": None, "rows_per_strip": 16},
-                   {"tile": None, "deflate": False}, {"tile": 128, "deflate": False, "big": True},
-                   {"tile": 64, "order": ">"}, {"tile": None, "rows_per_strip": 7, "predictor": 2, "order": ">"}]
-        for kwargs in layouts:
-            with self.subTest(kwargs):
-                r = self.raster(rows, **kwargs)
-                self.assertEqual((r.width, r.height, r.epsg, r.x0, r.y0, r.sx, r.sy), (300, 270, 5070, -1000, 2000, 10, 10))
-                for col, row in [(0, 0), (299, 0), (0, 269), (299, 269), (150, 133), (63, 64), (64, 63), (255, 256)]:
-                    self.assertEqual(r.at(col, row), rows[row][col])
-                self.assertEqual(r.value(-1000 + 10 * 150 + 5, 2000 - 10 * 133 - 5), rows[133][150])
-
-    def test_outside_and_no_data(self):
-        rows = [b"\x00\x7a", b"\x01\x7c"]
-        r = self.raster(rows, tile=None)
-        self.assertIsNone(r.value(-1000 + 1, 2000 - 1))                    # no data
-        self.assertEqual(r.value(-1000 + 15, 2000 - 1), 122)
-        self.assertEqual(r.value(-1000 + 19.99, 2000 - 19.99), 124)
-        self.assertIsNone(r.value(-1000 - 0.01, 2000 - 1))
-        self.assertIsNone(r.value(-1000 + 20, 2000 - 1))
-        self.assertIsNone(r.value(-1000 + 1, 2000 - 20))
+    def test_a_build_reads_back(self):
+        squares = [developed_build.square(-1619500, 2463300, 100), developed_build.square(-1619300, 2463300, 30)]
+        doc = developed_build.write(self.folder(), squares)
+        self.assertEqual(developed.read_build(self.folder())["counts"], doc["counts"])
+        self.assertEqual(doc["counts"]["area_km2"], 0.0109)
+        got = list(developed.pieces(self.folder()))
+        self.assertEqual([n for n, _ in got], [1, 2])
+        self.assertEqual(json.loads(got[0][1]), squares[0])
 
     def test_refused(self):
-        path = os.path.join(self.tmp.name, "two.tif")
-        cdl_tiff.write(path, [b"\x01\x02"] * 3, 0.0, 30.0, 10.0, tile=None, bands=2)
-        with self.assertRaises(cdl.RasterError):
-            cdl.Raster(path)
-        r = self.raster([b"\x01"], epsg=32611)
-        with self.assertRaises(cdl.RasterError):
-            cdl.Developed(r)
+        sq = [developed_build.square(0, 0, 10)]
+        cases = [({"format": "tvt-roads-developed/0"}, "format"), ({"classes": [121, 122, 123, 124]}, "classes"),
+                 ({"srid": 32611}, "srid"), ({"build_id": "another"}, "build_id"),
+                 ({"cdl": {"file": "x.tif", "year": 2025, "res_m": 10, "sha256": "c" * 64, "license": "CC0",
+                           "credit": "USDA NASS Cropland Data Layer 2025"}}, "licence"),
+                 ({"counts": {"pieces": 0}}, "no pieces")]
+        for i, (override, words) in enumerate(cases):
+            with self.subTest(override):
+                folder = self.folder(f"b{i}")
+                developed_build.write(folder, sq, **override)
+                with self.assertRaises(developed.BuildError) as cm:
+                    developed.read_build(folder)
+                self.assertIn(words, str(cm.exception))
+        folder = self.folder("changed")
+        developed_build.write(folder, sq)
+        with open(os.path.join(folder, developed.LAND_FILE), "ab") as f:
+            f.write(b"\0")
+        with self.assertRaises(developed.BuildError):
+            developed.read_build(folder)                                     # not the file build.json describes
+        with self.assertRaises(developed.BuildError):
+            developed.read_build(self.folder("missing"))                     # unfinished: no build.json
+        folder = self.folder("line")
+        developed_build.write(folder, [{"type": "LineString", "coordinates": [[0, 0], [1, 1]]}])
+        with self.assertRaises(developed.BuildError):
+            list(developed.pieces(folder))
 
-    def test_shares(self):
-        path = os.path.join(self.tmp.name, "cdl.tif")
-        split = cdl_tiff.synthetic_cdl(path, res=10.0, split_lon=-116.30, bounds=(-116.32, 43.595, -116.28, 43.61))
-        with cdl.Raster(path) as r:
-            land = cdl.Developed(r)
-            self.assertEqual(land.line_share([[-116.31, 43.6], [-116.31, 43.601]]), 1.0)
-            self.assertEqual(land.line_share([[-116.29, 43.6], [-116.29, 43.601]]), 0.0)
-            # east-west across the split: a quarter west of it
-            share = land.line_share([[-116.3010, 43.6], [-116.2970, 43.6]])
-            self.assertAlmostEqual(share, 0.25, delta=0.04)
-            self.assertEqual(land.line_share([[-116.31, 43.6], [-116.31, 43.6]]), 1.0)          # a point: one sample
-            self.assertEqual(land.line_share([[-116.31, 43.6]]), 1.0)
-            self.assertIsNone(land.line_share([[-100.0, 40.0], [-100.0, 40.001]]))              # off the raster
-            self.assertEqual(land.area_share(square(0, -116.312, -116.311)["coordinates"]), 1.0)
-            self.assertAlmostEqual(land.area_share(square(0, -116.302, -116.298)["coordinates"]), 0.5, delta=0.05)
-            tiny = square(0, -116.31, -116.30997, 43.6, 43.60002)["coordinates"]                 # no cell centre inside
-            self.assertEqual(land.area_share(tiny), 1.0)
-            self.assertIsNone(land.area_share([]))
-        self.assertLess(cdl.to_albers(-116.3001, 43.6)[0], split)
+    def test_describe(self):
+        self.assertIn("none loaded", developed.describe(None))
+        line = developed.describe({"id": "b1", "credit": "USDA NASS Cropland Data Layer 2025",
+                                   "cdl_file": "cdl_2025_10m.tif", "license": "public domain", "cdl_sha256": "f" * 64})
+        self.assertIn("USDA NASS Cropland Data Layer 2025", line)
+        self.assertIn("f" * 64, line)                                       # the whole sha256
 
-    def test_inside(self):
-        ring = [(0, 0), (10, 0), (10, 10), (0, 10), (0, 0)]
-        hole = [(4, 4), (6, 4), (6, 6), (4, 6), (4, 4)]
-        self.assertTrue(cdl.inside(1, 1, [ring]))
-        self.assertFalse(cdl.inside(5, 5, [ring, hole]))
-        self.assertFalse(cdl.inside(11, 5, [ring]))
+    def test_dry_run(self):
+        developed_build.write(self.folder(), [developed_build.square(0, 0, 10)])
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(developed.main(["--build", self.folder(), "--dry-run"]), 0)
+        self.assertIn("1 pieces", out.getvalue())
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertEqual(developed.main(["--build", self.folder("missing"), "--dry-run"]), 1)
 
 
 class FakeRun:
@@ -434,11 +450,16 @@ class FakeRun:
         return iter(self._features)
 
 
+# The tests' developed land: everything west of this meridian (at the fixture's latitudes), none east of it.
+LAND_WEST, LAND_SOUTH, LAND_SPLIT, LAND_NORTH = -116.62, 42.99, -116.275, 43.62
+
+
 @unittest.skipUnless(DB_URL, "set TVT_TEST_DATABASE_URL to a scratch database (with roads 0002)")
 class DatabaseTest(unittest.TestCase):
     """Everything here runs in one transaction that is rolled back. Every active row is retired
     first (rolled back too), so a load's rows are the active ones; synthetic ids start far above
-    OpenStreetMap's (Idaho's node ids run past 13 billion)."""
+    OpenStreetMap's (Idaho's node ids run past 13 billion). The developed land is a synthetic build
+    loaded in the same transaction: the envelope from LAND_WEST to LAND_SPLIT, on NASS's grid."""
     BASE = 900_000_000_000
 
     @classmethod
@@ -446,11 +467,16 @@ class DatabaseTest(unittest.TestCase):
         import psycopg
         cls.psycopg = psycopg
         with psycopg.connect(DB_URL) as c:
-            if not c.execute("select to_regclass('roads.osm_walk_node') is not null").fetchone()[0]:
+            if not c.execute("select to_regclass('roads.developed_land') is not null").fetchone()[0]:
                 raise unittest.SkipTest("roads.osm_paving and friends are missing: apply roads 0002")
+            land = json.loads(c.execute(
+                "select ST_AsGeoJSON(ST_Transform(ST_MakeEnvelope(%s, %s, %s, %s, 4326), 5070), 6)",
+                (LAND_WEST, LAND_SOUTH, LAND_SPLIT, LAND_NORTH)).fetchone()[0])
         cls.tmp = tempfile.TemporaryDirectory()
-        cls.cdl = os.path.join(cls.tmp.name, "cdl.tif")
-        cdl_tiff.synthetic_cdl(cls.cdl)
+        cls.land = os.path.join(cls.tmp.name, "20261011T120000Z")
+        developed_build.write(cls.land, [land])
+        cls.other = os.path.join(cls.tmp.name, "20270301T120000Z")         # the next year's: no developed land
+        developed_build.write(cls.other, [developed_build.square(0, 0, 10)], year=2026, cdl_sha256="d" * 64)
 
     @classmethod
     def tearDownClass(cls):
@@ -460,13 +486,17 @@ class DatabaseTest(unittest.TestCase):
         self.conn = self.psycopg.connect(DB_URL)
         for table in (pv.WAYS, pv.LOTS, pv.NODES):
             self.conn.execute(f"update {table} set active = false where active")          # rolled back
-        self.env = mock.patch.dict(os.environ, {pv.CDL_ENV: self.cdl})
-        self.env.start()
+        self.loaded = developed.load(self.conn, self.land)
 
     def tearDown(self):
-        self.env.stop()
         self.conn.rollback()
         self.conn.close()
+
+    def marks(self, by):
+        if not self.conn.execute("select to_regclass('ops.build_pending') is not null").fetchone()[0]:
+            return None
+        return self.conn.execute("select coalesce(sum(marks), 0) from ops.build_pending "
+                                 "where build = 'roads-build' and marked_by = %s", (by,)).fetchone()[0]
 
     def features(self):
         b = self.BASE
@@ -477,46 +507,97 @@ class DatabaseTest(unittest.TestCase):
                 {**area(4, amenity="parking"), "osm_id": b + 4},
                 {**area(5, kind="r", type="multipolygon", amenity="parking", surface="gravel"), "osm_id": b + 4}]
 
+    def test_a_build_loads_as_the_current_land(self):
+        self.assertEqual((self.loaded["pieces"], self.loaded["build"]), (1, "20261011T120000Z"))
+        row = self.conn.execute("""select cdl_year, cdl_sha256, credit, license, republish, pieces, parts >= 1,
+                                          area_km2 > 1000, current
+                                     from roads.developed_build where id = '20261011T120000Z'""").fetchone()
+        self.assertEqual(row, (2025, "c" * 64, "USDA NASS Cropland Data Layer 2025", "public domain", "yes", 1, True,
+                               True, True))
+        self.assertEqual(self.conn.execute("select max(ST_NPoints(geom)) <= %s, min(ST_SRID(geom)) from "
+                                           "roads.developed_land", (developed.SUBDIVIDE,)).fetchone(), (True, 5070))
+        self.assertEqual(developed.current(self.conn)["id"], "20261011T120000Z")
+        self.assertIn("skipped", developed.load(self.conn, self.land))     # already current
+        stats = developed.load(self.conn, self.other)
+        self.assertEqual((stats["pieces"], stats["replaced"]), (1, "20261011T120000Z"))
+        self.assertEqual(self.conn.execute("select id from roads.developed_build where current").fetchall(),
+                         [("20270301T120000Z",)])
+        self.assertEqual(self.conn.execute("select count(*) from roads.developed_land").fetchone()[0], 1)
+
+    def test_measure(self):
+        b = 'ST_GeomFromText(%s, 4326)'
+        got = developed.measure(self.conn, query=f"""
+            select 'w'::char(1) as t, 1::bigint as id, {b} as geom union all
+            select 'w', 2, {b} union all select 'w', 3, {b} union all select 'w', 4, {b}""",
+            params=("LINESTRING(-116.30 43.6, -116.30 43.601)", "LINESTRING(-116.27 43.6, -116.27 43.601)",
+                    "LINESTRING(-116.2775 43.6, -116.2725 43.6)", "LINESTRING(-116.30 43.6, -116.30 43.6)"))
+        self.assertEqual((got[("w", 1)], got[("w", 2)], got[("w", 4)]), (1.0, 0.0, None))
+        self.assertAlmostEqual(got[("w", 3)], 0.5, delta=0.01)              # across the split
+        lots = developed.measure(self.conn, [("w", 1, json.dumps(square(1, -116.2785, -116.2715)))], area=True)
+        share, m2 = lots[("w", 1)]
+        self.assertAlmostEqual(share, 0.5, delta=0.01)
+        self.assertAlmostEqual(m2, 0.007 * 80740 * 0.001 * 111100, delta=60)   # 0.007 x 0.001 degrees at 43.6 N
+        unmeasured = developed.measure(self.conn, [("w", 1, json.dumps(square(1, -116.30, -116.29)))], area=True,
+                                       land=False)
+        self.assertIsNone(unmeasured[("w", 1)][0])
+        self.assertGreater(unmeasured[("w", 1)][1], 0)
+
     def test_consume(self):
         b = self.BASE
-        if self.conn.execute("select to_regclass('ops.build_pending') is not null").fetchone()[0]:
-            before = self.conn.execute("select coalesce(sum(marks), 0) from ops.build_pending "
-                                       "where build = 'roads-build' and marked_by = 'osm_paving'").fetchone()[0]
+        before = self.marks("osm_paving")
         stats = pv.consume(self.conn, FakeRun(self.features()))
         self.assertEqual((stats["objects"], stats["new"], stats["osm_paving new"], stats["osm_parking new"],
                           stats["osm_walk_node new"]), (7, 7, 3, 2, 2))
         self.assertIn("USDA NASS Cropland Data Layer 2025", stats["developed land"])
+        self.assertIn("c" * 64, stats["developed land"])
         rows = self.conn.execute("""select osm_id - %s, kind, material, material_source, developed, marked, marked_from
                                     from roads.osm_paving where active order by 1""", (b,)).fetchall()
         self.assertEqual(rows, [(1, "crossing", "asphalt", "default", None, True, "node"),
                                 (2, "service", "unknown", None, 0.0, None, None),
                                 (3, "driveway", "concrete", "default", 1.0, None, None)])
-        lots = self.conn.execute("""select osm_type, material, material_source, ST_GeometryType(geom), area_m2 > 8000
+        lots = self.conn.execute("""select osm_type, material, material_source, developed, ST_GeometryType(geom),
+                                           area_m2 between 8900 and 9050
                                     from roads.osm_parking where osm_id = %s order by 1""", (b + 4,)).fetchall()
-        self.assertEqual(lots, [("r", "gravel", "surface", "ST_MultiPolygon", True),
-                                ("w", "asphalt", "default", "ST_MultiPolygon", True)])
+        self.assertEqual(lots, [("r", "gravel", "surface", 1.0, "ST_MultiPolygon", True),
+                                ("w", "asphalt", "default", 1.0, "ST_MultiPolygon", True)])
         nodes = self.conn.execute("select osm_id - %s, kind, marked, ways from roads.osm_walk_node where active "
                                   "order by 1", (b,)).fetchall()
         self.assertEqual(nodes, [(11, "crossing", True, [b + 1]), (12, "kerb", None, [b + 1])])
-        if self.conn.execute("select to_regclass('ops.build_pending') is not null").fetchone()[0]:
-            after = self.conn.execute("select sum(marks) from ops.build_pending "
-                                      "where build = 'roads-build' and marked_by = 'osm_paving'").fetchone()[0]
-            self.assertEqual(after, before + 1)
+        if before is not None:
+            self.assertEqual(self.marks("osm_paving"), before + 1)
         # Again, an hour on, without the lot relation and the kerb: unchanged, retired, and versioned in place.
         later = T0.replace(hour=13)
         stats = pv.consume(self.conn, FakeRun(self.features()[:1] + self.features()[2:6], later))
-        self.assertEqual((stats["new"], stats["retired"], stats["osm_paving unchanged"]), (0, 2, 3))
+        self.assertEqual((stats["new"], stats["retired"], stats["osm_paving unchanged"], stats["osm_parking unchanged"]),
+                         (0, 2, 3, 1))
         self.assertEqual(self.conn.execute("select active, first_seen from roads.osm_parking where osm_type = 'r' and "
                                            "osm_id = %s", (b + 4,)).fetchone(), (False, T0))
         self.assertEqual(self.conn.execute("select ways from roads.osm_walk_node where osm_id = %s", (b + 11,)).fetchone()[0],
                          [b + 1])
 
-    def test_without_the_cdl(self):
-        with mock.patch.dict(os.environ, {pv.CDL_ENV: "none"}):
-            stats = pv.consume(self.conn, FakeRun(self.features()))
-        self.assertIn("none", stats["developed land"])
-        self.assertEqual(self.conn.execute("select material, developed from roads.osm_paving where osm_id = %s",
-                                           (self.BASE + 3,)).fetchone(), ("unknown", None))
+    def test_without_land_then_a_build_measures_them(self):
+        """No current build: the load runs and says so, untagged service ways and lots unknown. Loading
+        a build measures them and marks roads-build; a build without that land unmarks them again."""
+        self.conn.execute("update roads.developed_build set current = false")
+        stats = pv.consume(self.conn, FakeRun(self.features()))
+        self.assertIn("none loaded", stats["developed land"])
+        q = "select material, material_source, developed from roads.osm_paving where osm_id = %s"
+        self.assertEqual(self.conn.execute(q, (self.BASE + 3,)).fetchone(), ("unknown", None, None))
+        self.assertEqual(self.conn.execute("select material, area_m2 > 8900 from roads.osm_parking where osm_type = 'w' "
+                                           "and osm_id = %s", (self.BASE + 4,)).fetchone(), ("unknown", True))
+        before = self.marks("cdl_developed")
+        stats = developed.load(self.conn, self.land)
+        self.assertEqual((stats["osm_paving remeasured"], stats["osm_parking remeasured"]), (2, 2))
+        self.assertEqual(self.conn.execute(q, (self.BASE + 3,)).fetchone(), ("concrete", "default", 1.0))
+        self.assertEqual(self.conn.execute(q, (self.BASE + 2,)).fetchone(), ("unknown", None, 0.0))
+        if before is not None:
+            self.assertEqual(self.marks("cdl_developed"), before + 1)
+        stats = pv.consume(self.conn, FakeRun(self.features(), T0.replace(hour=13)))
+        self.assertEqual(stats["changed"], 0)                              # measured the same way at load time
+        stats = developed.load(self.conn, self.other)
+        self.assertEqual((stats["osm_paving remeasured"], stats["osm_parking remeasured"]), (1, 2))   # way 2 was 0 already
+        self.assertEqual(self.conn.execute(q, (self.BASE + 3,)).fetchone(), ("unknown", None, 0.0))
+        self.assertEqual(developed.load(self.conn, self.other, force=True)["osm_paving remeasured"], 0)
 
     def test_the_tables_refuse_what_the_partition_never_gives_them(self):
         for tags in ({"highway": "service", "service": "alley"},              # osm_street's
@@ -527,12 +608,33 @@ class DatabaseTest(unittest.TestCase):
                     pv.consume(self.conn, FakeRun([{**way(6, **tags), "osm_id": self.BASE + 6}]))
                 self.conn.execute("rollback to savepoint s")
 
-    def test_an_alley_drawn_as_an_area_is_the_paving_s(self):
-        self.assertEqual(osm_extract.owner({"highway": "service", "service": "alley", "area": "yes"}), "osm_paving")
-        alley = {**area(7, highway="service", service="alley", area="yes"), "osm_id": self.BASE + 7}
-        pv.consume(self.conn, FakeRun([alley]))
-        self.assertEqual(self.conn.execute("select kind, service, area, ST_IsClosed(geom) from roads.osm_paving "
-                                           "where osm_id = %s", (self.BASE + 7,)).fetchone(), ("service", "alley", True, True))
+    def test_the_alleys_the_partition_gives_the_paving(self):
+        """An alley tagged area=yes, closed (as osmium gives it: a closed line) or not, and one whose
+        value has a stray space: the partition gives them to osm_paving, and the table takes them."""
+        ring = [[-116.30, 43.603], [-116.299, 43.603], [-116.299, 43.604], [-116.30, 43.604], [-116.30, 43.603]]
+        tags = ({"highway": "service", "service": "alley", "area": "yes"},
+                {"highway": "service", "service": "alley", "area": "yes"},
+                {"highway": "service", "service": "alley "})
+        features = [{**way(7 + i, **t), "osm_id": self.BASE + 7 + i} for i, t in enumerate(tags)]
+        features[0]["geom"] = {"type": "LineString", "coordinates": ring}
+        for f in features:
+            self.assertEqual(osm_extract.owner(f["tags"]), "osm_paving")
+        pv.consume(self.conn, FakeRun(features))
+        self.assertEqual(self.conn.execute("select osm_id - %s, service, area, ST_IsClosed(geom) from roads.osm_paving "
+                                           "where active order by 1", (self.BASE,)).fetchall(),
+                         [(7, "alley", True, True), (8, "alley", False, False), (9, "alley", False, False)])
+
+    def test_a_rail_trail_crossing_node_may_be_marked(self):
+        b = self.BASE
+        pv.consume(self.conn, FakeRun([node(b + 21, highway="crossing", crossing="marked", railway="abandoned"),
+                                       node(b + 22, railway="level_crossing", crossing="marked")]))
+        self.assertEqual(self.conn.execute("select osm_id - %s, marked, railway from roads.osm_walk_node where active "
+                                           "order by 1", (b,)).fetchall(),
+                         [(21, True, "abandoned"), (22, None, "level_crossing")])
+        self.conn.execute("savepoint s")
+        with self.assertRaises(self.psycopg.errors.CheckViolation):
+            self.conn.execute("update roads.osm_walk_node set marked = true where osm_id = %s", (b + 22,))
+        self.conn.execute("rollback to savepoint s")
 
     @unittest.skipUnless(HAVE_OSMIUM, "needs osmium-tool")
     def test_the_fixture_through_the_loader(self):
@@ -542,19 +644,24 @@ class DatabaseTest(unittest.TestCase):
             with contextlib.redirect_stdout(io.StringIO()):
                 stats = pv.consume(self.conn, run)
         ways = {r[0]: r[1:] for r in self.conn.execute(
-            """select osm_id, kind, material, material_source, marked, marked_from, area, width_est_m
+            """select osm_id, kind, material, material_source, marked, marked_from, area, width_est_m, service
                from roads.osm_paving where active""").fetchall()}
-        self.assertEqual(sorted(ways), [601, 602, 603, 604, 605, 608, 609, 611, 612, 613, 614, 615, 616, 617, 618])
+        self.assertEqual(sorted(ways), [601, 602, 603, 604, 605, 608, 609, 611, 612, 613, 614, 615, 616, 617, 618,
+                                        621, 622, 623, 624])
         self.assertEqual(ways[601][:3], ("driveway", "concrete", "default"))
-        self.assertEqual(ways[602][:3] + ways[602][-1:], ("parking_aisle", "asphalt", "surface", 4.5))
+        self.assertEqual(ways[602][:3] + ways[602][-2:-1], ("parking_aisle", "asphalt", "surface", 4.5))
         self.assertEqual(ways[604][:3], ("service", "unknown", None))
-        self.assertEqual(ways[605][-1], 6.0)
+        self.assertEqual(ways[605][-2], 6.0)
         self.assertEqual(ways[608][:3], ("service", "gravel", "surface"))
         self.assertTrue(ways[609][5])                                       # drawn as an area
         self.assertEqual(ways[612][3:5], (True, "way"))
         self.assertEqual(ways[613][3:5], (False, "node"))
         self.assertEqual(ways[614][3:5], (None, None))
         self.assertEqual(ways[616][3:5], (False, "node"))
+        self.assertEqual((ways[621][5], ways[621][-1]), (True, "alley"))     # an alley drawn as an area: a closed line
+        self.assertEqual((ways[622][5], ways[622][-1]), (False, "alley"))    # area=yes on an open way
+        self.assertEqual((ways[623][5], ways[623][-1]), (False, "alley"))    # "alley " with a stray space
+        self.assertEqual(ways[624][3:5], (True, "way"))                      # a rail trail's crossing
         lots = {(r[0], r[1]): r[2:] for r in self.conn.execute(
             """select osm_type, osm_id, kind, material, material_source, ST_YMin(geom) < 43.0, ST_NumInteriorRings(
                  ST_GeometryN(geom, 1)) from roads.osm_parking where active""").fetchall()}
@@ -570,10 +677,11 @@ class DatabaseTest(unittest.TestCase):
         nodes = {r[0]: r[1:] for r in self.conn.execute(
             "select osm_id, kind, marked, signals, kerb, railway, ways from roads.osm_walk_node where active"
         ).fetchall()}
-        self.assertEqual(sorted(nodes), [6119, 6122, 6132, 6142, 6162, 6902, 6903, 6904, 6906])
+        self.assertEqual(sorted(nodes), [6119, 6122, 6132, 6142, 6162, 6242, 6902, 6903, 6904, 6906])
         self.assertEqual(nodes[6119], ("kerb", None, False, "lowered", None, [611]))
         self.assertEqual(nodes[6122][:2] + nodes[6122][-1:], ("crossing", True, [612]))
         self.assertEqual(nodes[6142][1:3], (None, True))
+        self.assertEqual(nodes[6242][1:2] + nodes[6242][4:], (True, "abandoned", [624]))   # a rail trail: may be marked
         self.assertEqual(nodes[6903][1:2] + nodes[6903][4:5], (None, "crossing"))   # a rail crossing: never marked
         self.assertEqual(nodes[6904][:2] + nodes[6904][3:4], ("crossing", True, "flush"))
         self.assertEqual(nodes[6906][1], True)

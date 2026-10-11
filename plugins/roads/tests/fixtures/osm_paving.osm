@@ -2,9 +2,9 @@
 <!-- Synthetic OpenStreetMap-format fixture for the roads plugin's osm_paving consumer
      (plugins/roads/ingest/sources/osm_paving.py). Everything here is made up: ids, names and
      coordinates are invented, not copied from OpenStreetMap. Service ways and walkways stand in a
-     row near (-116.30, 43.60), one per case (each way's comment names its owner and what it tests);
-     the tests' synthetic Cropland Data Layer calls everything west of -116.275 developed land and
-     the rest crops. The lot relation 761 crosses the valley box's south edge and its way 752 lies
+     row near (-116.30, 43.60), and the alley and rail-trail cases in a second row at 43.603, one per
+     case (each way's comment names its owner and what it tests); the tests' synthetic developed land
+     (a build loaded in the database test) covers everything west of -116.275, and not the rest. The lot relation 761 crosses the valley box's south edge and its way 752 lies
      wholly outside, so only a smart cut holds the whole lot. Objects are sorted by type and id, as
      osmium extract requires. Generated once by hand; edit it directly. -->
 <osm version="0.6" generator="hand-written">
@@ -68,6 +68,22 @@
   <node id="6199" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6010000" lon="-116.2620000"/>
   <node id="6201" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6000000" lon="-116.2600000"/>
   <node id="6209" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6010000" lon="-116.2600000"/>
+  <node id="6211" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6030000" lon="-116.3000000"/>
+  <node id="6212" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6030000" lon="-116.2990000"/>
+  <node id="6213" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6040000" lon="-116.2990000"/>
+  <node id="6214" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6040000" lon="-116.3000000"/>
+  <node id="6221" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6030000" lon="-116.2980000"/>
+  <node id="6222" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6030000" lon="-116.2970000"/>
+  <node id="6229" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6040000" lon="-116.2970000"/>
+  <node id="6231" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6030000" lon="-116.2960000"/>
+  <node id="6239" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6040000" lon="-116.2960000"/>
+  <node id="6241" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6030000" lon="-116.2940000"/>
+  <node id="6242" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6035000" lon="-116.2940000">
+    <tag k="highway" v="crossing"/>
+    <tag k="crossing" v="marked"/>
+    <tag k="railway" v="abandoned"/>
+  </node>
+  <node id="6249" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6040000" lon="-116.2940000"/>
   <node id="6901" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6050000" lon="-116.3100000">
     <tag k="amenity" v="parking"/>
     <tag k="name" v="Point Lot"/>
@@ -242,6 +258,34 @@
     <tag k="highway" v="steps"/>
     <tag k="footway" v="sidewalk"/>
   </way>
+  <!-- osm_paving: an alley drawn as an area (area=yes on a closed way: osmium gives a closed line) -->
+  <way id="621" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="6211"/><nd ref="6212"/><nd ref="6213"/><nd ref="6214"/><nd ref="6211"/>
+    <tag k="highway" v="service"/>
+    <tag k="service" v="alley"/>
+    <tag k="area" v="yes"/>
+  </way>
+  <!-- osm_paving: an alley tagged area=yes on a way that isn't closed (a validator's warning) -->
+  <way id="622" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="6221"/><nd ref="6222"/><nd ref="6229"/>
+    <tag k="highway" v="service"/>
+    <tag k="service" v="alley"/>
+    <tag k="area" v="yes"/>
+  </way>
+  <!-- osm_paving: service="alley " with a stray space: not exactly alley, so not osm_street's -->
+  <way id="623" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="6231"/><nd ref="6239"/>
+    <tag k="highway" v="service"/>
+    <tag k="service" v="alley "/>
+  </way>
+  <!-- osm_paving: a crossing on a rail trail (railway=abandoned isn't a rail crossing): marked on the way -->
+  <way id="624" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="6241"/><nd ref="6242"/><nd ref="6249"/>
+    <tag k="highway" v="footway"/>
+    <tag k="footway" v="crossing"/>
+    <tag k="crossing" v="marked"/>
+    <tag k="railway" v="abandoned"/>
+  </way>
   <!-- a surface lot, untagged, on developed land (asphalt, estimated) -->
   <way id="701" version="2" timestamp="2026-09-02T00:00:00Z">
     <nd ref="7011"/><nd ref="7012"/><nd ref="7013"/><nd ref="7014"/><nd ref="7011"/>
@@ -257,7 +301,7 @@
     <tag k="building" v="parking"/>
     <tag k="name" v="Fixture Garage"/>
   </way>
-  <!-- a mapped stall, too small for a cell centre -->
+  <!-- a mapped stall, a few metres across -->
   <way id="703" version="2" timestamp="2026-09-02T00:00:00Z">
     <nd ref="7031"/><nd ref="7032"/><nd ref="7033"/><nd ref="7034"/><nd ref="7031"/>
     <tag k="amenity" v="parking_space"/>
