@@ -27,7 +27,9 @@ own conflict flag is carried too.
 - 'counted': lanes from a source, widths from the defaults below.
 - 'estimated': default lanes, or a class pavement width wider than the lanes: local streets' (curbed or rural ⚠️)
   and a two-way curbed collector's (⚠️), calibrated in the test windows (calibrate.py) against ACHD's measured
-  widths; the pavement the lanes don't fill lies at the edges (parking, bike lanes, gutters we don't know).
+  widths; the pavement the lanes don't fill lies at the edges (parking, bike lanes, gutters we don't know). A
+  service way (a parking aisle, a driveway, a drive-through) is its lanes, at least the service width: never a
+  street's.
 - 'measured' is the photo check's, later.
 Lane width: HPMS's on its sections, else ACHD's lane next to the bike facility, else the class's (§14.7: 3.66 m
 major roads, 3.35 m collectors, 3.05 m local streets). Bike lanes: ACHD's facility where it's in the roadway, else
@@ -38,8 +40,9 @@ lanes are widened or narrowed to fit (2.6-4.6 m), and the rest is unassigned pav
 that don't fit are scaled down, flagged and listed for review.
 
 **Edges:** a side is curbed (edge 'curb') where ACHD's bike network says so, where a sidewalk is mapped beside it
-(tagged on the way or a parallel sidewalk way), or on developed land (the CDL's classes 122-124, half the
-piece's length or more); motorways and their links never; otherwise 'shoulder' (no curb).
+(tagged on the way or a parallel sidewalk way), or where the land beside it is developed (the CDL's classes
+122-124 over half of a band 20-100 m out on that side: `land`; the road's own cells, which the CDL counts as
+developed even among fields, are left out); motorways and their links never; otherwise 'shoulder' (no curb).
 
 **Sidewalks:** a surface edge stays at least SIDEWALK_CLEAR_M inside a parallel sidewalk way (the sidewalk's
 centre line, measured square to the piece). An estimated or counted side is cut to it, from its outer space
@@ -56,7 +59,9 @@ inside it.
 land, like the paving's service ways (plan C11): otherwise 'unknown'.
 
 Every component records its source in `sources`, and a piece with any ACHD or ITD input is `republish`
-'internal' (a public variant rebuilds without them, plan C17).
+'internal' (a public variant rebuilds without them, plan C17). A width from a class pavement that was
+calibrated on ACHD's measurements (CALIBRATED: the curbed local street's and the curbed collector's) is
+'aggregates': it rests on an aggregate of internal data, and `sources['calibration']` names it.
 """
 
 from .sources.osm_paving import DEVELOPED_SHARE, MATERIALS, PAVED, surface_value
@@ -85,6 +90,7 @@ DEFAULTS = {
     "alley": 5.0,                                                     # ⚠️
     "roundabout_lane": 5.0,                                           # a ring's circulating lane ⚠️
     "service": 5.5,                                                   # as osm_paving's other service ways ⚠️
+    "curb_land_share": DEVELOPED_SHARE,                               # a side's band this developed is curbed
     "sidewalk_clear": 1.0,                                            # an edge stays this far inside a sidewalk
     "markings_local_min_lanes": 3,
 }
@@ -98,6 +104,10 @@ FREEWAY = {"motorway", "motorway_link", "trunk_link"}       # never curbed; edge
 LAND_RULE = {"unclassified", "road", "service"}             # a default material only on developed land
 LANE_SOURCES = ("osm", "itd_hpms", "achd_msm", "osm_valley", "compass_centerline", "default")
 INTERNAL_SOURCES = {"itd_hpms", "achd_msm", "achd_bike_network", "achd_roads", "osm_valley"}
+# The class pavements calibrated on ACHD's measured widths (calibrate.py, Oct 11): a width taken from one rests on
+# an aggregate of internal data.
+CALIBRATED = {"local_curbed": "achd_bike_network (median of measured curbed local streets, Oct 11)",
+              "collector_curbed": "achd_bike_network (median of measured curbed collectors, Oct 11)"}
 IN_ROADWAY_BUFFERS = {"painted", "delineator", "extruded_curb", "jersey_barrier"}
 BIKE_LANE_TAGS = {"lane", "opposite_lane", "buffered_lane"}
 PARKING_OLD = {"parallel": "parallel", "diagonal": "diagonal", "perpendicular": "perpendicular",
@@ -364,7 +374,9 @@ def cross_section(p, d=DEFAULTS):
     functional_class, one_way, same_way, confidence}), lanes (core.segment_lanes' row or None), bike
     (roads.segment_bike_xsection's row or None), hpms ({through: [...], lane_width_ft, shoulder: {type,
     left_ft, right_ft}, median: {type, width_ft}} or None), sidewalk ({left, right}: the nearest parallel
-    sidewalk's distance in metres, or None), developed (0-1 or None)}.
+    sidewalk's distance in metres, or None), developed (the share of the piece's line on developed land, 0-1 or
+    None: the material), land ({left, right}: the share of developed land in a band either side, 0-1 or None:
+    the curbs)}.
 
     Returns roads.xsection's columns (without piece_id), plus 'reviews' ([(kind, detail)]), 'outer'
     ({left, right}: each side's outer space beyond its lanes, which a sidewalk may cut) and 'spans' (each
@@ -461,6 +473,7 @@ def cross_section(p, d=DEFAULTS):
     walks = osm_sidewalk_tag(tags, way)
     near = p.get("sidewalk") or {}
     developed = p.get("developed")
+    land = p.get("land") or {}
     edge, edge_source = {}, {}
     for side in ("left", "right"):
         s = achd[side]
@@ -470,7 +483,7 @@ def cross_section(p, d=DEFAULTS):
             edge[side], edge_source[side] = "shoulder", "class"
         elif walks[side] or near.get(side) is not None:
             edge[side], edge_source[side] = "curb", "sidewalk"
-        elif developed is not None and developed >= DEVELOPED_SHARE:
+        elif land.get(side) is not None and land[side] >= d["curb_land_share"]:
             edge[side], edge_source[side] = "curb", "developed"
         else:
             edge[side], edge_source[side] = "shoulder", "class"
@@ -579,18 +592,24 @@ def cross_section(p, d=DEFAULTS):
         elif hw == "service" and lanes_source == "default":
             total, width_source, tier = d["service"], "class_default", "estimated"
         else:
-            floor = 0.0
+            floor, calibrated = 0.0, None
             curbs = sum(1 for s in edge.values() if s == "curb")
-            if cls == "local":
+            if hw == "service":
+                floor = d["service"]                  # a lane-tagged service way: its lanes, at least this
+            elif cls == "local":
                 pave = d["local_pavement"]
                 floor = (pave["curbed"] * curbs + pave["rural"] * (2 - curbs)) / 2
+                calibrated = "local_curbed" if curbs else None
             elif cls == "collector" and curbs == 2 and way == 0:
                 floor = d["collector_pavement_curbed"]
+                calibrated = "collector_curbed"
             if floor > total:
                 unassigned = floor - total
                 total = floor
                 width_source = "class_default"
                 tier = "estimated"
+                if calibrated:
+                    sources["calibration"] = CALIBRATED[calibrated]
     total = float(total)
 
     # -- outer space per side (what a sidewalk may cut), and the sidewalk cap
@@ -644,11 +663,12 @@ def cross_section(p, d=DEFAULTS):
     sources["material"] = material_source or "unknown"
 
     used = set()
-    for v in sources.values():
-        used |= set(v.values()) if isinstance(v, dict) else {v}
+    for k, v in sources.items():
+        if k != "calibration":
+            used |= set(v.values()) if isinstance(v, dict) else {v}
     if seg is not None and lanes_source not in ("osm", "itd_hpms", "default"):
         used.add("achd_roads")          # the count came through ACHD's segment
-    republish = "internal" if used & INTERNAL_SOURCES else "yes"
+    republish = "internal" if used & INTERNAL_SOURCES else "aggregates" if "calibration" in sources else "yes"
 
     xs = {
         "lanes_fwd": fwd, "lanes_bwd": bwd, "centre_turn": centre,

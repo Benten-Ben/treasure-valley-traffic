@@ -11,9 +11,12 @@ D = X.DEFAULTS
 
 
 def piece(highway="residential", oneway="no", tags=None, **kw):
+    """A synthetic piece. developed=x, without land, is land as developed on both sides as its line is."""
     t = {"highway": highway, **(tags or {})}
     if oneway != "no":
         t.setdefault("oneway", oneway)
+    if "developed" in kw and "land" not in kw:
+        kw["land"] = {"left": kw["developed"], "right": kw["developed"]}
     return {"highway": highway, "oneway": oneway, "tags": t, "county": "Ada", **kw}
 
 
@@ -57,8 +60,10 @@ class LocalStreets(unittest.TestCase):
         self.assertEqual(xs["width_left_m"], xs["width_right_m"])
         self.assertFalse(xs["markings"])
         self.assertEqual((xs["material"], xs["material_source"]), ("asphalt", "default"))
-        # The 1+1 is our rule, not ACHD's data: nothing internal went in.
-        self.assertEqual(xs["republish"], "yes")
+        # The 1+1 is our rule, not ACHD's data; the width is the class pavement calibrated on ACHD's measurements,
+        # an aggregate of internal data: 'aggregates', and sources say so.
+        self.assertEqual(xs["republish"], "aggregates")
+        self.assertIn("achd_bike_network", xs["sources"]["calibration"])
         self.assertEqual(X.marking_lines(xs, 0), [])
 
     def test_a_rural_road_is_the_rural_width_and_its_material_unknown(self):
@@ -68,6 +73,24 @@ class LocalStreets(unittest.TestCase):
         self.assertEqual((xs["material"], xs["material_source"]), ("unknown", None))
         xs = X.cross_section(piece("unclassified", tags={"surface": "gravel"}, developed=0.1))
         self.assertEqual((xs["material"], xs["material_source"]), ("gravel", "surface"))
+
+    def test_a_farm_road_whose_own_cells_read_developed_is_rural(self):
+        # The CDL counts the road's own cells as developed (its line 0.9 on it), but the land either side is fields.
+        xs = X.cross_section(piece("unclassified", county="Canyon", developed=0.9, land={"left": 0.1, "right": 0.3}))
+        self.assertEqual((xs["edge_l"], xs["edge_r"]), ("shoulder", "shoulder"))
+        self.assertEqual((xs["total_w_m"], xs["width_source"]), (D["local_pavement"]["rural"], "class_default"))
+        self.assertEqual(xs["material"], "asphalt")      # the material still follows the line (plan C11)
+        self.assertEqual(xs["republish"], "yes")         # the rural width isn't calibrated on ACHD's
+        # A collector among fields keeps its lanes and shoulders, not the curbed collector's pavement.
+        xs = X.cross_section(piece("tertiary", tags={"lanes": "2"}, developed=0.9, land={"left": 0.0, "right": 0.0}))
+        self.assertAlmostEqual(xs["total_w_m"], 2 * 3.35 + 2 * D["shoulder"]["rural"], places=2)
+        # A town edge: houses on one side, a field on the other.
+        xs = X.cross_section(piece(land={"left": 0.8, "right": 0.2}, developed=1.0))
+        self.assertEqual((xs["edge_l"], xs["edge_r"]), ("curb", "shoulder"))
+        self.assertEqual(xs["sources"]["edge"], {"left": "developed", "right": "class"})
+        # Land not measured on a side (no developed land loaded): no curb from it.
+        xs = X.cross_section(piece(land={"left": None, "right": None}, developed=None))
+        self.assertEqual((xs["edge_l"], xs["edge_r"]), ("shoulder", "shoulder"))
 
     def test_a_mapped_sidewalk_makes_a_curb_even_off_developed_land(self):
         xs = X.cross_section(piece(sidewalk={"left": 6.5, "right": None}, developed=0.0))
@@ -89,6 +112,20 @@ class LocalStreets(unittest.TestCase):
         xs = X.cross_section(piece("service", service="alley", tags={"service": "alley"}, developed=0.2))
         self.assertEqual((xs["total_w_m"], xs["width_tier"], xs["markings"]), (D["alley"], "estimated", False))
         self.assertEqual(xs["material"], "unknown")
+
+    def test_a_lane_tagged_service_way_is_its_lanes_not_a_streets_width(self):
+        # osm_valley keeps lane-tagged service ways: a parking aisle, a drive-through. Never the curbed street's 9.75 m.
+        aisle = X.cross_section(piece("service", service="parking_aisle",
+                                      tags={"service": "parking_aisle", "lanes": "2"}, developed=1.0))
+        self.assertEqual(aisle["lanes_source"], "osm")
+        self.assertAlmostEqual(aisle["total_w_m"], 2 * 3.05 + 2 * D["gutter"], places=2)
+        self.assertEqual(aisle["width_tier"], "counted")
+        self.assertEqual(aisle["republish"], "yes")
+        thru = X.cross_section(piece("service", oneway="yes", service="drive-through",
+                                     tags={"service": "drive-through", "lanes": "1"}, developed=1.0))
+        self.assertEqual((thru["total_w_m"], thru["width_source"], thru["width_tier"]),
+                         (D["service"], "class_default", "estimated"))
+        self.assertNotIn("calibration", thru["sources"])
 
 
 class SidewalkCap(unittest.TestCase):
@@ -269,6 +306,7 @@ class Widths(unittest.TestCase):
         xs = X.cross_section(piece("tertiary", tags={"lanes": "2"}, developed=1.0))
         self.assertEqual((xs["total_w_m"], xs["width_source"], xs["width_tier"]),
                          (D["collector_pavement_curbed"], "class_default", "estimated"))
+        self.assertEqual(xs["republish"], "aggregates")
         self.assertTrue(xs["markings"])         # its lines stay where its lanes are, the rest at the curbs
         self.assertEqual([o for _, _, o in X.marking_lines(xs, 0)], [0.0])
         # A rural collector keeps its lanes and shoulders.

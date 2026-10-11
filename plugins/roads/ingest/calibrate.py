@@ -59,7 +59,7 @@ from d group by 1, 2 order by 1, 2
 _SIDEWALK = """
 select {box} as box, count(*) as pieces,
        percentile_cont(array[0.1, 0.25, 0.5, 0.75, 0.9]) within group (order by k.left_m + k.right_m - 2 * %(off)s)
-from rb_walk k
+from cal_walk k
 join roads.piece p on p.id = k.piece_id
 {join}
 where p.highway = 'residential' and k.left_m is not null and k.right_m is not null and p.oneway = 0
@@ -74,22 +74,22 @@ def _q(values):
 
 
 def measure(conn):
-    """{'achd': {fclass: [(box, edges, segments, [p10, p25, p50, p75, p90], our median)]}, 'sidewalks': [...]}."""
+    """{'achd': {fclass: [(box, edges, segments, [p10, p25, p50, p75, p90])]}, 'sidewalks': [(box, pieces, [p10,
+    ..., p90])]}, from the current build's tables (roads.piece, roads.xsection). Its sidewalk table (cal_walk)
+    goes in a savepoint that's rolled back, so it reads alongside a build's own transaction too."""
     bx = boxes()
     params = {"ids": [b[0] for b in bx], "w": [b[1][0] for b in bx], "s": [b[1][1] for b in bx],
               "e": [b[1][2] for b in bx], "n": [b[1][3] for b in bx]}
     out = {"achd": {}}
-    for fclass in ("Local", "Collector"):
-        out["achd"][fclass] = [row for box, join in (("b.id", _IN_BOX), ("'valley'", ""))
-                               for row in conn.execute(_ACHD.format(box=box, join=join),
-                                                       {**params, "fclass": fclass}).fetchall()]
-    B.run_sql(conn, B._SIDEWALKS, {"srid": B.SRID, "reach": B.SIDEWALK_REACH_M, "bearing": B.SIDEWALK_BEARING})
-    conn.execute("update rb_walk set left_m = null where n_left < 2")
-    conn.execute("update rb_walk set right_m = null where n_right < 2")
-    out["sidewalks"] = [row for box, join in (("b.id", _IN_BOX), ("'valley'", ""))
-                        for row in conn.execute(_SIDEWALK.format(box=box, join=join),
-                                                {**params, "off": ATTACHED_OFFSET_M}).fetchall()]
-    conn.rollback()
+    with conn.transaction(force_rollback=True):
+        for fclass in ("Local", "Collector"):
+            out["achd"][fclass] = [row for box, join in (("b.id", _IN_BOX), ("'valley'", ""))
+                                   for row in conn.execute(_ACHD.format(box=box, join=join),
+                                                           {**params, "fclass": fclass}).fetchall()]
+        B.sidewalk_table(conn, "roads.piece", "cal")
+        out["sidewalks"] = [row for box, join in (("b.id", _IN_BOX), ("'valley'", ""))
+                            for row in conn.execute(_SIDEWALK.format(box=box, join=join),
+                                                    {**params, "off": ATTACHED_OFFSET_M}).fetchall()]
     return out
 
 

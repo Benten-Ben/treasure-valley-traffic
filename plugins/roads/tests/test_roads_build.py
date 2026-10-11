@@ -17,11 +17,21 @@ The synthetic town (metres):
 - A secondary road on a bridge (layer 1) crosses 1st St at y = -100 without a shared node.
 - Crossings on Main: marked at (10, 0) with a crossing way, unmarked at (-80, 0); on 1st St, marked at (0, -12).
 - A sidewalk 5 m east of 1st St from y = 60 to 190.
+- An alley 13 m south of Main from x = -120 to -30, beside ACHD's W Main St (a minor arterial): the line rule alone
+  would put it on it.
+- ACHD's segment along the highway's east piece is elevated (level 20) where OpenStreetMap draws no bridge.
+- The town is developed land up to x = 400. Out in the fields, Farm Rd (unclassified, x = 470, y = -400 to 600)
+  crosses Dixie Rd (unclassified, y = 450, x = 420 to 560) at (470, 450): the CDL's developed land covers only their
+  own 20 m, as it does a farm road's cells.
 """
 
+import contextlib
+import io
 import math
 import os
+import tempfile
 import unittest
+from unittest import mock
 
 from plugins.roads.ingest import build as B
 
@@ -67,9 +77,10 @@ def osm_way(conn, osm_id, highway, pts, tags=None, oneway="no", name=None):
 def osm_street(conn, osm_id, highway, pts, tags=None, oneway="no", name=None):
     tags = {"highway": highway, **(tags or {})}
     conn.execute(
-        """insert into roads.osm_street (osm_id, highway, name, oneway, tags, geom)
-           values (%s, %s, %s, %s, %s, ST_GeomFromEWKT(%s))""",
-        (osm_id, highway, name, oneway, __import__("json").dumps(tags), line(*pts)))
+        """insert into roads.osm_street (osm_id, highway, service, name, oneway, tags, geom)
+           values (%s, %s, %s, %s, %s, %s, ST_GeomFromEWKT(%s))""",
+        (osm_id, highway, tags.get("service") if highway == "service" else None, name, oneway,
+         __import__("json").dumps(tags), line(*pts)))
 
 
 def town(conn):
@@ -107,6 +118,9 @@ def town(conn):
     osm_street(conn, 2004, "residential", [E, (120, 350)])
     osm_street(conn, 2005, "residential", [W, (-120, 350)])
     osm_street(conn, 2006, "residential", [N, (0, 470)])
+    osm_street(conn, 2020, "service", [(-120, -13), (-30, -13)], {"service": "alley"})
+    osm_street(conn, 2030, "unclassified", [(470, -400), (470, 450), (470, 600)], name="Farm Rd")
+    osm_street(conn, 2031, "unclassified", [(420, 450), (470, 450), (560, 450)], name="Dixie Rd")
     # The paving: a crossing way and a sidewalk; crossing nodes.
     conn.execute(
         """insert into roads.osm_paving (osm_id, kind, highway, footway, material, material_source, width_est_m,
@@ -129,10 +143,14 @@ def town(conn):
         """insert into core.road_segment (name, functional_class, one_way, geom) values
            ('W Main St', 'Minor Arterial', 'both', ST_Multi(ST_GeomFromEWKT(%s)))""", (line((-140, 0), (0, 0)),))
     conn.execute(
+        """insert into core.road_segment (name, functional_class, one_way, from_level, to_level, geom) values
+           ('Hwy', 'Minor Arterial', 'both', 20, 20, ST_Multi(ST_GeomFromEWKT(%s)))""", (line((60, -100), (200, -100)),))
+    conn.execute(
         """insert into core.taz (taz_id, county, geom, first_seen, last_seen)
            values (1, 'Ada', ST_Multi(ST_MakeEnvelope(%s, %s, %s, %s, 4326)), now(), now())""",
-        (*ll(-500, -500), *ll(500, 700)))
-    # Developed land over the whole town (the CDL), so the local streets read as curbed.
+        (*ll(-500, -500), *ll(600, 700)))
+    # Developed land over the town (the CDL), so its local streets read as curbed; out in the fields only the farm
+    # roads' own cells.
     conn.execute(
         """insert into roads.developed_build (id, cdl_file, cdl_year, cdl_res_m, cdl_sha256, classes, srid, license,
              credit, republish, pieces, parts, area_km2, made_at, loaded_at, current)
@@ -141,7 +159,12 @@ def town(conn):
     conn.execute(
         """insert into roads.developed_land (id, piece, geom)
            values (1, 1, ST_Transform(ST_MakeEnvelope(%s, %s, %s, %s, 4326), 5070))""",
-        (*ll(-500, -500), *ll(500, 700)))
+        (*ll(-500, -500), *ll(400, 700)))
+    for i, pts in ((2, [(470, -400), (470, 600)]), (3, [(420, 450), (560, 450)])):
+        conn.execute(
+            """insert into roads.developed_land (id, piece, geom)
+               values (%s, 1, ST_Transform(ST_Buffer(ST_Transform(ST_GeomFromEWKT(%s), 32611), 10, 'endcap=flat'),
+                                           5070))""", (i, line(*pts)))
 
 
 def utm(conn, x, y):
@@ -161,7 +184,9 @@ class BuildTest(unittest.TestCase):
             raise unittest.SkipTest("roads.piece is missing: apply roads 0003")
         town(cls.conn)
         cls.log = []
-        cls.stats = B.make(cls.conn, "test", out=cls.log.append)
+        # The roundabout (its nodes 20 m from its centre) is listed as a large junction too.
+        with mock.patch.dict(B.LARGE_JUNCTION, {"spread_m": 15.0}):
+            cls.stats = B.make(cls.conn, "test", out=cls.log.append)
 
     @classmethod
     def tearDownClass(cls):
@@ -306,16 +331,123 @@ class BuildTest(unittest.TestCase):
         self.assertIn("sidewalk_cap", flags)
         self.assertAlmostEqual(right, 4.0, delta=0.3)
 
-    def test_the_build_row_and_review(self):
-        bid, current, inputs = self.one("select id, current, inputs from roads.build")
+    def test_the_build_row(self):
+        bid, current, inputs, started, finished = self.one(
+            "select id, current, inputs, started_at, finished_at from roads.build")
         self.assertTrue(current)
-        self.assertIn("osm", [i["name"] for i in inputs])
-        self.assertIn("cdl", [i["name"] for i in inputs])
+        names = [i["name"] for i in inputs]
+        for name in ("osm", "achd_roads", "achd_msm", "achd_bike_network", "itd_hpms", "compass_centerline",
+                     "intersections", "compass_zones", "cdl"):
+            self.assertIn(name, names)
+        self.assertEqual({i["name"]: i["republish"] for i in inputs}["intersections"], "internal")
         self.assertEqual(self.stats["build"], bid)
+        self.assertGreaterEqual(finished, started)             # the clock's, not the transaction's start
         # Every surface is valid, and z15's copies exist for the big ones.
         bad = self.one("select count(*) from roads.surface where not ST_IsValid(geom)")[0]
         self.assertEqual(bad, 0)
         self.assertGreater(self.one("select count(*) from roads.surface where geom_z15 is not null")[0], 0)
+
+    def test_the_review_list(self):
+        rows = self.q("select r.kind, p.osm_id, r.road_segment_id, r.detail from roads.review r "
+                      "left join roads.piece p on p.id = r.piece_id order by r.id")
+        kinds = {k for k, *_ in rows}
+        # A major road in Ada along no ACHD segment (the divided road's carriageways, the highway's west piece).
+        self.assertIn(1002, [o for k, o, *_ in rows if k == "unmatched"])
+        # The highway's east piece lies along an elevated ACHD segment, and OpenStreetMap draws no bridge.
+        self.assertEqual([o for k, o, *_ in rows if k == "deck_mismatch"], [1006])
+        # The roundabout, over the (lowered) spread.
+        self.assertIn("junction_large", kinds)
+        # The alley beside W Main St: kept off ACHD's arterial and listed.
+        (osm_id, seg, detail), = [(o, s, d) for k, o, s, d in rows if k == "class_mismatch"]
+        self.assertEqual((osm_id, detail["achd_class"], detail["source"], detail["names_agree"]),
+                         (2020, "Minor Arterial", "achd_roads", None))
+        self.assertIsNotNone(seg)
+        self.assertIsNone(self.one("select road_segment_id from roads.piece where osm_id = 2020")[0])
+        self.assertEqual(self.stats["review"], {k: sum(1 for r in rows if r[0] == k) for k in kinds})
+        # The listing, by kind and for one kind.
+        out = []
+        B.show_review(self.conn, out=out.append)
+        self.assertTrue(any(line.startswith("class_mismatch") for line in out))
+        out = []
+        B.show_review(self.conn, "deck_mismatch", out=out.append)
+        self.assertEqual(len(out), 1)
+        self.assertTrue(out[0].startswith("w1006"))
+
+    def test_the_review_queries_for_invalid_surfaces_and_bike_conflicts(self):
+        # Neither happens in the town: their queries, on a bowtie surface and a flagged bike row.
+        sid = self.one("select max(id) + 1 from roads.surface")[0]
+        self.conn.execute("""insert into roads.surface (id, kind, junction_id, material, tier, geom)
+                             values (%s, 'junction', 1, 'asphalt', 'estimated',
+                                     ST_Multi(ST_GeomFromText('POLYGON((0 0, 10 10, 10 0, 0 10, 0 0))', 32611)))""",
+                          (sid,))
+        got = self.q(B._REVIEW_SQL["geometry"])
+        self.assertEqual(len(got), 1)
+        self.assertEqual(got[0][3]["surface"], sid)
+        seg = self.one("select road_segment_id from roads.piece where osm_id = 1001 and seq = 3")[0]
+        self.conn.execute("alter view roads.segment_bike_xsection rename to segment_bike_xsection_real")
+        self.conn.execute("""create view roads.segment_bike_xsection as
+                             select %s::bigint as road_segment_id, array['direction_conflicts_one_way'] as flags"""
+                          .replace("%s", str(int(seg))))
+        got = self.q(B._REVIEW_SQL["bike_other_carriageway"])
+        self.assertEqual([(r[1], r[2]) for r in got], [(1001, seg)])
+
+    def test_farm_roads_are_rural_though_their_own_cells_read_developed(self):
+        rows = self.q("""select x.edge_l, x.edge_r, x.total_w_m, x.sources->>'edge', x.material
+                         from roads.xsection x join roads.piece p on p.id = x.piece_id
+                         where p.osm_id in (2030, 2031)""")
+        self.assertEqual(len(rows), 4)          # Farm Rd's two pieces and Dixie Rd's, split where they cross
+        for edge_l, edge_r, total, source, material in rows:
+            self.assertEqual((edge_l, edge_r, source), ("shoulder", "shoulder", "class"))
+            self.assertEqual(total, B.X.DEFAULTS["local_pavement"]["rural"])
+            self.assertEqual(material, "asphalt")         # the material follows the line, on developed cells
+        # The streets in town are still curbed by the land either side.
+        self.assertEqual(self.one("""select x.edge_l, x.edge_r, x.sources->>'edge' from roads.xsection x
+                                     join roads.piece p on p.id = x.piece_id where p.osm_id = 2002""")[0:3],
+                         ("curb", "curb", "developed"))
+        # Where the farm roads cross, the corners' edges are shoulders, not curbs.
+        kinds = self.q(f"""select distinct e.kind from roads.edge e join roads.junction j on j.id = e.junction_id
+                           where ST_DWithin(j.geom, {self.at(470, 450)}, 2)""")
+        self.assertEqual(kinds, [("shoulder",)])
+        # And in town, where every street is curbed, they're curbs.
+        kinds = self.q(f"""select distinct e.kind from roads.edge e join roads.junction j on j.id = e.junction_id
+                           where ST_DWithin(j.geom, {self.at(150, 0)}, 2)""")
+        self.assertEqual(kinds, [("curb",)])
+
+    def test_the_calibration_reads_the_build(self):
+        from plugins.roads.ingest import calibrate
+        got = calibrate.measure(self.conn)
+        self.assertEqual(set(got), {"achd", "sidewalks"})
+        self.assertEqual(set(got["achd"]), {"Local", "Collector"})
+        # Its own tables went with its savepoint; the build's are still there.
+        self.assertIsNone(self.one("select to_regclass('pg_temp.cal_walk')")[0])
+        self.assertGreater(self.one("select count(*) from roads.piece")[0], 0)
+        out = []
+        calibrate.report(self.conn, out=out.append)
+        self.assertTrue(out[0].startswith("The defaults now:"))
+
+    def test_the_command_line(self):
+        @contextlib.contextmanager
+        def connect():
+            yield self.conn                     # the build's own transaction, never committed here
+        with mock.patch("ingest.db.connect", connect):
+            for argv, want in ((["--review"], "deck_mismatch"), (["--review", "class_mismatch"], "w2020"),
+                               (["--calibrate"], "The defaults now")):
+                buf = io.StringIO()
+                with contextlib.redirect_stdout(buf):
+                    self.assertEqual(B.main(argv), 0)
+                self.assertIn(want, buf.getvalue())
+
+    def test_an_export_waits_for_a_build_in_progress(self):
+        import psycopg
+        from plugins.roads.ingest import export as E
+        # This connection's build holds its tables (TRUNCATE) until it commits: an export elsewhere waits for it
+        # (here it gives up after 0.3 s), so it never reads half a build.
+        with psycopg.connect(DB_URL) as other, tempfile.TemporaryDirectory() as archive:
+            other.execute("set lock_timeout = '300ms'")
+            other.commit()
+            with self.assertRaises(psycopg.errors.LockNotAvailable):
+                E.export(other, archive, build="20261011T000000Z")
+            self.assertEqual(os.listdir(archive), [])
 
 
     def test_a_changed_source_marks_the_build(self):
@@ -341,9 +473,144 @@ class BuildTest(unittest.TestCase):
             lines = next(lay for lay in m.layers if lay.name == "lines")
             self.assertEqual(lines["features"], self.one("select count(*) from roads.piece")[0])
             self.assertIn("minzoom", lines["fields"])
+            self.assertIn("off", lines["fields"])
+            self.assertLessEqual({"intersections", "compass_centerline"}, set(m.inputs))
             plan = LP.resolve({"roads": m})
             self.assertTrue(plan.roads)
             self.assertEqual(plan.republish, "internal")
+
+    def test_the_lines_carry_the_width_the_surface_is_drawn_at(self):
+        from plugins.roads.ingest import export as E
+        lines = next(lay for lay in E.LAYERS if lay.name == "lines")
+        # 1st St beside its sidewalk: the cap cut its right side to 4.0 m; the line is as wide as what's drawn,
+        # and its middle lies left of the line.
+        w, off, total, left, right = self.one(
+            f"""select l.w, l.off, x.total_w_m, x.width_left_m, x.width_right_m from ({lines.sql}) l
+                join roads.xsection x on x.piece_id = l.id
+                where l.id = (select id from roads.piece where osm_id = 2001 and ST_DWithin(geom, {self.at(0, 120)}, 1))""")
+        self.assertAlmostEqual(w, left + right, delta=0.06)
+        self.assertLess(w, total)
+        self.assertAlmostEqual(off, (right - left) / 2, delta=0.06)
+        self.assertLess(off, 0)
+
+
+@unittest.skipUnless(DB_URL, "set TVT_TEST_DATABASE_URL to a test database migrated through roads 0004")
+class ExportSnapshotTest(unittest.TestCase):
+    def test_an_export_reads_in_its_own_read_only_snapshot(self):
+        import psycopg
+        from psycopg import pq
+        from plugins.roads.ingest import export as E
+        with psycopg.connect(DB_URL) as conn, tempfile.TemporaryDirectory() as archive:
+            if not conn.execute("select to_regclass('roads.piece') is not null").fetchone()[0]:
+                self.skipTest("roads.piece is missing: apply roads 0003")
+            conn.rollback()
+            # The test database has no committed build: the export says so, and leaves no transaction open.
+            with self.assertRaises(E.ExportError):
+                E.export(conn, archive)
+            self.assertEqual(conn.info.transaction_status, pq.TransactionStatus.IDLE)
+            self.assertEqual(os.listdir(archive), [])
+
+
+class ExportPruneTest(unittest.TestCase):
+    def test_the_newest_two_exports_stay(self):
+        from basemap.ground import manifest as M
+        from plugins.roads.ingest import export as E
+        with tempfile.TemporaryDirectory() as archive:
+            for b in ("20261009T000000Z", "20261010T000000Z", "20261011T000000Z", "20261011T120000Z"):
+                os.makedirs(M.export_dir(archive, "roads", b))
+                with open(os.path.join(M.export_dir(archive, "roads", b), M.FILE), "w") as f:
+                    f.write("{}")
+            os.makedirs(M.export_dir(archive, "roads", "20261012T000000Z"))      # unfinished: no manifest yet
+            self.assertEqual(E.prune(archive), ["20261009T000000Z", "20261010T000000Z"])
+            self.assertEqual(sorted(os.listdir(os.path.join(archive, "roads", "export"))),
+                             ["20261011T000000Z", "20261011T120000Z", "20261012T000000Z"])
+            self.assertEqual(E.prune(archive), [])
+
+
+class RunTest(unittest.TestCase):
+    def test_a_run_checks_the_partition_builds_and_marks_the_export(self):
+        seen = {}
+
+        class FakeRun:
+            def __init__(self, conn, build, then=()):
+                seen["run"] = (conn, build, tuple(then))
+                self.note = None
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                seen["note"] = self.note
+                return False
+
+        stats = {"build": "20261011T000000Z", "pieces": 3, "junctions": 1, "seconds": 1.5,
+                 "surfaces": {"carriageway": 3, "junction": 1, "tapers": 1}}
+        with mock.patch.object(B.builds, "Run", FakeRun), \
+                mock.patch.object(B.osm_extract, "check_partition", return_value="abc123") as partition, \
+                mock.patch.object(B, "make", return_value=stats) as make:
+            self.assertEqual(B.run("conn"), stats)
+        self.assertEqual(seen["run"], ("conn", "roads-build", ("roads-export",)))
+        partition.assert_called_once_with("conn", ("osm_valley", "osm_street", "osm_paving"))
+        self.assertEqual(make.call_args[0][:2], ("conn", "abc123"))
+        self.assertEqual(seen["note"], "build 20261011T000000Z: 3 pieces, 1 junctions, 4 surfaces, 1.5 s")
+
+
+class ClassRuleTest(unittest.TestCase):
+    def test_a_target_far_above_the_piece_needs_the_names(self):
+        rank = B.ACHD_RANK
+        self.assertFalse(B.class_fits("service", rank["Interstate"], None))          # an alley by the interstate
+        self.assertFalse(B.class_fits("tertiary", rank["Interstate"], False))        # a street beside it
+        self.assertFalse(B.class_fits("residential", rank["Minor Arterial"], False))
+        self.assertTrue(B.class_fits("residential", rank["Minor Arterial"], True))   # OSM calls an arterial residential
+        self.assertTrue(B.class_fits("unclassified", rank["Collector"], None))
+        self.assertTrue(B.class_fits("service", rank["Alley"], None))
+        self.assertTrue(B.class_fits("service", rank["Local"], None))
+        self.assertTrue(B.class_fits("motorway_link", rank["Interstate"], None))
+        self.assertTrue(B.class_fits("residential", None, None))                     # a class we don't know
+        # HPMS: interstate, US and state routes by their system; any other route a collector's.
+        self.assertEqual((B.hpms_rank("01990ASH055"), B.hpms_rank("02070AUS020"), B.hpms_rank("00084AIN084"),
+                          B.hpms_rank("12785AOH000")), (4, 4, 5, 2))
+        self.assertFalse(B.class_fits("residential", B.hpms_rank("02070AUS020"), None))   # 'US 20 Main'
+        self.assertTrue(B.class_fits("residential", B.hpms_rank("12785AOH000"), True))
+        self.assertFalse(B.class_fits("service", B.hpms_rank("54755AOH000"), None))
+
+
+@unittest.skipUnless(DB_URL, "set TVT_TEST_DATABASE_URL to a test database migrated through 0021")
+class MarksTest(unittest.TestCase):
+    def test_a_segment_match_by_hand_marks_the_build(self):
+        import psycopg
+        from plugins.roads.ingest import segment_match
+
+        class NoCommit:
+            def __init__(self, conn):
+                self.conn, self.commits = conn, 0
+
+            def execute(self, *a, **k):
+                return self.conn.execute(*a, **k)
+
+            def commit(self):
+                self.commits += 1
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        with psycopg.connect(DB_URL) as conn:
+            try:
+                wrapped = NoCommit(conn)
+                results = {"itd_hpms": {"lines": 1}, "achd_msm": {"failed": "ValueError: test"}}
+                with mock.patch("ingest.db.connect", return_value=wrapped), \
+                        mock.patch.object(segment_match, "rematch_all", return_value=results), \
+                        contextlib.redirect_stdout(io.StringIO()), self.assertRaises(SystemExit):
+                    segment_match.main([])
+                self.assertEqual(wrapped.commits, 1)
+                self.assertEqual(conn.execute("""select reason from ops.build_pending
+                                                 where build = 'roads-build' and marked_by = 'segment-match'""").fetchone(),
+                                 ("rematched by hand: itd_hpms",))
+            finally:
+                conn.rollback()
 
 
 if __name__ == "__main__":

@@ -10,7 +10,8 @@
 --   core.road_segment, core.segment_lanes and roads.segment_bike_xsection (ACHD), core.hpms_section (ITD): lane
 --     counts, the measured curb-to-curb widths of ACHD's bike network, lane, shoulder and median widths, bridges;
 --   core.intersection: signals (stop bars); core.taz (COMPASS): which county a piece is in;
---   roads.developed_land (USDA NASS's CDL): whether an untagged local street is in town (curbed) or rural.
+--   roads.developed_land (USDA NASS's CDL): whether the land either side of a street is built up (curbed) or
+--     not (rural), and an untagged minor road's material.
 -- The three OpenStreetMap tables must hold one extract (osm_extract.check_partition). Every table is replaced
 -- whole by each build, in one transaction, and roads.build records it: so ids here are the build's own, and
 -- anything kept across builds (cards, links) keys on the OpenStreetMap way (osm_id) and ACHD's segment, never
@@ -18,7 +19,7 @@
 --
 -- The tables reference each other by the build's ids (piece_id, junction_id) without foreign keys: they're
 -- replaced together, and a delete checking six tables for each of 70,000 pieces made a rebuild's clearing take
--- minutes.
+-- minutes. A build empties them with TRUNCATE, so a rebuild leaves no dead rows behind.
 --
 -- Geometry is in EPSG:32611 (UTM 11N on WGS 84: the ground's grid and the export contract's CRS), in metres.
 --
@@ -113,7 +114,9 @@ create table roads.xsection (
   material_source text check (material_source in ('surface', 'default')),
   markings        boolean not null,                -- lane lines drawn: only where a source gives the lane count
   sources         jsonb not null,                  -- every component's source: {"lanes": "achd_msm", "width": ...}
-  republish       text not null check (republish in ('yes', 'internal')),   -- internal: an ACHD or ITD input
+  republish       text not null check (republish in ('yes', 'aggregates', 'internal')),
+                                                   -- internal: an ACHD or ITD input; aggregates: a class width
+                                                   -- calibrated on ACHD's measurements (sources.calibration)
   flags           text[] not null default '{}',
   check ((material = 'unknown') = (material_source is null))
 );
@@ -220,7 +223,7 @@ create table roads.review (
   id              int primary key,
   kind            text not null,                   -- lanes_conflict, direction, other_direction_assumed, components_exceed,
                                                    -- sidewalk_close, unmatched, deck_mismatch, turn_slots, junction_large,
-                                                   -- geometry, bike_other_carriageway
+                                                   -- geometry, bike_other_carriageway, class_mismatch
   piece_id        int,                             -- roads.piece
   junction_id     int,                             -- roads.junction
   osm_id          bigint,

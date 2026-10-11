@@ -174,12 +174,19 @@ def rematch_all(conn, names=None, only_stale=False):
 
 
 def main(argv):
-    from ingest import db
+    from ingest import builds, db
+
+    from . import marks
     with db.connect() as conn:
         try:
             results = rematch_all(conn, argv or None)
         except ValueError as err:
             sys.exit(str(err))
+        # The lanes rule (core.segment_lanes) reads these matches, and roads-build reads it.
+        done = [name for name, stats in results.items() if "failed" not in stats]
+        if done and marks.ready(conn):
+            builds.mark(conn, marks.BUILD, by="segment-match", reason=f"rematched by hand: {', '.join(done)}")
+            conn.commit()
     for name, stats in results.items():
         print(f"{name} matching: " + ", ".join(f"{k} {v}" for k, v in stats.items()), flush=True)
     if any("failed" in s for s in results.values()):

@@ -10,8 +10,11 @@ build run (ingest/builds.py: it clears roads-build's marks and marks roads-expor
    splits it) and where a way touches itself. The three OpenStreetMap tables must hold one extract
    (osm_extract.check_partition, osm_paving included: sidewalks and crossings come from it).
 2. **Matching.** Each piece's county (COMPASS's zones), the ACHD segment it lies along in Ada (core's line
-   matcher, roads' rule: 15 m, bearings within 20°), ITD's HPMS sections along it, the parallel sidewalks either
-   side (roads.osm_paving), and its share of developed land (the CDL, roads.developed_land).
+   matcher, roads' rule: 15 m, bearings within 20°), ITD's HPMS sections along it (a segment or section two
+   classes or more above the piece, an alley beside an interstate say, only where their names agree: else it's
+   listed, class_mismatch), the parallel sidewalks either side (roads.osm_paving), and developed land (the CDL,
+   roads.developed_land): the share of the piece's line on it (its material) and of a band 20-100 m out either
+   side (its curbs).
 3. **Cross-sections** by the rules in xsection.py, into roads.xsection.
 4. **Junctions.** Nodes where three or more piece ends meet, clustered along short pieces between them (a divided
    road's crossing is one junction) and round roundabouts; each gets a curb-return radius by the classes that meet.
@@ -24,7 +27,8 @@ build run (ingest/builds.py: it clears roads-build's marks and marks roads-expor
 7. **Closings.** In each junction's disc, its carriageways closed (buffered out by the radius and back in), less
    the islands: what that adds is the junction's fill (curb returns). Interchanges' freeway nodes get none.
 8. **Edges:** every surface's outline less the surfaces it meets (no seams), as curb, shoulder or deck edges with
-   the width's tier, so a crisp curb can be drawn only where the width is known.
+   the width's tier, so a crisp curb can be drawn only where the width is known. A junction's fill takes the
+   edge of the nearest piece's side there.
 9. **Crosswalks** at marked crossing nodes only (roads.osm_walk_node: marked true; decision 10): 3 m deep, across
    the road along the crossing way, clipped to the surfaces.
 10. **Markings** where xsection says so: lines offset from the centreline, cut back from each junction (the
@@ -34,6 +38,10 @@ build run (ingest/builds.py: it clears roads-build's marks and marks roads-expor
 
 The rules' numbers are xsection.DEFAULTS and the constants here; each build records them (roads.build.params).
 Every input's source and version goes into roads.build.inputs, and the export reads them from there.
+
+The build empties its tables with TRUNCATE (so a rebuild leaves no dead copy of the last one behind), which holds
+them exclusively until it commits: a reader waits for the build (roads-export locks them first, so it reads one
+whole build either way), and the build waits at most LOCK_WAIT for a reader to finish before it gives up.
 """
 
 import argparse
@@ -47,6 +55,7 @@ from datetime import datetime, timezone
 from ingest import builds, linematch, osm_extract
 
 from . import developed as land
+from . import marks
 from . import xsection as X
 
 COMMAND = "python3 -m ingest roads-build"
@@ -57,6 +66,24 @@ OWNERS = ("osm_valley", "osm_street", "osm_paving")
 CLASSES = sorted(X.ROAD_CLASSES)
 ACHD_RULE = linematch.Rule(15, "bearing", loops=False)     # roads' rule (segment_match, Oct 6)
 HPMS_KINDS = ("through_lanes", "lane_width", "shoulders", "median")
+LOCK_WAIT = "2min"                 # how long the build waits for its tables (a reader holding them)
+
+# Classes, to keep a piece off a segment or a section far above it (an alley beside an interstate, a frontage
+# street beside a state route) unless their names agree. ACHD's functional classes; OpenStreetMap's highway=*;
+# an HPMS section's by its route's system (interstate, US and state routes; any other route is at least a
+# collector's, since HPMS covers federal-aid roads).
+ACHD_RANK = {"Interstate": 5, "Ramp": 4, "Principal Arterial": 4, "Minor Arterial": 3, "Collector": 2, "Local": 1,
+             "Parks": 1, "Alley": 0, "Driveway": 0}
+OSM_RANK = {"motorway": 5, "motorway_link": 4, "trunk": 4, "primary": 4, "trunk_link": 3, "primary_link": 3,
+            "secondary": 3, "secondary_link": 2, "tertiary": 2, "tertiary_link": 1, "service": 0}
+HPMS_RANK = {"IN": 5, "US": 4, "SH": 4}
+HPMS_OTHER_RANK = 2
+CLASS_GAP = 2                      # a target this many classes above the piece needs the names to agree
+
+# Developed land either side (the curbs): a band from LAND_NEAR_M to LAND_FAR_M out on each side. The CDL counts a
+# road's own cells as developed, even a farm road's among fields, so the line itself says little.
+LAND_NEAR_M = 20.0
+LAND_FAR_M = 100.0
 
 # Junctions ⚠️ (the design's numbers until the sheets say otherwise)
 CLUSTER_EPS = {"major": 30.0, "collector": 22.0, "local": 15.0}   # nodes joined by a piece this short are one junction
@@ -85,8 +112,10 @@ LICENSE = "ODbL-1.0 (© OpenStreetMap contributors) with ACHD's and ITD's layers
 CREDIT = "© OpenStreetMap contributors; Ada County Highway District; Idaho Transportation Department; COMPASS; " \
          "USDA NASS Cropland Data Layer"
 
-TABLES = ("roads.review", "roads.arrow", "roads.marking", "roads.edge", "roads.surface", "roads.xsection",
-          "roads.junction", "roads.piece")
+# The build's tables, in the order the build and roads-export lock them (one order: no deadlock).
+TABLES = ("roads.build", "roads.piece", "roads.xsection", "roads.junction", "roads.surface", "roads.edge",
+          "roads.marking", "roads.arrow", "roads.review")
+CLEARED = TABLES[1:]               # roads.build keeps a row per build
 
 
 class BuildError(RuntimeError):
@@ -226,41 +255,87 @@ def counties(conn):
     return dict(conn.execute("select coalesce(county, 'other'), count(*) from rb_piece group by 1").fetchall())
 
 
+def osm_rank(highway):
+    return OSM_RANK.get(highway, 1)
+
+
+def hpms_rank(route_id):
+    return HPMS_RANK.get(str(route_id or "")[6:8], HPMS_OTHER_RANK)
+
+
+def class_fits(highway, rank, names):
+    """Whether a piece of this class may take a match to a target of this rank (None: unknown, any): one CLASS_GAP
+    or more above it only where the names agree (names: linematch.names_agree's True, False or None). An alley
+    10 m from an interstate's segment, or a residential street beside a state route, lies along it by the line
+    rule alone."""
+    return rank is None or rank - osm_rank(highway) < CLASS_GAP or names is True
+
+
+def _mismatch_table(conn):
+    conn.execute("create temp table if not exists rb_mismatch (piece_id int, source text, road_segment_id bigint, "
+                 "detail jsonb) on commit drop")
+
+
+def _store_mismatches(conn, rows):
+    with conn.cursor() as cur:
+        with cur.copy("copy rb_mismatch (piece_id, source, road_segment_id, detail) from stdin") as cp:
+            for r in rows:
+                cp.write_row(r)
+
+
 def match_achd(conn):
     """The ACHD segment each Ada piece lies along: core's line matcher (lines: the pieces, targets: ACHD's active
-    segments), the best match by confidence, then overlap."""
+    segments), the best match by confidence, then overlap, of those its class allows (class_fits); a piece whose
+    best match that leaves out is listed (rb_mismatch)."""
+    _mismatch_table(conn)
     found = linematch.match(
         conn,
         "select 'piece' as source, id::text as source_id, name, ST_Transform(geom, 4326) as geom "
         "from rb_piece where county = 'Ada'",
         "select id, name, geom from core.road_segment where active",
         rule=ACHD_RULE)
-    best = {}
+    fclass = dict(conn.execute("select id, functional_class from core.road_segment where active").fetchall())
+    highway = dict(conn.execute("select id, highway from rb_piece where county = 'Ada'").fetchall())
+    best, left_out = {}, {}
     for m in found:
         pid = int(m["source_id"])
         key = (m["confidence"], m["overlap_m"])
-        if pid not in best or key > best[pid][0]:
-            best[pid] = (key, m["target_id"], m["confidence"])
+        names = linematch.names_agree(m.get("target_name"), m.get("line_name"))
+        ok = class_fits(highway[pid], ACHD_RANK.get(fclass.get(m["target_id"])), names)
+        into = best if ok else left_out
+        if pid not in into or key > into[pid][0]:
+            into[pid] = (key, m["target_id"], m["confidence"], m.get("target_name"), names)
+    _store_mismatches(conn, [
+        (pid, "achd_roads", sid, json.dumps({"highway": highway[pid], "achd_class": fclass.get(sid),
+                                              "achd_name": name, "names_agree": names}))
+        for pid, (key, sid, _, name, names) in left_out.items() if pid not in best or key > best[pid][0]])
     conn.execute("create temp table rb_seg (piece_id int primary key, road_segment_id bigint, confidence real) "
                  "on commit drop")
     with conn.cursor() as cur:
         with cur.copy("copy rb_seg from stdin") as cp:
-            for pid, (_, sid, conf) in best.items():
+            for pid, (_, sid, conf, _, _) in best.items():
                 cp.write_row((pid, sid, conf))
     conn.execute(
         """update rb_piece p set road_segment_id = m.road_segment_id, seg_confidence = m.confidence,
              seg_same_way = core.drawn_same_way(s.geom, ST_Transform(p.geom, 4326))
            from rb_seg m join core.road_segment s on s.id = m.road_segment_id
            where p.id = m.piece_id""")
-    return {"ada pieces matched to ACHD": len(best)}
+    return {"ada pieces matched to ACHD": len(best), "ACHD matches its class leaves out": len(left_out)}
 
 
 def match_hpms(conn):
     """ITD HPMS sections along each piece: through lanes where no ACHD segment gives a count, and lane widths,
-    shoulders and medians everywhere. rb_hpms: (piece_id, kind, source_id, confidence, overlap_m, same_way)."""
+    shoulders and medians everywhere, of the sections its class allows (class_fits: an interstate's, a US or a
+    state route's two classes above a local street, an alley's or a service way's above any route's) and the
+    rest listed (rb_mismatch). rb_hpms: (piece_id, kind, source_id, confidence, overlap_m, same_way)."""
+    _mismatch_table(conn)
     conn.execute("""create temp table rb_hpms (piece_id int, kind text, source_id text, confidence real,
                       overlap_m real, same_way boolean) on commit drop""")
-    rows = []
+    route = {(k, s): r for k, s, r in conn.execute(
+        "select kind, source_id, route_id from core.hpms_section where active and kind = any(%s)",
+        (list(HPMS_KINDS),)).fetchall()}
+    highway = dict(conn.execute("select id, highway from rb_piece").fetchall())
+    rows, left_out = [], {}
     for kinds, where in ((("through_lanes",), "road_segment_id is null"),
                          (("lane_width", "shoulders", "median"), "true")):
         found = linematch.match(
@@ -269,7 +344,13 @@ def match_hpms(conn):
             "where h.active and h.kind = any(%(kinds)s) and h.geom is not null",
             f"select id, name, ST_Transform(geom, 4326) as geom from rb_piece where not tunnel and {where}",
             rule=ACHD_RULE, params={"kinds": list(kinds)})
-        rows += [(int(m["target_id"]), m["source"], m["source_id"], m["confidence"], m["overlap_m"]) for m in found]
+        for m in found:
+            pid, rid = int(m["target_id"]), route.get((m["source"], m["source_id"]))
+            names = linematch.names_agree(m.get("target_name"), m.get("line_name"))
+            if class_fits(highway[pid], hpms_rank(rid), names):
+                rows.append((pid, m["source"], m["source_id"], m["confidence"], m["overlap_m"]))
+            else:
+                left_out.setdefault(pid, {})[rid] = m.get("line_name")
     with conn.cursor() as cur:
         with cur.copy("copy rb_hpms (piece_id, kind, source_id, confidence, overlap_m) from stdin") as cp:
             for r in rows:
@@ -279,27 +360,31 @@ def match_hpms(conn):
            from core.hpms_section h, rb_piece p
            where h.kind = m.kind and h.source_id = m.source_id and p.id = m.piece_id""")
     conn.execute("create index on rb_hpms (piece_id)")
-    return {"hpms matches": len(rows)}
+    _store_mismatches(conn, [
+        (pid, "itd_hpms", None, json.dumps({"highway": highway[pid], "hpms": [{"route_id": r, "road_name": n}
+                                                                             for r, n in sorted(got.items())]}))
+        for pid, got in left_out.items()])
+    return {"hpms matches": len(rows), "pieces whose class leaves HPMS sections out": len(left_out)}
 
 
 # A parallel sidewalk either side: at a quarter, half and three quarters along the piece, the nearest sidewalk
 # way within reach that runs within SIDEWALK_BEARING of the piece, on each side; a side counts where two of the
 # three samples find one, at their median distance.
 _SIDEWALKS = """
-create temp table rb_sw on commit drop as
+create temp table {prefix}_sw on commit drop as
 select osm_id, ST_Transform(geom, %(srid)s) as g from roads.osm_paving where active and kind = 'sidewalk';
-create index on rb_sw using gist (g);
-analyze rb_sw;
-create temp table rb_walk on commit drop as
+create index on {prefix}_sw using gist (g);
+analyze {prefix}_sw;
+create temp table {prefix}_walk on commit drop as
 with s as (
   select p.id, k, ST_LineInterpolatePoint(p.geom, k / 4.0) as pt,
          ST_Azimuth(ST_LineInterpolatePoint(p.geom, greatest(0, k / 4.0 - 2 / p.length_m)),
                     ST_LineInterpolatePoint(p.geom, least(1, k / 4.0 + 2 / p.length_m))) as az
-  from rb_piece p cross join generate_series(1, 3) k
+  from {pieces} p cross join generate_series(1, 3) k
   where p.length_m >= 10 and not p.bridge and not p.tunnel
 ), n as (
   select s.id, s.k, s.pt, s.az, w.g, ST_ClosestPoint(w.g, s.pt) as c
-  from s join rb_sw w on ST_DWithin(w.g, s.pt, %(reach)s)
+  from s join {prefix}_sw w on ST_DWithin(w.g, s.pt, %(reach)s)
 ), a as (
   select n.*, ST_Distance(n.pt, n.c) as d,
          ST_Azimuth(ST_LineInterpolatePoint(n.g, greatest(0, ST_LineLocatePoint(n.g, n.c) - 2 / ST_Length(n.g))),
@@ -322,28 +407,58 @@ from par group by 1
 """
 
 
+def sidewalk_table(conn, pieces="rb_piece", prefix="rb"):
+    """<prefix>_walk: each of the pieces' (a table like roads.piece) parallel sidewalks either side (piece_id, left_m,
+    right_m), a side's distance where two of its three samples find one. Temporary, dropped at the commit."""
+    run_sql(conn, _SIDEWALKS.format(pieces=pieces, prefix=prefix),
+            {"srid": SRID, "reach": SIDEWALK_REACH_M, "bearing": SIDEWALK_BEARING})
+    conn.execute(f"update {prefix}_walk set left_m = null where n_left < 2")
+    conn.execute(f"update {prefix}_walk set right_m = null where n_right < 2")
+    conn.execute(f"create index on {prefix}_walk (piece_id)")
+
+
 def sidewalks(conn):
-    run_sql(conn, _SIDEWALKS, {"srid": SRID, "reach": SIDEWALK_REACH_M, "bearing": SIDEWALK_BEARING})
-    conn.execute("update rb_walk set left_m = null where n_left < 2")
-    conn.execute("update rb_walk set right_m = null where n_right < 2")
-    conn.execute("create index on rb_walk (piece_id)")
+    sidewalk_table(conn)
     n = conn.execute("select count(*) filter (where left_m is not null or right_m is not null) from rb_walk").fetchone()[0]
     return {"pieces with a parallel sidewalk": n}
 
 
+# Each piece's bands either side, LAND_NEAR_M to LAND_FAR_M out (a one-sided buffer less the road's own), as
+# developed.measure() takes them: t 'l' or 'r', the piece's id, the band in EPSG:4326.
+_LAND_BANDS = """
+select s.t, p.id::bigint as id, ST_Transform(b.g, 4326) as geom
+from rb_piece p
+cross join (values ('l'::char(1), 'left'), ('r'::char(1), 'right')) s(t, side)
+cross join lateral (
+  select ST_CollectionExtract(ST_MakeValid(ST_Difference(ST_MakeValid(ST_Buffer(p.geom, %(far)s, 'side=' || s.side)),
+                                                         ST_Buffer(p.geom, %(near)s, 'quad_segs=4'))), 3) as g) b
+where not ST_IsEmpty(b.g)
+"""
+
+
 def developed(conn):
-    """Each piece's share of developed land (the CDL's 122-124), or none when no developed build is loaded."""
-    conn.execute("create temp table rb_dev (piece_id int primary key, share real) on commit drop")
+    """Each piece's developed land (the CDL's 122-124): the share of its line on it (rb_dev.share: its material,
+    as the paving's service ways') and of its band either side (land_l, land_r: its curbs); none when no developed
+    build is loaded."""
+    conn.execute("create temp table rb_dev (piece_id int primary key, share real, land_l real, land_r real) "
+                 "on commit drop")
     current = land.current(conn)
     if current is None:
         return {"developed land": "none loaded: local streets off sidewalks count as rural"}, None
-    shares = land.measure(conn, query="select 'p'::char(1) as t, id::bigint as id, ST_Transform(geom, 4326) as geom "
-                                      "from rb_piece")
+    out = {pid: [share, None, None] for (_, pid), share in land.measure(
+        conn, query="select 'p'::char(1) as t, id::bigint as id, ST_Transform(geom, 4326) as geom "
+                    "from rb_piece").items()}
+    for (t, pid), (share, _) in land.measure(conn, query=_LAND_BANDS, params={"near": LAND_NEAR_M, "far": LAND_FAR_M},
+                                             area=True).items():
+        out.setdefault(pid, [None, None, None])[1 if t.strip() == "l" else 2] = share
     with conn.cursor() as cur:
         with cur.copy("copy rb_dev from stdin") as cp:
-            for (_, pid), share in shares.items():
-                cp.write_row((pid, share))
-    return {"developed land": f"{current['id']} (CDL {current['cdl_year']})"}, current
+            for pid, (share, left, right) in out.items():
+                cp.write_row((pid, share, left, right))
+    curbed = sum(1 for _, left, right in out.values() for s in (left, right)
+                 if s is not None and s >= X.DEFAULTS["curb_land_share"])
+    return {"developed land": f"{current['id']} (CDL {current['cdl_year']})",
+            "sides on developed land": curbed}, current
 
 
 # ---- 3. cross-sections -----------------------------------------------------------------------------
@@ -378,7 +493,7 @@ analyze rb_hpms_piece
 _INPUTS = """
 select p.id, p.highway, p.service, w.oneway, p.roundabout, p.county, w.tags,
        p.road_segment_id, s.functional_class, s.one_way, p.seg_same_way, p.seg_confidence,
-       to_jsonb(l) as lanes, to_jsonb(b) as bike, k.left_m, k.right_m, d.share, h.hpms
+       to_jsonb(l) as lanes, to_jsonb(b) as bike, k.left_m, k.right_m, d.share, d.land_l, d.land_r, h.hpms
 from rb_piece p
 join rb_way w using (osm_id)
 left join core.road_segment s on s.id = p.road_segment_id
@@ -412,14 +527,15 @@ def hpms_input(rows):
 
 def piece_input(row):
     (pid, highway, service, oneway, roundabout, county, tags, seg_id, fclass, seg_one_way, same_way, seg_conf,
-     lanes, bike, left_m, right_m, share, hpms) = row
+     lanes, bike, left_m, right_m, share, land_l, land_r, hpms) = row
     seg = None
     if seg_id is not None:
         seg = {"id": seg_id, "functional_class": fclass, "one_way": seg_one_way, "same_way": same_way,
                "confidence": seg_conf}
     return {"id": pid, "highway": highway, "service": service, "oneway": oneway, "roundabout": roundabout,
             "county": county, "tags": tags, "seg": seg, "lanes": lanes if seg else None, "bike": bike if seg else None,
-            "hpms": hpms_input(hpms), "sidewalk": {"left": left_m, "right": right_m}, "developed": share}
+            "hpms": hpms_input(hpms), "sidewalk": {"left": left_m, "right": right_m}, "developed": share,
+            "land": {"left": land_l, "right": land_r}}
 
 
 XS_COLUMNS = ("piece_id", "lanes_fwd", "lanes_bwd", "centre_turn", "turn_fwd", "turn_bwd", "lanes_source", "lanes_conf",
@@ -531,8 +647,8 @@ def junctions(conn, xsections):
     signals = conn.execute(
         """select i.id, ST_X(g), ST_Y(g) from core.intersection i
            cross join lateral ST_Transform(i.geom, %(srid)s) g
-           where i.status = 'active' and i.control in ('signal', 'half_signal', 'signal_uturn')""",
-        {"srid": SRID}).fetchall()
+           where i.status = 'active' and i.control = any(%(controls)s)""",
+        {"srid": SRID, "controls": list(marks.SIGNAL_CONTROLS)}).fetchall()
     rows, node_junction, discs = [], {}, []
     for jid, g in enumerate(groups, start=1):
         xs_ = [nodes[n][0] for n in g]
@@ -938,7 +1054,7 @@ select row_number() over (order by e.id), e.kind_, e.tier, e.layer, e.piece_id, 
 from (
   select e.id, e.tier, e.layer, e.piece_id, e.junction_id, d.geom as g,
          case when e.kind = 'deck' then 'deck'
-              when e.kind = 'junction' then 'curb'
+              when e.kind = 'junction' then coalesce(jn.kind, 'curb')
               when x.edge_l = x.edge_r then x.edge_l
               when ST_Distance(ST_LineInterpolatePoint(d.geom, 0.5), ST_OffsetCurve(p.geom, x.width_left_m))
                    < ST_Distance(ST_LineInterpolatePoint(d.geom, 0.5), ST_OffsetCurve(p.geom, -x.width_right_m))
@@ -948,6 +1064,20 @@ from (
   cross join lateral ST_Dump(ST_LineMerge(e.g)) d
   left join roads.piece p on p.id = e.piece_id
   left join roads.xsection x on x.piece_id = e.piece_id
+  -- a junction's fill: the edge of the side of its nearest at-grade piece that it lies on
+  left join lateral (
+    select case when x2.edge_l = x2.edge_r then x2.edge_l
+                when sin(ST_Azimuth(ST_ClosestPoint(p2.geom, m.pt), m.pt) - ST_Azimuth(
+                       ST_LineInterpolatePoint(p2.geom, greatest(0, ST_LineLocatePoint(p2.geom, m.pt) - 1 / p2.length_m)),
+                       ST_LineInterpolatePoint(p2.geom, least(1, ST_LineLocatePoint(p2.geom, m.pt) + 1 / p2.length_m))))
+                     > 0 then x2.edge_r
+                else x2.edge_l end as kind
+    from roads.junction j
+    join roads.piece p2 on p2.id = any(j.pieces) and not p2.bridge and not p2.tunnel
+    join roads.xsection x2 on x2.piece_id = p2.id
+    cross join (select ST_LineInterpolatePoint(d.geom, 0.5) as pt) m
+    where j.id = e.junction_id and e.kind = 'junction'
+    order by ST_Distance(p2.geom, m.pt), p2.id limit 1) jn on true
   where not ST_IsEmpty(e.g) and ST_Length(d.geom) >= 0.2
 ) e
 """
@@ -1240,6 +1370,10 @@ def review(conn, reviews, large):
     for kind, sql in _REVIEW_SQL.items():
         conn.execute(f"""insert into rb_review (kind, piece_id, osm_id, road_segment_id, detail, geom)
                          select %(kind)s, q.* from ({sql}) q""", {"kind": kind, "ranked": ranked})
+    _mismatch_table(conn)
+    conn.execute("""insert into rb_review (kind, piece_id, road_segment_id, detail)
+                    select 'class_mismatch', m.piece_id, m.road_segment_id, m.detail || jsonb_build_object('source', m.source)
+                    from rb_mismatch m""")
     with conn.cursor() as cur:
         with cur.copy("copy rb_review (kind, piece_id, detail) from stdin") as cp:
             for kind, pid, detail in reviews:
@@ -1282,6 +1416,16 @@ def inputs(conn, md5, developed_build):
             ("itd_hpms", "roads/itd_hpms", "Idaho Transportation Department")):
         out.append({"name": name, "source": source, "licence": "none-stated", "republish": "internal",
                     "credit": credit, "version": last_fetch(name)})
+    out.append({"name": "compass_centerline", "source": "roads/compass_centerline", "licence": "none-stated",
+                "republish": "yes",
+                "credit": "COMPASS (Community Planning Association of Southwest Idaho) and its member agencies",
+                "version": last_fetch("compass_centerline"),
+                "note": "lane counts in Ada where ACHD's lanes rule takes COMPASS's (core.segment_lanes)"})
+    out.append({"name": "intersections", "source": "intersections/intersections", "licence": "none-stated",
+                "republish": "internal", "credit": "COMPASS; Ada County Highway District; © OpenStreetMap contributors",
+                "version": last_fetch("intersections"),
+                "note": "core.intersection's signals: junction kinds and stop bars (built from COMPASS's and ACHD's "
+                        "signal lists)"})
     out.append({"name": "compass_zones", "source": "development/compass_growth", "licence": "none-stated",
                 "republish": "yes", "credit": "COMPASS and COMPASS member agencies",
                 "version": last_fetch("compass_growth"), "note": "core.taz: which county a piece is in"})
@@ -1294,8 +1438,17 @@ def inputs(conn, md5, developed_build):
 
 
 def clear(conn):
-    for t in TABLES:
-        conn.execute(f"delete from {t}")
+    """Empty the build's tables (but roads.build) in the build's transaction. TRUNCATE gives each a new file, so
+    the last build's rows leave no dead copy behind; it waits at most LOCK_WAIT for a reader."""
+    conn.execute(f"set local lock_timeout = '{LOCK_WAIT}'")
+    try:
+        conn.execute(f"truncate {', '.join(CLEARED)}")
+    except Exception as err:
+        if getattr(err, "sqlstate", None) == "55P03":         # lock_not_available
+            raise BuildError(f"the roads tables are in use (roads-export, or a session reading them) and didn't "
+                             f"come free within {LOCK_WAIT}: try again when it's done") from None
+        raise
+    conn.execute("set local lock_timeout to default")
 
 
 def make(conn, md5, out=say, now=None):
@@ -1345,12 +1498,13 @@ def make(conn, md5, out=say, now=None):
               "crosswalk_depth_m": CROSSWALK_DEPTH_M, "crosswalk_clear_m": CROSSWALK_CLEAR_M,
               "junction_clear_m": JUNCTION_CLEAR_M, "z15_tolerance_m": Z15_TOLERANCE_M, "taper_m": TAPER_M,
               "crosswalk_skew_deg": CROSSWALK_SKEW_DEG, "parallel_deg": PARALLEL_DEG, "straight_deg": STRAIGHT_DEG,
-              "stop_bar_gap_m": STOP_BAR_GAP_M, "arrow_back_m": ARROW_BACK_M, "srid": SRID}
+              "stop_bar_gap_m": STOP_BAR_GAP_M, "arrow_back_m": ARROW_BACK_M, "srid": SRID,
+              "land_band_m": [LAND_NEAR_M, LAND_FAR_M], "class_gap": CLASS_GAP}
     conn.execute("update roads.build set current = false where current")
     conn.execute(
         """insert into roads.build (id, started_at, finished_at, current, extract_md5, inputs, params, counts, seconds,
                                     license, republish, credit)
-           values (%s, %s, now(), true, %s, %s, %s, %s, %s, %s, 'internal', %s)""",
+           values (%s, %s, clock_timestamp(), true, %s, %s, %s, %s, %s, %s, 'internal', %s)""",
         (build_id, started, md5, json.dumps(inputs(conn, md5, dev_build)), json.dumps(params),
          json.dumps(stats, default=str), seconds, LICENSE, CREDIT))
     stats["build"] = build_id
