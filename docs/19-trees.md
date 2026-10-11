@@ -49,11 +49,13 @@ How wide a crown can be for its height and type, and the shape of its top.
   (Oct 8). Among other trees it doesn't: neighbours squeeze crowns, and on
   the owner's labelled trees the width fit's narrow and conifer calls were
   mostly wrong. So whether a placed tree is narrow comes from how fast its
-  crown falls away from its top (the narrow rule, §19.3); the width curve
-  sizes and shapes the crown, and for now still makes the conifer call
-  (pending, §19.3). In the mountains, narrow means conifer. In the valley
-  it is its own type ("narrow": spruce, young street trees, poplars) unless
-  a catalogue says otherwise. Only about 1% of the North End's street trees
+  crown falls away from its top (the narrow rule, §19.3), and whether it is
+  a conifer from a spring Sentinel-2 image where that can tell (over the
+  mountains' April snow, §19.3); the width curve sizes and shapes the
+  crown, and elsewhere for now still makes the conifer call (pending,
+  §19.3). In the mountains, narrow means conifer. In the valley it is its
+  own type ("narrow": spruce, young street trees, poplars) unless a
+  catalogue says otherwise. Only about 1% of the North End's street trees
   are conifers.
 - **Catalogued trees** also get their species' Urban Tree Database curves
   for Boise (crown diameter and height from trunk diameter), which size the
@@ -143,22 +145,66 @@ of a bigger tree and 6 not a tree. What that showed:
   and a lone mountain conifer up to about 16 m, so a lone yard spruce or an
   open-stand conifer below those heights isn't called narrow either: in the
   windows, 166 of the 3,418 trees with their own top of 8.3 m or more.
-  These trees are broadleaf, or conifer where the conifer curve sized them
-  (next point). Letting the width fit's narrow call stand for crowns that
+  These trees are conifer where the spring image sees an evergreen crown
+  or, for now, where the conifer curve sized them, else broadleaf (the next
+  points). Letting the width fit's narrow call stand for crowns that
   end within 3 m was tried: on the labels it typed no more trees rightly
   and called two more conifers narrow, so it isn't used.
-- **Conifers: pending (Oct 11).** No cue tells conifers yet. The photo's
-  darkness only looked like one because the forest area's photo is darker,
-  and the width fit's conifer call is weak: of the 14 labelled trees the
-  Oct 8 build called conifer, one was (ten weren't trees of their own). It
-  puts cones on 7–8% of the North End's and downtown's trees 8 m and
-  taller, where about 1% of the North End's street trees are conifers, and
-  on 71 of Bogus Basin's 598. Until the owner decides
-  ([DECISIONS](DECISIONS.md#pending-owner-to-decide)), a placed tree the
-  narrow rule doesn't call narrow keeps that call. Proposed: drop it, so
-  that only a catalogue's genus says conifer until the next cue is in, a
-  spring Sentinel-2 image (evergreens green while broadleaf trees are
-  bare). On the labels both ways type 51 of the 73 real trees rightly.
+- **Conifers from a spring image (Oct 11).** Evergreen crowns are green in
+  early April, when broadleaf crowns are still bare (decision 24 of the
+  landscape sprint, Oct 8). The image is Sentinel-2's NDVI from April 4
+  and 5, 2025 (10 m; "Contains modified Copernicus Sentinel data 2025"),
+  set against July 2025's. Each placed crown gets its April and July
+  greenness over the 10 m cells it covers (weighted by its area in each).
+  In the valley that can't tell: by early April the lawns, pastures and
+  cheatgrass under and around the crowns are green too, and a yard tree is
+  a fifth of a cell, so a bare broadleaf crown reads about as green as an
+  evergreen one. Of the owner's 40 labelled valley broadleaf trees, 9 read
+  at least as green in April as the least green of the 4 labelled valley
+  conifers (NDVI 0.54), and 16 keep at least as much of their July
+  greenness (69%); unmixing each cell's canopy share, from the lidar,
+  didn't separate them either. Over snow it can: the ground reads white,
+  so only evergreen foliage is green. So a crown is a conifer when at
+  least half the clear April views within 50 m of it were snow, it is at
+  least half a 10 m cell (50 m², so the cells' colour is mostly its own),
+  and its April NDVI is 0.2 or more, after the narrow rule. A crown that
+  reads dark over snow may still be a conifer (laden with snow, or a few
+  metres off the image's cells: two labelled conifers do), so the cue says
+  nothing about it. July's greenness is kept with each tree but doesn't
+  enter the call: over snow it added nothing on the labels.
+- **How well it does.** On the eight labelled areas (the placement
+  unchanged), the cue calls 9 of the 20 labelled conifers conifer, all
+  in Bogus Basin, and none of the 53 other real trees (one crown labelled
+  part of a bigger tree reads evergreen too); the build types 60 of the 73
+  real trees it finds rightly with the width fit's conifer call dropped
+  (51 before), 59 with it kept. It misses the 4 valley conifers (no snow,
+  and crowns of 12–40 m²), 5 small Bogus Basin conifers and the 2 dark
+  ones. These scores are in-sample, and the snow-only rule and the half-
+  cell floor were settled while looking at them. Choosing the NDVI floor
+  (0.1–0.3) and the crown floor (none to 79 m²) on 72 of the real labelled
+  trees and typing the one left out, in turn, gives the same 9 and none
+  wrong: a rough guide, because only 10 of the labelled trees that aren't
+  conifers stand in snow (all in Silver City, all under 50 m²). In the
+  windows the cue types 163 of Bogus Basin's 1,315 trees conifer and 103
+  of Silver City's 3,669, and none in the valley.
+- **Where the spring image can't tell.** Anywhere without April snow,
+  which in 2025 means the whole valley and the foothills below about the
+  snow line; crowns under 50 m² (a lone tree under about 8 m wide); and
+  trees whose cells read dark over snow. In the Owyhees some evergreen
+  trees aren't conifers (curl-leaf mountain mahogany keeps its leaves ⚠️),
+  so a green crown in Silver City may be called a conifer wrongly; no
+  labelled tree tests it. Those trees are narrow, broadleaf, or conifer
+  where the conifer curve sized them (next point).
+- **The width fit's conifer call: pending (Oct 11).** Where the spring
+  cue can't tell, a placed tree the narrow rule doesn't call narrow keeps
+  the width fit's conifer call until the owner decides
+  ([DECISIONS](DECISIONS.md#pending-owner-to-decide)). That call is weak:
+  of the 14 labelled trees the Oct 8 build called conifer, one was (ten
+  weren't trees of their own). It puts cones on 7–8% of the North End's
+  and downtown's trees 8 m and taller, where about 1% of the North End's
+  street trees are conifers. The photo's darkness only looked like a cue
+  because the forest area's photo is darker. Proposed: drop it, so that
+  the spring cue and a catalogue's genus say conifer.
 
 ## 19.4 Data
 
@@ -169,13 +215,16 @@ lidar-derived data:
   centre), ground elevation, height, crown radius, crown shape, the lidar
   it came from, the catalogue and catalogue id if any, the fit (how well it
   explains the surface, the width curve that sized it and its width
-  against that curve's typical one, and how its crown falls from its top;
-  or how far it sits from its trunk point), and the build it came from.
+  against that curve's typical one, how its crown falls from its top, and
+  its spring cue: its April and July NDVI, the April snow around it, its
+  crown area and whether it read evergreen; or how far it sits from its
+  trunk point), and the build it came from.
 - `trees.tree_log`: what we know about each tree over time, one entry per
   event: measured by the 2023 lidar, matched to the catalogue, placed with
   a fit, and later a 2005 Forest Service measurement or a removal seen in
   newer lidar.
-- `trees.build`: each build's area, settings, model and counts.
+- `trees.build`: each build's area, settings, model, sources (the lidar,
+  and Sentinel-2's acquisitions and files' sha256) and counts.
 
 **Private plugin `city_trees`** (the private repository; schema
 `city_trees`): the City of Boise's park and street trees, all of them,
@@ -192,11 +241,16 @@ service (§15.3).
 ## 19.5 Building
 
 `trees build` runs in the worker image (NumPy, SciPy, rasterio): it reads an
-area's lidar height products and building mask, the crown model and, when
-the private plugin is present, the catalogue. It writes the trees and their
-log to the archive, and the ingest service loads them into PostGIS,
-replacing the area's trees and keeping the build history. An area is
-rebuilt when its catalogue changes (monthly) or new lidar arrives.
+area's lidar height products and building mask, the crown model, the
+early-April and July Sentinel-2 NDVI on the ground's 10 m grid
+(`--spring`, `--summer`; each read once by hand, with its provenance
+beside it on the server) and, when the private plugin is present, the
+catalogue. The plugin's manifest lists its sources with their licences:
+the 3DEP lidar, Sentinel-2 and OpenStreetMap's hedges (the shrubs' check,
+§19.8). It writes the trees and their log to the archive, and the ingest
+service loads them into PostGIS, replacing the area's trees and keeping
+the build history. An area is rebuilt when its catalogue changes
+(monthly) or new lidar arrives.
 
 ## 19.6 On the map
 
@@ -245,7 +299,9 @@ rebuilt when its catalogue changes (monthly) or new lidar arrives.
   request lands: one the view no longer wants is called off. Nothing is
   asked for where no area is built.
 - **Credit:** the map's attribution credits the trees (USGS 3DEP lidar,
-  City of Boise, US Forest Service) at every zoom they're drawn, through a
+  City of Boise, US Forest Service, and "contains modified Copernicus
+  Sentinel data 2025" for the conifer cue; a tree the spring image typed
+  says so on its card) at every zoom they're drawn, through a
   layer that matches no tree (MapLibre credits a source only while one of
   its layers is shown, and the discs stop at z15).
 - **Picking:** trees rank just under streets, so a click on a road under a
