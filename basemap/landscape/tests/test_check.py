@@ -151,6 +151,15 @@ class CheckTest(unittest.TestCase):
         self.assertIn("roads.surfaces           roads/surfaces@20261013T031500Z (MultiPolygon, 3 features, z14-16)",
                       out)
         self.assertIn("Republish internal: served to the tailnet only", out)
+        P.update_manifest(self.tiles, P.empty_entry("x"))
+        with open(os.path.join(self.tiles, "manifest.json"), encoding="utf-8") as f:
+            m = json.load(f)
+        m["landscape"] = "broken"
+        with open(os.path.join(self.tiles, "manifest.json"), "w", encoding="utf-8") as f:
+            json.dump(m, f)
+        code, out, _ = run("status", "--archive", self.archive, "--tiles", self.tiles, "--no-hash")
+        self.assertEqual(code, 0)
+        self.assertIn("the landscape entry is broken", out)
         code, _, err = run("bake", "--tiles", os.path.join(self.dir, "none"), "--archive", self.archive)
         self.assertEqual(code, 2)
         self.assertIn("no tiles folder", err)

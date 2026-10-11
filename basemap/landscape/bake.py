@@ -12,8 +12,8 @@ $TVT_ARCHIVE unless --archive says otherwise. Exit codes: 0 done (or nothing to 
 or the writer failed; 2 refused (a missing folder, a broken export, a layer that may not be baked, a file already
 named for this bake that isn't it); 3 nothing to bake (`status`); 4 over the byte budget (nothing switched in).
 
-A bake: the newest export of each plugin is read (manifests checked; the base layers' files checked with their
-sha256), each base layer is written as one source-layer `<plugin>.<layer>` with its `id` as both the vector tile's
+A bake: the newest export of each plugin that has a base layer is read (its manifest checked, and its base layers'
+files with their sha256), each base layer is written as one source-layer `<plugin>.<layer>` with its `id` as both the vector tile's
 feature id and a property (promoteId), read back, measured against the downtown z16 budget, given the bake's entry
 and credits in its metadata, and renamed into the tiles folder. Then the manifest's entry is replaced atomically
 (the old file becomes `previous`), and every other landscape file is deleted, so the last two are kept. The same
@@ -273,20 +273,31 @@ def cmd_status(args):
         except P.BakeError as err:
             _err(f"refused: {err}")
             return EXIT_REFUSED
-        if not cur:
-            _say("Tiles: no landscape entry yet")
-        elif cur["status"] == "empty":
-            _say(f"Tiles: empty ({cur['reason']})" + (", so a bake would switch one in" if plan.bases else ""))
-        elif cur["inputs"] == plan.refs:
-            _say(f"Tiles: {cur['file']}, built {cur['built']} from these exports (up to date)")
+        try:
+            if cur is not None:
+                P.check_entry(cur)
+        except ValueError as err:
+            _say(f"Tiles: the landscape entry is broken ({err}); a bake would replace it")
         else:
-            new, old = set(plan.refs), set(cur["inputs"])
-            _say(f"Tiles: {cur['file']}, built {cur['built']} from other exports: a bake would add "
-                 f"{', '.join(sorted(new - old)) or 'nothing'} and drop {', '.join(sorted(old - new)) or 'nothing'}")
+            _say_tiles(cur, plan)
     if not plan.bases:
         _say(plan.reason)
         return EXIT_NOTHING
     return 0
+
+
+def _say_tiles(cur, plan):
+    """How the tiles folder's entry compares with what a bake would hold."""
+    if not cur:
+        _say("Tiles: no landscape entry yet")
+    elif cur["status"] == "empty":
+        _say(f"Tiles: empty ({cur['reason']})" + (", so a bake would switch one in" if plan.bases else ""))
+    elif cur["inputs"] == plan.refs:
+        _say(f"Tiles: {cur['file']}, built {cur['built']} from these exports (up to date)")
+    else:
+        new, old = set(plan.refs), set(cur["inputs"])
+        _say(f"Tiles: {cur['file']}, built {cur['built']} from other exports: a bake would add "
+             f"{', '.join(sorted(new - old)) or 'nothing'} and drop {', '.join(sorted(old - new)) or 'nothing'}")
 
 
 def _previous(tiles_dir, old, name):
