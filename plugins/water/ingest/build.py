@@ -15,7 +15,8 @@ Conflation, in PostGIS, in UTM 11N (EPSG:32611) metres:
    visibility filter) from the NHD flowline that is 70% or more matched and covers half the way or more. A way half
    or more of whose length lies within 20 m of NHD is `confirmed`.
 3. A run of unmatched NHD pieces 100 m or longer becomes an NHD-only reach (geometry_from 'nhd'), drawn lighter and
-   a zoom later. Artificial paths through lakes and rivers (the bodies draw those) and connectors are left out.
+   a zoom later. Where it leaves or rejoins an OSM way it was matched to, its end is carried onto that way, so a
+   lateral OSM lacks starts on the canal OSM draws. Artificial paths through lakes and rivers (the bodies draw those) and connectors are left out.
 4. HydroShare's canal network names the reaches that OSM and NHD leave unnamed, where it runs along half of one
    within 20 m, and counts as evidence.
 5. Kinds, flow, widths and first zooms come from rules.py. Named canal reaches that touch (within 50 m) form one
@@ -54,7 +55,7 @@ WAY_SHARE = 0.5           # ... to an OSM way it covers this much of
 CONFIRMED_SHARE = 0.5     # an OSM way this much within MATCH_M of NHD is confirmed
 NHD_RUN_M = 100.0         # an unmatched NHD run this long or longer is drawn
 HS_SHARE = 0.5            # HydroShare names a reach it runs along this much of
-CANAL_EPS_M = 50.0        # named canal reaches this close are one canal
+CANAL_EPS_M = 500.0       # named canal reaches this close are one canal (across siphons and gaps)
 OSM_SNAP_M = 0.5          # OSM ways meet at shared nodes
 NHD_SNAP_M = 25.0         # NHD-only runs meet anything within a piece
 HEAD_SOURCE_M = 50.0      # a canal's head this close to a river or reservoir leaves it
@@ -66,6 +67,7 @@ GAUGE_NEAREST_M = 300.0
 BOX = (-117.05, 43.00, -115.95, 43.85)
 NHD_BASE = 2 ** 51        # NHD-only ids: 2^51 + a 48-bit hash
 GAUGE_BASE = 2 ** 52
+TEMP_BUFFERS = "160MB"
 
 DRAWN_LINES = ("river", "stream", "canal", "ditch", "drain")
 WATER_AREAS = ("lake", "reservoir", "pond", "river", "canal", "water", "basin", "wastewater", "dock")
@@ -78,8 +80,12 @@ def h48(expr):
     return f"('x' || substr(md5({expr}), 1, 12))::bit(48)::bigint"
 
 
+BOX_SQL = (f"ST_Transform(ST_Segmentize(ST_MakeEnvelope({BOX[0]}, {BOX[1]}, {BOX[2]}, {BOX[3]}, 4326), 0.01), "
+           "32611)")
+
 SETUP = [
     ("osm lines", f"""
+create temp table box on commit drop as select {BOX_SQL} g;
 create temp table o_line on commit drop as
 select osm_id, kind, name, intermittent, piped, width_m, geom, ST_Transform(geom, 32611) g
 from water.osm_feature
@@ -101,10 +107,12 @@ create index on o_area using gist (g);
 analyze o_area"""),
     ("nhd parts", f"""
 create temp table n_part on commit drop as
-select f.permanent_identifier pid, d.path[1] part, f.class, f.gnis_name, f.hydrographiccategory, f.streamorder,
+select f.permanent_identifier pid, coalesce(d.path[1], 1) part, f.class, f.gnis_name, f.hydrographiccategory, f.streamorder,
        f.visibilityfilter, f.reachcode, f.flowdir, f.wbarea_permanent_identifier wbarea,
-       ST_Transform(d.geom, 32611) g, 0::real len, 1 n
-from water.nhd_flowline f, ST_Dump(f.geom) d
+       coalesce(wb.ftype_name = 'Canal/Ditch', false) in_canal, d.geom g, 0::real len, 1 n
+from water.nhd_flowline f
+left join water.nhd_polygon wb on wb.permanent_identifier = f.wbarea_permanent_identifier,
+     box, ST_Dump(ST_Intersection(ST_Transform(f.geom, 32611), box.g)) d
 where GeometryType(d.geom) = 'LINESTRING' and ST_NPoints(d.geom) >= 2;
 update n_part set len = ST_Length(g), n = greatest(1, ceil(ST_Length(g) / {PIECE_M}))::int;
 create index on n_part using gist (g);
@@ -144,11 +152,16 @@ runs as (select pid, part, min(i) i0, max(i) i1, count(*) k from m group by pid,
 select {NHD_BASE} + {h48("r.pid || ':' || r.part || ':' || r.i0")} rid, r.pid, r.part, r.i0, r.i1, p.class,
        p.gnis_name, p.hydrographiccategory, p.streamorder, p.visibilityfilter, p.reachcode, p.flowdir,
        r.i0 = 0 at_start, r.i1 = p.n - 1 at_end,
+       (select x.osm_id from n_match x where x.pid = r.pid and x.part = r.part and x.i = r.i0 - 1) prev_osm,
+       (select x.osm_id from n_match x where x.pid = r.pid and x.part = r.part and x.i = r.i1 + 1) next_osm,
        ST_LineSubstring(p.g, r.i0::float8 / p.n, (r.i1 + 1)::float8 / p.n) g
 from runs r join n_part p using (pid, part)
-left join water.nhd_polygon wb on wb.permanent_identifier = p.wbarea
 where r.k * p.len / p.n >= {NHD_RUN_M}
-  and (p.class in {NHD_DRAWN!r} or (p.class = 'artificial_path' and wb.ftype_name = 'Canal/Ditch'))"""),
+  and (p.class in {NHD_DRAWN!r} or (p.class = 'artificial_path' and p.in_canal));
+update n_run r set g = ST_AddPoint(r.g, ST_ClosestPoint(o.g, ST_StartPoint(r.g)), 0)
+from o_line o where o.osm_id = r.prev_osm and ST_DWithin(o.g, ST_StartPoint(r.g), {MATCH_M + PIECE_M});
+update n_run r set g = ST_AddPoint(r.g, ST_ClosestPoint(o.g, ST_EndPoint(r.g)))
+from o_line o where o.osm_id = r.next_osm and ST_DWithin(o.g, ST_EndPoint(r.g), {MATCH_M + PIECE_M})"""),
     ("osm pieces matched to nhd", f"""
 create temp table o_match on commit drop as
 with o as (select osm_id, g, greatest(1, ceil(ST_Length(g) / {PIECE_M}))::int n from o_line),
@@ -165,7 +178,13 @@ with s as (select osm_id, max(n) n, count(pid)::real / max(n) share,
 best as (select distinct on (m.osm_id) m.osm_id, m.pid, count(*)::real / max(m.n) way_share,
                 percentile_cont(0.5) within group (order by m.d) d
          from o_match m join n_share ns on ns.pid = m.pid and ns.line_share >= {NHD_SHARE}
-         where m.pid is not null
+         join o_line o on o.osm_id = m.osm_id
+         join (select distinct on (pid) pid, class, in_canal from n_part order by pid, part) np on np.pid = m.pid
+         where m.pid is not null and case
+           when np.class in ('canal_ditch', 'pipeline', 'underground_conduit') or np.in_canal
+             then o.kind in ('canal', 'ditch', 'drain')
+           when np.class in ('stream_river', 'artificial_path') then o.kind in ('river', 'stream', 'drain')
+           else false end
          group by m.osm_id, m.pid
          having count(*)::real / max(m.n) >= {WAY_SHARE}
          order by m.osm_id, count(*) desc, m.pid)
@@ -288,9 +307,10 @@ update b set area_m2 = ST_Area(g);
 create index on b using gist (g);
 create temp table n_poly on commit drop as
 select permanent_identifier pid, layer, ftype_name, gnis_name, hydrographiccategory, reservoirtype,
-       ST_Transform(ST_CollectionExtract(ST_MakeValid(geom), 3), 32611) g
-from water.nhd_polygon
+       ST_CollectionExtract(ST_Intersection(ST_Transform(ST_CollectionExtract(ST_MakeValid(geom), 3), 32611), box.g), 3) g
+from water.nhd_polygon, box
 where ftype_name in ('Lake/Pond', 'Reservoir', 'Swamp/Marsh', 'Playa', 'Stream/River', 'Canal/Ditch');
+delete from n_poly where ST_IsEmpty(g);
 create index on n_poly using gist (g);
 create temp table b_sub on commit drop as select id, ST_Subdivide(g, 64) g from b;
 create index on b_sub using gist (g);
@@ -506,15 +526,16 @@ def gauge_names(name):
 
 GAUGE_SQL = f"""
 select kind, id, d from (
-  select 'body' kind, b.id, ST_Distance(b.g, p.pt) d, trim(regexp_replace(lower(b.name), '[^a-z0-9]+', ' ', 'g')) k
+  select 'body' kind, b.id, ST_Distance(b.g, p.pt) d, trim(regexp_replace(lower(b.name), '[^a-z0-9]+', ' ', 'g')) k,
+         b.kind in ('river', 'lake', 'reservoir') natural_kind
   from b, (select ST_SetSRID(ST_MakePoint(%(x)s, %(y)s), 32611) pt) p
   where b.name is not null and ST_DWithin(b.g, p.pt, {GAUGE_NAME_M})
   union all
-  select 'reach', r.id, ST_Distance(r.g, p.pt), r.name_key
+  select 'reach', r.id, ST_Distance(r.g, p.pt), r.name_key, r.kind in ('river', 'stream')
   from r, (select ST_SetSRID(ST_MakePoint(%(x)s, %(y)s), 32611) pt) p
   where r.name_key is not null and ST_DWithin(r.g, p.pt, {GAUGE_NAME_M})) x
 where k = %(key)s or k like %(key)s || ' %%' or k like '%% ' || %(key)s or k like '%% ' || %(key)s || ' %%'
-order by (kind = %(prefer)s) desc, d limit 1"""
+order by (kind = %(prefer)s) desc, (natural_kind = %(natural)s) desc, d limit 1"""
 GAUGE_NEAREST_SQL = f"""
 select r.id, ST_Distance(r.g, p.pt) d from r, (select ST_SetSRID(ST_MakePoint(%(x)s, %(y)s), 32611) pt) p
 where ST_DWithin(r.g, p.pt, {GAUGE_NEAREST_M}) order by r.g <-> p.pt limit 1"""
@@ -524,7 +545,8 @@ def link_gauge(conn, name, x, y):
     """(reach id, body id, method, metres) for a gauge at (x, y) in UTM 11N: the reach or body its name says,
     within 1.5 km, else the nearest reach within 300 m, else nothing."""
     for key, prefer in gauge_names(name):
-        hit = conn.execute(GAUGE_SQL, {"x": x, "y": y, "key": key, "prefer": prefer}).fetchone()
+        natural = bool(re.search(r"\b(river|creek|lake|reservoir)\b", key))      # not a canal: prefer natural water
+        hit = conn.execute(GAUGE_SQL, {"x": x, "y": y, "key": key, "prefer": prefer, "natural": natural}).fetchone()
         if hit:
             return (hit[1], None, "name", hit[2]) if hit[0] == "reach" else (None, hit[1], "name", hit[2])
     hit = conn.execute(GAUGE_NEAREST_SQL, {"x": x, "y": y}).fetchone()
@@ -573,6 +595,13 @@ def build(conn, out=None):
     """Rebuild the drawn tables in the caller's transaction (no commit). Returns the build id and its counts."""
     import time
     out = out or (lambda msg: print(msg, flush=True))
+    # The build's temporary tables hold tens of MB of geometry: keep them in memory rather than re-reading them
+    # from disk in every join. Settable only before the session's first temporary table; otherwise left as it is.
+    try:
+        with conn.transaction():
+            conn.execute(f"set temp_buffers = '{TEMP_BUFFERS}'")
+    except Exception:
+        pass
     have = conn.execute("select (select count(*) from water.nhd_flowline), "
                         "(select count(*) from water.osm_feature where active)").fetchone()
     if not have[0] and not have[1]:
@@ -617,6 +646,8 @@ def build(conn, out=None):
     _set(conn, "r", "id", [("kind", "text"), ("width_m", "real"), ("width_from", "text"), ("minzoom", "smallint")],
          [(i, v["kind"], v["width_m"], v["width_from"], v["minzoom"]) for i, v in final.items()])
     step("reaches stored", REACH_INSERT, {"build": build_id})
+    conn.execute("analyze r")
+    conn.execute("analyze water.reach")
 
     for label, sql in LINKS:
         step(f"links: {label}", sql)
@@ -658,13 +689,17 @@ def build(conn, out=None):
                                    case when bool_or(r.hs_id is not null) then 'hydroshare_canals' end], null) sources
                           from r where r.canal_id is not null group by r.canal_id) x
                     where x.canal_id = c.id""")
+    conn.execute("analyze water.reach_link")
+    conn.execute("analyze water.canal")
     out(f"water-build: canal heads ({time.monotonic() - t0:.1f} s)")
 
     step("gauges read", GAUGES)
     step("bodies", BODIES)
+    conn.execute("analyze b")
     bodies = conn.execute("select id, kind, area_m2 from b").fetchall()
     _set(conn, "b", "id", [("minzoom", "smallint")], [(i, rules.body_minzoom(k, a)) for i, k, a in bodies])
     step("structures", STRUCTURES)
+    conn.execute("analyze s")
     srows = conn.execute("select id, kind, name, on_river from s").fetchall()
     _set(conn, "s", "id", [("minzoom", "smallint")],
          [(i, rules.structure_minzoom(k, named=bool(n), on_river=bool(o))) for i, k, n, o in srows])

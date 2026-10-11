@@ -31,7 +31,9 @@ SOURCES_BEFORE = ["achd_cameras", "idaho511_views_oneoff", "idaho511_rwis_sites_
                   # ch. 17 Wave A (Oct 7): hazards (order 60) runs before safety's crashes, the rest after
                   "idl_fire_restrictions", "nifc_wfigs_incidents", "nifc_wfigs_perimeters", "nasa_firms", "nws_wwa",
                   "usgs_quakes", "compass_crashes", "noaa_hms_smoke", "nwps_gauges", "nrcs_snotel", "boise_ecoli",
-                  "boise_river_hazards", "usdm_drought", "r2r_trails", "boise_greenbelt_closures", "usfs_r4_orders",
+                  "boise_river_hazards", "usdm_drought",
+                  "idwr_irrigation_orgs", "idwr_season_of_use",                # P4-data, landscape sprint (Oct 11)
+                  "r2r_trails", "boise_greenbelt_closures", "usfs_r4_orders",
                   "idpr_route_closures", "idpr_area_restrictions", "awc_metar", "idfg_roadkill", "agrimet_et",
                   "swpc_ovation", "swpc_kp_1m", "compass_counts", "compass_growth", "compass_plats", "compass_congestion"]
 STREAMS_BEFORE = ["vrt_realtime", "idaho511_frames", "itd_wzdx", "idaho511_api"]
@@ -82,6 +84,8 @@ class RegistryTest(unittest.TestCase):
         self.assertEqual([e["name"] for _, e in registry.MANUAL if _.name == "hazards"],
                          ["nifc_wfigs_perimeters_backfill"])
         self.assertEqual([e["name"] for _, e in registry.MANUAL if _.name == "trails"], ["osm_paths", "trails_match"])
+        self.assertEqual([e["name"] for _, e in registry.MANUAL if _.name == "water"],
+                         ["nhd_hr", "hydroshare_canals", "osm_waterways"])
 
     def test_the_plugins(self):
         self.assertEqual(sorted(p.name for p in ours()),
@@ -114,10 +118,10 @@ class RegistryTest(unittest.TestCase):
     def test_commands_resolve_and_keep_clear_of_the_built_ins(self):
         self.assertEqual(sorted(registry.COMMANDS),
                          ["burn-scars", "farm-cdl-load", "farm-csb-load", "farm-derive", "farm-export",
-                          "farm-fields-load", "match-intersections", "match-routes", "roads-developed-load", "rollup",
-                          "route-colors", "segment-match", "shrubs-hedge-check", "shrubs-load", "soils-export",
-                          "soils-load", "trails-match", "transit-progress", "transit-ribbons", "trees-load",
-                          "wfigs-backfill"])
+                          "farm-fields-load", "hydroshare-load", "match-intersections", "match-routes", "nhd-load",
+                          "roads-developed-load", "rollup", "route-colors", "segment-match", "shrubs-hedge-check",
+                          "shrubs-load", "soils-export", "soils-load", "trails-match", "transit-progress",
+                          "transit-ribbons", "trees-load", "water-build", "water-export", "wfigs-backfill"])
         self.assertFalse(set(registry.COMMANDS) & (set(BUILTINS) | set(CORE_COMMANDS)))
         for name in registry.COMMANDS:
             self.assertTrue(callable(registry.command(name)), name)

@@ -148,8 +148,10 @@ def prepare_nhd(zip_path, out):
     for f in t:
         fcodes[f.GetField("fcode")] = {n: f.GetField(n) for n in names}
     vaa = {}
-    for f in src.GetLayerByName("NHDFlowlineVAA"):
-        vaa[f.GetField("permanent_identifier")] = [f.GetField(n) for n in VAA]
+    t = src.GetLayerByName("NHDFlowlineVAA")
+    have = {t.GetLayerDefn().GetFieldDefn(i).GetName().lower() for i in range(t.GetLayerDefn().GetFieldCount())}
+    for f in t:
+        vaa[f.GetField("permanent_identifier")] = [f.GetField(n) if n in have else None for n in VAA]
 
     gpkg = os.path.join(out, "nhd.gpkg")
     dst = ogr.GetDriverByName("GPKG").CreateDataSource(gpkg)

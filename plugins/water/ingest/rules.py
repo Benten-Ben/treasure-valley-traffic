@@ -80,7 +80,11 @@ def nhd_kind(nhd_class, name, order):
 
 
 def osm_kind(kind, name, hydroshare_type=None):
-    """An OpenStreetMap way's kind: its waterway class, a canal refined by its name (or HydroShare's type)."""
+    """An OpenStreetMap way's kind: its waterway class, a canal refined by its name (or HydroShare's type), and a
+    stream whose name says it's a canal, lateral, ditch or drain taken at its word ('New York Canal' tagged as a
+    stream in a few places)."""
+    if kind == "stream":
+        return canal_kind_by_name(name, default=None) or kind
     if kind != "canal":
         return kind
     by_name = canal_kind_by_name(name, default=None)
