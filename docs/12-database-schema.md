@@ -635,9 +635,11 @@ create table roads.review (id int primary key, kind text, piece_id int, junction
   road_segment_id bigint, detail jsonb, geom geometry(Point, 32611));
 ```
 
-The rules, the calibration of the local streets' default widths, the review
-list's kinds and the export (`roads-export`) are in the roads plugin's
-README.
+On scratch, Oct 11, the Oct 5 extract gave 69,893 pieces and 31,087
+junctions; the tables came to 192 MB with their indexes, freshly built, and
+the build took 8-9 minutes as a light job. The rules, the calibration of the
+local streets' default widths, the review list's kinds and the export
+(`roads-export`) are in the roads plugin's README.
 
 **COMPASS (built Oct 6, 2026, migration 0012).** Crashes are `obs.crash`,
 one row per ITD serial number. `crashed_at` is the reported local time, so

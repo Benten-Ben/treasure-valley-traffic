@@ -1343,7 +1343,9 @@ def make(conn, md5, out=say, now=None):
               "corner_radius": {f"{a}/{b}": r for (a, b), r in CORNER_RADIUS.items()},
               "minor_radius": MINOR_RADIUS, "island_max_m2": ISLAND_MAX_M2, "thin_m": THIN_M,
               "crosswalk_depth_m": CROSSWALK_DEPTH_M, "crosswalk_clear_m": CROSSWALK_CLEAR_M,
-              "junction_clear_m": JUNCTION_CLEAR_M, "z15_tolerance_m": Z15_TOLERANCE_M, "srid": SRID}
+              "junction_clear_m": JUNCTION_CLEAR_M, "z15_tolerance_m": Z15_TOLERANCE_M, "taper_m": TAPER_M,
+              "crosswalk_skew_deg": CROSSWALK_SKEW_DEG, "parallel_deg": PARALLEL_DEG, "straight_deg": STRAIGHT_DEG,
+              "stop_bar_gap_m": STOP_BAR_GAP_M, "arrow_back_m": ARROW_BACK_M, "srid": SRID}
     conn.execute("update roads.build set current = false where current")
     conn.execute(
         """insert into roads.build (id, started_at, finished_at, current, extract_md5, inputs, params, counts, seconds,
@@ -1363,7 +1365,8 @@ def run(conn, out=say, check=True):
         md5 = osm_extract.check_partition(conn, OWNERS) if check else "unchecked"
         stats = make(conn, md5, out)
         r.note = (f"build {stats['build']}: {stats['pieces']:,} pieces, {stats['junctions']:,} junctions, "
-                  f"{sum(stats['surfaces'].values()):,} surfaces, {stats['seconds']} s")
+                  f"{sum(v for k, v in stats['surfaces'].items() if k != 'tapers'):,} surfaces, "
+                  f"{stats['seconds']} s")
     return stats
 
 

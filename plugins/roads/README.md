@@ -405,6 +405,21 @@ county a piece is in) and developed land (the CDL, `roads.developed_land`).
 11. **Generalised** surfaces for z15 (0.5 m; under 4 m² left out), and the
     **review list** (`roads.review`).
 
+**On scratch** (Oct 11, 2026, the Oct 5 extract; build `20261011T175252Z`):
+
+| | |
+|---|---|
+| Ways, pieces | 36,689 ways (13,917 in `core.osm_way`, 22,772 in `roads.osm_street`), 69,893 pieces: Ada 44,884, Canyon 22,310, elsewhere 2,699; 38,097 of Ada's on an ACHD segment |
+| Lanes | from OpenStreetMap 22,111 pieces, the Master Street Map 1,043, HPMS 326, COMPASS (in Ada, by the lanes rule) 143, OpenStreetMap through ACHD's segment 101, the default 46,169; lines on 13,303 |
+| Widths | inventoried 8,916, counted 4,767, estimated 56,210 |
+| Junctions | 31,087 (signal 588, roundabout 139, interchange 126); 79,950 corner pairs closed, 30,324 fills; 1,852 islands; 928 tapers |
+| Edges, markings | 204,351 edges (curb, shoulder, deck); 30,150 lines and stop bars (1,651 stop bars); 4,295 crosswalks; 1,738 arrows |
+| Review list | lanes_conflict 801, sidewalk_close 1,444, components_exceed 724, unmatched 196, direction 42, other_direction_assumed 16, deck_mismatch 12, turn_slots 10, bike_other_carriageway 8 |
+| Time | 456-528 s, as a light job (2 GB, 2 CPUs, `tvt_build`): matching 90 s, cross-sections 35-90 s, closings 140 s, edges 85 s; a rebuild over the last build takes no longer. The build's container peaked at 0.56 GB; the database's at 1 GB (its cap is 2) |
+| Size | 192 MB with indexes, freshly built: `roads.surface` 74 MB, `roads.edge` 53, `roads.xsection` 25, `roads.piece` 25, `roads.marking` 9, `roads.junction` 6, the rest under 2. A rebuild deletes and writes every row, so up to about twice that until vacuumed |
+| Export | 164 MB of FlatGeobuf, about 15 s |
+| Bake | the export alone baked to 30.6 MB (21,475 tiles, z14-16) in 346 s at one CPU and under 1 GB (a light worker job); the largest z16 tile downtown is 20 KB, a third of the 60 KB budget |
+
 ### Cross-sections
 
 Left and right are as the line is drawn; forward lanes run along it.
