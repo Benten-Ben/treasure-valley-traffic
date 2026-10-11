@@ -16,6 +16,9 @@ list, then the features by ID range, a pause between requests; robots.txt checke
 Each run reads the features touching the map box (whole), stores each version in raw.record (by OBJECTID) and the
 current state in its table (replaced whole; a snapshot with less than half the rows we hold is refused), and marks
 water-build out of date when anything changed. The organizations' `Owner` field is never requested.
+
+The polygons are stored made valid (GEOM_SQL): 14 of the 59 organizations came with self-intersecting rings or a
+hole outside its shell (Oct 11), which would make water-build's intersections unreliable, or fail them.
 """
 
 from ingest import arcgis, db
@@ -23,6 +26,8 @@ from ingest import arcgis, db
 BOX = (-117.05, 43.00, -115.95, 43.85)      # the map box: the 59 organizations decision 19b approved
 PRECISION = 6                               # decimal degrees (0.1 m)
 BUILD = "water-build"
+# A served polygon (GeoJSON, WGS 84) as stored: made valid, polygons only, multi (the tables' type).
+GEOM_SQL = "ST_Multi(ST_CollectionExtract(ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON(%s), 4326)), 3))"
 
 
 def fetch(layer, label, fields):

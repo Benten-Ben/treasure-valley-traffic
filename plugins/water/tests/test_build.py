@@ -5,7 +5,10 @@ migrations), in one transaction that is rolled back: the build doesn't commit.
 The scene is invented, in metres east and north of a corner near Kuna (synthetic.at): an OSM canal with NHD's
 named canal 5 m beside it; an NHD lateral leaving the canal that OSM lacks; an NHD desert wash; an 80 m NHD ditch
 (too short to draw); an NHD ditch only half along an OSM ditch; an OSM drain HydroShare names; an OSM pond NHD also
-maps and an NHD-only pond; an OSM dam with NHD's dam 10 m off; a gauge named for the canal; and IDWR polygons.
+maps and an NHD-only pond; an OSM dam with NHD's dam 10 m off; a gauge named for the canal; and IDWR polygons, one
+of them a bow tie as served. Added in review: OSM ways that leave and join a canal 10 m from its ends; an unnamed
+OSM canal and an OSM stream along HydroShare's placeholders ('Unnamed Supply', 'Unnamed Drain'); an OSM dam drawn
+as a long area with NHD's dam line at one end (its middle far from NHD's), and an OSM weir beside NHD's named dam.
 
 Run: python3 -m unittest discover -s plugins -t .
 """
@@ -29,6 +32,14 @@ def line(*points):
 
 def square(x, y, size):
     return json.dumps({"type": "Polygon", "coordinates": [[list(p) for p in S.box_square(x, y, size)[0]]]})
+
+
+def polygon(*points):
+    return json.dumps({"type": "Polygon", "coordinates": [[list(S.at(*p)) for p in points]]})
+
+
+def point(x, y):
+    return json.dumps({"type": "Point", "coordinates": list(S.at(x, y))})
 
 
 @unittest.skipUnless(DB_URL, "set TVT_TEST_DATABASE_URL to a scratch database (with water 0001)")
@@ -71,9 +82,21 @@ class ConflationTest(unittest.TestCase):
         flowline("{F-005}", line((0, -500), (800, -500)), "canal_ditch", "Half Ditch")
         osm("w", BASE + 2, "line", "ditch", line((0, -505), (400, -505)), waterway="ditch")
         osm("w", BASE + 3, "line", "drain", line((0, -1000), (500, -1000)), waterway="drain")
-        c.execute("""insert into water.hydroshare_canal (id, call_number, name, type, geom, load_id)
-                     values (1, 'N1', 'Test Drain', 'Drain', ST_Multi(ST_SetSRID(ST_GeomFromGeoJSON(%s), 4326)), %s)""",
-                  (line((0, -1003), (500, -1003)), load))
+        for hid, call, name, kind, y in ((1, "N1", "Test Drain", "Drain", -1003),
+                                         (2, "N2", "Unnamed Supply", "Field Supply", -3003),
+                                         (3, "N3", "Unnamed Drain", "Drain", -3503)):
+            c.execute("""insert into water.hydroshare_canal (id, call_number, name, type, geom, load_id)
+                         values (%s, %s, %s, %s, ST_Multi(ST_SetSRID(ST_GeomFromGeoJSON(%s), 4326)), %s)""",
+                      (hid, call, name, kind, line((0, y), (500, y)), load))
+        # OSM splits canals at culverts and roads: a lateral leaves 10 m before the canal's end, a drain joins 10 m
+        # after its start, each on a node of the canal's way.
+        osm("w", BASE + 6, "line", "canal", line((0, -2000), (10, -2000), (990, -2000), (1000, -2000)),
+            waterway="canal")
+        osm("w", BASE + 7, "line", "canal", line((990, -2000), (990, -1700)), waterway="canal")
+        osm("w", BASE + 8, "line", "drain", line((10, -2300), (10, -2000)), waterway="drain")
+        # Unnamed in OSM, and HydroShare's line beside each has a placeholder for a name.
+        osm("w", BASE + 9, "line", "canal", line((0, -3000), (500, -3000)), waterway="canal")
+        osm("w", BASE + 10, "line", "stream", line((0, -3500), (500, -3500)), waterway="stream")
         osm("w", BASE + 4, "area", "pond", square(2000, 1000, 100), natural="water", water="pond")
         for pid, x in (("{W-001}", 2000), ("{W-002}", 3000)):
             c.execute("""insert into water.nhd_polygon (permanent_identifier, layer, ftype, ftype_name,
@@ -87,6 +110,16 @@ class ConflationTest(unittest.TestCase):
                      values ('{L-001}', 'Test Dam', 343, 'Dam/Weir',
                              ST_Multi(ST_SetSRID(ST_GeomFromGeoJSON(%s), 4326)), %s)""",
                   (line((100, 5), (100, 15)), load))
+        # A dam OSM draws as a long area, NHD's line at its west end (Barber Dam: 208 m between their middles, 1 m
+        # between the shapes); an unnamed OSM weir 10 m from NHD's named Dam/Weir line.
+        osm("w", BASE + 11, "area", "dam", polygon((4000, -10), (4300, -10), (4300, 0), (4000, 0), (4000, -10)),
+            name="Test River Dam", waterway="dam")
+        osm("n", BASE + 12, "point", "weir", point(5000, 0), waterway="weir")
+        for pid, name, geom in (("{L-002}", "Test River Dam", line((4000, 2), (4040, 2))),
+                                ("{L-003}", "Test Check Dam", line((5000, 10), (5000, 20)))):
+            c.execute("""insert into water.nhd_line (permanent_identifier, gnis_name, ftype, ftype_name, geom, load_id)
+                         values (%s, %s, 343, 'Dam/Weir', ST_Multi(ST_SetSRID(ST_GeomFromGeoJSON(%s), 4326)), %s)""",
+                      (pid, name, geom, load))
         x, y = S.at(50, 2)
         c.execute("""insert into raw.record (source, source_id, version_hash, payload, geom, first_seen, last_seen)
                      values ('nwps_gauges', 'TSTI1', '\\x00', %s::jsonb, ST_SetSRID(ST_MakePoint(%s, %s), 4326),
@@ -95,6 +128,10 @@ class ConflationTest(unittest.TestCase):
         c.execute("""insert into water.idwr_org (objectid, name, geom, fetched_at)
                      values (1, 'TEST IRRIGATION DISTRICT', ST_Multi(ST_SetSRID(ST_GeomFromGeoJSON(%s), 4326)), %s)""",
                   (square(-100, -100, 1300), T0))
+        # As IDWR serves some: a ring crossing itself (a bow tie whose waist is on the canal at x 500), stored as is.
+        c.execute("""insert into water.idwr_org (objectid, name, geom, fetched_at)
+                     values (3, 'TEST BOWTIE DISTRICT', ST_Multi(ST_SetSRID(ST_GeomFromGeoJSON(%s), 4326)), %s)""",
+                  (polygon((400, -50), (600, 50), (600, -50), (400, 50), (400, -50)), T0))
         c.execute("""insert into water.idwr_season (objectid, season, start_month, start_day, end_month, end_day, geom,
                        fetched_at)
                      values (2, '4/1 - 10/31', 4, 1, 10, 31, ST_Multi(ST_SetSRID(ST_GeomFromGeoJSON(%s), 4326)), %s)""",
@@ -158,6 +195,25 @@ class ConflationTest(unittest.TestCase):
         self.assertEqual(self.q("""select source_id, role from water.reach_evidence
                                    where reach_id = %s and source = 'hydroshare_canals'""", BASE + 3), [("N1", "name")])
 
+    def test_hydroshare_placeholders_are_no_name(self):
+        # 'Unnamed Supply' on a field supply: no name, so an unnamed ditch (1.5 m, z13), not a named canal (5 m, z11).
+        self.assertEqual(self.q("select name, name_from, kind, width_m, minzoom, canal_id from water.reach "
+                                "where id = %s", BASE + 9), [(None, None, "ditch", 1.5, 13, None)])
+        # 'Unnamed Drain' doesn't turn an OSM stream into a drain.
+        self.assertEqual(self.q("select name, kind from water.reach where id = %s", BASE + 10), [(None, "stream")])
+        self.assertEqual(self.q("""select reach_id, role from water.reach_evidence
+                                   where source = 'hydroshare_canals' and reach_id in (%s, %s) order by 1""",
+                                BASE + 9, BASE + 10), [(BASE + 9, "agrees"), (BASE + 10, "agrees")])
+        self.assertEqual(self.q("select count(*) from water.reach where name ~* 'unnamed|supply'"), [(0,)])
+        self.assertEqual(self.q("select count(*) from water.canal where name ~* 'unnamed|supply'"), [(0,)])
+        self.assertEqual((self.counts["named_by_hydroshare"], self.counts["kinds_from_hydroshare"]), (1, 1))
+
+    def test_osm_ways_meeting_near_a_ways_end(self):
+        self.assertEqual(self.q("select method, round(at_m) from water.reach_link "
+                                "where from_reach = %s and to_reach = %s", BASE + 6, BASE + 7), [("branch", 990)])
+        self.assertEqual(self.q("select method from water.reach_link where from_reach = %s and to_reach = %s",
+                                BASE + 8, BASE + 6), [("joins",)])
+
     def test_bodies(self):
         self.assertEqual(self.q("select id, kind, geometry_from, confirmed from water.body where osm_id = %s",
                                 BASE + 4), [(2 * (BASE + 4), "pond", "osm", True)])
@@ -165,8 +221,13 @@ class ConflationTest(unittest.TestCase):
                          [("nhd", "pond", 11)])                    # {W-002} only: {W-001} lies under the OSM pond
 
     def test_structures_dedupe_and_gauges(self):
-        self.assertEqual(self.q("select source, name from water.structure where kind = 'dam'"),
-                         [("osm_waterways", "Test Dam")])
+        # NHD's dams are OSM's: by their shapes (the area dam's middle is 130 m from NHD's), a dam and a weir alike;
+        # the unnamed weir takes NHD's name.
+        self.assertEqual(self.q("select source, kind, name from water.structure where kind in ('dam', 'weir') "
+                                "order by name"),
+                         [("osm_waterways", "weir", "Test Check Dam"), ("osm_waterways", "dam", "Test Dam"),
+                          ("osm_waterways", "dam", "Test River Dam")])
+        self.assertEqual(self.q("select count(*) from water.structure where source = 'nhd_hr'"), [(0,)])
         gauge = self.q("select method, reach_id, canal_id is not null from water.gauge where lid = 'TSTI1'")
         self.assertEqual(gauge, [("name", BASE + 1, True)])
         canal = self.q("select name, kind, gauge_lid, head_reach_id, head_structure_id is not null from water.canal "
@@ -175,13 +236,15 @@ class ConflationTest(unittest.TestCase):
 
     def test_idwr_side_tables(self):
         cid = self.q("select canal_id from water.reach where id = %s", BASE + 1)[0][0]
-        org = self.q("select name, round(share::numeric, 2), at_head from water.canal_org where canal_id = %s", cid)
-        self.assertEqual(org, [("TEST IRRIGATION DISTRICT", 1, True)])
+        org = self.q("select name, round(share::numeric, 2)::float8, at_head from water.canal_org where canal_id = %s "
+                     "order by name", cid)
+        # The bow tie, made valid: two triangles meeting on the canal, 200 m of its 1,000.
+        self.assertEqual(org, [("TEST BOWTIE DISTRICT", 0.2, False), ("TEST IRRIGATION DISTRICT", 1, True)])
         self.assertEqual(self.q("select season, start_month, end_month from water.canal_season where canal_id = %s",
                                 cid), [("4/1 - 10/31", 4, 10)])
 
     def test_counts_and_ids(self):
-        self.assertEqual(self.counts["reaches_osm"], 3)
+        self.assertEqual(self.counts["reaches_osm"], 8)
         self.assertEqual(self.counts["gauges_linked"], 1)
         self.assertEqual(self.q("select count(*) from water.reach where id >= 2 ^ 53"), [(0,)])
 
@@ -210,9 +273,25 @@ class ConflationTest(unittest.TestCase):
                 self.assertEqual((lay["licence"], lay["republish"]), ("ODbL-1.0", "yes"))
                 self.assertNotIn("Idaho Department of Water Resources", " ".join(lay["credit"]))
             self.assertIn("hydroshare", m.inputs)                  # its name is on the drain
-            self.assertEqual(layers["mask"]["inputs"], ["osm", "nhd"])
+            # ... whose width (3 m, a drain) the mask buffers it to: HydroShare is the mask's input too.
+            self.assertEqual(layers["mask"]["inputs"], ["osm", "nhd", "hydroshare"])
+            self.assertEqual(layers["bodies"]["inputs"], ["osm", "nhd"])
             again = M.read(m.folder)                                # the files check against the manifest
             self.assertEqual(again.build, "20261011T120000Z")
+
+
+class ExportInputsTest(unittest.TestCase):
+    def test_the_hash_beside_the_url_is_the_downloads(self):
+        from plugins.water.ingest import export
+        entries = {e["name"]: e for e in export.input_entries({
+            "nhd_hr": {"file": "nhd.gpkg", "sha256": "a" * 64, "download": "NHD_H_1705_HU4_GDB.zip",
+                       "download_sha256": "b" * 64},
+            "hydroshare_canals": {"file": "hydroshare.gpkg", "sha256": "c" * 64}})}
+        self.assertEqual(entries["nhd"]["sha256"], "b" * 64)
+        self.assertIn("nhd.gpkg (sha256 " + "a" * 64 + ")", entries["nhd"]["note"])
+        self.assertIn("NHD_H_1705_HU4_GDB.zip", entries["nhd"]["note"])
+        self.assertNotIn("sha256", entries["hydroshare"])         # no download hash recorded: none given
+        self.assertNotIn("sha256", entries["osm"])
 
 
 if __name__ == "__main__":

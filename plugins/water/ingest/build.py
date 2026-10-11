@@ -19,21 +19,25 @@ Conflation, in PostGIS, in UTM 11N (EPSG:32611) metres:
    lateral OSM lacks starts on the canal OSM draws. Artificial paths through lakes and rivers (the bodies draw those)
    and connectors are left out.
 4. HydroShare's canal network names the reaches that OSM and NHD leave unnamed, where it runs along half of one
-   within 20 m, and counts as evidence.
+   within 20 m, and counts as evidence. Its placeholders ('Unnamed Drain', 'Unnamed Supply', 'Field Supply': its
+   Name field where a line has none) are no name, from any source (rules.real_name); its type still sets the kind
+   of an unnamed canal.
 5. Kinds, flow, widths and first zooms come from rules.py. Named canal reaches that touch (within 50 m) form one
    canal (water.canal); a canal 20 km or longer is a main canal ⚠️.
 6. Topology (water.reach_link): one reach's end at another's start, a reach starting on another (a lateral leaving
-   its canal), a reach ending on another (a drain joining a canal), and NHDFlow between NHD-only runs. OSM draws
+   its canal), a reach ending on another (a drain joining a canal), and NHDFlow between NHD-only runs. Two OSM ways
+   meet within 0.5 m (a shared node), anything else within 25 m. OSM draws
    waterways downstream; NHD's flowdir 1 says the same. Each canal's head is its most upstream reach (the one from
    which most of it is reached), and each reach gets its distance from it. Its source is the river, reservoir or
    canal it leaves, and its head structure the dam, weir or gate within 150 m.
 7. Bodies: OSM's water areas, wetlands and pools; NHD's lakes, ponds, reservoirs, marshes, river and canal polygons
    where OSM water covers less than half of them (NHD-only). Structures: OSM's and NHD's dams, weirs, gates,
-   waterfalls and springs (NHD's within 50 m of OSM's of the same kind dropped), and the NWPS gauges.
+   waterfalls and springs, and the NWPS gauges. NHD's dam, weir, spring or waterfall whose geometry lies within 50 m
+   of OSM's of the same family (a dam and a weir are one) is OSM's: dropped, its name kept when OSM's has none.
 8. Gauges (water.gauge): each NWPS gauge in the box to the reach or body it measures, by the water named in the
    gauge's name within 1.5 km, else the nearest reach within 300 m.
 9. INTERNAL side tables from IDWR, when loaded: the service areas each canal runs through (water.canal_org) and the
-   legal season at its head (water.canal_season). Never exported.
+   legal season at its head (water.canal_season), from IDWR's polygons made valid. Never exported.
 
 Evidence for every reach is in water.reach_evidence: its geometry's source and every other that agrees.
 """
@@ -61,7 +65,8 @@ OSM_SNAP_M = 0.5          # OSM ways meet at shared nodes
 NHD_SNAP_M = 25.0         # NHD-only runs meet anything within a piece
 HEAD_SOURCE_M = 50.0      # a canal's head this close to a river or reservoir leaves it
 HEAD_STRUCTURE_M = 150.0  # a dam, weir or gate this close to a canal's head is its head structure
-STRUCTURE_DEDUPE_M = 50.0
+STRUCTURE_DEDUPE_M = 50.0  # NHD's dam, weir, spring or waterfall this close to OSM's (geometry to geometry) is OSM's
+STRUCTURE_FAMILY_SQL = "(case when {k} in ('dam', 'weir') then 'dam' else {k} end)"   # NHD's Dam/Weir: one family
 STRUCTURE_REACH_M = 30.0
 GAUGE_NAME_M = 1500.0
 GAUGE_NEAREST_M = 300.0
@@ -88,7 +93,7 @@ SETUP = [
     ("osm lines", f"""
 create temp table box on commit drop as select {BOX_SQL} g;
 create temp table o_line on commit drop as
-select osm_id, kind, name, intermittent, piped, width_m, geom, ST_Transform(geom, 32611) g
+select osm_id, kind, {rules.name_sql("name")} as name, intermittent, piped, width_m, geom, ST_Transform(geom, 32611) g
 from water.osm_feature
 where active and shape = 'line' and osm_type = 'w' and kind in {DRAWN_LINES!r}
   and GeometryType(geom) = 'LINESTRING' and ST_NPoints(geom) >= 2;
@@ -108,7 +113,8 @@ create index on o_area using gist (g);
 analyze o_area"""),
     ("nhd parts", f"""
 create temp table n_part on commit drop as
-select f.permanent_identifier pid, coalesce(d.path[1], 1) part, f.class, f.gnis_name, f.hydrographiccategory,
+select f.permanent_identifier pid, coalesce(d.path[1], 1) part, f.class, {rules.name_sql("f.gnis_name")} gnis_name,
+       f.hydrographiccategory,
        f.streamorder,
        f.visibilityfilter, f.reachcode, f.flowdir, f.wbarea_permanent_identifier wbarea,
        coalesce(wb.ftype_name = 'Canal/Ditch', false) in_canal, d.geom g, 0::real len, 1 n
@@ -197,9 +203,9 @@ from s left join best b using (osm_id)"""),
 create temp table r on commit drop as
 select o.osm_id id, 'osm'::text geometry_from, o.kind src_kind, o.name, case when o.name is not null then 'osm' end
          name_from, o.intermittent osm_intermittent, o.piped, o.width_m osm_width, f.class nhd_class,
-       f.gnis_name nhd_name, f.hydrographiccategory nhd_category, f.streamorder, f.visibilityfilter,
-       f.reachcode, a.pid nhd_pid, coalesce(a.share, 0) >= {CONFIRMED_SHARE} confirmed, a.share nhd_share,
-       a.d nhd_d, true flow_known, o.osm_id, o.geom, o.g,
+       {rules.name_sql("f.gnis_name")} nhd_name, f.hydrographiccategory nhd_category, f.streamorder,
+       f.visibilityfilter, f.reachcode, a.pid nhd_pid, coalesce(a.share, 0) >= {CONFIRMED_SHARE} confirmed,
+       a.share nhd_share, a.d nhd_d, true flow_known, o.osm_id, o.geom, o.g,
        null::int hs_id, null::text hs_name, null::text hs_type, null::text hs_call, null::real hs_share,
        null::real hs_d
 from o_line o left join o_attr a using (osm_id) left join water.nhd_flowline f on f.permanent_identifier = a.pid
@@ -220,7 +226,8 @@ create index on r using gist (g);
 analyze r"""),
     ("hydroshare matched", f"""
 create temp table hs on commit drop as
-select id, call_number, name, type, ST_Subdivide(ST_Segmentize(ST_Transform(geom, 32611), 200), 8) g
+select id, call_number, {rules.name_sql("name")} as name, type,
+       ST_Subdivide(ST_Segmentize(ST_Transform(geom, 32611), 200), 8) g
 from water.hydroshare_canal;
 create index on hs using gist (g);
 analyze hs;
@@ -278,28 +285,31 @@ from n_run ra join water.nhd_flow f on f.from_pid = ra.pid and ra.at_end
 join n_run rb on rb.pid = f.to_pid and rb.at_start
 join r a on a.id = ra.rid join r b on b.id = rb.rid
 on conflict do nothing"""),
+    # A reach starting on another's line, away from its ends (those are 'end' links): within OSM_SNAP_M of an OSM
+    # way when both are OSM (they share a node), else within a piece. OSM splits canals at every culvert and road,
+    # so a lateral often leaves a few metres from a way's end: only the snap distance counts as "at the end".
     ("branch", f"""
 insert into water.reach_link (from_reach, to_reach, method, gap_m, at_m)
 select a.id, b.id, 'branch', ST_Distance(b.s, a.g), ST_LineLocatePoint(a.g, b.s) * a.length_m
 from re b join r a on a.id <> b.id and ST_DWithin(b.s, a.g, {NHD_SNAP_M})
-join re ae on ae.id = a.id
-where ST_Distance(b.s, a.g) <= case when ae.osm and b.osm then {OSM_SNAP_M} else {NHD_SNAP_M} end
-  and not ST_DWithin(b.s, ae.e, {NHD_SNAP_M}) and not ST_DWithin(b.s, ae.s, {NHD_SNAP_M})
+join re ae on ae.id = a.id,
+lateral (select case when ae.osm and b.osm then {OSM_SNAP_M} else {NHD_SNAP_M} end snap) x
+where ST_Distance(b.s, a.g) <= x.snap and not ST_DWithin(b.s, ae.e, x.snap) and not ST_DWithin(b.s, ae.s, x.snap)
 on conflict do nothing"""),
     ("joins", f"""
 insert into water.reach_link (from_reach, to_reach, method, gap_m, at_m)
 select a.id, b.id, 'joins', ST_Distance(a.e, b.g), a.length_m
 from re a join r b on a.id <> b.id and ST_DWithin(a.e, b.g, {NHD_SNAP_M})
-join re be on be.id = b.id
-where ST_Distance(a.e, b.g) <= case when a.osm and be.osm then {OSM_SNAP_M} else {NHD_SNAP_M} end
-  and not ST_DWithin(a.e, be.s, {NHD_SNAP_M}) and not ST_DWithin(a.e, be.e, {NHD_SNAP_M})
+join re be on be.id = b.id,
+lateral (select case when a.osm and be.osm then {OSM_SNAP_M} else {NHD_SNAP_M} end snap) x
+where ST_Distance(a.e, b.g) <= x.snap and not ST_DWithin(a.e, be.s, x.snap) and not ST_DWithin(a.e, be.e, x.snap)
 on conflict do nothing"""),
 ]
 
 BODIES = f"""
 create temp table b on commit drop as
-select case when osm_type = 'r' then 2 * osm_id + 1 else 2 * osm_id end id, kind, name, coalesce(intermittent, false)
-         intermittent, 'osm'::text geometry_from, osm_type, osm_id, null::text nhd_pid,
+select case when osm_type = 'r' then 2 * osm_id + 1 else 2 * osm_id end id, kind, {rules.name_sql("name")} as name,
+       coalesce(intermittent, false) intermittent, 'osm'::text geometry_from, osm_type, osm_id, null::text nhd_pid,
        ST_Multi(ST_CollectionExtract(ST_MakeValid(geom), 3)) geom
 from water.osm_feature
 where active and shape = 'area' and kind in {BODY_KINDS!r} and osm_type in ('w', 'r');
@@ -310,7 +320,8 @@ update b set g = ST_Transform(geom, 32611);
 update b set area_m2 = ST_Area(g);
 create index on b using gist (g);
 create temp table n_poly on commit drop as
-select permanent_identifier pid, layer, ftype_name, gnis_name, hydrographiccategory, reservoirtype,
+select permanent_identifier pid, layer, ftype_name, {rules.name_sql("gnis_name")} gnis_name, hydrographiccategory,
+       reservoirtype,
        ST_CollectionExtract(ST_Intersection(ST_Transform(ST_CollectionExtract(ST_MakeValid(geom), 3), 32611),
                                             box.g), 3) g
 from water.nhd_polygon, box
@@ -341,27 +352,41 @@ where c.covered < 0.5 * c.area and not ST_IsEmpty(n.g)"""
 
 STRUCTURES = f"""
 create temp table s on commit drop as
-select 4 * osm_id + case osm_type when 'n' then 0 when 'w' then 1 else 2 end id, kind, name,
-       'osm_waterways'::text source,
-       osm_type || osm_id source_id, null::text gauge_lid,
-       case when shape = 'point' then geom else ST_PointOnSurface(ST_MakeValid(geom)) end geom
+select 4 * osm_id + case osm_type when 'n' then 0 when 'w' then 1 else 2 end id, kind,
+       {rules.name_sql("name")} as name, 'osm_waterways'::text source, osm_type || osm_id source_id,
+       null::text gauge_lid, case when shape = 'point' then geom else ST_PointOnSurface(ST_MakeValid(geom)) end geom,
+       ST_Transform(ST_MakeValid(geom), 32611) src
 from (select distinct on (osm_type, osm_id) * from water.osm_feature
       where active and kind in ('dam', 'weir', 'lock_gate', 'sluice_gate', 'waterfall', 'spring')
         and (shape = 'point' or GeometryType(geom) in ('LINESTRING', 'POLYGON', 'MULTIPOLYGON'))
       order by osm_type, osm_id, case shape when 'point' then 0 when 'area' then 1 else 2 end) o;
-insert into s
-select {NHD_BASE} + {h48("'structure:' || n.permanent_identifier")}, n.kind, n.gnis_name, 'nhd_hr',
-       n.permanent_identifier, null, n.geom
-from (select permanent_identifier, gnis_name,
-             case ftype_name when 'Spring/Seep' then 'spring' when 'Waterfall' then 'waterfall' end kind, geom
+create index on s using gist (src);
+create temp table n_s on commit drop as
+select {NHD_BASE} + {h48("'structure:' || n.permanent_identifier")} id, n.kind, n.name, n.permanent_identifier,
+       n.geom, ST_Transform(n.src, 32611) src
+from (select permanent_identifier, {rules.name_sql("gnis_name")} as name,
+             case ftype_name when 'Spring/Seep' then 'spring' when 'Waterfall' then 'waterfall' end kind, geom,
+             geom src
       from water.nhd_point where layer = 'point' and ftype_name in ('Spring/Seep', 'Waterfall')
       union all
-      select permanent_identifier, gnis_name, case when gnis_name ~* '\\mweir\\M' then 'weir' else 'dam' end,
-             ST_PointOnSurface(geom)
-      from water.nhd_line where ftype_name = 'Dam/Weir') n
-where not exists (select 1 from s o where o.source = 'osm_waterways' and o.kind = n.kind
-                  and ST_DWithin(ST_Transform(o.geom, 32611), ST_Transform(n.geom, 32611), {STRUCTURE_DEDUPE_M}));
-insert into s
+      select permanent_identifier, {rules.name_sql("gnis_name")},
+             case when gnis_name ~* '\\mweir\\M' then 'weir' else 'dam' end, ST_PointOnSurface(geom), geom
+      from water.nhd_line where ftype_name = 'Dam/Weir') n;
+create temp table n_s_dup on commit drop as
+select n.id, n.name, (select o.id from s o
+                      where {STRUCTURE_FAMILY_SQL.format(k="o.kind")} = {STRUCTURE_FAMILY_SQL.format(k="n.kind")}
+                        and ST_DWithin(o.src, n.src, {STRUCTURE_DEDUPE_M})
+                      order by (o.kind = n.kind) desc, ST_Distance(o.src, n.src), o.id limit 1) osm_id
+from n_s n;
+update s set name = d.name
+from (select distinct on (osm_id) osm_id, name from n_s_dup where osm_id is not null and name is not null
+      order by osm_id, id) d
+where s.id = d.osm_id and s.name is null;
+insert into s (id, kind, name, source, source_id, gauge_lid, geom, src)
+select n.id, n.kind, n.name, 'nhd_hr', n.permanent_identifier, null, n.geom, n.src
+from n_s n join n_s_dup d using (id)
+where d.osm_id is null;
+insert into s (id, kind, name, source, source_id, gauge_lid, geom)
 select {GAUGE_BASE} + {h48("g.lid")}, 'gauge', g.name, 'nwps_gauges', g.lid, g.lid, g.geom
 from gauges g;
 alter table s add column reach_id bigint, add column minzoom smallint, add column on_river boolean default false,
@@ -404,18 +429,24 @@ having count(*)::real / max(m.n) >= 0.2
 on conflict do nothing"""
 
 IDWR = """
+create temp table i_org on commit drop as
+select objectid, name, ST_Multi(ST_CollectionExtract(ST_MakeValid(geom), 3)) geom from water.idwr_org;
+create temp table i_season on commit drop as
+select objectid, season, start_month, start_day, end_month, end_day,
+       ST_Multi(ST_CollectionExtract(ST_MakeValid(geom), 3)) geom
+from water.idwr_season;
 insert into water.canal_org (canal_id, objectid, name, share, at_head, build_id)
 select c.id, o.objectid, o.name, least(1, sum(ST_Length(ST_Intersection(rr.geom, o.geom)::geography)) / c.length_m),
        bool_or(rr.id = c.head_reach_id and ST_Intersects(ST_StartPoint(rr.geom), o.geom)), %(build)s
 from water.canal c join water.reach rr on rr.canal_id = c.id
-join water.idwr_org o on ST_Intersects(rr.geom, o.geom)
+join i_org o on ST_Intersects(rr.geom, o.geom)
 group by c.id, o.objectid, o.name, c.length_m
 having sum(ST_Length(ST_Intersection(rr.geom, o.geom)::geography)) / c.length_m >= 0.1
     or bool_or(rr.id = c.head_reach_id and ST_Intersects(ST_StartPoint(rr.geom), o.geom));
 insert into water.canal_season (canal_id, objectid, season, start_month, start_day, end_month, end_day, build_id)
 select distinct on (c.id) c.id, s.objectid, s.season, s.start_month, s.start_day, s.end_month, s.end_day, %(build)s
 from water.canal c join water.reach rr on rr.id = c.head_reach_id
-join water.idwr_season s on ST_Intersects(ST_StartPoint(rr.geom), s.geom)
+join i_season s on ST_Intersects(ST_StartPoint(rr.geom), s.geom)
 order by c.id, s.objectid"""
 
 RULE_COLUMNS = ("id, geometry_from, src_kind, name, osm_intermittent, piped, osm_width, nhd_class, nhd_category, "
@@ -427,26 +458,29 @@ DRAWN_TABLES = ("water.canal_season", "water.canal_org", "water.gauge", "water.r
 # ---- rules applied in Python ------------------------------------------------------------------------------------
 
 def reach_rules(row, main_canals):
-    """kind, flow, intermittent, name_key, width, width_from, minzoom for one reach row (a dict)."""
+    """kind, flow, intermittent, name_key, width, width_from, minzoom, and whether HydroShare's type set the kind
+    (kind_from_hydroshare), for one reach row (a dict)."""
+    name = rules.real_name(row["name"])
     if row["geometry_from"] == "osm":
-        kind = rules.osm_kind(row["src_kind"], row["name"], row["hs_type"])
+        kind = rules.osm_kind(row["src_kind"], name, row["hs_type"])
+        own = rules.osm_kind(row["src_kind"], name)
     else:
-        kind = rules.nhd_kind(row["nhd_class"], row["name"], row["streamorder"])
+        kind = own = rules.nhd_kind(row["nhd_class"], name, row["streamorder"])
         hs = rules.HYDROSHARE_KIND.get(row["hs_type"])
-        if hs and kind in rules.CANAL_KINDS and hs in rules.CANAL_KINDS and not row["name"]:
+        if hs and kind in rules.CANAL_KINDS and hs in rules.CANAL_KINDS and not name:
             kind = hs
     fl = rules.flow(row["osm_intermittent"], row["nhd_category"] if kind in ("river", "stream") else None)
     intermittent = fl in ("intermittent", "ephemeral")
     main = row.get("canal_id") in main_canals and kind == "canal"
-    named = bool(row["name"])
+    named = bool(name)
     order = row["streamorder"] if kind in ("river", "stream") else None
     w, how = rules.width(kind, intermittent=intermittent, order=order, osm_width=row["osm_width"], named=named,
                          main=main)
     z = rules.reach_minzoom(kind, intermittent=intermittent, order=order, visibility=row["visibilityfilter"],
                             named=named, main=main, nhd_only=row["geometry_from"] == "nhd", piped=row["piped"],
                             has_nhd=row["nhd_class"] is not None)
-    return {"kind": kind, "flow": fl, "intermittent": intermittent, "name_key": rules.name_key(row["name"]),
-            "width_m": w, "width_from": how, "minzoom": z}
+    return {"kind": kind, "flow": fl, "intermittent": intermittent, "name_key": rules.name_key(name),
+            "width_m": w, "width_from": how, "minzoom": z, "kind_from_hydroshare": kind != own}
 
 
 def canal_kinds(rows):
@@ -586,10 +620,13 @@ def _set(conn, table, key, columns, rows):
 
 
 def inputs(conn):
-    """What this build reads: each load's sha256 and the OSM extract's MD5."""
-    loads = {s: {"load": i, "sha256": h, "file": f, "loaded_at": str(t)} for s, i, h, f, t in conn.execute(
-        """select distinct on (source) source, id, sha256, file, loaded_at from water.load
-           order by source, id desc""").fetchall()}
+    """What this build reads: each load's prepared file and its sha256, the download it was prepared from (its file
+    and sha256, from prepare.json), and the OSM extract's MD5."""
+    loads = {s: {"load": i, "sha256": h, "file": f, "loaded_at": str(t), "download": d, "download_sha256": dh}
+             for s, i, h, f, t, d, dh in conn.execute(
+                 """select distinct on (source) source, id, sha256, file, loaded_at, prepared->'input'->>'file',
+                           prepared->'input'->>'sha256'
+                    from water.load order by source, id desc""").fetchall()}
     osm = conn.execute("""select md5, extract_file, data_as_of, loaded_at from ops.osm_consumer
                           where consumer = 'water.osm_waterways'""").fetchone() \
         if conn.execute("select to_regclass('ops.osm_consumer') is not null").fetchone()[0] else None
@@ -801,6 +838,9 @@ update water.canal c set head_structure_id = (
                            (select count(*) from water.canal_org),
                            (select count(*) from water.canal_season)""").fetchone()))
     counts = {k: (float(v) if hasattr(v, "is_integer") and not isinstance(v, int) else v) for k, v in counts.items()}
+    # Reaches whose kind HydroShare's type set (an unnamed OSM canal it calls a lateral, drain or field supply): with
+    # its names, what makes HydroShare an input of the exports (their kinds and widths).
+    counts["kinds_from_hydroshare"] = sum(1 for v in final.values() if v["kind_from_hydroshare"])
     conn.execute("update water.build set finished_at = clock_timestamp(), counts = %s::jsonb where id = %s",
                  (json.dumps(counts, default=float), build_id))
     return build_id, counts

@@ -233,6 +233,25 @@ class DatabaseTest(unittest.TestCase):
             idwr.store(self.conn, idwr_irrigation_orgs.SOURCE["name"], idwr_irrigation_orgs.TABLE,
                        idwr_irrigation_orgs.INSERT, idwr_irrigation_orgs.rows(feats[:1], T0), fid, T0, "test")
 
+    def test_idwr_polygons_are_stored_valid(self):
+        # A ring crossing itself, as IDWR serves 14 of its 59 organizations: stored as the valid polygons it outlines.
+        self.conn.execute("delete from water.idwr_org")
+        from ingest import db
+        db.ensure_source(self.conn, idwr_irrigation_orgs.SOURCE)
+        fid = self.conn.execute("insert into ops.fetch (source, started_at, ok) values (%s, %s, true) returning id",
+                                (idwr_irrigation_orgs.SOURCE["name"], T0)).fetchone()[0]
+        # Lobes of 0.5 and 2 (0.01 degree units), so the ring has an area and a side (the reader drops a ring without)
+        bowtie = {"rings": [[[-116.50, 43.40], [-116.47, 43.42], [-116.47, 43.40], [-116.50, 43.41], [-116.50, 43.40]]]}
+        feats = [{"attributes": {"OBJECTID": 1, "NAME": "Bow Tie District"}, "geometry": bowtie}]
+        idwr.store(self.conn, idwr_irrigation_orgs.SOURCE["name"], idwr_irrigation_orgs.TABLE,
+                   idwr_irrigation_orgs.INSERT, idwr_irrigation_orgs.rows(feats, T0), fid, T0, "test")
+        valid, parts, area = self.conn.execute(
+            "select ST_IsValid(geom), ST_NumGeometries(geom), round((ST_Area(geom) * 1e4)::numeric, 3)::float8 "
+            "from water.idwr_org").fetchone()
+        self.assertEqual((valid, parts, area), (True, 2, 2.5))      # its two triangles
+        self.assertIn("ST_MakeValid", idwr_irrigation_orgs.INSERT)
+        self.assertIn("ST_MakeValid", idwr_season_of_use.INSERT)
+
 
 if __name__ == "__main__":
     unittest.main()

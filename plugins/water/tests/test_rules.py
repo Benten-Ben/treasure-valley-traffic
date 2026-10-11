@@ -41,6 +41,13 @@ class KindTest(unittest.TestCase):
         self.assertIsNone(rules.name_key("  "))
         self.assertIsNone(rules.name_key(None))
 
+    def test_placeholders_are_no_name(self):
+        for name in ("Unnamed Drain", "Unnamed Supply", "UNNAMED LATERAL", " Unnamed Creek ", "Unnamed", "Field Supply",
+                     "Pump Lifter", "Private Drain", "Drain", "", "  ", None):
+            self.assertIsNone(rules.real_name(name), name)
+        for name in ("LATERAL 34", "Unnamedville Canal", "Supply Ditch", "Field Supply Lateral", "Drain 5"):
+            self.assertEqual(rules.real_name(name), name)
+
     def test_flow(self):
         self.assertEqual(rules.flow(True, "Perennial"), "intermittent")      # OSM's tag first
         self.assertEqual(rules.flow(False, "Intermittent"), "perennial")
@@ -141,6 +148,16 @@ class ReachRulesTest(unittest.TestCase):
         r = build.reach_rules(self.row(geometry_from="nhd", src_kind=None, name=None, nhd_class="canal_ditch",
                                        hs_type="Lateral", canal_id=None), set())
         self.assertEqual((r["kind"], r["width_m"], r["minzoom"]), ("lateral", 2.5, 13))
+
+    def test_a_placeholder_neither_names_nor_kinds(self):
+        # OSM's unnamed canal with HydroShare's 'Unnamed Supply' (a field supply): an unnamed ditch, kind from its type.
+        r = build.reach_rules(self.row(name="Unnamed Supply", hs_type="Field Supply", canal_id=None), set())
+        self.assertEqual((r["kind"], r["width_m"], r["minzoom"], r["name_key"], r["kind_from_hydroshare"]),
+                         ("ditch", 1.5, 13, None, True))
+        r = build.reach_rules(self.row(src_kind="stream", name="Unnamed Drain", hs_type="Drain", canal_id=None), set())
+        self.assertEqual((r["kind"], r["kind_from_hydroshare"]), ("stream", False))
+        r = build.reach_rules(self.row(), set())
+        self.assertFalse(r["kind_from_hydroshare"])
 
     def test_intermittent_wash(self):
         r = build.reach_rules(self.row(geometry_from="nhd", src_kind=None, name=None, nhd_class="stream_river",

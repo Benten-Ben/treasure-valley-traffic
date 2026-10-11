@@ -30,9 +30,9 @@ SOURCE = {
              "note to IDWR is the owner's to send.",
 }
 
-INSERT = """insert into water.idwr_season (objectid, season, spring, fall, start_month, start_day, end_month, end_day,
+INSERT = f"""insert into water.idwr_season (objectid, season, spring, fall, start_month, start_day, end_month, end_day,
               geom, fetched_at)
-            values (%s, %s, %s, %s, %s, %s, %s, %s, ST_Multi(ST_SetSRID(ST_GeomFromGeoJSON(%s), 4326)), %s)"""
+            values (%s, %s, %s, %s, %s, %s, %s, %s, {idwr.GEOM_SQL}, %s)"""
 
 
 def _day(v, top):

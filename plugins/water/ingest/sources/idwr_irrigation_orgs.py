@@ -31,8 +31,8 @@ SOURCE = {
              "to IDWR is the owner's to send.",
 }
 
-INSERT = """insert into water.idwr_org (objectid, name, place_of_use, lpou, process, acres, geom, fetched_at)
-            values (%s, %s, %s, %s, %s, %s, ST_Multi(ST_SetSRID(ST_GeomFromGeoJSON(%s), 4326)), %s)"""
+INSERT = f"""insert into water.idwr_org (objectid, name, place_of_use, lpou, process, acres, geom, fetched_at)
+            values (%s, %s, %s, %s, %s, %s, {idwr.GEOM_SQL}, %s)"""
 
 
 def parse(attrs):

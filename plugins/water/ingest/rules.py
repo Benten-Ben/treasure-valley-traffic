@@ -48,6 +48,27 @@ _RIVER = re.compile(r"\briver\b", re.IGNORECASE)
 HYDROSHARE_KIND = {"Canal": "canal", "Lateral": "lateral", "Drain": "drain", "Field Supply": "ditch",
                    "Pump Lifter": "ditch", "Creek": "stream", "River": "river"}
 
+# Names that aren't names. HydroShare's canal network fills its Name field where a line has none with placeholders
+# ("Unnamed Drain", "Unnamed Supply", "Unnamed Lateral", "Unnamed Creek": about 2,070 of its lines) and with its
+# type's words ("Field Supply", "Pump Lifter", "Private Drain"). water-build reads them as no name, from every source,
+# so they never label a line, group a canal or make a canal "named" (wider, earlier). One pattern for Python and
+# PostgreSQL's ~* (case-insensitive in both); it holds no quote or percent sign, so SQL can carry it inline.
+PLACEHOLDER_NAME = (r"^\s*(unnamed(\W.*)?|(private\s+)?(field\s+supply|pump\s+lifter|supply|drain|lateral|ditch|"
+                    r"canal|creek|stream|river|slough|wasteway))\s*$")
+_PLACEHOLDER = re.compile(PLACEHOLDER_NAME, re.IGNORECASE)
+
+
+def real_name(name):
+    """The name, or None when there's none or it's a placeholder ('Unnamed Drain', 'Field Supply')."""
+    if not name or not name.strip() or _PLACEHOLDER.match(name):
+        return None
+    return name
+
+
+def name_sql(column):
+    """SQL for a name column read through real_name()."""
+    return f"case when {column} ~* '{PLACEHOLDER_NAME}' or btrim({column}) = '' then null else {column} end"
+
 
 def name_key(name):
     """A name for grouping: lower case, letters and digits only ('A line Canal' and 'A Line Canal' are one)."""

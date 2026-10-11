@@ -12,13 +12,18 @@ manifest.json last, from the newest water-build, read in one snapshot. As a run 
 
 Only what the map draws goes into the base: cards read the rest (sources, evidence, canals, gauges, IDWR's side
 tables) from the plugin's own API. The base never reads IDWR (the bake refuses any input from an `idwr_*` source),
-and the mask reads only OSM's and NHD's geometry, both republishable (the ground's C17 rule).
+and the mask's geometry is OSM's and NHD's, all of it republishable (the ground's C17 rule).
 
-Licences: the reaches and bodies carry OSM's geometry and NHD's facts, and HydroShare's names on some canals: ODbL,
-republish yes, credited "© OpenStreetMap contributors; USGS National Hydrography Dataset; Tatum, Bittmann, Stone and
-Kaiser (2022), HydroShare (CC BY 4.0; modified)". The mask is ODbL from OSM and NHD. Widths are estimates ⚠️
-(rules.py).
-Standard library plus psycopg (and basemap/ground, which the ingest image carries).
+Licences: the reaches and bodies carry OSM's geometry and NHD's facts, and on some canals HydroShare's names or its
+type (a lateral, drain or field supply), which set their kinds and widths: ODbL, republish yes, credited "©
+OpenStreetMap contributors; USGS National Hydrography Dataset; Tatum, Bittmann, Stone and Kaiser (2022), HydroShare
+(CC BY 4.0; modified)". The mask buffers the reaches to those widths, so it lists the same inputs. HydroShare is an
+input of the reaches and the mask only when the build took a name or a kind from it. Widths are estimates ⚠️
+(rules.py). Each input's sha256 is the download's (the file at its url); the prepared GeoPackage loaded from it is
+named in its note.
+
+Standard library plus psycopg, basemap/ground (the export contract) and basemap/landscape's plan (the bake's rules
+for a base layer), both of which the ingest image carries (ingest/Dockerfile).
 """
 
 import argparse
@@ -30,6 +35,7 @@ import sys
 
 from basemap.ground import inputs as GI
 from basemap.ground import manifest as M
+from basemap.landscape import plan as bake_plan
 
 from .sources import hydroshare_canals, nhd_hr, osm_waterways
 
@@ -68,9 +74,19 @@ class ExportError(ValueError):
     pass
 
 
-def _sha256(entry):
-    h = (entry or {}).get("sha256")
-    return {"sha256": h} if isinstance(h, str) and re.fullmatch(r"[0-9a-f]{64}", h) else {}
+def _hash(h):
+    return isinstance(h, str) and re.fullmatch(r"[0-9a-f]{64}", h) is not None
+
+
+def _download(entry, note):
+    """The manifest's sha256 (the download's: what the input's url serves) and a note naming the prepared file that
+    was loaded from it, from a load's entry in water.build.inputs."""
+    entry = entry or {}
+    out = {"sha256": entry["download_sha256"]} if _hash(entry.get("download_sha256")) else {}
+    if entry.get("file") and _hash(entry.get("sha256")):
+        note += f"; loaded from {entry['file']} (sha256 {entry['sha256']}), prepared from "
+        note += f"{entry.get('download') or 'the download'}"
+    return {**out, "note": note}
 
 
 def input_entries(build_inputs):
@@ -84,11 +100,11 @@ def input_entries(build_inputs):
              "note": "the valley cut of the Idaho extract; the box's Oregon slice has no OpenStreetMap data"},
             {"name": "nhd", "licence": "public-domain", "republish": "yes", "credit": nhd_hr.SOURCE["credit"],
              "source": "water/nhd_hr", "url": nhd_hr.URL, "version": "HU4 1705, published 2023-12-09",
-             **_sha256(nhd), "note": "NAD83 read as WGS 84 (the ground's datum policy)"},
+             **_download(nhd, "NAD83 read as WGS 84 (the ground's datum policy)")},
             {"name": "hydroshare", "licence": "CC-BY-4.0", "republish": "yes",
              "credit": hydroshare_canals.SOURCE["credit"], "source": "water/hydroshare_canals",
-             "url": hydroshare_canals.URL, "doi": hydroshare_canals.DOI, **_sha256(hs),
-             "note": "canal names where OpenStreetMap and NHD have none"}]
+             "url": hydroshare_canals.URL, "doi": hydroshare_canals.DOI,
+             **_download(hs, "canal names where OpenStreetMap and NHD have none, and the kinds of unnamed canals")}]
 
 
 def export(conn, archive, build=None, min_features=None):
@@ -117,8 +133,10 @@ def export(conn, archive, build=None, min_features=None):
     if not all(blobs.values()):
         raise ExportError(f"build {build_id}: an empty layer ({', '.join(k for k, v in blobs.items() if not v)})")
 
-    # HydroShare is an input only when its names are in the reaches (CC BY: credited wherever they show).
-    inputs = [i for i in input_entries(build_inputs or {}) if i["name"] != "hydroshare" or named_by_hs]
+    # HydroShare is an input only when the reaches carry its names or kinds (CC BY: credited wherever they show), and
+    # then of the mask too, whose widths follow them.
+    hydroshare = bool(named_by_hs or (counts or {}).get("kinds_from_hydroshare"))
+    inputs = [i for i in input_entries(build_inputs or {}) if i["name"] != "hydroshare" or hydroshare]
     base_inputs = [i["name"] for i in inputs]
     folder = M.export_dir(archive, "water", build or M.build_id())
     os.makedirs(folder)
@@ -139,9 +157,10 @@ def export(conn, archive, build=None, min_features=None):
              "note": "id: water.body.id (an OSM way's 2 x id, a relation's 2 x id + 1, NHD-only 2^51 + a hash); "
                      "name: '' for none; pools from z15, wetlands from z14"},
             {"name": "mask", "file": "mask.fgb", "format": "FlatGeobuf", "geometry": "MultiPolygon",
-             "inputs": ["osm", "nhd"], "base": False, "title": "Confident water, for the ground",
+             "inputs": base_inputs, "base": False, "title": "Confident water, for the ground",
              "note": "every body but wetlands, and the reaches OSM draws or both sources agree on, buffered to "
-                     "their widths; piped water and intermittent channels left out"},
+                     "their widths (which follow their names and kinds); piped water and intermittent channels left "
+                     "out"},
         ]
         m = M.write(folder, "water", inputs=inputs, layers=layers, command=COMMAND,
                     note=f"water-build {build_id} of {finished:%Y-%m-%d %H:%M} UTC: "
@@ -149,7 +168,6 @@ def export(conn, archive, build=None, min_features=None):
         choice = GI.resolve({"water": m}).choice("water/mask")
         if choice.fallback:
             raise ExportError(f"the ground wouldn't read water/mask: {choice.reason}")
-        from basemap.landscape import plan as bake_plan
         visibility = bake_plan.plugin_visibility()
         for lay in m.layers:
             if lay["base"]:
@@ -167,7 +185,6 @@ def main(argv=None):
     if not archive or not os.path.isdir(archive):
         print("water-export: set TVT_ARCHIVE to the archive folder", file=sys.stderr)
         return 1
-    from basemap.landscape import plan as bake_plan
     from ingest import builds, db
     try:
         with db.connect() as conn:
