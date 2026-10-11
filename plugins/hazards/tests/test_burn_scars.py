@@ -12,6 +12,7 @@ import json
 import os
 import unittest
 from datetime import date, datetime, timedelta, timezone
+from unittest import mock
 
 from ingest import manifest, seasons
 from ingest.db import version_hash
@@ -41,8 +42,8 @@ def payload(irwin="{00000000-0000-4000-8000-0000000000A1}", name="SYNTH ONE", fi
     return {k: v for k, v in p.items() if v is not None}
 
 
-def version(p, seen=T0, first=None, in_box=True, sid=None):
-    return bs.Version(sid or p.get("poly_IRWINID", "X").upper(), version_hash(p), p, first or seen, seen, in_box)
+def version(p, seen=T0, first=None, near=True, sid=None):
+    return bs.Version(sid or p.get("poly_IRWINID", "X").upper(), version_hash(p), p, first or seen, seen, near)
 
 
 class ManifestTest(unittest.TestCase):
@@ -116,7 +117,7 @@ class RulesTest(unittest.TestCase):
         for why, ps in cases.items():
             for p in ps:
                 self.assertEqual(bs.scar_of(version(p), TODAY), (None, why))
-        self.assertEqual(bs.scar_of(version(payload(), in_box=False), TODAY), (None, "outside the box"))
+        self.assertEqual(bs.scar_of(version(payload(), near=False), TODAY), (None, "outside the box"))
 
     def test_a_scars_row(self):
         row, _ = bs.scar_of(version(payload(acres=None, attr_IncidentSize=42)), TODAY)
@@ -128,15 +129,15 @@ class RulesTest(unittest.TestCase):
                           "fade_2_on": date(2028, 11, 1), "gone_on": date(2029, 11, 1)})
         self.assertEqual(row["perimeter_at"], datetime(2026, 7, 9, 3, tzinfo=UTC))
         daily, _ = bs.scar_of(version(payload(final=False)), TODAY)
-        self.assertEqual(daily["perimeter"], "daily")
+        self.assertEqual(daily["perimeter"], "daily")             # a fire with no final perimeter yet is drawn
 
 
 class FadeTest(unittest.TestCase):
     def test_three_whole_growing_seasons_after_the_fire(self):
         for burned, first in [(date(2025, 7, 31), 2026),    # mid-season: next year's is the first whole one
                               (date(2025, 12, 31), 2026),
-                              (date(2026, 3, 31), 2026),    # before the season: this year's counts
-                              (date(2026, 4, 1), 2027),     # on its first day: it doesn't
+                              (date(2026, 3, 31), 2026),    # before the season: this year's counts (7 months)
+                              (date(2026, 4, 1), 2027),     # on its first day: it doesn't (19 months)
                               (date(2026, 10, 31), 2027),
                               (date(2026, 11, 1), 2027)]:
             with self.subTest(burned):
@@ -310,6 +311,79 @@ class RefreshDatabaseTest(unittest.TestCase):
         self.assertEqual(set(self.scars()), {fid})
         self.assertEqual(self.scars()[fid][-1], "final")
         self.assertEqual(len(self.versions()), 2)
+
+    def test_a_box_that_overlaps_is_not_enough(self):
+        # An L around the box's north-east corner: its bounding box overlaps the map box, its outline doesn't.
+        west, south, east, north = bs.BOX
+        ell = {"type": "Polygon", "coordinates": [[[east + 0.01, north - 0.05], [east + 0.02, north - 0.05],
+                                                   [east + 0.02, north + 0.02], [east - 0.05, north + 0.02],
+                                                   [east - 0.05, north + 0.01], [east + 0.01, north + 0.01],
+                                                   [east + 0.01, north - 0.05]]]}
+        self.add(payload(irwin="{0-L}", name="ELL"), ell)
+        self.add(payload(irwin="{0-A}"), square(-116.40, 43.60))
+        stats = self.refresh()
+        self.assertEqual((stats["written"], stats["scars"], stats["left out (outside the box)"]), (1, 1, 1))
+        self.assertNotIn("problems", stats)
+
+    def test_the_refresh_sets_its_own_statement_limit(self):
+        self.refresh(statement_timeout_s=42)
+        self.assertEqual(self.conn.execute("show statement_timeout").fetchone()[0], "42s")
+
+    def test_one_fire_s_geometry_failing_leaves_out_that_fire_only(self):
+        good = self.add(payload(irwin="{0-A}"), square(-116.40, 43.60))
+        throws = self.add(payload(irwin="{0-B}", name="THROWS"), square(-116.30, 43.60))
+        slow = self.add(payload(irwin="{0-C}", name="SLOW"), square(-116.20, 43.60))
+        real = bs.write_scar
+
+        def write(conn, row, *a):
+            if row["fire_id"] == throws:     # a real PostGIS error (XX000), as GEOS throwing would give
+                conn.execute("select ST_GeomFromText('POLYGON((0 0, 1 1))')")
+            if row["fire_id"] == slow:       # a real statement timeout
+                conn.execute("select pg_sleep(2)")
+            return real(conn, row, *a)
+
+        with mock.patch.object(bs, "write_scar", side_effect=write):
+            stats = self.refresh(statement_timeout_s=0.2)
+        self.assertEqual((stats["written"], stats["scars"], stats["left out (geometry error)"]), (1, 1, 2))
+        self.assertEqual(set(self.scars()), {good})
+        self.assertIn("THROWS ({0-B}): geometry requires more points", stats["problems"])
+        self.assertIn("SLOW ({0-C}): canceling statement due to statement timeout", stats["problems"])
+        self.assertEqual(len(self.versions()), 1)
+        again = self.refresh()                       # tried again on the next run
+        self.assertEqual((again["written"], again["scars"]), (2, 3))
+
+    def test_a_drawn_scar_whose_new_version_cant_be_drawn_keeps_its_last_good_one(self):
+        fid = self.add(payload(irwin="{0-A}", final=False), square(-116.40, 43.60))
+        self.refresh()
+        old = self.conn.execute("select record_hash from hazards.burn_scar").fetchone()[0]
+        flat = {"type": "Polygon", "coordinates": [[[-116.40, 43.60], [-116.39, 43.60], [-116.38, 43.60],
+                                                    [-116.39, 43.60], [-116.40, 43.60]]]}   # zero area only
+        self.add(payload(irwin="{0-A}", _geom="flat"), flat, seen=T0 + timedelta(hours=1))
+        stats = self.refresh()
+        self.assertEqual((stats["written"], stats["deleted"], stats["left out (geometry unusable)"],
+                          stats["kept from an older version"], stats["stepped"], stats["version"]),
+                         (0, 0, 1, 1, 0, "unchanged"))
+        self.assertIn("SYNTH ONE ({0-A}): nothing left once made valid", stats["problems"])
+        self.assertEqual(self.conn.execute("select record_hash from hazards.burn_scar").fetchone()[0], old)
+        stepped = self.refresh(today=date(2027, 11, 1))          # its step still comes on its day
+        self.assertEqual((stepped["stepped"], stepped["written"]), (1, 0))
+        (n, f, *_), = self.scars().values()
+        self.assertEqual(n, 1)
+        self.assertAlmostEqual(f, 2 / 3, places=6)
+        self.assertEqual(len(self.versions()), 2)
+        self.assertEqual(self.refresh(today=date(2027, 11, 1))["version"], "unchanged")   # stepped once
+        self.assertEqual(set(self.scars()), {fid})
+
+    def test_out_of_time_the_rest_wait_for_the_next_run(self):
+        a = self.add(payload(irwin="{0-A}"), square(-116.40, 43.60))
+        self.refresh()
+        self.add(payload(irwin="{0-B}"), square(-116.30, 43.60))
+        late = self.refresh(today=date(2027, 11, 1), budget_s=0)
+        self.assertEqual((late["written"], late["left for the next run (out of time)"], late["version"]),
+                         (0, 2, "unchanged"))
+        self.assertEqual(set(self.scars()), {a})
+        stats = self.refresh(today=date(2027, 11, 1))
+        self.assertEqual((stats["written"], stats["scars"]), (2, 2))
 
     def test_most_scars_vanishing_is_refused(self):
         for i in range(12):
