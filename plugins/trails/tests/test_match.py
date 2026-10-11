@@ -377,18 +377,27 @@ class DatabaseTest(unittest.TestCase):
              "tags": {"highway": "track"}, "geom": line((7800, 200), (8200, 200))},            # crosses it
             {"type": "w", "osm_id": B + 33, "geometry": "linestring", "osm_version": 1, "osm_timestamp": T0,
              "tags": {"highway": "path"}, "geom": line((7996, 0), (7996, 400))},               # a path, not a track
+            {"type": "w", "osm_id": B + 34, "geometry": "linestring", "osm_version": 1, "osm_timestamp": T0,
+             "tags": {"highway": "track"}, "geom": line((9000, 0), (9000, 1000))},             # 30% along a canal
+            {"type": "w", "osm_id": B + 35, "geometry": "linestring", "osm_version": 1, "osm_timestamp": T0,
+             "tags": {"highway": "track"}, "geom": line((9500, 0), (9500, 800))},              # 75%, along two reaches
         ] + self.ways())
         osm_paths.consume(self.conn, run)
         self.conn.execute("create temp table reach_fixture (id bigint, name text, geom geometry) on commit drop")
-        self.conn.execute("insert into reach_fixture values (77, 'Fixture Canal', ST_SetSRID(ST_GeomFromGeoJSON(%s), 4326))",
-                          (json.dumps(line((8008, -50), (8008, 450))),))
+        for reach_id, geom in ((77, line((8008, -50), (8008, 450))), (78, line((9008, 0), (9008, 300))),
+                               (79, line((9508, 0), (9508, 300))), (80, line((9508, 300), (9508, 650)))):
+            self.conn.execute("insert into reach_fixture values (%s, 'Fixture Canal', "
+                              "ST_SetSRID(ST_GeomFromGeoJSON(%s), 4326))", (reach_id, json.dumps(geom)))
         n = match.canal_tracks(self.conn, T0, "select id::text as id, name, geom from pg_temp.reach_fixture")
-        self.assertEqual(n, 1)
-        self.assertEqual(self.conn.execute("select osm_id - %s, reach_id from trails.canal_track", (B,)).fetchall(),
-                         [(30, "77")])
+        self.assertEqual(n, 2)
+        got = self.conn.execute("select osm_id - %s, reach_id, line_share from trails.canal_track order by 1",
+                                (B,)).fetchall()
+        self.assertEqual([(r[0], r[1]) for r in got], [(30, "77"), (35, "80")])   # 80 runs along more of it
+        self.assertAlmostEqual(got[1][2], 0.81, delta=0.02)          # 650 m of 800, with the buffer's round end
         drawn = dict(self.conn.execute("select osm_id - %s, not_drawn from trails.path where osm_id between %s and %s",
-                                       (B, B + 30, B + 33)).fetchall())
-        self.assertEqual(drawn, {30: "irrigation access along a canal", 31: None, 32: None, 33: None})
+                                       (B, B + 30, B + 35)).fetchall())
+        self.assertEqual(drawn, {30: "irrigation access along a canal", 31: None, 32: None, 33: None, 34: None,
+                                 35: "irrigation access along a canal"})
         self.assertEqual(self.conn.execute("select count(*) from trails.target_way where osm_id = %s",
                                            (B + 30,)).fetchone()[0], 0)
 

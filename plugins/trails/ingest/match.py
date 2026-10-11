@@ -374,25 +374,36 @@ TRACKS_SQL = """select 'osm_paths' as source, w.osm_id::text as source_id, w.nam
 
 
 def canal_tracks(conn, now, reaches_sql=None):
-    """Rewrite trails.canal_track: the tracks along a canal bank. Returns its count, or None when
-    water's reaches don't exist yet (the rule is skipped). Doesn't commit."""
+    """Rewrite trails.canal_track: the tracks along a canal bank, where 60% or more of the track
+    lies within 15 m of canal reaches that match it (core's matcher: either one's share, and the
+    bearing). The reach recorded is the one most of the track lies along. Returns the count, or
+    None when water's reaches don't exist yet (the rule is skipped). Doesn't commit."""
     reaches_sql = reaches_sql or canal_reaches_sql(conn)
     if reaches_sql is None:
         return None
     matches = linematch.match(conn, TRACKS_SQL.format(reaches=reaches_sql, near=NEAR_DEG), reaches_sql, CANAL_RULE)
-    best = {}
-    for m in matches:                                      # each track's best reach: the most of it along one
-        share = m["line_share"] if m["line_share"] is not None else 1.0
-        if share >= best.get(m["source_id"], (-1,))[0]:
-            best[m["source_id"]] = (share, m)
-    conn.execute("delete from trails.canal_track")
+    conn.execute("drop table if exists pg_temp.tm_cm")
+    conn.execute("create temp table tm_cm (osm_id bigint, reach_id text, bearing_diff real) on commit drop")
     with conn.cursor() as cur:
-        cur.executemany(
-            "insert into trails.canal_track (osm_id, reach_id, line_share, bearing_diff, built_at) "
-            "values (%s, %s, %s, %s, %s)",
-            [(int(k), str(m["target_id"]), round(share, 3), m["bearing_diff"], now)
-             for k, (share, m) in best.items()])
-    return len(best)
+        with cur.copy("copy tm_cm (osm_id, reach_id, bearing_diff) from stdin") as cp:
+            for m in matches:
+                cp.write_row((int(m["source_id"]), str(m["target_id"]), m["bearing_diff"]))
+    conn.execute("delete from trails.canal_track")
+    return conn.execute(
+        f"""insert into trails.canal_track (osm_id, reach_id, line_share, bearing_diff, built_at)
+            with pair as (
+              select c.osm_id, c.reach_id, c.bearing_diff, ST_Buffer(ST_Transform(r.geom, {UTM}), %(near)s) as rb
+              from tm_cm c join ({reaches_sql}) r on r.id = c.reach_id),
+            track as (
+              select p.osm_id, avg(p.bearing_diff) as bearing_diff,
+                     ST_Length(ST_Intersection(w.g, ST_Union(p.rb))) / nullif(ST_Length(w.g), 0) as share,
+                     (array_agg(p.reach_id order by ST_Length(ST_Intersection(w.g, p.rb)) desc))[1] as reach_id
+              from pair p
+              join (select osm_id, ST_Transform(geom, {UTM}) as g from trails.any_way) w on w.osm_id = p.osm_id
+              group by p.osm_id, w.g)
+            select osm_id, reach_id, round(share::numeric, 3), round(bearing_diff::numeric, 1), %(now)s
+            from track where share >= %(share)s""",
+        {"near": CANAL_RULE.near_m, "now": now, "share": CANAL_RULE.min_share}).rowcount
 
 
 # ---- routes and the valley-zoom network --------------------------------------------------------
