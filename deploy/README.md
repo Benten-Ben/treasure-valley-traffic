@@ -424,6 +424,17 @@ What a load does:
   download): `farm-cdl-load`, then these two.
 - Then the refresh cascade (plan §6): the builds that read the new tables
   (`roads-build`, `water-build`, `trails-match`), the exports, the bake.
+  `roads-build` (the real-width roads, roads 0003) is a production load:
+  under `heavy` as `tvt_build`, about 8-9 minutes and 0.6 GB in its own
+  container (it measured 456-516 s on scratch, Oct 11), then `roads-export`
+  (about 15 s), whose base layers the bake reads:
+
+  ```bash
+  /srv/tvt/work/bin/heavy --deadline HH:MM --runtime 15 --peak 1 "roads-build (deploy)" \
+    docker run --rm --memory 2g --memory-swap 2g --cpus 2 --network tvt_default -e DATABASE_URL \
+      -e TVT_ARCHIVE=/srv/archive -v /srv/tvt/archive:/srv/archive \
+      tvt-ingest:latest sh -c 'python3 -m ingest roads-build && python3 -m ingest roads-export'
+  ```
 
 Timing at server scale, estimated Oct 6:
 

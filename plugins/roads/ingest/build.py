@@ -778,7 +778,9 @@ from roads.junction j
 join roads.piece p on p.id = any(j.pieces)
 cross join lateral (values ('from', p.from_junction = j.id, p.geom), ('to', p.to_junction = j.id, ST_Reverse(p.geom)))
   e(at_end, here, g)
-where e.here and p.from_junction is distinct from p.to_junction and not p.bridge and not p.tunnel
+where e.here and p.from_junction is distinct from p.to_junction and not p.bridge and not p.tunnel;
+create index on rb_arm (junction_id, piece_id);
+analyze rb_arm
 """
 
 # Each junction's carriageways, cut to its disc's box once: the closings, the lines' trims and the fills' cut read
@@ -1029,7 +1031,7 @@ def crosswalks(conn):
 # ---- 10. markings ----------------------------------------------------------------------------------
 
 # How far a piece's lines stop short of each end: at a junction, the length of the piece's line inside the
-# other pieces' carriageways there, plus the curb-return radius and JUNCTION_CLEAR_M; at a dead end a little;
+# carriageways there of the other pieces that cross it, plus the curb-return radius and JUNCTION_CLEAR_M; at a dead end a little;
 # where it continues into one other piece, nothing.
 _TRIMS = """
 create temp table rb_trim on commit drop as
@@ -1042,9 +1044,16 @@ with e as (
          (select degree from rb_node n where n.id = p.to_node)
   from roads.piece p
 ), k as (
+  -- the other pieces at the junction that cross this one: not its parallel neighbours (a divided road's other
+  -- carriageway, whose surface may touch it all the way along)
   select e.*, rj.r,
-         (select ST_Union(c.g) from rb_jclip c where c.junction_id = e.j and c.piece_id <> e.id) as other
+         (select ST_Union(c.g) from rb_jclip c
+          where c.junction_id = e.j and c.piece_id <> e.id
+            and (a.dir is null or not exists (
+                   select 1 from rb_arm o where o.junction_id = e.j and o.piece_id = c.piece_id
+                     and abs(sin(radians(o.dir - a.dir))) < sin(radians(%(parallel)s))))) as other
   from e left join rb_junc rj on rj.id = e.j
+  left join rb_arm a on a.junction_id = e.j and a.piece_id = e.id and a.at_end = e.at_end
 )
 select k.id, k.at_end,
        case when k.j is not null then
@@ -1137,7 +1146,7 @@ where q.f between 0.05 and 0.95
 
 def markings(conn, xsections):
     """Lines, stop bars and arrows from each piece's cross-section."""
-    conn.execute(_TRIMS, {"clear": JUNCTION_CLEAR_M, "dead": DEAD_END_TRIM_M})
+    conn.execute(_TRIMS, {"clear": JUNCTION_CLEAR_M, "dead": DEAD_END_TRIM_M, "parallel": PARALLEL_DEG})
     conn.execute("create index on rb_trim (id, at_end)")
     conn.execute(_TRIM_TO_CROSSWALKS, {"half": CROSSWALK_DEPTH_M / 2, "gap": STOP_BAR_GAP_M, "reach": 8.0})
     conn.execute("create temp table rb_lines (piece_id int, n int, kind text, dash text, offset_m real) on commit drop")
