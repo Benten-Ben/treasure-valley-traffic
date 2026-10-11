@@ -9,30 +9,40 @@
 
   -C DIR          the checkout (default: the current folder), mounted read-only at /repo
   --pkg PKG       the package the sheets are for: they go to /srv/tvt/private/sheets/<PKG>/<run>/ (a-z 0-9 . _ -)
-  --db NAME       read exports from that scratch database's archive (default tvt):
-                  /srv/tvt/work/scratch/archive/<NAME>/, read-only at /srv/archive ($TVT_ARCHIVE)
-  --archive DIR   another archive of exports instead, read-only (a folder under the work folder, or production's)
+  --db NAME       read exports from that scratch database's archive (default tvt): /srv/tvt/work/scratch/archive/<NAME>/
+  --archive DIR   another archive of exports instead: a folder under the work folder, or production's archive
   --in SRC[:NAME] a folder of other inputs (for --vector and --raster), read-only at /in/<NAME> (default: its name)
-  --timeout MIN   stop the run after MIN minutes (default 60; exit 124)
-  --wait MIN      wait at most MIN minutes for a free slot (default 30; exit 75)
+  --timeout MIN   stop the run after MIN minutes (default 60; exit 124); a run that starts in the day cuts it to end
+                  by 23:15
+  --wait MIN      wait at most MIN minutes for a free slot and the memory (default 30; exit 75)
   --dry-run       print the docker command and stop
 
 The draw arguments are `python -m basemap.sheets.sheet draw`'s (basemap/sheets/README.md); --out is given.
 It runs
 
   docker run --rm --init --memory 1g --memory-swap 1g --cpus 1 --network none --read-only --tmpfs /tmp (256 MB)
-    --user <you> -v DIR:/repo:ro -v <archive>:/srv/archive:ro -v /srv/tvt/tiles:/srv/tiles:ro
+    --user <you> -v DIR:/repo:ro -v /srv/tvt/tiles:/srv/tiles:ro
+    -v <archive>/<plugin>/export:/srv/archive/<plugin>/export:ro (each plugin's exports, nothing else)
     -v /srv/tvt/work/landcover/naip2025:/srv/naip/naip2025:ro (and naip2023) -v <SRC>:/in/<NAME>:ro
     -v /srv/tvt/private/sheets/<PKG>:/out tvt-worker python -m basemap.sheets.sheet draw --out /out <args>
 
+An archive is mounted one plugin's `export/` folder at a time: that's all a sheet reads ($TVT_ARCHIVE), and it keeps
+the rest out (builds, inboxes, anchors). Production's `trees/` is never mounted, nor any folder holding it: its builds
+carry the City of Boise's inventory, which this work never reads. Nor are the private files, secrets, the tools'
+folders, or the land-cover spike's own runs (only its `lidar/` and NAIP crops; its trees runs were matched against the
+City's inventory).
+
 A run is light (1 GB, 1 CPU, no network), but it isn't a unit test, so it keeps the quiet-hours rule: from 23:15 to
 06:00 Boise it starts only once tonight's camera roll-up has finished (heavy's reading of the capture services'
-status files). It needs 12 GB free on / plus 1 GB, doesn't start within its timeout of a planned VM restart
-(MAINTENANCE), and at most two runs go at once (a third waits for a slot). The private files, secrets and the
-City of Boise's tree data are never mounted.
+status files), not while a roll-up runs late into the day, and one that starts in the day ends by 23:15. It needs
+12 GB free on / plus 1 GB, and the drawing refuses a run whose frames could take more (a bound from their pixels)
+and stops drawing under 11 GB free; this runner stops the container under 11 GB too (exit 123). It doesn't start
+within its timeout of a planned VM restart (MAINTENANCE). At most two runs go at once, each only with 1 GB plus 3 GB
+of memory available (scratch's reserve); a third waits.
 
-Exit: the run's (0 every frame drawn; 1 a frame failed, see index.json; 2 bad arguments); 2 usage or a refused
-mount; 73 not enough disk; 75 not now (quiet hours, a restart, or no slot); 124 timed out; 125 docker couldn't start.
+Exit: the run's (0 every frame drawn; 1 a frame failed or wasn't drawn, see index.json; 2 bad arguments); 2 usage or
+a refused mount; 73 not enough disk; 75 not now (quiet hours, a restart, no slot or memory); 123 stopped under 11 GB
+free; 124 timed out; 125 docker couldn't start.
 
 Source: deploy/bin/sheets in the repo; installed in /srv/tvt/work/bin beside heavy, whose rules it asks.
 """
@@ -51,8 +61,11 @@ MEMORY = "1g"
 CPUS = "1"
 TMP_MB = 256
 SLOTS = 2
-PEAK_GB = 1
-EX_USAGE, EX_DISK, EX_LATER, EX_TIMEOUT = 2, 73, 75, 124
+PEAK_GB = 1                     # to start; the drawing then checks its own bound (sheet.py --min-free-gb)
+MEM_MB = 1024
+MEM_RESERVE_MB = 3072           # kept available beside a run, as scratch's light jobs keep it (deploy/scratch/lib.sh)
+MIN_RUN_MIN = 2                 # a run that would have less than this before 23:15 doesn't start
+EX_USAGE, EX_DISK, EX_LATER, EX_FLOOR, EX_TIMEOUT = 2, 73, 75, 123, 124
 
 # The VM's folders (the tests point these at a scratch tree).
 WORK = "/srv/tvt/work"
@@ -65,10 +78,14 @@ SCRATCH_ARCHIVE = "/srv/tvt/work/scratch/archive"
 SLOT_DIR = "/srv/tvt/work/sheets.slots"
 HEAVY = os.path.join(os.path.dirname(os.path.realpath(__file__)), "heavy")
 
-# Never mounted: folders with these names anywhere in the path, the work folder's tools, and production's trees
-# archive (its builds carry rows derived from the City of Boise's inventory, which this work never reads).
+# Never mounted: folders with these names anywhere in the path, the work folder's tools, production's trees archive
+# (its builds carry the City of Boise's inventory, which this work never reads) or any folder holding it, and the
+# land-cover spike's folder except its lidar and NAIP crops (its trees runs, experiments and their outputs were
+# matched against that inventory).
 NEVER_NAMES = {"private", "secrets", ".ssh", "plugins-private", "city_trees", "boise-trees"}
 WORK_NEVER = ("bin", "e2e", "worker-test", "worker-test.slots", "sheets.slots")
+LANDCOVER_OK = ("lidar", "naip2025", "naip2023")
+PLUGIN_RE = re.compile(r"[a-z][a-z0-9_]{0,63}")
 
 
 class Refused(Exception):
@@ -91,24 +108,59 @@ def load_heavy(path=None):
 
 # --- when ----------------------------------------------------------------------------------------------------------
 
+def to_close(h, t):
+    """Minutes from t to 23:15 (heavy's day window's close) when t is in the day, else None: a run that starts at
+    night, once the roll-up has finished, has the night ahead of it."""
+    if h.DAY[0] <= t.time() < h.DAY[1]:
+        return (h.at(t.date(), h.DAY[1]) - t).total_seconds() / 60
+    return None
+
+
+def run_limit(h, t, timeout_min):
+    """The minutes a run starting at t may take: its --timeout, cut to end by 23:15 when it starts in the day."""
+    left = to_close(h, t)
+    return timeout_min if left is None else min(timeout_min, left)
+
+
 def may_start(h, t, statuses, maint, timeout_min):
     """None if a run may start at t, else why not. Quiet hours (outside heavy's day window): only once tonight's
-    camera roll-up has finished. A planned restart: not within the run's timeout plus heavy's margin."""
+    camera roll-up has finished; in the day, not while a roll-up runs late. A run that would have under MIN_RUN_MIN
+    minutes before 23:15. A planned restart: not within the run's time plus heavy's margin."""
     clock = t.time()
-    if not (h.DAY[0] <= clock < h.DAY[1]):
+    if h.DAY[0] <= clock < h.DAY[1]:
+        going = h.rolling_now(t, statuses)
+        if going:
+            return f"the camera roll-up is still going ({', '.join(going)}): quiet hours, until it has finished"
+        limit = run_limit(h, t, timeout_min)
+        if limit < min(timeout_min, MIN_RUN_MIN):
+            return f"it's {h.hm(t)} in Boise: a run started now would have under {MIN_RUN_MIN} min before 23:15"
+    else:
         if clock >= h.DAY[1] or clock < h.NIGHT[0]:
             return (f"it's {h.hm(t)} in Boise: from 23:15 until tonight's camera roll-up (from 00:05) has finished, "
                     "only unit tests and scratch queries run")
         done, why = h.rollup_finished(t, statuses)
         if not done:
             return f"it's {h.hm(t)} in Boise and {why}: quiet hours, until the roll-up has finished"
+        limit = timeout_min
     if maint is not None:
         text, restart = maint
         if restart is None:
             return f"a VM restart is planned and MAINTENANCE gives no time heavy can read: {text[:200]!r}"
-        if t + dt.timedelta(minutes=timeout_min) > restart - h.MAINTENANCE_MARGIN:
+        if t + dt.timedelta(minutes=limit) > restart - h.MAINTENANCE_MARGIN:
             return (f"a VM restart is planned at {restart:%Y-%m-%d %H:%M} Boise, within this run's "
-                    f"{timeout_min:g} min (--timeout) and heavy's margin")
+                    f"{limit:.0f} min and heavy's margin")
+    return None
+
+
+def mem_available_mb(meminfo="/proc/meminfo"):
+    """MemAvailable in MB (None if it can't be read)."""
+    try:
+        with open(meminfo) as f:
+            for line in f:
+                if line.startswith("MemAvailable:"):
+                    return int(line.split()[1]) // 1024
+    except (OSError, ValueError, IndexError):
+        pass
     return None
 
 
@@ -127,6 +179,10 @@ def check_input(src, what="--in"):
     if _inside(real, private) or _inside(private, real):
         raise Refused(f"{what} {src}: private files, secrets and the City's tree data are never mounted")
     work, prod = os.path.realpath(WORK), os.path.realpath(PROD_ARCHIVE)
+    trees = os.path.join(prod, "trees")
+    if _inside(real, trees) or _inside(trees, real):
+        raise Refused(f"{what} {src}: production's trees archive ({trees}) holds builds from the City's inventory; "
+                      "it isn't mounted, nor a folder holding it")
     root = work if _inside(real, work) and real != work else prod if _inside(real, prod) else None
     if root is None:
         raise Refused(f"{what} {src}: only folders under {WORK}/ or production's archive ({PROD_ARCHIVE}) are "
@@ -134,8 +190,6 @@ def check_input(src, what="--in"):
     if set(real[len(root):].split("/")) & NEVER_NAMES:
         raise Refused(f"{what} {src}: private files, secrets and the City's tree data are never mounted")
     if root == prod:
-        if _inside(real, os.path.join(prod, "trees")):
-            raise Refused(f"{what} {src}: production's trees archive holds rows derived from the City's inventory")
         return real
     top = real[len(work) + 1:].split("/", 1)[0]
     scratch = os.path.realpath(SCRATCH_ARCHIVE)
@@ -144,11 +198,38 @@ def check_input(src, what="--in"):
     if top in WORK_NEVER or top.startswith("worker-test"):
         raise Refused(f"{what} {src}: {os.path.join(work, top)} holds the tools and state that enforce the rules; "
                       "it isn't mounted")
+    landcover = os.path.realpath(NAIP)
+    if _inside(real, landcover):
+        sub = real[len(landcover) + 1:].split("/", 1)[0] if real != landcover else ""
+        if sub not in LANDCOVER_OK:
+            raise Refused(f"{what} {src}: of the land-cover spike's folder only {', '.join(LANDCOVER_OK)} are "
+                          "mounted (its trees runs and experiments were matched against the City's inventory)")
     return real
 
 
-def command(repo, pkg, archive, inputs, args, image=IMAGE, uid=None, gid=None, name=None):
-    """The docker run for a sheets run."""
+def archive_mounts(src, what):
+    """[(host folder, folder in the container)] for an archive of exports: each plugin's export/ folder at
+    /srv/archive/<plugin>/export, each checked as an --in folder is; production's trees/ never. Raise Refused when
+    the archive isn't one that may be read."""
+    real = os.path.realpath(src)
+    if not os.path.isdir(real):
+        raise Refused(f"{what} {src}: no such folder")
+    if real != os.path.realpath(PROD_ARCHIVE):           # production's root holds trees/: only its exports are mounted
+        check_input(real, what)
+    mounts = []
+    for name in sorted(os.listdir(real)):
+        folder = os.path.join(real, name, "export")
+        if not PLUGIN_RE.fullmatch(name) or not os.path.isdir(folder):
+            continue
+        try:
+            mounts.append((check_input(folder, what), f"/srv/archive/{name}/export"))
+        except Refused as err:
+            print(f"sheets: {name}'s exports aren't mounted: {err}", file=sys.stderr)
+    return mounts
+
+
+def command(repo, pkg, archive, inputs, args, image=IMAGE, uid=None, gid=None, name=None, min_free_gb=11):
+    """The docker run for a sheets run. archive: [(host folder, container folder)] from archive_mounts()."""
     uid = os.getuid() if uid is None else uid
     gid = os.getgid() if gid is None else gid
     name = name or f"sheets-{os.getpid()}"
@@ -158,8 +239,13 @@ def command(repo, pkg, archive, inputs, args, image=IMAGE, uid=None, gid=None, n
            "--tmpfs", f"/tmp:rw,nosuid,nodev,size={TMP_MB}m", "--user", f"{uid}:{gid}",
            "-e", "HOME=/tmp", "-e", "PYTHONDONTWRITEBYTECODE=1", "-e", "PYTHONPATH=/repo", "-e", "TZ=America/Boise",
            "-e", "TVT_ARCHIVE=/srv/archive", "-e", "TVT_TILES=/srv/tiles", "-e", "TVT_NAIP_CROPS=/srv/naip",
-           "-v", f"{os.path.abspath(repo)}:/repo:ro", "-v", f"{archive}:/srv/archive:ro",
-           "-v", f"{TILES}:/srv/tiles:ro"]
+           "-e", f"TVT_SHEETS_MIN_FREE_GB={min_free_gb:g}",
+           "-v", f"{os.path.abspath(repo)}:/repo:ro",
+           # an empty, read-only /srv/archive under the plugins' export folders, so it's there with none
+           "--mount", "type=tmpfs,destination=/srv/archive,tmpfs-size=1m,tmpfs-mode=0555"]
+    for src, dest in archive:
+        cmd += ["-v", f"{src}:{dest}:ro"]
+    cmd += ["-v", f"{TILES}:/srv/tiles:ro"]
     for year in ("naip2025", "naip2023"):
         if os.path.isdir(os.path.join(NAIP, year)):
             cmd += ["-v", f"{os.path.join(NAIP, year)}:/srv/naip/{year}:ro"]
@@ -170,12 +256,22 @@ def command(repo, pkg, archive, inputs, args, image=IMAGE, uid=None, gid=None, n
     return cmd
 
 
-def take_slot(label, wait_s, folder=None, slots=SLOTS, poll_s=2.0):
-    """Hold one of the slot files (an exclusive flock for this process's life); the open fd, or None."""
+def memory_ok(mem=None):
+    """(True, "") when a run's cap plus the reserve is available, else (False, why)."""
+    have = (mem or mem_available_mb)()
+    if have is None or have >= MEM_MB + MEM_RESERVE_MB:
+        return True, ""
+    return False, f"memory: {have} MB available, a run needs {MEM_MB} MB plus {MEM_RESERVE_MB} MB kept free"
+
+
+def take_slot(label, wait_s, folder=None, slots=SLOTS, poll_s=2.0, mem=None):
+    """Hold one of the slot files (an exclusive flock for this process's life) once the memory is there too; the
+    open fd, or None after wait_s seconds."""
     folder = folder or SLOT_DIR
     os.makedirs(folder, mode=0o775, exist_ok=True)
-    end, said = time.monotonic() + wait_s, False
+    end, said = time.monotonic() + wait_s, None
     while True:
+        why = f"{slots} runs going"
         for n in range(1, slots + 1):
             fd = os.open(os.path.join(folder, str(n)), os.O_RDWR | os.O_CREAT, 0o664)
             try:
@@ -183,14 +279,19 @@ def take_slot(label, wait_s, folder=None, slots=SLOTS, poll_s=2.0):
             except BlockingIOError:
                 os.close(fd)
                 continue
+            ok, why = memory_ok(mem)
+            if not ok:
+                os.close(fd)
+                break
             os.ftruncate(fd, 0)
             os.write(fd, f"{label}\n".encode())
             return fd
         if time.monotonic() >= end:
+            print(f"sheets: gave up waiting: {why}", file=sys.stderr)
             return None
-        if not said:
-            print(f"sheets: {slots} runs going; waiting for one to end", file=sys.stderr)
-            said = True
+        if said != why:
+            print(f"sheets: waiting ({why})", file=sys.stderr)
+            said = why
         time.sleep(poll_s)
 
 
@@ -230,7 +331,7 @@ def parse(argv):
 
 
 def resolve(o, args):
-    """(repo, pkg, archive, [(src, name)], args) checked, or raise Refused."""
+    """(repo, pkg, [(archive folder, mount)], [(src, name)], args) checked, or raise Refused."""
     if not o["pkg"] or not re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,47}", o["pkg"]):
         raise Refused("--pkg names the package the sheets are for: 1-48 of a-z 0-9 . _ - (e.g. p7, s5a)")
     if not os.path.isfile(os.path.join(o["repo"], "basemap", "sheets", "sheet.py")):
@@ -238,14 +339,14 @@ def resolve(o, args):
     if any(a == "--out" or a.startswith("--out=") for a in args):
         raise Refused("--out is given by sheets (the private files); leave it out")
     if o["archive"]:
-        archive = check_input(o["archive"], "--archive")
+        archive = archive_mounts(o["archive"], "--archive")
     else:
         if not re.fullmatch(r"[a-z0-9_]{1,63}", o["db"] or ""):
             raise Refused("--db names a scratch database (tvt, tvt_<pkg>)")
         path = os.path.join(SCRATCH_ARCHIVE, o["db"])
         if not os.path.isdir(path):
             raise Refused(f"--db {o['db']}: no archive at {path}")
-        archive = check_input(path, "--db")
+        archive = archive_mounts(path, "--db")
     inputs, names = [], set()
     for spec in o["inputs"]:
         src, _, label = spec.partition(":")
@@ -268,50 +369,85 @@ def out_folder(pkg):
     return os.path.join(SHEETS, pkg)
 
 
-def main(argv, heavy=None, now=None, free_gb=None):
+def stop(name, grace=10):
+    subprocess.run(["docker", "stop", "-t", str(grace), name], stdout=subprocess.DEVNULL)
+
+
+def main(argv, heavy=None, now=None, free_gb=None, mem=None):
     try:
         o, args = parse(argv)
         if o.get("help"):
             print(__doc__.strip())
             return 0
         repo, pkg, archive, inputs, args = resolve(o, args)
+        floor, free, close_min = 11, free_gb, None
         if not o["dry"]:
             h = heavy or load_heavy()
             t = now or h.now()
             why = may_start(h, t, h.read_statuses(), h.maintenance(t), o["timeout"])
             if why:
                 raise Refused(f"not now: {why}", EX_LATER)
-            have = (free_gb or h.free_gb)("/")
+            free = free_gb or h.free_gb
+            have = free("/")
             if have < h.FREE_MIN_GB + PEAK_GB:
                 raise Refused(f"{have:.1f} GB free on /; a run needs {h.FREE_MIN_GB} GB + {PEAK_GB} GB", EX_DISK)
+            floor, close_min = getattr(h, "FLOOR_GB", 11), to_close(h, t)
     except Refused as err:
         print(f"sheets: {err}", file=sys.stderr)
         return err.code
     name = f"sheets-{os.getpid()}"
-    cmd = command(repo, pkg, archive, inputs, args, name=name)
+    cmd = command(repo, pkg, archive, inputs, args, name=name, min_free_gb=floor)
     if o["dry"]:
         print(" ".join(cmd))
         return 0
+    close = None if close_min is None else time.monotonic() + close_min * 60      # 23:15, as the slot wait goes by
     out_folder(pkg)
     try:
-        slot = take_slot(f"{name}: {pkg} (since {time.strftime('%H:%M:%S %Z')})", o["wait"] * 60)
+        slot = take_slot(f"{name}: {pkg} (since {time.strftime('%H:%M:%S %Z')})", o["wait"] * 60, mem=mem)
     except KeyboardInterrupt:
         return 130
     if slot is None:
         print(f"sheets: no slot came free in {o['wait']:g} min; try again later", file=sys.stderr)
         return EX_LATER
-    print(f"sheets: {pkg}: drawing into {os.path.join(SHEETS, pkg)}/ (1 GB, 1 CPU, no network; at most "
-          f"{o['timeout']:g} min)", file=sys.stderr, flush=True)
-    proc = subprocess.Popen(cmd)
     try:
-        return proc.wait(timeout=o["timeout"] * 60)
-    except subprocess.TimeoutExpired:
-        print(f"sheets: over {o['timeout']:g} min; stopping {name}", file=sys.stderr)
-        subprocess.run(["docker", "stop", "-t", "10", name], stdout=subprocess.DEVNULL)
-        proc.wait()
-        return EX_TIMEOUT
+        return run(cmd, name, pkg, o, close, floor, free)
+    finally:
+        os.close(slot)
+
+
+def run(cmd, name, pkg, o, close, floor, free):
+    """Run the container under the time limit and the disk floor; its exit code (or 75, 123, 124, 130)."""
+    run_s = o["timeout"] * 60 if close is None else min(o["timeout"] * 60, close - time.monotonic())
+    if run_s < min(o["timeout"], MIN_RUN_MIN) * 60:
+        print("sheets: the wait for a slot left too little time before 23:15; try again later", file=sys.stderr)
+        return EX_LATER
+    print(f"sheets: {pkg}: drawing into {os.path.join(SHEETS, pkg)}/ (1 GB, 1 CPU, no network; at most "
+          f"{run_s / 60:.0f} min; stopped under {floor:g} GB free)", file=sys.stderr, flush=True)
+    proc = subprocess.Popen(cmd)
+    end = time.monotonic() + run_s
+    try:
+        while True:
+            try:
+                code = proc.wait(timeout=min(5.0, max(0.1, end - time.monotonic())))
+                if code == 137:
+                    print(f"sheets: {name} was killed (137: over its 1 GB?); the run's index.json lists the frames "
+                          "drawn before it", file=sys.stderr)
+                return code
+            except subprocess.TimeoutExpired:
+                pass
+            if time.monotonic() >= end:
+                print(f"sheets: its {run_s / 60:.0f} min are up; stopping {name}", file=sys.stderr)
+                stop(name)
+                proc.wait()
+                return EX_TIMEOUT
+            have = free("/")
+            if have < floor:
+                print(f"sheets: {have:.1f} GB free on /, under {floor:g} GB; stopping {name}", file=sys.stderr)
+                stop(name)
+                proc.wait()
+                return EX_FLOOR
     except KeyboardInterrupt:
-        subprocess.run(["docker", "stop", "-t", "5", name], stdout=subprocess.DEVNULL)
+        stop(name, 5)
         proc.wait()
         return 130
 

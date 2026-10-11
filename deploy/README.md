@@ -267,8 +267,8 @@ the landscape sprint's image sheets: export layers and rasters over the
 aerial photo at the review places ([basemap/sheets](../basemap/sheets/README.md)).
 It runs the worker image capped like `worker-test` (1 GB, 1 CPU, no network,
 read-only, the checkout at `/repo`), with these mounted read-only: a scratch
-database's archive of exports (`--db`, default `tvt`; or `--archive`), the
-map's tiles, the land-cover spike's NAIP crops and any `--in` folders. It
+database's exports (`--db`, default `tvt`; or `--archive`), the map's tiles,
+the land-cover spike's NAIP crops and any `--in` folders. It
 writes only to `/srv/tvt/private/sheets/<package>/` (`750`, taking the
 private files' group and setgid bit from its parent):
 
@@ -279,16 +279,28 @@ private files' group and setgid bit from its parent):
 
 - It isn't a unit test, so it keeps the quiet-hours rule: from 23:15 it
   starts only once tonight's camera roll-up has finished (heavy's reading
-  of the status files), and not within its `--timeout` (default 60 min) of
-  a planned restart in `MAINTENANCE`.
-- It needs 12 GB plus 1 GB free on `/`. At most two run at once.
-- `--in` and `--archive` take folders under the work folder (not `bin/`,
-  `e2e/` or the scratch folder's tools and secrets; a database's archive is
-  fine) or production's archive (not its `trees/`). The private files,
-  secrets and the City of Boise's tree data are never mounted.
+  of the status files), not while a roll-up runs late into the day, and a
+  run that starts in the day has its `--timeout` (default 60 min) cut to
+  end by 23:15. It doesn't start within its time of a planned restart in
+  `MAINTENANCE`.
+- It needs 12 GB plus 1 GB free on `/` to start; the drawing then refuses a
+  run whose frames could take more than leaves 12 GB (a bound from their
+  pixels), and the runner stops the container under 11 GB (exit 123). At
+  most two run at once, each with 1 GB plus 3 GB of memory available
+  (scratch's reserve).
+- An archive (`--db`, default `tvt`; or `--archive`) is mounted one
+  plugin's `export/` folder at a time, which is all a sheet reads.
+  Production's `trees/` is never mounted, nor any folder holding it (its
+  builds carry the City of Boise's inventory), nor, of the land-cover
+  spike's folder, anything but `lidar/` and the NAIP crops. `--in` takes
+  folders under the work folder (not `bin/`, `e2e/` or the scratch
+  folder's tools and secrets; a database's archive is fine) or in
+  production's archive (not the archive itself, which holds `trees/`).
+  The private files and secrets are never mounted.
 - Exit codes: the run's (1 when a frame failed: its error is in the run's
-  `index.json`); 2 usage or a refused mount; 73 disk; 75 not now or no
-  slot; 124 timed out.
+  `index.json`); 2 usage or a refused mount; 73 disk; 75 not now, or no
+  slot or memory; 123 stopped under 11 GB free; 124 timed out; 137 killed
+  (over its 1 GB: `index.json` lists the frames drawn).
 
 A full run of the 94 frames was 2.3 minutes and 0.23 GB (one panel each,
 Oct 11). Sheets are private and never committed; delete runs once reviewed.
