@@ -283,17 +283,17 @@ def over_budget(sizes):
     return sorted(((t, n) for t, n in sizes.items() if n > BUDGET["maxBytes"]), key=lambda kv: (-kv[1], kv[0]))
 
 
-def baked_entry(plan, digest_hex, budget, writer, features=None, built=None):
+def baked_entry(plan, digest_hex, budget, writer, features=None, zooms=(MINZOOM, MAXZOOM), built=None):
     """The bake's entry, as its file's metadata holds it (the tiles manifest adds `previous`). features: {source
-    layer: count written}, when known."""
+    layer: count written}, when known; zooms: the lowest and highest zoom the file holds tiles at (its header's)."""
     features = features or {}
     return {
         "status": "baked",
         "file": file_name(digest_hex),
         "digest": digest_hex,
         "format": FORMAT,
-        "minzoom": MINZOOM,
-        "maxzoom": MAXZOOM,
+        "minzoom": zooms[0],
+        "maxzoom": zooms[1],
         "promoteId": PROMOTE_ID,
         "layers": {b.id: b.summary(features.get(b.id)) for b in plan.bases},
         "attribution": "; ".join(plan.credits),
@@ -348,9 +348,11 @@ def _check_entry(e, in_manifest):
     if in_manifest and e["previous"] is not None and (not FILE_RE.match(str(e["previous"]))
                                                       or e["previous"] == e["file"]):
         raise ValueError("previous must be another landscape file's name, or null")
-    if (e["format"], e["minzoom"], e["maxzoom"], e["promoteId"], e["spec"]) != (
-            FORMAT, MINZOOM, MAXZOOM, PROMOTE_ID, SPEC_VERSION):
-        raise ValueError("the entry doesn't match the bake's spec (format, zooms, promoteId)")
+    if (e["format"], e["promoteId"], e["spec"]) != (FORMAT, PROMOTE_ID, SPEC_VERSION):
+        raise ValueError("the entry doesn't match the bake's spec (format, promoteId)")
+    if not (isinstance(e["minzoom"], int) and isinstance(e["maxzoom"], int)
+            and MINZOOM <= e["minzoom"] <= e["maxzoom"] <= MAXZOOM):
+        raise ValueError(f"the entry's zooms must lie in z{MINZOOM}-{MAXZOOM}")
     layers = e["layers"]
     if not isinstance(layers, dict) or not layers:
         raise ValueError("a baked entry has at least one layer")

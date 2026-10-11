@@ -47,7 +47,7 @@ toggled layers' versions.
 | | |
 |---|---|
 | Format | PMTiles v3, gzipped Mapbox vector tiles, written by GDAL's PMTiles driver (3.13 in the worker image) |
-| Zooms | z8 to z16. z16 tiles are about 440 m across here and 4,096 units wide, so about 0.11 m a unit; the app overzooms them for curbs, crosswalks and stalls |
+| Zooms | z8 to z16. z16 tiles are about 440 m across here and 4,096 units wide, so about 0.11 m a unit; the app overzooms them for curbs, crosswalks and stalls. The header (and the entry) give the zooms that hold tiles, as the PMTiles spec has it, so the app never asks for empty ones: until water's z8 reaches are in, roads alone start at z14. go-pmtiles' `verify` passes |
 | Writer | `EXTENT` 4096, `BUFFER` 80, `SIMPLIFICATION` 1 tile unit below z16 and none at z16 (real widths keep their shape). `MAX_SIZE` and `MAX_FEATURES` are set far out of reach, because past them GDAL quietly coarsens or drops features; the bake measures tiles itself instead |
 | Name | `landscape-<digest>.pmtiles`. The digest covers the spec, the bake's own version, GDAL's version and every base layer's export, zooms and sha256. The same exports give the same name, and a bake with nothing new switches nothing. A file is never overwritten (`/tiles/` is cached for an hour, and PMTiles clients keep the header) |
 | Metadata | GDAL's (`vector_layers`, bounds), plus `attribution` and `tvt.landscape`: the bake's entry, so each file says what it holds and who may see it |
@@ -116,6 +116,7 @@ source-layer as not built (its `suppresses` only applies once it's built).
 |---|---|
 | `status` | `baked`, or `empty` (`{"status", "reason", "previous", "built", "spec"}`: nothing to bake yet, or every base layer is empty) |
 | `file`, `digest` | the file under `/tiles/`, and the full digest its name is cut from |
+| `minzoom`, `maxzoom` | the zooms the file holds tiles at, inside z8–16: the vector source's |
 | `promoteId` | `"id"`, MapLibre's vector source option as it is (every source-layer has `id`) |
 | `layers` | by source-layer: its export (`plugin`, `layer`, `build`), geometry, features baked, the fields the tiles carry, its zoom range in the file, licence, republish and credits |
 | `attribution` | every layer's credit once, in layer order (the source's attribution; MapLibre shows it while one of its layers is visible) |

@@ -247,6 +247,14 @@ def zxy(tid):
     return z, x, y
 
 
+def zoom_range(sizes):
+    """(lowest, highest) zoom among {(z, x, y): ...}'s tiles."""
+    zs = [t[0] for t in sizes]
+    if not zs:
+        raise PMTilesError("the archive holds no tiles")
+    return min(zs), max(zs)
+
+
 def tile_sizes(path, tiles=None):
     """{(z, x, y): stored bytes} of every tile in the archive (tiles: only these (z, x, y))."""
     want = None if tiles is None else {tile_id(*t): t for t in tiles}
@@ -284,13 +292,18 @@ def _copy(src, dst, offset, length, chunk=1 << 20):
         left -= len(b)
 
 
-def write_with_metadata(src_path, dst_path, metadata):
+def write_with_metadata(src_path, dst_path, metadata, zooms=None):
     """Copy an archive to dst_path with new JSON metadata, in the spec's order (header, root directory, metadata,
     leaf directories, tile data). Directories and tiles are copied byte for byte: their offsets are relative to
-    their own sections, so only the header's section offsets change. dst_path is written and fsynced, not renamed."""
+    their own sections, so only the header's section offsets change. zooms: (min, max) for the header, which the
+    spec says are the zooms of the tiles it holds (the center zoom is kept inside them). dst_path is written and
+    fsynced, not renamed."""
     body = json.dumps(metadata, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     with open(src_path, "rb") as src:
         h = parse_header(src.read(HEADER_LEN))
+        if zooms is not None:
+            h.min_zoom, h.max_zoom = zooms
+            h.center_zoom = min(max(h.center_zoom, h.min_zoom), h.max_zoom)
         meta = _compress(body, h.internal_compression)
         h.root_offset, old_root = HEADER_LEN, h.root_offset
         h.metadata_offset, h.metadata_length = HEADER_LEN + h.root_length, len(meta)

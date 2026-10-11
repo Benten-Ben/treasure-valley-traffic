@@ -94,6 +94,20 @@ class ReadTest(unittest.TestCase):
             for t, data in tiles.items():
                 self.assertEqual(P.tile_data(dst, *t), data)
 
+    def test_rewrite_sets_the_zooms(self):
+        tiles = tiles_at(14, [2903], [5981])
+        tiles[(16, 11616, 23924)] = b"z16"
+        src = pmt.write(os.path.join(self.dir, "z.pmtiles"), tiles, {}, minzoom=8, maxzoom=16)
+        self.assertEqual(P.zoom_range(P.tile_sizes(src)), (14, 16))
+        dst = os.path.join(self.dir, "z2.pmtiles")
+        h = P.write_with_metadata(src, dst, {"minzoom": "14"}, zooms=(14, 16))
+        h2 = P.read_header(dst)
+        self.assertEqual((h2.min_zoom, h2.max_zoom, h2.center_zoom), (14, 16, 14))
+        self.assertEqual(h, h2)
+        self.assertEqual(P.tile_sizes(dst), P.tile_sizes(src))
+        with self.assertRaisesRegex(P.PMTilesError, "no tiles"):
+            P.zoom_range({})
+
     def test_damage_is_reported(self):
         path = os.path.join(self.dir, "bad.pmtiles")
         with open(path, "wb") as f:

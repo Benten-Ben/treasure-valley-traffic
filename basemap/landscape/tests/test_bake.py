@@ -320,6 +320,12 @@ class BakeTest(unittest.TestCase):
         e = self.entry()
         self.assertEqual(e["layers"]["water.reaches"]["features"], 0)
         self.assertEqual(e["layers"]["roads.surfaces"]["features"], 2)
+        # The file's zooms are those holding tiles (roads' surfaces from z14), in its header and its entry.
+        h = pmtiles.read_header(os.path.join(self.tiles, e["file"]))
+        self.assertEqual((e["minzoom"], e["maxzoom"], h.min_zoom, h.max_zoom), (14, 16, 14, 16))
+        self.assertLessEqual(14, h.center_zoom)
+        meta = pmtiles.read_metadata(os.path.join(self.tiles, e["file"]))
+        self.assertEqual((meta["minzoom"], meta["maxzoom"], meta["center"].split(",")[2]), ("14", "16", "14"))
         self.assertEqual(bake.check(self.tiles), [])
         shutil.rmtree(os.path.join(self.archive, "water"))
         shutil.rmtree(os.path.join(self.archive, "roads"))

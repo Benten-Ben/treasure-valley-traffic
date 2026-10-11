@@ -209,8 +209,13 @@ def read_back(path, plan, counts):
 
 
 def metadata_with(meta, entry):
-    """GDAL's metadata plus the bake's credits and entry (`tvt.landscape`), which `check` and `rollback` read."""
+    """GDAL's metadata plus the bake's credits and entry (`tvt.landscape`), which `check` and `rollback` read, with
+    the zooms the file holds tiles at."""
     out = dict(meta)
+    out["minzoom"], out["maxzoom"] = str(entry["minzoom"]), str(entry["maxzoom"])
+    if isinstance(out.get("center"), str) and out["center"].count(",") == 2:
+        lon, lat, z = out["center"].split(",")
+        out["center"] = f"{lon},{lat},{min(max(int(float(z)), entry['minzoom']), entry['maxzoom'])}"
     out["attribution"] = entry["attribution"]
     out["description"] = (f"Treasure Valley Traffic's base contributions: {', '.join(entry['layers'])}. Republish "
                           f"{entry['republish']}; served to the {entry['access']} only"
@@ -342,9 +347,10 @@ def _bake_file(plan, tiles_dir, work, digest, writer, threads=2):
             _err("over budget, so nothing is switched in: " + ", ".join(
                 f"{'/'.join(map(str, t))} {n:,} bytes" for t, n in over[:10]))
             return None, EXIT_BUDGET
-        made = P.baked_entry(plan, digest, budget, writer, counts)
+        zooms = pmtiles.zoom_range(sizes)
+        made = P.baked_entry(plan, digest, budget, writer, counts, zooms)
         P.check_entry(made, in_manifest=False)
-        pmtiles.write_with_metadata(raw, part, metadata_with(meta, made))
+        pmtiles.write_with_metadata(raw, part, metadata_with(meta, made), zooms)
         os.chmod(part, 0o644)
         os.replace(part, os.path.join(tiles_dir, name))
         P.fsync_dir(tiles_dir)
@@ -465,8 +471,9 @@ def check(tiles_dir, public=False):
                 h = pmtiles.read_header(path)
                 made = file_entry(path)
                 if (h.tile_type_name, h.tile_compression_name, h.min_zoom, h.max_zoom) != (
-                        "mvt", "gzip", P.MINZOOM, P.MAXZOOM):
-                    problems.append(f"{entry['file']}: not gzipped mvt at z{P.MINZOOM}-{P.MAXZOOM}")
+                        "mvt", "gzip", entry["minzoom"], entry["maxzoom"]):
+                    problems.append(f"{entry['file']}: not gzipped mvt at the entry's z{entry['minzoom']}-"
+                                    f"{entry['maxzoom']}")
                 if made != {k: v for k, v in entry.items() if k != "previous"}:
                     problems.append(f"{entry['file']}: its metadata's entry isn't the manifest's")
                 mine = pmtiles.tile_sizes(path, P.budget_tiles())

@@ -250,6 +250,7 @@ class EntryTest(unittest.TestCase):
         P.check_entry(e, in_manifest=False)
         P.check_entry(dict(e, previous=None))
         P.check_entry(dict(e, previous="landscape-000000000000.pmtiles"))
+        P.check_entry(dict(e, minzoom=14, maxzoom=16), in_manifest=False)   # a file whose first tiles are at z14
         self.assertEqual(e["access"], "tailnet")
         self.assertEqual(e["republish"], "internal")
         self.assertEqual(e["layers"]["roads.surfaces"]["minzoom"], 14)
@@ -264,7 +265,9 @@ class EntryTest(unittest.TestCase):
             (dict(e, file="landscape-ffffffffffff.pmtiles"), "digest"),
             (dict(e, attribution="© OpenStreetMap contributors"), "attribution lacks"),
             (dict(e, licences=["ODbL-1.0", "public-domain"]), "licences"),
-            (dict(e, maxzoom=15), "spec"),
+            (dict(e, maxzoom=17), "zooms must lie"),
+            (dict(e, minzoom=12, maxzoom=11), "zooms must lie"),
+            (dict(e, promoteId="fid"), "spec"),
             (dict(e, budget=dict(e["budget"], largest=60001)), "budget"),
             (dict(e, layers={}), "at least one layer"),
             (dict(e, layers={"water.other": e["layers"]["water.reaches"]}), "isn't named"),
