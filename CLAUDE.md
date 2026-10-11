@@ -139,6 +139,7 @@ basemap/build.sh                       # build self-hosted basemap into data/til
 
 export DATABASE_URL=postgres://tvt:<password>@localhost/tvt   # never commit a real password
 python3 db/migrate.py                  # apply db/migrations/, then the plugins' migrations
+python3 -m unittest discover -s deploy/scratch/tests   # scratch rules, tvt_build's policy (needs deploy/bin/heavy)
 python3 -m ingest run all              # every scheduled source (cameras, signals, crossings, COMPASS, ...)
 python3 -m ingest stream idaho511_frames   # key-camera frames (needs TVT_ARCHIVE)
 python3 -m ingest stream itd_wzdx         # ITD work zones every 5 min (needs TVT_ARCHIVE)
