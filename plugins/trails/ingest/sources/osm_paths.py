@@ -31,8 +31,9 @@ Each way gets, by tags alone (the same rules as the SQL functions in trails
 - a surface class: paved, gravel, dirt or unknown, from the surface tag
   (surface_from 'osm'); untagged, a cycleway is paved and a track dirt
   (surface_from 'default'), anything else unknown ('none'). A path that
-  Ridge to Rivers' trail runs along reads dirt by default (the view
-  trails.path, since that needs the links);
+  Ridge to Rivers' trail runs along reads dirt by default on its card (the
+  view trails.way_agency, since that needs the City's lines; the tiles keep
+  OpenStreetMap's own);
 - a width estimate by kind and surface, ⚠️ as for lanes: dirt or unknown path
   0.8 m, gravel path or bridleway 1.5 m, footway 1.8 m, paved path or
   cycleway 3.0 m, track 3.0 m, steps 1.5 m, pedestrian way 4.0 m. The width
@@ -43,7 +44,9 @@ Each way gets, by tags alone (the same rules as the SQL functions in trails
 
 Stored versioned in place (plan C2): no raw.record copies. A load marks the
 trails-match build (the links follow the new ways) and gives the Trails
-layer's tiles a new version (core.layer_version 'trails.paths').
+layer's tiles a new version (core.layer_version 'trails.paths': OpenStreetMap's
+alone, so ODbL, republish yes; what the City's lines say of a way is
+feature-state).
 
 License ODbL: credit "© OpenStreetMap contributors". Its own tables, so other
 sources' tables aren't pulled under the ODbL.
@@ -273,7 +276,7 @@ def consume(conn, run):
     builds.mark(conn, BUILD, by=SOURCE["name"], reason=f"{extract} loaded ({md5}): relink the agencies' trails")
     version = layer_version.record(conn, LAYER, license="ODbL", republish="yes", credit=SOURCE["credit"],
                                    build=f"osm_paths {md5}".strip(), features=p["objects"],
-                                   note="the OpenStreetMap ways; links as of the last trails-match")
+                                   note="the OpenStreetMap ways (the agencies' states are feature-state)")
     stats = {"objects": p["objects"] + a["objects"] + r["objects"]}
     for name, s in (("paths", p), ("areas", a), ("routes", r)):
         stats[name] = s["objects"]

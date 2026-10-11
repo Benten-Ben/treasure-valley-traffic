@@ -42,6 +42,7 @@ const row = (o: Record<string, unknown>) => ({
 	line_m: 600,
 	covered_m: 597.4,
 	gap_m: 0,
+	along_m: 0,
 	...o
 });
 
@@ -77,8 +78,9 @@ describe('trailStatus', () => {
 							line_id: '10',
 							links: 1,
 							line_m: 120,
-							covered_m: null,
-							gap_m: 120.2
+							covered_m: 119.6,
+							gap_m: 0,
+							along_m: 121.4
 						})
 					],
 					hidden: [9500000009]
@@ -91,9 +93,10 @@ describe('trailStatus', () => {
 		expect(got.counts).toEqual({ dry: 1, closed: 1, not_evaluated: 1 });
 		expect(got.polled).toEqual({ r2r_trails: '2026-10-11T18:30:00.000Z', boise_greenbelt_closures: null });
 		const ridge = got.agencies[0];
-		expect(ridge).toMatchObject({ id: 'test-1', ways: [9500000001, 9500000002], line_id: 7, own_line: false, covered: 0.996, set_at: '2026-09-11T14:00:00.000Z' });
-		expect(got.agencies[2]).toMatchObject({ own_line: true, gap_m: 600, covered: null, severity: null });
-		expect(got.agencies[3]).toMatchObject({ kind: 'closure', partial: [9500000005], ways: [], own_line: true, gap_m: 120 });
+		expect(ridge).toMatchObject({ id: 'test-1', ways: [9500000001, 9500000002], line_id: 7, drawn: false, covered: 0.996, set_at: '2026-09-11T14:00:00.000Z' });
+		expect(got.agencies[2]).toMatchObject({ drawn: true, gap_m: 600, along_m: 0, covered: null, severity: null });
+		// A closure on part of a longer way: it paints no way, and draws itself on the way's stretch along it.
+		expect(got.agencies[3]).toMatchObject({ kind: 'closure', partial: [9500000005], ways: [], drawn: true, gap_m: 0, along_m: 121, covered: 0.997 });
 		expect(seen.find((s) => s.text.includes('hidden_informal'))?.values).toEqual([HIDDEN_NEAR_M]);
 		expect(got.republish).toBe('aggregates');
 	});
@@ -114,8 +117,9 @@ describe('wayStates', () => {
 		ways,
 		partial: [],
 		line_id: null,
-		own_line: false,
+		drawn: false,
 		gap_m: 0,
+		along_m: 0,
 		covered: null
 	});
 

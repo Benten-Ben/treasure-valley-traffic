@@ -23,9 +23,20 @@
 --   water's reaches exist; cut-first).
 -- * trails-match (plugins/trails/ingest/match.py) links the agencies' lines to OpenStreetMap's
 --   ways with core's line matcher (ingest/linematch.py), in 150 m pieces: trails.link and
---   trails.matched_line, with each line's gap (where it draws itself). The pollers relink the
---   lines a poll changed, and the trails-match build everything. Links carry the City of Boise's
---   ids, so they're internal (republish aggregates, like their source).
+--   trails.matched_line, with what each line draws itself. The pollers relink the lines a poll
+--   changed, and the trails-match build everything. Links carry the City of Boise's ids, so
+--   they're internal (republish aggregates, like their source).
+--
+-- Licences (plan C3: every table, view and tile set takes the strictest of its inputs). The
+-- Trails layer's ways (trails.path, the 'trails.paths' tiles) and the valley-zoom network
+-- (trails.path_lo) are OpenStreetMap's alone, with water's reaches for the canal rule (both
+-- republish yes): nothing in them comes from the City's lines. What the City's lines say of a way
+-- (its state, that an R2R trail runs along it) reaches the map only as feature-state, from
+-- /api/trails/status, and the lines' own drawing is in the 'trails.agency' tiles
+-- (trails.agency_drawn, trails.agency_lo): republish aggregates, like the views that read the
+-- City's rows (agency_line, agency_state, way_agency). Those read raw.record and evt.event, so
+-- they run with the reader's privileges (security_invoker), and the tile login is refused them
+-- (deploy/tvt_tiles.sql's never_tables).
 --
 -- The 12 lane-tagged cycleways, tracks and pedestrian ways osm_valley keeps (the partition's
 -- named exception) stay in core.osm_way; trails reads them through trails.exception_way.
@@ -199,44 +210,56 @@ comment on table trails.route_line is
 -- ways: one row per way, from core's line matcher run on the line's pieces of at most 150 m
 -- (buffer 15 m, bearing 20°, a 60% share of the way or of the piece). overlap_m and share measure
 -- the way: how much of it lies within 15 m of the pieces that matched it; line_share how much of
--- the line those pieces are. A full link (method pieces150_buffer15_bearing20): 60% of the way
--- lies along the line. A partial one (way_in_pieces150_...): 20 m or more of it does, but less,
--- since the way is longer than the line or runs on past it. A way takes its line's state only on
--- a full link; elsewhere the line draws itself (its gap, in trails.matched_line).
+-- the line those pieces are; off_m how much of the way lies farther than 15 m from the whole line.
+-- A full link (method pieces150_buffer15_bearing20): 60% of the way lies along the line. A
+-- partial one (way_in_pieces150_...): 20 m or more of it does, but less. A way **paints** (takes
+-- the line's state, as feature-state on the whole way) only on a full link with less than 20 m of
+-- it off the line; otherwise the stretch of it along the line is drawn in the line's state (the
+-- line's `along`, in trails.matched_line), so no way shows a state beyond the line.
 create table trails.link (
   source         text not null references ops.source,
   source_id      text not null,
   osm_id         bigint not null,                   -- in trails.osm_path or the named exception (core.osm_way)
   overlap_m      real,
+  off_m          real,
   share          real,
   line_share     real,
   bearing_diff   real,
   confidence     real check (confidence between 0 and 1),
   method         text not null,
+  paints         boolean not null,
   matched_at     timestamptz not null,
-  primary key (source, source_id, osm_id)
+  primary key (source, source_id, osm_id),
+  check (not paints or not starts_with(method, 'way_in_'))
 );
 create index link_osm on trails.link (osm_id);
 
 comment on table trails.link is
   'Agency trail lines (Ridge to Rivers, Greenbelt closures) linked to OpenStreetMap ways (trails-match). Internal: the City''s ids; republish: aggregates';
 
--- Each agency line's last match: the line as matched (its fingerprint) and the extract
--- osm_paths held, so a poll rematches only the lines it changed. line_id is a stable number for
--- the line (a map feature's id is -line_id where the line draws itself). The gap is where it
--- does: its stretches of 20 m or more farther than 15 m from every way it's fully linked to (the
--- whole line when it has none). So every metre of an agency's line shows its state, on a way that
--- lies along it or drawn as itself, and no way shows a state beyond the line.
+-- Each agency line's last match: the line as matched (its fingerprint, kind and name, so the tiles
+-- never read the City's raw rows) and the extract osm_paths held, so a poll rematches only the
+-- lines it changed. line_id is a stable number for the line (its map features' id is -line_id).
+-- Where no way it paints shows it, the line draws itself, in two parts: `along`, the stretches of
+-- the ways it's linked to but doesn't paint that lie along it (OpenStreetMap's geometry, cut to
+-- the line), and `gap`, its own line where neither covers it (stretches of 20 m or more farther
+-- than 15 m from both). So every metre of an agency's line shows its state, and no way shows it
+-- more than 20 m beyond the line. line_lo is the whole line simplified (5 m), for z10-12.
 create table trails.matched_line (
   line_id        bigint generated always as identity unique,
   source         text not null references ops.source,
   source_id      text not null,
+  kind           text not null check (kind in ('trail', 'closure', 'detour')),
+  name           text,
   line_fp        text,                              -- raw.record payload's _geom when it was matched
   osm_md5        text,                              -- the extract osm_paths held then
   line_m         real,
-  covered_m      real,                              -- of the line, within 15 m of the ways it's fully linked to
-  gap            geometry(MultiLineString, 4326),   -- where the line draws itself, or null
+  covered_m      real,                              -- of the line, within 15 m of the ways it paints or its along
+  along          geometry(MultiLineString, 4326),   -- stretches of ways it lies along without painting them
+  along_m        real not null default 0,
+  gap            geometry(MultiLineString, 4326),   -- its own line where nothing else shows it, or null
   gap_m          real not null default 0,
+  line_lo        geometry(MultiLineString, 4326),   -- the whole line, simplified, for the valley zooms
   links          int not null check (links >= 0),
   matched_at     timestamptz not null,
   matched_by     text not null check (matched_by in ('poll', 'trails-match')),
@@ -245,31 +268,35 @@ create table trails.matched_line (
 );
 
 create index matched_line_gap on trails.matched_line using gist (gap);
+create index matched_line_along on trails.matched_line using gist (along);
+create index matched_line_lo on trails.matched_line using gist (line_lo);
 
 comment on table trails.matched_line is
-  'Each agency trail line''s last match and where it draws itself (trails-match). Internal: the City''s ids and lines; republish: aggregates';
+  'Each agency trail line''s last match and what it draws itself (trails-match): the City''s lines and ids, with OpenStreetMap''s ways cut to them. License none stated (City of Boise) + ODbL; republish: aggregates';
 
 -- Tracks along a canal bank: irrigation access, not trails (plan C18; cut-first). 60% or more of
 -- the track within 15 m of canal, lateral, ditch or drain reaches of water's build that match it
 -- (bearing within 20°), and no access=yes|permissive. line_share is that share; reach_id the reach
--- most of it lies along.
+-- most of it lies along; water_build the water build whose reaches it was (water.reach.build_id).
 create table trails.canal_track (
   osm_id         bigint primary key,
   reach_id       text not null,
   line_share     real,
   bearing_diff   real,
+  water_build    bigint,
   built_at       timestamptz not null
 );
 
 comment on table trails.canal_track is
-  'OpenStreetMap tracks along canal banks, taken as irrigation access (trails-match). License ODbL (© OpenStreetMap contributors); republish: yes';
+  'OpenStreetMap tracks along canal banks, taken as irrigation access (trails-match), from water''s reaches (ODbL, republish yes). License ODbL (© OpenStreetMap contributors); republish: yes';
 
--- The valley-zoom network (z10-12): the drawn ways with minzoom 10 (linked, the Greenbelt,
--- cycleways, named ways), simplified once per build (plan C4). fid is the map feature's id, the
--- way's osm_id. The agencies' own lines are in trails.agency_gap, at every zoom.
+-- The valley-zoom network (z10-12, plan C4): the drawn ways with minzoom 10 (the Greenbelt's
+-- route, cycleways, named paths; never tracks or informal ways), simplified once per build. fid is
+-- the map feature's id, the way's osm_id. OpenStreetMap's only: R2R's trails at these zooms are
+-- their own lines (trails.agency_lo).
 create table trails.path_lo (
   fid            bigint primary key,
-  network        text not null check (network in ('r2r', 'greenbelt', 'cycleway', 'named')),
+  network        text not null check (network in ('greenbelt', 'cycleway', 'named')),
   kind           text not null,                     -- the OSM kind
   name           text,
   surface        text,
@@ -279,7 +306,7 @@ create table trails.path_lo (
 create index path_lo_geom on trails.path_lo using gist (geom);
 
 comment on table trails.path_lo is
-  'The trails network at valley zoom (trails-match). License ODbL (© OpenStreetMap contributors); republish: yes';
+  'The trails network at valley zoom, OpenStreetMap''s ways only (trails-match). License ODbL (© OpenStreetMap contributors); republish: yes';
 
 -- ---- views ------------------------------------------------------------------------------------
 
@@ -305,6 +332,9 @@ where w.active
   and not (w.highway in ('footway', 'path', 'cycleway')
            and coalesce(w.tags->>'footway', '') in ('sidewalk', 'crossing', 'access_aisle', 'traffic_island'));
 
+comment on view trails.exception_way is
+  'The partition''s named exception: path-class ways osm_valley keeps in core.osm_way. License ODbL (© OpenStreetMap contributors); republish: yes';
+
 -- Every way that could be a trail, from both tables: osm_path's active ways and the exception.
 create view trails.any_way as
 select osm_id, kind, name, ref, surface_tag, surface, surface_from, width_m, width_est_m, access, no_access,
@@ -315,15 +345,25 @@ select osm_id, kind, name, ref, surface_tag, surface, surface_from, width_m, wid
        informal, bridge, layer, tags, geom, length_m, osm_version, osm_timestamp, 'core.osm_way'::text
 from trails.exception_way;
 
--- The ways an agency's line may be linked to: public ways that aren't irrigation access.
+comment on view trails.any_way is
+  'Every OpenStreetMap way that could be a trail (trails.osm_path and the named exception). License ODbL (© OpenStreetMap contributors); republish: yes';
+
+-- The ways an agency's line may be linked to: public, official ways that aren't irrigation access.
+-- An informal way never is: the Trails layer draws it only from z16, so an agency's line on one
+-- draws itself.
 create view trails.target_way as
 select osm_id, name, geom from trails.any_way a
-where not a.no_access and not exists (select 1 from trails.canal_track c where c.osm_id = a.osm_id);
+where not a.no_access and not a.informal
+  and not exists (select 1 from trails.canal_track c where c.osm_id = a.osm_id);
+
+comment on view trails.target_way is
+  'The ways an agency''s line may be linked to (trails-match). License ODbL (© OpenStreetMap contributors); republish: yes';
 
 -- The agencies' current lines, from the pollers' versions in raw.record: Ridge to Rivers' trails
 -- (keyed by GlobalID) and the Greenbelt's closures and detours ('construction:<id>',
--- 'detour:<id>'). line_fp is the version's line fingerprint. Internal: the City's rows.
-create view trails.agency_line as
+-- 'detour:<id>'). line_fp is the version's line fingerprint. Internal: the City's rows, so it
+-- runs with the reader's privileges, and the tile login may not read it.
+create view trails.agency_line with (security_invoker = true) as
 select distinct on (r.source, r.source_id)
        r.source, r.source_id,
        case when r.source = 'r2r_trails' then 'trail'
@@ -337,13 +377,16 @@ from raw.record r
 where r.source in ('r2r_trails', 'boise_greenbelt_closures') and r.removed_at is null
 order by r.source, r.source_id, r.last_seen desc, r.first_seen desc;
 
+comment on view trails.agency_line is
+  'The agencies'' current trail and closure lines (raw.record). License none stated (City of Boise disclaimer only); republish: aggregates. Internal: never tiled';
+
 -- Each agency line's state now, its match and the ways it's on: R2R's condition (state,
 -- severity: open, caution, do_not_use, closed; null when not evaluated) from its active
 -- trail_condition event; a Greenbelt closure in effect is 'closed', a detour 'detour', and a row
--- the City has set inactive 'ended'. `ways` are the ways the line runs along (each way's own
--- share passed), `partial` those it covers only part of (the line's share passed): a closure
--- 125 m long on a 1 km way. Internal: the City's rows (republish aggregates).
-create view trails.agency_state as
+-- the City has set inactive 'ended'. `ways` are the ways it paints (they take its state),
+-- `partial` the others it's linked to, whose stretch along it the line draws itself (its
+-- along_m): a 125 m closure on a 1 km way. Internal: the City's rows (republish aggregates).
+create view trails.agency_state with (security_invoker = true) as
 with ev as (    -- each line's event in effect, found once: R2R's by trail, the Greenbelt's by row
   select distinct on (e.source, k.key) e.source, k.key, e.id, e.attributes, e.severity, e.description, e.declared,
          e.observed
@@ -361,66 +404,101 @@ select l.source, l.source_id, l.kind, l.name, l.system,
        e.description as label,
        lower(e.declared) as set_at,
        lower(e.observed) as since,
-       m.line_id, m.links, m.line_m, m.covered_m, m.gap_m, m.matched_at, m.osm_md5,
+       m.line_id, m.links, m.line_m, m.covered_m, m.gap_m, m.along_m, m.matched_at, m.osm_md5,
        coalesce(k.ways, '{}') as ways, coalesce(k.partial, '{}') as partial
 from trails.agency_line l
 left join ev e on e.source = l.source and e.key = l.source_id
 left join trails.matched_line m on m.source = l.source and m.source_id = l.source_id
 left join lateral (
-  select array_agg(k.osm_id order by k.osm_id) filter (where not starts_with(k.method, 'way_in_')) as ways,
-         array_agg(k.osm_id order by k.osm_id) filter (where starts_with(k.method, 'way_in_')) as partial
+  select array_agg(k.osm_id order by k.osm_id) filter (where k.paints) as ways,
+         array_agg(k.osm_id order by k.osm_id) filter (where not k.paints) as partial
   from trails.link k where k.source = l.source and k.source_id = l.source_id) k on true;
 
--- Where the agencies' lines draw themselves (the 'trails.agency' tiles): each line's gap, with
--- fid -line_id, its feature-state key in /api/trails/status. Internal: the City's lines.
-create view trails.agency_gap as
-select -m.line_id as fid, m.line_id, m.source, m.source_id, l.kind, l.name, m.gap as geom, m.gap_m
-from trails.matched_line m
-join trails.agency_line l on l.source = m.source and l.source_id = m.source_id
-where m.gap is not null;
+comment on view trails.agency_state is
+  'Each agency line''s state now (evt.event), its match and the ways it paints. License none stated (City of Boise disclaimer only); republish: aggregates. Internal: never tiled';
 
--- The Trails layer's ways (plan C18), for the tiles and the card: every way that could be a
--- trail, with its effective surface (a path that R2R's trail runs along is dirt by default:
--- OpenStreetMap says unpaved for 94% of that length), whether it's drawn and why not, whether
--- it reads as informal (informal=yes, unless an agency's line runs along it), what links it to
--- the agencies and the Greenbelt (r2r: an R2R trail runs along it, a full link; on_r2r: any link;
--- greenbelt: a Greenbelt closure or detour on it, or a route named for the Greenbelt), and the
--- zoom it comes in at: 10 for the named network (R2R's trails, the Greenbelt, cycleways and named
--- ways), 13 for the rest, 16 for informal ways.
+-- What the agencies' lines draw themselves from z13 (the 'trails.agency' tiles), from
+-- trails.matched_line alone: part 'way', the stretches of ways a line lies along without painting
+-- them (OpenStreetMap's geometry, cut to the line), and part 'line', its own line where nothing
+-- else shows it. fid is -line_id, the line's feature-state key in /api/trails/status.
+create view trails.agency_drawn as
+select -m.line_id as fid, m.line_id, m.source, m.source_id, m.kind, m.name, p.part, p.geom, p.length_m
+from trails.matched_line m
+cross join lateral (values ('way', m.along, m.along_m), ('line', m.gap, m.gap_m)) p(part, geom, length_m)
+where p.geom is not null;
+
+comment on view trails.agency_drawn is
+  'Where the agencies'' lines draw themselves, z13 up (trails-match). License none stated (City of Boise) + ODbL (© OpenStreetMap contributors); republish: aggregates';
+
+-- The agencies' whole lines at the valley zooms (z10-12; the 'trails.agency' tiles), simplified:
+-- R2R's trails, the Greenbelt's closures and detours. fid as in trails.agency_drawn.
+create view trails.agency_lo as
+select -m.line_id as fid, m.line_id, m.source, m.source_id, m.kind, m.name, m.line_lo as geom
+from trails.matched_line m
+where m.line_lo is not null;
+
+comment on view trails.agency_lo is
+  'The agencies'' lines at valley zoom (trails-match). License none stated (City of Boise disclaimer only); republish: aggregates';
+
+-- The Trails layer's ways (plan C18), for the 'trails.paths' tiles and the card: every way that
+-- could be a trail, with its surface and where it came from, its width, whether it's drawn and
+-- why not, whether it's informal, whether a route named for the Greenbelt takes it, and the zoom
+-- it comes in at: 16 for informal ways; 13 for tracks; 10 for the named network (the Greenbelt's
+-- route, cycleways and named paths); 13 for the rest. OpenStreetMap's alone (and water's reaches,
+-- for the canal rule): what the agencies say of a way is feature-state (/api/trails/status), and
+-- the facts their links add are in trails.way_agency.
 create view trails.path as
 select a.osm_id, a.kind, a.name, a.ref, a.held_in,
-       case when a.surface_from = 'none' and lk.r2r then 'dirt' else a.surface end as surface,
-       case when a.surface_from = 'none' and lk.r2r then 'default' else a.surface_from end as surface_from,
-       case when a.surface_from = 'none' and lk.r2r then 'Ridge to Rivers trail'
-            when a.surface_from = 'default' then a.kind end as surface_default,
+       a.surface, a.surface_from,
+       case when a.surface_from = 'default' then a.kind end as surface_default,
        coalesce(a.width_m, a.width_est_m) as width_m,
        case when a.width_m is not null then 'osm' else 'estimated' end as width_from,
-       a.access, a.no_access,
-       a.informal and not coalesce(lk.on_r2r or lk.closure, false) as informal,
+       a.access, a.no_access, a.informal,
        (c.osm_id is not null) as canal_track,
        not a.no_access and c.osm_id is null as drawn,
        case when a.no_access then 'private, no public access'
             when c.osm_id is not null then 'irrigation access along a canal' end as not_drawn,
-       coalesce(lk.r2r, false) as r2r, coalesce(lk.on_r2r, false) as on_r2r,
-       coalesce(lk.closure, false) or gb.on_greenbelt as greenbelt,
-       case when a.informal and not coalesce(lk.on_r2r or lk.closure, false) then 16
-            when coalesce(lk.on_r2r or lk.closure, false) or gb.on_greenbelt or a.kind = 'cycleway'
-                 or a.name is not null then 10
+       gb.on_greenbelt as greenbelt,
+       case when a.informal then 16
+            when a.kind = 'track' then 13
+            when gb.on_greenbelt or a.kind = 'cycleway' or a.name is not null then 10
             else 13 end as minzoom,
        a.bridge, a.layer, a.length_m, a.tags, a.geom, a.osm_version, a.osm_timestamp
 from trails.any_way a
 left join trails.canal_track c on c.osm_id = a.osm_id
-left join lateral (
-  select bool_or(k.source = 'r2r_trails' and not starts_with(k.method, 'way_in_')) as r2r,
-         bool_or(k.source = 'r2r_trails') as on_r2r, bool_or(k.source = 'boise_greenbelt_closures') as closure
-  from trails.link k where k.osm_id = a.osm_id) lk on true
 cross join lateral (
   select exists (select 1 from trails.osm_route r
                  where r.active and r.way_ids @> array[a.osm_id] and r.name ilike '%greenbelt%') as on_greenbelt) gb;
 
+comment on view trails.path is
+  'The Trails layer''s ways, OpenStreetMap''s alone (with water''s reaches for the canal rule). License ODbL (© OpenStreetMap contributors); republish: yes';
+
+-- What the agencies' links add to a way, for the card: whether an R2R trail or a Greenbelt
+-- closure or detour paints it, and its surface with R2R's default (a path most of which an R2R
+-- trail runs along is dirt by default: OpenStreetMap says unpaved for 94% of that length).
+-- Internal: the City's lines (republish aggregates).
+create view trails.way_agency with (security_invoker = true) as
+select a.osm_id, k.r2r, k.greenbelt, k.lines,
+       case when a.surface_from = 'none' and k.r2r_along then 'dirt' else a.surface end as surface,
+       case when a.surface_from = 'none' and k.r2r_along then 'default' else a.surface_from end as surface_from,
+       case when a.surface_from = 'none' and k.r2r_along then 'Ridge to Rivers trail'
+            when a.surface_from = 'default' then a.kind end as surface_default
+from (
+  select l.osm_id, bool_or(l.source = 'r2r_trails' and l.paints) as r2r,
+         bool_or(l.source = 'r2r_trails' and not starts_with(l.method, 'way_in_')) as r2r_along,
+         bool_or(l.source = 'boise_greenbelt_closures' and l.paints) as greenbelt,
+         count(*) as lines
+  from trails.link l group by l.osm_id) k
+join trails.any_way a on a.osm_id = k.osm_id;
+
+comment on view trails.way_agency is
+  'What the agencies'' links add to a way (trails-match). License none stated (City of Boise) + ODbL; republish: aggregates. Internal: never tiled';
+
 -- Informal ways near a closure (plan C18: hidden inside closures): within near_m of an agency
 -- line that's closed now (an R2R trail CLOSED, a Greenbelt closure in effect). R2R closes
 -- trails, not areas, and we hold no land manager's area closures yet, so "inside" is "near".
+-- Informal ways are never link targets, so no agency's line makes one official. It reads the
+-- City's rows: run by the app's login, never the tile login.
 create function trails.hidden_informal(near_m double precision default 100)
 returns table (osm_id bigint, source text, source_id text)
 language sql stable as $$
@@ -430,11 +508,13 @@ language sql stable as $$
     join trails.agency_line l on l.source = s.source and l.source_id = s.source_id
     where s.severity = 'closed' and l.geom is not null),
   informal as materialized (
-    select p.osm_id, p.geom from trails.any_way p
-    where p.informal and not exists (select 1 from trails.link k where k.osm_id = p.osm_id))
+    select p.osm_id, p.geom from trails.any_way p where p.informal)
   select distinct on (i.osm_id) i.osm_id, c.source, c.source_id
   from informal i
   join closed c on i.geom && ST_Expand(c.geom, near_m / 75000.0)   -- a box first: 75 km a degree or more here
                 and ST_DWithin(i.geom::geography, c.geom::geography, near_m)
   order by i.osm_id, c.source, c.source_id
 $$;
+
+comment on function trails.hidden_informal(double precision) is
+  'Informal ways near a closed agency line (plan C18). OpenStreetMap ids with the City''s ids; republish: aggregates';

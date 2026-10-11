@@ -46,9 +46,14 @@ def serve(check_every_s):
     """Run scheduled sources when they're due. One-off and by-request sources
     have no schedule (the database refuses one), so they never run here. Nor do
     builds: a source marks a build out of date (ingest/builds.py), and builds.Run
-    refuses to start in this process or anything it starts. The one exception
-    predates that rule: the `intersections` source rebuilds core.intersection
-    here once a day (about 10 s), as a source logged in ops.fetch."""
+    refuses to start in this process or anything it starts. Two exceptions,
+    each logged in ops.fetch as a source: the `intersections` source rebuilds
+    core.intersection here once a day (about 10 s; it predates the rule), and
+    the trails pollers relink the trail lines a poll changed once its data is
+    committed (plugins/trails/ingest/match.py, `trails_match`: at most 40
+    lines, about 2 s; each statement limited to 20 s and the relink to 60 s,
+    then left to the trails-match build), which the landscape plan's P6-data
+    row asks for so that a closure the City posts shows within the hour."""
     os.environ[builds.SERVE_ENV] = "1"
     print(f"ingest serve: checking every {check_every_s} s", flush=True)
     while True:

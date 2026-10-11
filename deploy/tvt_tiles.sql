@@ -61,10 +61,14 @@ DO $tiles$
 DECLARE
   -- Schemas tiles read: core, and the plugins' own schemas (plan C3).
   tile_schemas text[] := ARRAY['core', 'roads', 'soils', 'farm', 'water', 'trails', 'fences', 'hazards', 'trees'];
-  -- Tables in those schemas that tiles never read: internal free text, republish no. A plugin
-  -- that keeps such a table beside its tile data adds it here on its branch.
+  -- Tables in those schemas that tiles never read: internal free text, republish no, and views
+  -- over schemas tiles may not read (raw, evt). A plugin that keeps such a table beside its tile
+  -- data adds it here on its branch.
   never_tables text[] := ARRAY[
-    'roads.bike_facility_note'   -- ACHD's free-text Comments and FieldNotes (roads 0004)
+    'roads.bike_facility_note',  -- ACHD's free-text Comments and FieldNotes (roads 0004)
+    'trails.agency_line',        -- the City's trail and closure rows from raw.record, free text included (trails 0001)
+    'trails.agency_state',       -- the same with their events from evt.event (trails 0001)
+    'trails.way_agency'          -- what the City's lines say of each way, for the card (trails 0001)
   ];
   t text;
   db_owner text := (SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname = current_database());
