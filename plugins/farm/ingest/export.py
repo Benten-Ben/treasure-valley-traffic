@@ -9,7 +9,7 @@ manifest.json last:
 | `fields` | fields.fgb | every current field (EPSG:32611): id (farm.field.id), csbid, crop_group (crop_cover's group code, 0 when not crop), cdl (the newest year's code), bearing (degrees clockwise from grid north, 0-180: the row direction), acres |
 
 Both are public: CSB and CDL are public domain, Sentinel-2 is Copernicus (credit "Contains modified Copernicus Sentinel
-data 2025"). The ground reads them as `farm/crop_cover` and `farm/fields` (basemap/ground/inputs.py USES); the export
+data <year>", the July NDVI's own year from the build). The ground reads them as `farm/crop_cover` and `farm/fields` (basemap/ground/inputs.py USES); the export
 is checked against the ground's shape and licence rules before it's left in place. Neither is a base layer.
 
 The build defaults to the one the current fields' stats came from (farm-fields-load), in $TVT_ARCHIVE/farm/build/.
@@ -26,6 +26,7 @@ from basemap.ground import inputs as GI
 from basemap.ground import manifest as M
 
 from . import classes as C
+from . import credits, derive
 from .fields_load import BuildError, read_build
 from .sources import nass_cdl, nass_csb
 
@@ -53,11 +54,10 @@ select ST_AsFlatGeobuf(q, true, 'geom') from (
 
 
 def default_build(conn, archive):
-    row = conn.execute("""select build_id, count(*) from farm.field where valid_to is null and build_id is not null
-                          group by 1 order by 2 desc limit 1""").fetchone()
-    if row is None:
+    build = derive.current_build(conn)
+    if build is None:
         raise BuildError("no current field has a build's stats yet (farm-fields-load first)")
-    return os.path.join(archive, "farm", "build", row[0])
+    return os.path.join(archive, "farm", "build", build)
 
 
 def export(conn, archive, build_dir=None, build=None):
@@ -74,6 +74,7 @@ def export(conn, archive, build_dir=None, build=None):
     if b["inputs"]["csb"]["sha256"] != sha:
         raise BuildError(f"build {b['build_id']} was made from another CSB file than {edition}'s")
     cover_year, july_year = b["cover_year"], b["july_year"]
+    span = b["inputs"]["ndvi"].get("acquired")
     cdl_in = b["inputs"]["cdl"][str(cover_year)]
 
     folder = M.export_dir(archive, "farm", build or M.build_id())
@@ -95,8 +96,9 @@ def export(conn, archive, build_dir=None, build=None):
              "credit": f"{nass_cdl.SOURCE['credit']} {cover_year}", "source": f"farm/{nass_cdl.SOURCE['name']}",
              "version": str(cover_year), "sha256": cdl_in["sha256"], "url": nass_cdl.SOURCE["url"]},
             {"name": "sentinel-2", "licence": "Copernicus", "republish": "yes",
-             "credit": f"Contains modified Copernicus Sentinel data {july_year}",
-             "version": f"July {july_year} NDVI median", "sha256": b["inputs"]["ndvi"]["sha256"]},
+             "credit": credits.sentinel(july_year),
+             "version": f"July {july_year} NDVI median" + (" ({} to {})".format(*span) if span else ""),
+             "sha256": b["inputs"]["ndvi"]["sha256"]},
         ]
         layers = [
             {"name": "crop_cover", "file": "crop_cover.tif", "format": "GeoTIFF", "crs": g["crs"],

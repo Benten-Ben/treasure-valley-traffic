@@ -20,14 +20,11 @@ import os
 import sys
 
 from . import classes as C
-from . import derive
+from . import credits, derive
 
 FORMAT = "tvt-farm-build/1"
 FILES = ("fields.jsonl", "crop_cover.tif")
 STATES = ("green", "growing", "bare")
-LICENSE = "public domain (USDA NASS CSB, CDL); Copernicus (Sentinel-2)"
-CREDIT = ("USDA NASS Crop Sequence Boundaries; USDA NASS Cropland Data Layer; Contains modified Copernicus Sentinel "
-          "data 2025")
 
 
 class BuildError(ValueError):
@@ -63,6 +60,10 @@ def read_build(folder, verify=True):
     csb = (b.get("inputs") or {}).get("csb") or {}
     if not csb.get("sha256"):
         raise BuildError(f"{path}: no CSB input sha256")
+    years = b.get("csb_years")
+    if not (isinstance(years, list) and len(years) == 2 and all(isinstance(y, int) for y in years)
+            and all(isinstance(b.get(k), int) for k in ("cover_year", "july_year"))):
+        raise BuildError(f"{path}: csb_years, cover_year and july_year must be years")
     rows, seen = [], set()
     with open(os.path.join(folder, "fields.jsonl"), encoding="utf-8") as f:
         for i, line in enumerate(f, 1):
@@ -77,8 +78,9 @@ def read_build(folder, verify=True):
             if not all(k.isdigit() and isinstance(v, (int, float)) and 0 <= v <= 1 for k, v in agree.items()):
                 raise BuildError(f"fields.jsonl line {i}: agree {agree!r}")
             july = r.get("july")
-            if july is not None and (july.get("state") not in STATES or not isinstance(july.get("ndvi"), (int, float))):
-                raise BuildError(f"fields.jsonl line {i}: july {july!r}")
+            if july is not None and (july.get("state") not in STATES or not isinstance(july.get("ndvi"), (int, float))
+                                     or july.get("year") != b["july_year"]):
+                raise BuildError(f"fields.jsonl line {i}: july {july!r} (the build's July is {b['july_year']})")
             rows.append((fid, json.dumps(agree) if agree else None, json.dumps(july) if july else None))
     if b.get("counts", {}).get("fields") != len(rows):
         raise BuildError(f"{folder}: fields.jsonl has {len(rows)} fields, build.json says "
@@ -107,11 +109,13 @@ def load(conn, folder, b, rows):
                  republish, credit)
                values (%s, %s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb, %s, 'yes', %s)
                on conflict (build_id) do update set edition = excluded.edition, loaded_at = now(),
-                 params = excluded.params, inputs = excluded.inputs, counts = excluded.counts""",
+                 params = excluded.params, inputs = excluded.inputs, counts = excluded.counts,
+                 license = excluded.license, credit = excluded.credit""",
             (bid, edition, b.get("started_at"), b.get("finished_at"),
              json.dumps({**b.get("params", {}), "cover_year": b.get("cover_year"), "july_year": b.get("july_year"),
                          "grid": b.get("grid"), "folder": os.path.abspath(folder)}),
-             json.dumps(b.get("inputs", {})), json.dumps(b.get("counts", {})), LICENSE, CREDIT))
+             json.dumps(b.get("inputs", {})), json.dumps(b.get("counts", {})), credits.BUILD_LICENSE,
+             credits.build(b["csb_years"], b["cover_year"], b["july_year"])))
         cur.execute("""create temporary table if not exists farm_stats_in (field_id text primary key, agree jsonb,
                          july jsonb) on commit drop""")
         cur.execute("truncate farm_stats_in")

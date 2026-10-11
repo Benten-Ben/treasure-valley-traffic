@@ -1,4 +1,5 @@
-"""What every crop-fields load works out afterwards, in the same transaction (farm-csb-load, farm-fields-load):
+"""What every crop-fields load works out afterwards, in the same transaction (farm-csb-load, farm-fields-load,
+farm-cdl-load when the classes change), and what `python3 -m ingest farm-derive` works out again by hand:
 
 1. letters and group_now from the codes (farm.crop_class);
 2. growth (growth.py) from the codes and COMPASS's new-construction permits inside each field (obs.building_permit,
@@ -6,14 +7,29 @@
 3. plats: the share of each field under COMPASS's plats (core.plat), by status, and the largest few;
 4. the z8-10 dissolves (farm.field_lo): current fields dissolved by crop group per year, and by growth state,
    closed and simplified at each zoom's pixel, cut to its tile grid;
-5. a new version of the crop-fields tiles (core.layer_version 'farm.crop_fields'), with its licence and credit.
+5. a new version of the crop-fields tiles (core.layer_version 'farm.crop_fields'), with its licence and credit
+   (credits.tiles: CSB's window, the July year of the fields' states, COMPASS when its tables are there).
 
 Only current fields (valid_to is null) are worked on. Standard library plus psycopg; the geometry is PostGIS's.
+
+Growth and plats rest on development's tables, which its sources update (plats weekly, permits monthly), so between
+farm loads they drift. `farm-derive` refreshes them by hand from what those tables hold now, with no new farm data:
+
+    python3 -m ingest farm-derive              # about 3 minutes when something changed (the dissolves), seconds if not
+    python3 -m ingest farm-derive --dry-run    # what would change; rolls back
+
+It rebuilds the dissolves and gives the tiles a new version only when a field's letters, group, growth or plats
+changed. Builds and derives never run inside `ingest serve` (plan item 27); once ops.build_pending is in (M1),
+development's sources mark it there.
 """
 
+import argparse
 import json
+import sys
+from datetime import datetime, timezone
 
 from . import classes as C
+from . import credits
 from . import growth as G
 
 TILE_LAYER = "farm.crop_fields"           # /api/farm/tiles/crop_fields (P3-app)
@@ -25,9 +41,11 @@ PLAT_STATUS = {"Approved": "approved", "Recorded": "approved", "Pending": "pendi
 PLAT_MIN_SHARE = 0.01                     # smaller overlaps are edge slivers, not plats over the field
 PLAT_KEEP = 3                             # the largest plats named in a field's detail
 
-LICENSE = "public domain (USDA NASS CSB, CDL); Copernicus (Sentinel-2); none stated (COMPASS permits and plats)"
-CREDIT = ("USDA NASS Crop Sequence Boundaries and Cropland Data Layer; Contains modified Copernicus Sentinel data "
-          "2025; COMPASS (permits and plats)")
+COMMAND = "farm-derive"
+
+
+class DeriveError(ValueError):
+    pass
 
 
 def pixel_m(z):
@@ -201,20 +219,44 @@ def dissolves(conn):
     return out
 
 
+def terms(conn):
+    """(licence, credit) of the crop-fields tiles as they stand: the newest edition's window, the July years of the
+    current fields' states (the NDVI's own year, from the build), and COMPASS when its permits or plats are there."""
+    ed = conn.execute("select first_year, last_year from farm.edition order by last_year desc, loaded_at desc "
+                      "limit 1").fetchone()
+    july = [r[0] for r in conn.execute(
+        """select distinct (july ->> 'year')::int from farm.field
+           where valid_to is null and july ? 'year' order by 1""")]
+    compass = has_table(conn, "obs.building_permit") or has_table(conn, "core.plat")
+    return credits.tiles(tuple(ed) if ed else None, july, compass)
+
+
 def tile_version(conn, build, features, note):
     """A new version of the crop-fields tiles, when core.layer_version exists (migration 0020). Returns it or None."""
     if not has_table(conn, "core.layer_version"):
         return None
     from ingest import layer_version
-    return layer_version.record(conn, TILE_LAYER, license=LICENSE, republish="yes", credit=CREDIT, build=build,
+    license, credit = terms(conn)
+    return layer_version.record(conn, TILE_LAYER, license=license, republish="yes", credit=credit, build=build,
                                 features=features, note=note)
 
 
-def run(conn, build, note, classes=None):
-    """Steps 1-5 above. Doesn't commit. Returns stats."""
+FINGERPRINT = """select field_id, md5(row(letters, group_now, growth, growth_detail, plat)::text)
+                 from farm.field where valid_to is null"""
+
+
+def fingerprint(conn):
+    """{field_id: digest} of what steps 1-3 write, for the current fields."""
+    return dict(conn.execute(FINGERPRINT).fetchall())
+
+
+def run(conn, build, note, classes=None, only_if_changed=False):
+    """Steps 1-5 above. Doesn't commit. Returns stats. only_if_changed: steps 4 and 5 only when steps 1-3 changed a
+    field (farm-derive)."""
     classes = classes or C.read()
     stats = {"fields (current)": conn.execute(
         "select count(*) from farm.field where valid_to is null").fetchone()[0]}
+    before = fingerprint(conn) if only_if_changed else None
     letters_and_groups(conn)
     counts, known = growth(conn, classes)
     stats.update({"built over": counts["built_over"], "being built": counts["being_built"]})
@@ -222,8 +264,62 @@ def run(conn, build, note, classes=None):
         stats["permits"] = "no obs.building_permit: being_built not flagged"
     under = plats(conn)
     stats["under a plat"] = "no core.plat" if under is None else under
+    if before is not None:
+        after = fingerprint(conn)
+        changed = sum(1 for k, v in after.items() if before.get(k) != v)
+        stats["fields changed"] = changed
+        if not changed:
+            stats["tiles"] = "unchanged: no new version"
+            return stats
     lo = dissolves(conn)
     stats["dissolved rows"] = "/".join(f"z{z} {n}" for z, n in sorted(lo.items()))
     version = tile_version(conn, build, stats["fields (current)"], note)
     stats["tiles"] = f"{TILE_LAYER} {version}" if version else "no core.layer_version (migration 0020): no version"
     return stats
+
+
+def current_build(conn):
+    """The build the current fields' stats came from, or None."""
+    row = conn.execute("""select build_id, count(*) from farm.field where valid_to is null and build_id is not null
+                          group by 1 order by 2 desc limit 1""").fetchone()
+    return row[0] if row else None
+
+
+def refresh(conn, now=None):
+    """farm-derive: steps 1-3 again from development's tables as they are now, and 4-5 if a field changed. Doesn't
+    commit. Returns stats."""
+    now = now or datetime.now(timezone.utc)
+    if not conn.execute("select exists (select 1 from farm.field where valid_to is null)").fetchone()[0]:
+        raise DeriveError("no current crop fields (farm-csb-load first)")
+    build = current_build(conn) or conn.execute(
+        "select edition from farm.edition order by last_year desc, loaded_at desc limit 1").fetchone()[0]
+    return run(conn, build, f"{COMMAND}: permits and plats as of {now.date().isoformat()}", only_if_changed=True)
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(prog=f"python3 -m ingest {COMMAND}",
+                                 description="Work the crop fields' growth, plats and dissolves out again from "
+                                             "development's permits and plats as they are now")
+    ap.add_argument("--dry-run", action="store_true", help="work it out, report what would change, and roll back")
+    args = ap.parse_args(argv)
+    try:
+        from ingest import db
+        with db.connect() as conn:
+            stats = refresh(conn)
+            if args.dry_run:
+                conn.rollback()
+            else:
+                conn.commit()
+                if stats.get("fields changed"):
+                    conn.execute("analyze farm.field, farm.field_lo")
+                    conn.commit()
+    except (DeriveError, C.ClassesError) as err:
+        print(f"{COMMAND}: {err}", file=sys.stderr, flush=True)
+        return 1
+    print(f"{COMMAND}{' (dry run)' if args.dry_run else ''}: " + ", ".join(f"{k} {v}" for k, v in stats.items()),
+          flush=True)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

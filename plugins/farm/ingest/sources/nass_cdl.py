@@ -26,3 +26,5 @@ SOURCE = {
              "at 10 m (NASS's new method). Inputs to the crop-fields build (agreement, crop cover), never served "
              "as tiles. Loaded with python3 -m ingest farm-cdl-load.",
 }
+
+REPUBLISH = "yes"    # plugin.json's republish; recorded with each row loaded from it

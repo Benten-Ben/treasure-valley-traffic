@@ -6,7 +6,8 @@ SciPy); elsewhere it skips, and worker-test counts a skip as a failure:
 The inputs, all synthetic: the three-field GeoPackage (synthetic.py) in NASS's Albers; CDL rasters for 2025 (10 m)
 and 2023 (30 m) on an Albers grid, painted with each field's code, a strip of alfalfa across F1's west end, a 1 ha
 block of wheat outside every field and a 3 x 3-cell speck of corn; and a July NDVI median on a window of the ground's
-10 m grid (F1 green, F2 bare, F3 growing, the rest dry, with a hole of no data).
+10 m grid (F1 green, F2 bare, F3 growing, the rest dry, with a hole of no data), tagged with its July 2025 views as the
+Sentinel-2 composite tags its median.
 """
 
 import json
@@ -31,6 +32,7 @@ WHEAT = (S.X0 + 1400, S.Y0 + 400, 100)    # a 100 m square of wheat outside ever
 SPECK = (S.X0 + 1400, S.Y0 - 200, 30)     # 30 m of corn: 9 cells at 10 m, under 0.5 ha
 NDVI = {S.F1: 8500, S.F2: 1000, S.F3: 4500}
 BACKGROUND_NDVI = 2000
+ACQUISITIONS = "2025-07-01 Sentinel-2C R027, 2025-07-13 Sentinel-2A R027, 2025-07-26 Sentinel-2A R070"
 
 
 @unittest.skipUnless(B, "needs the worker image (GDAL, NumPy, SciPy)")
@@ -131,8 +133,24 @@ class BuildTest(unittest.TestCase):
         out.SetProjection(srs.ExportToWkt())
         out.GetRasterBand(1).SetNoDataValue(B.NDVI_NODATA)
         out.GetRasterBand(1).WriteArray(arr)
+        out.SetMetadata({"ACQUISITIONS": ACQUISITIONS,
+                         "CREDIT": "Contains modified Copernicus Sentinel data 2025, processed by Treasure Valley Traffic"})
         out = None
         return win
+
+    def tagged(self, name, tags):
+        """A copy of the NDVI raster with these tags instead of its own."""
+        path = os.path.join(self.tmp.name, name)
+        src = gdal.Open(self.ndvi)
+        ds = gdal.GetDriverByName("GTiff").Create(path, src.RasterXSize, src.RasterYSize, 1, gdal.GDT_Int16)
+        ds.SetGeoTransform(src.GetGeoTransform())
+        ds.SetProjection(src.GetProjection())
+        ds.GetRasterBand(1).SetNoDataValue(B.NDVI_NODATA)
+        ds.GetRasterBand(1).WriteArray(src.GetRasterBand(1).ReadAsArray())
+        if tags:
+            ds.SetMetadata(tags)
+        ds = None
+        return path
 
     def fields(self, folder=None):
         with open(os.path.join(folder or self.out, "fields.jsonl")) as f:
@@ -153,6 +171,10 @@ class BuildTest(unittest.TestCase):
         d = self.doc
         self.assertEqual((d["format"], d["build_id"], d["cover_year"], d["july_year"]),
                          (B.FORMAT, "20261011T120000Z", 2025, 2025))
+        self.assertEqual((d["inputs"]["ndvi"]["year"], d["inputs"]["ndvi"]["acquired"]),
+                         (2025, ["2025-07-01", "2025-07-26"]))
+        self.assertEqual(d["credit"], "USDA NASS Crop Sequence Boundaries 2018-2025; USDA NASS Cropland Data Layer "
+                                      "2025; Contains modified Copernicus Sentinel data 2025")
         self.assertEqual(d["counts"]["fields"], 3)
         self.assertEqual(d["inputs"]["csb"]["sha256"], B.sha256_of(self.gpkg))
         self.assertEqual(sorted(d["inputs"]["cdl"]), ["2023", "2025"])
@@ -237,6 +259,39 @@ class BuildTest(unittest.TestCase):
         self.assertEqual(count.tolist(), [0, 4, 2, 1, 0])
         self.assertEqual(med[1:4].tolist(), [4.0, 15.0, 7.0])
         self.assertTrue(np.isnan(med[0]) and np.isnan(med[4]))
+
+    def test_the_july_year_is_the_ndvis(self):
+        """The state's year comes from the NDVI's tags, not the crop year; --july-year only for an untagged raster."""
+        def year(tags, given=None):
+            return B.july_year_of(gdal.Open(self.tagged("y.tif", tags)), given)
+
+        self.assertEqual(year({"ACQUISITIONS": ACQUISITIONS}), (2025, ["2025-07-01", "2025-07-26"]))
+        self.assertEqual(year({"ACQUISITIONS": ACQUISITIONS}, 2025)[0], 2025)
+        self.assertEqual(year({"CREDIT": "Contains modified Copernicus Sentinel data 2024"}), (2024, None))
+        self.assertEqual(year({}, 2023), (2023, None))
+        for tags, given in (({"ACQUISITIONS": ACQUISITIONS}, 2026),                    # disagrees with the tags
+                            ({}, None),                                                 # says nothing
+                            ({"ACQUISITIONS": "2025-04-04 Sentinel-2A R027"}, None),    # an April median
+                            ({"ACQUISITIONS": "2024-07-09 S2B, 2025-07-11 S2C"}, None),  # two years
+                            ({"ACQUISITIONS": "2025-07-32 S2A"}, None)):                # not a date
+            with self.subTest(tags=tags, given=given), self.assertRaises(B.BuildError):
+                year(tags, given)
+
+    def test_a_newer_crop_year_keeps_its_julys_year(self):
+        """A July 2024 median under 2025's crops: every field's July, the CREDIT tag and build.json say 2024."""
+        ndvi = self.tagged("july2024.tif", {"ACQUISITIONS": ACQUISITIONS.replace("2025-", "2024-")})
+        out = os.path.join(self.tmp.name, "farm", "build", "20261011T120002Z")
+        doc = B.build(self.gpkg, self.cdl, ndvi, out, log=lambda m: None)
+        self.assertEqual((doc["cover_year"], doc["july_year"]), (2025, 2024))
+        self.assertEqual({r["july"]["year"] for r in self.fields(out).values()}, {2024})
+        credit = gdal.Open(os.path.join(out, "crop_cover.tif")).GetMetadataItem("CREDIT")
+        self.assertTrue(credit.endswith("Cropland Data Layer 2025; Contains modified Copernicus Sentinel data 2024"),
+                        credit)
+        bad = os.path.join(self.tmp.name, "farm", "build", "20261011T120003Z")
+        with self.assertRaises(B.BuildError):
+            B.build(self.gpkg, self.cdl, self.tagged("april.tif", {"ACQUISITIONS": "2025-04-04 S2A"}), bad,
+                    log=lambda m: None)
+        self.assertFalse(os.path.exists(bad))                # refused before anything was written
 
     def test_refuses_an_ndvi_off_the_grid(self):
         path = os.path.join(self.tmp.name, "off.tif")

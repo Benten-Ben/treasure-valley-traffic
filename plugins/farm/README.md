@@ -141,10 +141,12 @@ on the VM):
   don't read 2023-to-2024 changes as real.
 - **Sentinel-2's July 2025 NDVI median** on the ground's 10 m grid
   (`sentinel2/july2025/ndvi_median.tif`; "Contains modified Copernicus
-  Sentinel data 2025").
+  Sentinel data 2025"). Its tags list the views it's the median of
+  (`ACQUISITIONS`, July 1-26, 2025); the build takes the July state's year
+  from them, never from the crop year.
 - **COMPASS's permits and plats** (`obs.building_permit`, `core.plat`: the
-  development plugin's sources, republish yes), joined at load time for the
-  growth flags.
+  development plugin's sources, republish yes), joined at each farm load and
+  by `farm-derive` for the growth flags and plats ([below](#growth-and-plats-between-loads)).
 
 **The crop year** is CSB's newest, read as "2025 (USDA's newest)" (view
 `farm.crop_year`). It moves on only when the next edition is loaded (CSB
@@ -162,7 +164,8 @@ python3 -m ingest farm-cdl-load --cdl $TVT_SOURCES/cdl/out --accuracy $TVT_SOURC
 # 2. the CSB edition (stdlib GeoPackage reader, WKB to PostGIS)
 python3 -m ingest farm-csb-load --gpkg $TVT_SOURCES/csb/csb_mapbox.gpkg --edition csb-2018-2025-rev23 \
     --published 2026-03-27 --last-modified 2026-05-15T17:58:04Z
-# 3. the worker build (GDAL, NumPy, SciPy), about 70 s and under 1 GB: a light job
+# 3. the worker build (GDAL, NumPy, SciPy), about 70 s and under 1 GB: a light job. The July year is the NDVI's
+#    own, from its tags (--july-year only for a raster without them, and it must agree with any it has)
 python -m plugins.farm.build.build --csb $TVT_SOURCES/csb/csb_mapbox.gpkg --cdl $TVT_ARCHIVE/farm/cdl \
     --ndvi $TVT_SOURCES/sentinel2/july2025/ndvi_median.tif --out $TVT_ARCHIVE/farm/build/<UTC stamp>
 python3 -m ingest farm-fields-load --build $TVT_ARCHIVE/farm/build/<UTC stamp>
@@ -174,8 +177,10 @@ Each load runs in one transaction, then works out the derived columns
 (`ingest/derive.py`): each field's letters and crop group now, its growth,
 its plats, the z8-10 dissolves, and a new version of the crop-fields tiles
 (`core.layer_version`, layer `farm.crop_fields`, with its licence and
-credit). A CSB or fields load takes about three minutes on the scratch
-database, mostly the dissolves. Every command has `--dry-run` but the export.
+credit, built from what's loaded: CSB's window, the July year of the fields'
+states, COMPASS). A CSB or fields load takes about three minutes on the
+scratch database, mostly the dissolves. Every command has `--dry-run` but the
+export.
 `farm-csb-load` and `farm-cdl-load` are logged in `ops.fetch` (sources
 `nass_csb`, `nass_cdl`; no request is made).
 
@@ -183,7 +188,12 @@ database, mostly the dissolves. Every command has `--dry-run` but the export.
 lacks, of an older edition, another revision of this one or this one's
 earlier load, are closed (`valid_to`), never deleted, and linked to the new
 fields covering at least a tenth of them (`successor`): a field that vanished
-is part of the farmland record. Loading it again with the field reopens it. Loading an edition older than the newest one loaded is refused.
+is part of the farmland record. Only the file's own fields can succeed one,
+never the field itself. One of this edition's own fields that a reload drops
+closes on the edition's date, so its `valid_from` and `valid_to` are equal:
+as the edition now stands, it never had the field. Loading it again with the
+field reopens it. Loading an edition older than the newest one loaded is
+refused.
 CSBIDs carry the window's years, so a new edition's ids are all new; its
 fields get the new build's stats once it's built and loaded.
 
@@ -203,7 +213,10 @@ the NDVI median:
    of the pixels (2025).
 2. **July state:** each field's median NDVI over the 10 m cells whose centres
    are inside it: **green** from 0.6, **growing** from 0.3, **bare or
-   harvested** below.
+   harvested** below. Its year (`july.year`, the credit's "Sentinel data
+   <year>") is the NDVI's own, from the raster's `ACQUISITIONS` tag (else its
+   `CREDIT`'s year). A raster with views outside July, or from two years, is
+   refused, and so is `--july-year` when it disagrees with the tags.
 3. **`crop_cover.tif`**, on the ground's 10 m grid (EPSG:32611 from E 495920
    N 4855750, 8,967 x 9,494 cells, exactly the NDVI's), three uint8 bands:
 
@@ -240,6 +253,33 @@ under COMPASS's approved or recorded, pending and built plats, and the largest
 three by name. A field still farmed in 2025 and at least half under an
 approved or recorded plat is the layer's "approved plat" (`p`).
 
+#### Growth and plats between loads
+
+Growth and plats are worked out at each farm load from development's tables
+as they are then, and stored: the z8-10 dissolves (`built_over`,
+`being_built`, `plat`) and the tiles' `s` and `p` need them precomputed. The
+farm design had permits and plats joined at query time; at z11 that would
+intersect every field in a tile with the plats on each request. Development's
+sources update them (plats weekly, permits monthly), so between yearly farm
+loads they drift: a plat approved, withdrawn or built, or new permits, show
+only after
+
+```bash
+python3 -m ingest farm-derive              # letters, growth, plats; the dissolves and a new tile version if a field changed
+python3 -m ingest farm-derive --dry-run    # how many fields would change; rolls back
+```
+
+It reads no new farm data. With nothing changed it writes nothing and takes
+seconds; otherwise about three minutes on the scratch database (the
+dissolves), a light job. Like the loads, it runs by hand, never inside
+`ingest serve` (plan item 27). Run it after development's weekly plats run,
+and before a review or a deploy. Once M1's `ops.build_pending` is on main,
+development's sources should mark it (`farm-derive`) when they change. The
+card can still read a field's plats live from `core.plat`, as the design had
+it; the stored `plat` and `growth_detail` are as of the last load or derive
+(the tile version's note names the day). This choice is pending with the
+owner ([DECISIONS](../../docs/DECISIONS.md#pending-owner-to-decide)).
+
 **Crop groups** (`ingest/crop_classes.csv`): NASS's legend (names, colours)
 with our group and the AgriMet crops whose water use the card can show (our
 mapping ⚠️). The groups are the farm design's: corn and sorghum; hay and
@@ -252,12 +292,17 @@ codes are placed by kind (none is in the box's 2025 fields).
 
 | Table | Rows (Oct 11) | What |
 |---|---|---|
-| `farm.edition` | 1 | each CSB edition: its window, release, the file's sha256, counts |
+| `farm.edition` | 1 | each CSB edition: its window, release, the file's sha256, counts, licence, republish, credit |
 | `farm.crop_class` | 133 | CDL codes: name, group, letter, NASS colour, AgriMet crops, Idaho 2025 accuracy (76 codes) |
-| `farm.cdl_year` | 5 | the CDL rasters in `$TVT_ARCHIVE/farm/cdl/`, with sha256 and method |
-| `farm.build` | 1 | each loaded build: its inputs, parameters and counts |
+| `farm.cdl_year` | 5 | the CDL rasters in `$TVT_ARCHIVE/farm/cdl/`, with sha256, method, licence, republish, credit |
+| `farm.build` | 1 | each loaded build: its inputs, parameters and counts, licence, republish, credit (with the July NDVI's year) |
 | `farm.field` | 21,460 | the fields: outline (4326), CSB's interior point, acres, county, codes per year (`crops`), `letters`, `group_now`, `bearing`, `agree`, `july`, `growth` (+ detail), `plat`, `valid_from`/`valid_to`, `successor`; `id` is the tiles' feature id |
 | `farm.field_lo` | 1,386 | the z8-10 dissolves: by crop group per year and by growth state (`built_over`, `being_built`, `plat`), closed across gaps under a pixel, simplified by half a pixel, parts under half a square pixel dropped, cut to each zoom's tile grid (EPSG:3857) |
+
+Every table and view says its licence, republish and credit in its comment
+(`\d+ farm.field`; plan C3): CSB and CDL public domain, Sentinel-2
+Copernicus, COMPASS none stated (development: republish yes); all republish
+yes. The tile views point at their `core.layer_version` row.
 
 Views for the tiles (`/api/farm/tiles/crop_fields`, P3-app), read by
 mvt.ts as one table per zoom band:
@@ -286,8 +331,8 @@ the ground's own rules before it's left there:
 | `fields` | FlatGeobuf, MultiPolygon, EPSG:32611 | public domain, republish yes | every current field: `id` (farm.field's), `csbid`, `crop_group` (crop_cover's codes), `cdl` (the 2025 code), `bearing` (the long side of its minimum-area rectangle, degrees clockwise from grid north, 0-180: the row direction), `acres` (15 MB) |
 
 Credits: "USDA NASS Crop Sequence Boundaries 2018-2025", "USDA NASS Cropland
-Data Layer 2025", "Contains modified Copernicus Sentinel data 2025". Neither
-layer is a base layer. `python3 basemap/ground/ground.py status --archive
+Data Layer 2025", "Contains modified Copernicus Sentinel data 2025" (the
+build's July year). Neither layer is a base layer. `python3 basemap/ground/ground.py status --archive
 $TVT_ARCHIVE` shows the ground reading both.
 
 ### Measured on the scratch database (Oct 11)
@@ -315,7 +360,11 @@ Yearly and by hand, each download with the owner's OK: CDL about late
 February, CSB about late March. Load the new CDL year (`farm-cdl-load`), the
 new edition (`farm-csb-load`), rebuild, load the build and export. A new July
 state needs a new Sentinel-2 run, or the landscape's July drifts from the crop
-year shown.
+year shown. Until then a rebuild under the 2026 crop year still says July
+2025 (and credits Sentinel data 2025), from the NDVI's tags.
+
+Between those: `farm-derive` after development's plats and permits change
+([above](#growth-and-plats-between-loads)).
 
 ### Tests
 

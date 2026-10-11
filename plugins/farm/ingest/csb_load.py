@@ -33,7 +33,7 @@ import sys
 from datetime import date, datetime, timezone
 
 from . import classes as C
-from . import derive, gpkg
+from . import credits, derive, gpkg
 from .sources import nass_csb
 
 EDITION = re.compile(r"^csb-([0-9]{4})-([0-9]{4})(-[a-z0-9]+)?$")
@@ -41,7 +41,6 @@ YEAR_COLUMN = re.compile(r"^CDL([0-9]{4})$")
 NAD83_EPSG = (5070, 4269, 26911, 6340, 3740)   # NAD83 CRSs taken with the null shift
 SUCCESSOR_MIN_SHARE = 0.1                     # a newer field covering at least this share of an old one succeeds it
 SUCCESSORS_KEPT = 5
-CREDIT_FMT = "USDA NASS Crop Sequence Boundaries {first}-{last}"
 
 
 class CsbError(ValueError):
@@ -126,6 +125,14 @@ def source_proj(conn, epsg):
     return proj.strip()
 
 
+def bearing_sql(azimuth):
+    """SQL for a row bearing, degrees 0-180 from grid north, from an azimuth in radians. A mod just under 180 can
+    round to 180 as a real; it wraps to 0 in the same expression, since farm.field's check (bearing < 180) is
+    tested as each row is written."""
+    b = f"mod(degrees({azimuth})::numeric, 180)::real"
+    return f"(case when {b} >= 180 then 0::real else {b} end)"
+
+
 def check_order(conn, edition, first, last):
     """Refuse an edition older than the newest one loaded (a reload of the same window is fine)."""
     newest = conn.execute("select edition, last_year from farm.edition order by last_year desc, loaded_at desc "
@@ -146,7 +153,7 @@ def load(conn, path, edition, published=None, last_modified=None, source_url=Non
     C.ensure(conn, classes)
     proj = source_proj(conn, info["epsg"])
     valid_from = published or now.date()
-    credit = CREDIT_FMT.format(first=first, last=last)
+    credit = credits.csb(first, last)
 
     def tr(expr):
         return (f"ST_Transform({expr}, %(proj)s, 4326)" if proj
@@ -155,13 +162,14 @@ def load(conn, path, edition, published=None, last_modified=None, source_url=Non
     with conn.cursor() as cur:
         cur.execute(
             """insert into farm.edition (edition, first_year, last_year, published, source_url, last_modified, file,
-                 sha256, loaded_at, license, credit)
-               values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                 sha256, loaded_at, license, republish, credit)
+               values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                on conflict (edition) do update set published = excluded.published, source_url = excluded.source_url,
                  last_modified = excluded.last_modified, file = excluded.file, sha256 = excluded.sha256,
-                 loaded_at = excluded.loaded_at, license = excluded.license, credit = excluded.credit""",
+                 loaded_at = excluded.loaded_at, license = excluded.license, republish = excluded.republish,
+                 credit = excluded.credit""",
             (edition, first, last, published, source_url or nass_csb.SOURCE["url"], last_modified,
-             os.path.abspath(path), sha, now, nass_csb.SOURCE["license"], credit))
+             os.path.abspath(path), sha, now, nass_csb.SOURCE["license"], nass_csb.REPUBLISH, credit))
         cur.execute("""create temporary table if not exists farm_csb_in (field_id text primary key, wkb bytea,
                          acres real, state_fips text, county_fips text, county text, asd text, first_year smallint,
                          crops smallint[], inside_x float8, inside_y float8) on commit drop""")
@@ -204,25 +212,19 @@ def load(conn, path, edition, published=None, last_modified=None, source_url=Non
                  build_id = case when farm.field.geom = excluded.geom then farm.field.build_id end""",
             args).rowcount
         # The row bearing: the longer side of the minimum-area rectangle in UTM 11N, degrees from grid north, 0-180.
+        side = """case when ST_Distance(ST_PointN(ST_ExteriorRing(r), 1), ST_PointN(ST_ExteriorRing(r), 2))
+                            >= ST_Distance(ST_PointN(ST_ExteriorRing(r), 2), ST_PointN(ST_ExteriorRing(r), 3))
+                       then ST_Azimuth(ST_PointN(ST_ExteriorRing(r), 1), ST_PointN(ST_ExteriorRing(r), 2))
+                       else ST_Azimuth(ST_PointN(ST_ExteriorRing(r), 2), ST_PointN(ST_ExteriorRing(r), 3)) end"""
         cur.execute(
-            """update farm.field f set bearing = s.bearing
-               from (select field_id,
-                            case when GeometryType(r) = 'POLYGON' then
-                              mod(degrees(case when ST_Distance(ST_PointN(ST_ExteriorRing(r), 1),
-                                                                ST_PointN(ST_ExteriorRing(r), 2))
-                                                    >= ST_Distance(ST_PointN(ST_ExteriorRing(r), 2),
-                                                                   ST_PointN(ST_ExteriorRing(r), 3))
-                                               then ST_Azimuth(ST_PointN(ST_ExteriorRing(r), 1),
-                                                               ST_PointN(ST_ExteriorRing(r), 2))
-                                               else ST_Azimuth(ST_PointN(ST_ExteriorRing(r), 2),
-                                                               ST_PointN(ST_ExteriorRing(r), 3)) end)::numeric,
-                                  180)::real
-                            end as bearing
-                     from (select field_id, ST_OrientedEnvelope(ST_Transform(geom, 32611)) as r
-                           from farm.field where edition = %s) e) s
-               where f.field_id = s.field_id""", (edition,))
-        cur.execute("update farm.field set bearing = 0 where edition = %s and bearing >= 180", (edition,))
-        # Fields this file doesn't have, of this edition or an older one: closed, and linked to what covers them now.
+            f"""update farm.field f set bearing = s.bearing
+                from (select field_id, case when GeometryType(r) = 'POLYGON' then {bearing_sql(side)} end as bearing
+                      from (select field_id, ST_OrientedEnvelope(ST_Transform(geom, 32611)) as r
+                            from farm.field where edition = %s) e) s
+                where f.field_id = s.field_id""", (edition,))
+        # Fields this file doesn't have, of this edition or an older one: closed, and linked to the file's fields
+        # that cover them now (never to themselves). One of this edition's own fields that a reload drops closes on
+        # the edition's date, an empty interval: as the edition now stands, it never had the field.
         closed = cur.execute(
             """with gone as (
                  select f.field_id from farm.field f join farm.edition e on e.edition = f.edition
@@ -232,7 +234,8 @@ def load(conn, path, edition, published=None, last_modified=None, source_url=Non
                  select o.field_id, array_agg(n.field_id order by ST_Area(ST_Intersection(o.geom, n.geom)) desc)
                           as ids
                  from farm.field o join gone using (field_id)
-                 join farm.field n on n.edition = %(edition)s and ST_Intersects(o.geom, n.geom)
+                 join farm.field n on n.field_id in (select field_id from farm_csb_in) and n.field_id <> o.field_id
+                   and ST_Intersects(o.geom, n.geom)
                    and ST_Area(ST_Intersection(o.geom, n.geom)) >= %(share)s * ST_Area(o.geom)
                  group by o.field_id)
                update farm.field f set valid_to = %(valid_from)s, successor = succ.ids[1:%(kept)s]

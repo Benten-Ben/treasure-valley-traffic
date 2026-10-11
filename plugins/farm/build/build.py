@@ -11,8 +11,12 @@ the fields to the ground. About 0.6 GB of memory and a few minutes for the box (
    the same year, on that grid, in row strips: the share of each field's pixels (centres inside) whose code is the
    field's CSB code that year. CSB's code is a smoothed majority (97% of fields' majority pixel matches it), so this
    says how mixed a field is, which the card shows as "USDA's map agrees on 82% of this field".
-2. **July state.** On the ground's 10 m grid (the July 2025 Sentinel-2 NDVI median's own grid), each field's median
-   NDVI over the cells whose centres are inside it: green from 0.6, growing from 0.3, bare or harvested below.
+2. **July state.** On the ground's 10 m grid (the July Sentinel-2 NDVI median's own grid), each field's median NDVI
+   over the cells whose centres are inside it: green from 0.6, growing from 0.3, bare or harvested below. The state's
+   year is the NDVI's own, read from the raster's tags (ACQUISITIONS, the dates of the views it's the median of, as
+   the Sentinel-2 composite writes them; else its CREDIT's year), never the crop year: a 2026 crop year built on the
+   July 2025 median says July 2025, and credits Sentinel data 2025. --july-year must agree with the tags, and is
+   needed only for a raster without them; views outside July, or from two years, are refused.
 3. **crop_cover.tif**, on the same grid, three bands (uint8), window by window with a 500 m halo:
    - group: 0 none, 1 corn, 2 hay, 3 grain, 4 roots, 5 specialty, 6 fallow (classes.COVER_CODES). Pasture isn't crop
      (the scheme paints it as grass), and built-over fields aren't either (their newest code is developed);
@@ -47,6 +51,7 @@ from scipy import ndimage
 
 from basemap.ground import grid, rasterize as R
 from plugins.farm.ingest import classes as C
+from plugins.farm.ingest import credits
 
 FORMAT = "tvt-farm-build/1"
 GREEN, GROWING = 0.6, 0.3                  # July NDVI cuts (farm design; checked on the ten boxes' photos)
@@ -60,6 +65,9 @@ STRIP_ROWS = 1024
 NDVI_SCALE = 10000.0                       # the NDVI median is NDVI x 10000 (int16)
 NDVI_NODATA = -32768
 RASTER = re.compile(r"^cdl_([0-9]{4})_([0-9]+)m\.tif$")
+ACQUISITION = re.compile(r"\b([0-9]{4})-([0-9]{2})-([0-9]{2})\b")
+SENTINEL_YEAR = re.compile(r"Sentinel data ([0-9]{4})\b")
+JULY = 7
 YEAR_COLUMN = re.compile(r"^CDL([0-9]{4})$")
 
 gdal.UseExceptions()
@@ -215,6 +223,38 @@ def area_of(ds):
     return grid.window((w, n - ds.RasterYSize * 10.0, w + ds.RasterXSize * 10.0, n), grid.BASE_RES, snap="exact")
 
 
+def ndvi_dates(ds):
+    """What the NDVI median's tags say of its dates: (year, [first, last] view dates, or None). ACQUISITIONS lists the
+    views it's the median of; without it, CREDIT's "Copernicus Sentinel data <year>". (None, None) when it says
+    neither. Views outside July or from more than one year are refused: the state is one year's July state."""
+    md = ds.GetMetadata() or {}
+    try:
+        dates = sorted({dt.date(int(y), int(m), int(d)) for y, m, d in ACQUISITION.findall(md.get("ACQUISITIONS", ""))})
+    except ValueError as err:
+        raise BuildError(f"the NDVI raster's ACQUISITIONS tag has a date that isn't one ({err})") from None
+    if dates:
+        ys = sorted({d.year for d in dates})
+        if len(ys) > 1:
+            raise BuildError(f"the NDVI raster's views are from {ys}: a July median is one year's")
+        off = [d for d in dates if d.month != JULY]
+        if off:
+            raise BuildError(f"the NDVI raster has views outside July ({off[0].isoformat()}): not a July median")
+        return dates[0].year, [dates[0].isoformat(), dates[-1].isoformat()]
+    m = SENTINEL_YEAR.search(md.get("CREDIT", ""))
+    return (int(m.group(1)), None) if m else (None, None)
+
+
+def july_year_of(ds, given=None):
+    """(the July state's year, its views' first and last dates or None): the NDVI's tags, which --july-year must
+    agree with; --july-year alone only for a raster without tags."""
+    year, span = ndvi_dates(ds)
+    if given and year and given != year:
+        raise BuildError(f"--july-year {given}, but the NDVI raster's tags say {year}")
+    if not (given or year):
+        raise BuildError("the NDVI raster doesn't say its year (no ACQUISITIONS or CREDIT tag): pass --july-year")
+    return given or year, span
+
+
 def read_padded(band, area, win, fill, dtype):
     """A window of a band whose raster covers `area` (both on one grid level), filled outside the raster."""
     out = np.full(win.shape, fill, dtype)
@@ -328,9 +368,12 @@ def build(csb, cdl_dir, ndvi, out, cover_year=None, july_year=None, window_cells
     started = dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
     if os.path.exists(os.path.join(out, "build.json")):
         raise BuildError(f"{out} already holds a finished build")
-    os.makedirs(out, exist_ok=True)
     classes = C.read()
     rasters = cdl_rasters(cdl_dir)
+    nds = gdal.Open(ndvi)
+    july_year, july_span = july_year_of(nds, july_year)      # before anything is written
+    area = area_of(nds)
+    os.makedirs(out, exist_ok=True)
     gdal.SetCacheMax(128 * 1024 * 1024)
     work = tempfile.mkdtemp(prefix="farm-build-", dir=out)
     try:
@@ -340,7 +383,8 @@ def build(csb, cdl_dir, ndvi, out, cover_year=None, july_year=None, window_cells
         cover_year = cover_year or years[-1]
         if cover_year not in rasters or cover_year not in years:
             raise BuildError(f"the cover year {cover_year} needs both a CDL raster and a CSB year")
-        july_year = july_year or cover_year
+        if july_year != cover_year:
+            log(f"the July state is {july_year}'s (the NDVI's), the crops {cover_year}'s")
 
         # 1. agreement per CDL year held
         agree, px = {}, {}
@@ -355,8 +399,6 @@ def build(csb, cdl_dir, ndvi, out, cover_year=None, july_year=None, window_cells
             log(f"agreement {year}: {have.sum()} fields with pixels, {share:.3f} of their pixels match")
 
         # 2 and 3. July state and crop_cover, window by window
-        nds = gdal.Open(ndvi)
-        area = area_of(nds)
         nband = nds.GetRasterBand(1)
         nodata = nband.GetNoDataValue()
         if nodata is not None and int(nodata) != NDVI_NODATA:
@@ -365,8 +407,8 @@ def build(csb, cdl_dir, ndvi, out, cover_year=None, july_year=None, window_cells
         cover_of_field = table[np.clip(codes[:, years.index(cover_year)], 0, 255)]
         cover_of_field[0] = 0
         cover_path = os.path.join(out, "crop_cover.tif")
-        meta = {"CREDIT": f"USDA NASS Crop Sequence Boundaries {years[0]}-{years[-1]}; USDA NASS Cropland Data Layer "
-                          f"{cover_year}; Contains modified Copernicus Sentinel data {july_year}",
+        meta = {"CREDIT": credits.build((years[0], years[-1]), cover_year, july_year),
+                "JULY": f"July {july_year} NDVI median" + (f" ({july_span[0]} to {july_span[1]})" if july_span else ""),
                 "BANDS": "group (0 none, 1 corn, 2 hay, 3 grain, 4 roots, 5 specialty, 6 fallow); state (0 none, "
                          "1 green, 2 growing, 3 bare or harvested); confidence (0 none, 1 field interior, 2 field "
                          "edge band where the CDL agrees, 3 CDL crop cluster >= 0.5 ha outside every field)",
@@ -423,6 +465,7 @@ def build(csb, cdl_dir, ndvi, out, cover_year=None, july_year=None, window_cells
         "finished_at": finished.isoformat().replace("+00:00", "Z"),
         "csb_years": [years[0], years[-1]],
         "cover_year": cover_year, "july_year": july_year,
+        "credit": credits.build((years[0], years[-1]), cover_year, july_year),
         "grid": {"crs": grid.CRS, "res": grid.BASE_RES, "west": area.west, "north": area.north,
                  "width": area.width, "height": area.height},
         "params": {"green": GREEN, "growing": GROWING, "state_smoothing": "3x3 mean of valid cells",
@@ -435,7 +478,8 @@ def build(csb, cdl_dir, ndvi, out, cover_year=None, july_year=None, window_cells
             "csb": {"path": os.path.abspath(csb), "sha256": sha256_of(csb), "bytes": os.path.getsize(csb)},
             "cdl": {str(y): {"path": os.path.abspath(p), "sha256": sha256_of(p), "res_m": r}
                     for y, (r, p) in sorted(rasters.items())},
-            "ndvi": {"path": os.path.abspath(ndvi), "sha256": sha256_of(ndvi), "bytes": os.path.getsize(ndvi)},
+            "ndvi": {"path": os.path.abspath(ndvi), "sha256": sha256_of(ndvi), "bytes": os.path.getsize(ndvi),
+                     "year": july_year, "acquired": july_span},
         },
         "files": {name: {"sha256": sha256_of(os.path.join(out, name)), "bytes": os.path.getsize(os.path.join(out, name))}
                   for name in ("fields.jsonl", "crop_cover.tif")},
@@ -465,7 +509,8 @@ def main(argv=None):
     ap.add_argument("--ndvi", required=True, help="the July NDVI median on the ground's 10 m grid (NDVI x 10000, int16)")
     ap.add_argument("--out", required=True, help="the build folder ($TVT_ARCHIVE/farm/build/<id>), new or unfinished")
     ap.add_argument("--cover-year", type=int, help="the crop year crop_cover shows (default: CSB's newest)")
-    ap.add_argument("--july-year", type=int, help="the NDVI's year (default: the cover year)")
+    ap.add_argument("--july-year", type=int, help="the NDVI's year, only for a raster whose tags don't say it "
+                                                   "(ACQUISITIONS or CREDIT); otherwise it must agree with them")
     ap.add_argument("--window", type=int, default=WINDOW_CELLS, help="window size in 10 m cells")
     args = ap.parse_args(argv)
     try:

@@ -23,3 +23,5 @@ SOURCE = {
              "loaded with python3 -m ingest farm-csb-load. Field outlines are modelled from 30 m CDL pixels: "
              "estimated fields. Never joined to the Assessor's parcels in anything public.",
 }
+
+REPUBLISH = "yes"    # plugin.json's republish; recorded with each row loaded from it

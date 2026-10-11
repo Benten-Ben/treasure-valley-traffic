@@ -95,13 +95,15 @@ def load(conn, folder, archive, accuracy=None, now=None):
             sha = sha256_of(path)
             rel = archive_copy(path, archive, sha)
             cur.execute(
-                """insert into farm.cdl_year (year, res_m, method, path, bytes, sha256, credit, loaded_at)
-                   values (%s, %s, %s, %s, %s, %s, %s, %s)
+                """insert into farm.cdl_year (year, res_m, method, path, bytes, sha256, license, republish, credit,
+                     loaded_at)
+                   values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                    on conflict (year) do update set res_m = excluded.res_m, method = excluded.method,
                      path = excluded.path, bytes = excluded.bytes, sha256 = excluded.sha256,
-                     credit = excluded.credit, loaded_at = excluded.loaded_at""",
-                (year, res, method(year, res), rel, os.path.getsize(path), sha,
-                 f"{nass_cdl.SOURCE['credit']} {year}", now))
+                     license = excluded.license, republish = excluded.republish, credit = excluded.credit,
+                     loaded_at = excluded.loaded_at""",
+                (year, res, method(year, res), rel, os.path.getsize(path), sha, nass_cdl.SOURCE["license"],
+                 nass_cdl.REPUBLISH, f"{nass_cdl.SOURCE['credit']} {year}", now))
             indexed.append(f"{year} ({res:g} m)")
     stats = {"classes": n, "with accuracy": len(accuracy) if accuracy is not None else "kept",
              "rasters": ", ".join(indexed)}

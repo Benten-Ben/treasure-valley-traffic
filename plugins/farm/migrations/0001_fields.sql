@@ -5,7 +5,8 @@
 -- sure USDA is, with Sentinel-2 for the field's state in July, and with COMPASS's permits and plats for growth.
 -- Public domain (CSB, CDL), Copernicus (Sentinel-2) and COMPASS's none-stated data with republish yes
 -- (development's sources), so everything here may be republished. CSB names no owners; it is never joined to the
--- Assessor's parcels in anything public.
+-- Assessor's parcels in anything public. Each table's licence, republish and credit are in its comment (decision C3);
+-- farm.edition, farm.cdl_year and farm.build also record them per row, and core.layer_version per tile version.
 --
 -- Loads, by hand (plugins/farm/README.md):
 --   farm-csb-load     an edition's GeoPackage into farm.edition and farm.field
@@ -13,6 +14,7 @@
 --   farm-fields-load  a worker build's per-field stats (agreement, July state) into farm.field
 -- Each then works out the fields' growth, plats and letters, rebuilds the z8-10 dissolves (farm.field_lo) and gives
 -- the crop-fields tiles a new version (core.layer_version 'farm.crop_fields'), in one transaction.
+--   farm-derive       that last step again, by hand, after COMPASS's permits or plats change (no new data of ours)
 --
 -- Naming: core's "fields" are gridded frames (ch. 15); here it's always farm.field or "crop fields".
 
@@ -31,6 +33,7 @@ create table farm.edition (
   loaded_at      timestamptz not null default now(),
   counts         jsonb not null default '{}',
   license        text not null,
+  republish      text not null check (republish in ('yes', 'aggregates', 'internal', 'no')),
   credit         text not null
 );
 
@@ -54,6 +57,8 @@ create table farm.cdl_year (
   path           text not null,              -- relative to $TVT_ARCHIVE
   bytes          bigint not null,
   sha256         text not null check (sha256 ~ '^[0-9a-f]{64}$'),
+  license        text not null,
+  republish      text not null check (republish in ('yes', 'aggregates', 'internal', 'no')),
   credit         text not null,
   loaded_at      timestamptz not null default now()
 );
@@ -94,8 +99,8 @@ create table farm.field (
   july           jsonb,                      -- {"year": 2025, "ndvi": 0.85, "state": "green", "px": 120}
   build_id       text references farm.build, -- the build whose agree and july these are
   growth         text check (growth in ('farmed', 'built_over', 'being_built')),
-  growth_detail  jsonb,                      -- the rule, the first developed year ("by"), permits, ...
-  plat           jsonb,                      -- COMPASS plats over it: shares by status, the largest few
+  growth_detail  jsonb,                      -- the rule, the first developed year ("by"), permits, ... (as of the last derive)
+  plat           jsonb,                      -- COMPASS plats over it: shares by status, the largest few (as of the last derive)
   valid_from     date not null,              -- the edition's release (or load) date
   valid_to       date,                       -- set when a newer edition no longer has the field
   successor      text[]                      -- the newer edition's fields covering most of it
@@ -153,7 +158,39 @@ create view farm.crop_fields_lo10 as
 select case when yr is null then null else key end as g, case when yr is null then key end as s, geom
 from farm.field_lo where z = 10 and now;
 
+comment on schema farm is
+  'Farms and crops. Crop fields: USDA NASS Crop Sequence Boundaries and Cropland Data Layer (public domain), '
+  'Copernicus Sentinel-2 (Copernicus licence), COMPASS permits and plats (none stated; development: republish yes). '
+  'Republish yes throughout; each table''s comment names its own';
+comment on table farm.edition is
+  'CSB editions loaded. Public domain; republish yes; credit USDA NASS Crop Sequence Boundaries <first>-<last> '
+  '(per row)';
+comment on table farm.crop_class is
+  'CDL class codes: NASS''s names and colours, NASS''s Idaho accuracy, our crop groups and AgriMet crops. Public '
+  'domain (USDA NASS Cropland Data Layer legend and accuracy); republish yes; credit USDA NASS Cropland Data Layer';
+comment on table farm.cdl_year is
+  'The CDL rasters the builds read (inputs, never tiles). Public domain; republish yes; credit USDA NASS Cropland '
+  'Data Layer <year> (per row)';
+comment on table farm.build is
+  'Crop-fields builds loaded (agreement, July state, crop_cover.tif). Public domain (CSB, CDL) and Copernicus '
+  '(Sentinel-2); republish yes; credit per row, with the July NDVI''s own year';
 comment on table farm.field is
-  'Crop fields (USDA NASS Crop Sequence Boundaries): estimated outlines with eight years of crops, CDL agreement, July state and growth';
+  'Crop fields: estimated outlines with eight years of crops (USDA NASS CSB, public domain), CDL agreement (public '
+  'domain), July state (Copernicus Sentinel-2), growth and plats (COMPASS permits and plats, none stated); republish '
+  'yes; credit USDA NASS Crop Sequence Boundaries and Cropland Data Layer, Contains modified Copernicus Sentinel '
+  'data <july.year>, COMPASS. growth, growth_detail and plat are as of the last load or farm-derive';
 comment on table farm.field_lo is
-  'Crop fields dissolved by group (per year) and growth state for z8-10 tiles, cut to each zoom''s tile grid (EPSG:3857)';
+  'Crop fields dissolved by group (per year) and growth state for z8-10 tiles, cut to each zoom''s tile grid '
+  '(EPSG:3857). From farm.field: public domain (CSB) and COMPASS (growth, plats; none stated); republish yes; credit '
+  'as the tiles'' core.layer_version row';
+comment on view farm.crop_year is
+  'The crop year the map shows: the newest year of the newest CSB edition loaded (public domain; republish yes)';
+comment on view farm.crop_fields is
+  'Crop-fields tiles, z11 on (one feature per current field). Licence, republish and credit: core.layer_version '
+  '''farm.crop_fields''';
+comment on view farm.crop_fields_lo8 is
+  'Crop-fields tiles, z8 (dissolves). Licence, republish and credit: core.layer_version ''farm.crop_fields''';
+comment on view farm.crop_fields_lo9 is
+  'Crop-fields tiles, z9 (dissolves). Licence, republish and credit: core.layer_version ''farm.crop_fields''';
+comment on view farm.crop_fields_lo10 is
+  'Crop-fields tiles, z10 (dissolves). Licence, republish and credit: core.layer_version ''farm.crop_fields''';

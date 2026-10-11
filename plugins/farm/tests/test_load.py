@@ -73,6 +73,8 @@ class CsbLoadTest(DbTest):
         self.assertEqual(ed[:3], (2018, 2025, date(2026, 3, 27)))
         self.assertEqual(ed[3], csb_load.sha256_of(self.gpkg))
         self.assertEqual(ed[4]["fields"], 3)
+        self.assertEqual(self.one("select license, republish, credit from farm.edition"),
+                         ("public domain", "yes", "USDA NASS Crop Sequence Boundaries 2018-2025"))
         # outlines: valid MultiPolygons south of Nampa, label points inside, the bowtie made into two triangles
         bad = self.one("""select count(*) from farm.field where not ST_IsValid(geom) or GeometryType(geom) <> 'MULTIPOLYGON'
                           or not ST_Intersects(label_pt, geom)""")[0]
@@ -199,10 +201,35 @@ class CsbLoadTest(DbTest):
         path = S.write_gpkg(os.path.join(self.tmp.name, "two.gpkg"), S.fields()[:2])
         stats = self.load(path)
         self.assertEqual(stats["closed"], 1)
-        self.assertEqual(self.one("select valid_to from farm.field where field_id = %s", (S.F3,))[0], date(2026, 3, 27))
+        # closed on the edition's date (an empty interval: the edition as it stands never had it), and never its
+        # own successor though it still carries this edition's name
+        self.assertEqual(self.one("select valid_from, valid_to, successor from farm.field where field_id = %s",
+                                  (S.F3,)), (date(2026, 3, 27), date(2026, 3, 27), None))
         self.assertEqual(self.one("select count(*) from farm.crop_fields")[0], 2)
         self.load()                                        # the full file again reopens it
-        self.assertIsNone(self.one("select valid_to from farm.field where field_id = %s", (S.F3,))[0])
+        self.assertEqual(self.one("select valid_to, successor from farm.field where field_id = %s", (S.F3,)),
+                         (None, None))
+
+    def test_a_reload_that_renumbers_a_field_links_the_new_one(self):
+        self.load()
+        rows = S.fields()
+        renumbered = dict(rows[2], CSBID="161825000000009")
+        path = S.write_gpkg(os.path.join(self.tmp.name, "renumbered.gpkg"), rows[:2] + [renumbered])
+        self.assertEqual(self.load(path)["closed"], 1)
+        self.assertEqual(self.one("select successor from farm.field where field_id = %s", (S.F3,))[0],
+                         ["161825000000009"])
+        self.assertIsNone(self.one("select valid_to from farm.field where field_id = '161825000000009'")[0])
+
+    def test_a_bearing_that_rounds_to_180_wraps_to_0(self):
+        """mod() just under 180 rounds to 180 as a real, which farm.field's check refuses: the expression wraps it."""
+        azimuth = "(2 * pi() - 1e-10)"
+        self.assertEqual(self.one(f"select mod(degrees({azimuth})::numeric, 180)::real")[0], 180.0)
+        self.assertEqual(self.one(f"select {csb_load.bearing_sql(azimuth)}")[0], 0.0)
+        self.assertAlmostEqual(self.one(f"select {csb_load.bearing_sql('radians(271.5)')}")[0], 91.5, places=4)
+        self.load()
+        self.conn.execute(f"update farm.field set bearing = {csb_load.bearing_sql(azimuth)} where field_id = %s",
+                          (S.F1,))
+        self.assertEqual(self.one("select bearing from farm.field where field_id = %s", (S.F1,))[0], 0.0)
 
     def test_a_new_edition_closes_the_fields_it_lacks(self):
         self.load()
@@ -236,16 +263,17 @@ class FieldsLoadTest(DbTest):
     GRID = {"crs": "EPSG:32611", "res": 10.0, "west": 495920.0 + 3000 * 10, "north": 4855750.0 - 6000 * 10,
             "width": 40, "height": 30}
 
-    def make_build(self, archive, build_id="20261011T120000Z", csb_sha=None, rows=None):
+    def make_build(self, archive, build_id="20261011T120000Z", csb_sha=None, rows=None, july_year=2025):
         folder = os.path.join(archive, "farm", "build", build_id)
         os.makedirs(folder)
         bands = [{"name": n, "type": "uint8"} for n in ("group", "state", "confidence")]
         tiffs.grid_tiff(os.path.join(folder, "crop_cover.tif"), self.GRID, bands)
         rows = rows if rows is not None else [
             {"field_id": S.F1, "agree": {"2019": 0.8, "2025": 0.82}, "px": {"2025": 400},
-             "july": {"year": 2025, "ndvi": 0.85, "state": "green", "px": 4}},
+             "july": {"year": july_year, "ndvi": 0.85, "state": "green", "px": 4}},
             {"field_id": S.F2, "agree": {"2025": 0.1}, "px": {"2025": 300}, "july": None},
-            {"field_id": S.F3, "agree": {}, "px": {}, "july": {"year": 2025, "ndvi": 0.2, "state": "bare", "px": 2}}]
+            {"field_id": S.F3, "agree": {}, "px": {},
+             "july": {"year": july_year, "ndvi": 0.2, "state": "bare", "px": 2}}]
         with open(os.path.join(folder, "fields.jsonl"), "w") as f:
             for r in rows:
                 f.write(json.dumps(r) + "\n")
@@ -253,10 +281,11 @@ class FieldsLoadTest(DbTest):
                      "bytes": os.path.getsize(os.path.join(folder, n))} for n in fields_load.FILES}
         doc = {"format": fields_load.FORMAT, "build_id": build_id, "started_at": "2026-10-11T12:00:00Z",
                "finished_at": "2026-10-11T12:03:00Z", "csb_years": [2018, 2025], "cover_year": 2025,
-               "july_year": 2025, "grid": self.GRID, "params": {"green": 0.6},
+               "july_year": july_year, "grid": self.GRID, "params": {"green": 0.6},
                "inputs": {"csb": {"path": self.gpkg, "sha256": csb_sha or csb_load.sha256_of(self.gpkg)},
                           "cdl": {"2025": {"path": "/x/cdl_2025_10m.tif", "sha256": "a" * 64, "res_m": 10.0}},
-                          "ndvi": {"path": "/x/ndvi_median.tif", "sha256": "b" * 64}},
+                          "ndvi": {"path": "/x/ndvi_median.tif", "sha256": "b" * 64, "year": july_year,
+                                   "acquired": [f"{july_year}-07-01", f"{july_year}-07-26"]}},
                "files": files, "counts": {"fields": len(rows)}}
         with open(os.path.join(folder, "build.json"), "w") as f:
             json.dump(doc, f)
@@ -272,7 +301,9 @@ class FieldsLoadTest(DbTest):
         self.assertEqual((agree, july["state"], bid), ({"2019": 0.8, "2025": 0.82}, "green", "20261011T120000Z"))
         self.assertIsNone(self.one("select july from farm.field where field_id = %s", (S.F2,))[0])
         self.assertIsNone(self.one("select agree from farm.field where field_id = %s", (S.F3,))[0])
-        self.assertEqual(self.one("select edition, republish from farm.build")[0:2], (EDITION, "yes"))
+        self.assertEqual(self.one("select edition, republish, credit from farm.build"),
+                         (EDITION, "yes", "USDA NASS Crop Sequence Boundaries 2018-2025; USDA NASS Cropland Data "
+                                          "Layer 2025; Contains modified Copernicus Sentinel data 2025"))
         st = dict(self.conn.execute("select f.field_id, c.st from farm.crop_fields c join farm.field f using (id)"))
         self.assertEqual(st, {S.F1: "green", S.F2: None, S.F3: "bare"})
         # a later CSB reload with the same outlines keeps the stats
@@ -291,6 +322,33 @@ class FieldsLoadTest(DbTest):
         b, rows = fields_load.read_build(folder)
         with self.assertRaises(fields_load.BuildError):
             fields_load.load(self.conn, folder, b, rows)
+
+    def test_the_july_year_is_the_builds_not_the_crop_years(self):
+        """A 2025 crop year built on a July 2024 NDVI: the build's credit, the tiles' and the export's all say 2024."""
+        self.load()
+        license, credit = derive.terms(self.conn)
+        self.assertNotIn("Sentinel", credit)               # no build loaded: no July state in the tiles yet
+        self.assertNotIn("Copernicus", license)
+        folder = self.make_build(self.tmp.name, july_year=2024)
+        b, rows = fields_load.read_build(folder)
+        fields_load.load(self.conn, folder, b, rows)
+        self.assertTrue(self.one("select credit from farm.build")[0].endswith("Contains modified Copernicus Sentinel "
+                                                                           "data 2024"))
+        v = self.one("select license, credit from core.layer_version_current where layer = 'farm.crop_fields'")
+        self.assertIn("Copernicus", v[0])
+        self.assertIn("Contains modified Copernicus Sentinel data 2024", v[1])
+        self.assertNotIn("2025;", v[1].split("Sentinel")[1])
+        m = export.export(self.conn, self.tmp.name, build="20261011T140000Z")
+        s2 = M.latest(self.tmp.name, "farm").inputs["sentinel-2"]
+        self.assertEqual((s2["credit"], s2["version"]), ("Contains modified Copernicus Sentinel data 2024",
+                                                         "July 2024 NDVI median (2024-07-01 to 2024-07-26)"))
+        self.assertIn("Sentinel-2 July 2024", m.data["note"])
+
+    def test_read_build_refuses_a_july_of_another_year(self):
+        rows = [{"field_id": S.F1, "agree": {}, "july": {"year": 2025, "ndvi": 0.8, "state": "green", "px": 4}}]
+        folder = self.make_build(self.tmp.name, rows=rows, july_year=2024)
+        with self.assertRaises(fields_load.BuildError):
+            fields_load.read_build(folder)
 
     def test_read_build_checks_the_files(self):
         folder = self.make_build(self.tmp.name)
@@ -347,6 +405,8 @@ class CdlLoadTest(DbTest):
                                                                      "user": 0.9}}, now=NOW)
         self.assertEqual(stats["rasters"], "2023 (30 m), 2025 (10 m)")
         rows = self.conn.execute("select year, res_m, method, path, sha256 from farm.cdl_year order by year").fetchall()
+        self.assertEqual(self.one("select license, republish, credit from farm.cdl_year where year = 2025"),
+                         ("public domain", "yes", "USDA NASS Cropland Data Layer 2025"))
         self.assertEqual([r[:4] for r in rows], [(2023, 30.0, "30m", "farm/cdl/cdl_2023_30m.tif"),
                                                  (2025, 10.0, "10m-2024", "farm/cdl/cdl_2025_10m.tif")])
         self.assertTrue(os.path.isfile(os.path.join(archive, "farm", "cdl", "cdl_2025_10m.tif")))
@@ -357,6 +417,49 @@ class CdlLoadTest(DbTest):
 
 
 class DeriveTest(DbTest):
+    def version(self):
+        return self.one("select version from core.layer_version_current where layer = 'farm.crop_fields'")[0]
+
+    def test_farm_derive_refreshes_growth_and_plats(self):
+        self.load()
+        v0 = self.version()
+        stats = derive.refresh(self.conn, now=NOW)
+        self.assertEqual((stats["fields changed"], stats["tiles"]), (0, "unchanged: no new version"))
+        self.assertEqual(self.version(), v0)
+        # COMPASS's monthly permits: three in F3 since 2018 make it being built
+        for i, year in enumerate((2019, 2022, 2024)):
+            self.permit(S.X0 + 1020 + i, S.Y0 + 100, year)
+        # and its weekly plats: F1 now under an approved plat
+        self.conn.execute(
+            """insert into core.plat (object_id, name, status, applied_on, geom, active, first_seen, last_seen)
+               values (990003, 'Later Farms', 'Approved', '2026-09-01',
+                       ST_Multi(ST_Transform(ST_MakeEnvelope(%s, %s, %s, %s, 5070), 4326)), true, now(), now())""",
+            (S.X0 - 50, S.Y0 - 50, S.X0 + 450, S.Y0 + 150))
+        stats = derive.refresh(self.conn, now=NOW)
+        self.assertEqual(stats["fields changed"], 2)
+        self.assertEqual(self.one("select growth from farm.field where field_id = %s", (S.F3,))[0], "being_built")
+        self.assertEqual(self.one("select c.p from farm.crop_fields c join farm.field f using (id) "
+                                  "where f.field_id = %s", (S.F1,))[0], True)
+        self.assertGreater(self.one("select count(*) from farm.field_lo where key in ('plat', 'being_built')")[0], 1)
+        v1 = self.one("select version, note, build from core.layer_version_current where layer = 'farm.crop_fields'")
+        self.assertNotEqual(v1[0], v0)
+        self.assertEqual(v1[1], "farm-derive: permits and plats as of 2026-10-11")
+        self.assertEqual(v1[2], EDITION)                   # no build loaded: the edition names the version
+
+    def test_farm_derive_needs_fields(self):
+        with self.assertRaises(derive.DeriveError):
+            derive.refresh(self.conn, now=NOW)
+
+    def test_every_farm_table_says_its_licence(self):
+        for name in ("farm.edition", "farm.crop_class", "farm.cdl_year", "farm.build", "farm.field", "farm.field_lo",
+                     "farm.crop_year", "farm.crop_fields", "farm.crop_fields_lo8", "farm.crop_fields_lo9",
+                     "farm.crop_fields_lo10"):
+            with self.subTest(name):
+                text = self.one("select obj_description(%s::regclass, 'pg_class')", (name,))[0] or ""
+                self.assertTrue(("republish yes" in text and "ublic domain" in text)
+                                or "core.layer_version" in text, text)
+        self.assertIn("Copernicus", self.one("select obj_description('farm'::regnamespace, 'pg_namespace')")[0])
+
     def test_pixel_sizes(self):
         self.assertAlmostEqual(derive.pixel_m(10), 76.437, places=2)
         self.assertAlmostEqual(derive.pixel_m(8), 305.75, places=1)
