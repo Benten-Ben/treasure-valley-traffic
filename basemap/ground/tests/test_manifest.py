@@ -1,7 +1,14 @@
 """Export manifests (manifest.py) and the FlatGeobuf header reader (fgb.py): standard library only.
 
-The fixtures are synthetic: tests/fixtures/squares.fgb (three 80 m squares with id, ground_type and misc, written by
-PostGIS's ST_AsFlatGeobuf with its spatial index) and lines-no-index.fgb (two lines, no index, no CRS).
+The fixtures are synthetic, written by PostGIS 3.6's ST_AsFlatGeobuf (the exports' writer), base64 out of psql:
+- squares.fgb, three 80 m squares with their spatial index:
+    SELECT ST_AsFlatGeobuf(q, true, 'geom') FROM (SELECT i::int AS id, (10 + i)::int AS ground_type,
+      CASE WHEN i = 3 THEN 'rock' ELSE '' END AS misc, ST_Multi(ST_MakeEnvelope(500000 + i*100, 4800000,
+      500080 + i*100, 4800080, 32611))::geometry(MultiPolygon, 32611) AS geom FROM generate_series(1, 3) i) q
+- lines-no-index.fgb, two lines with no index and no SRID:
+    SELECT ST_AsFlatGeobuf(q, false, 'geom') FROM (SELECT i::int AS id, ('way ' || i)::text AS name,
+      ST_MakeLine(ST_MakePoint(500000 + i*10, 4800000), ST_MakePoint(500100 + i*10, 4800100)) AS geom
+      FROM generate_series(1, 2) i) q
 """
 
 import copy

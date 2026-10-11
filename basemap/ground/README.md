@@ -19,6 +19,7 @@ This folder holds the contract every piece of the ground shares:
 
 Built Oct 11 (sprint package S5a, first half). Still to come: mask v0 (S5a-2), the painter and its tiles (G1a),
 texture and photo variation (G1b), and the base bake that reads the same exports (S5b, `basemap/landscape/`).
+Package names and C numbers refer to the landscape sprint plan (v3), which is kept with the private files.
 
 ## The grid
 
@@ -246,7 +247,7 @@ also **says so**:
   entry (`{"status": "flat", "reason": …}`). With no entry at all, the ground hasn't been built.
 - The app (G1a's wiring) keeps the flat ground and shows the reason, never another source in its place.
 
-Clay is flat in v1 whatever the ground's state (decision 6).
+Clay is flat in v1 whatever the ground's state ([DECISIONS](../../docs/DECISIONS.md), Oct 8).
 
 ## The tiles
 
@@ -285,8 +286,9 @@ harness's S1.
 - **Valley:** every request to the ground's files counts: the PMTiles header, its directories and its tiles. They
   total **at most 0.6 MB** (10^6 bytes, as `perf.mjs` counts) in **at most 14 requests**, inside the page's 6 MB.
 - **Clay:** the ground never loads (none).
-- `tiles.first_load(requests)` checks a run's request list. The whole map box has 20 tiles at z10, so the far half of
-  a pitched view has to come from lower zooms. G1a measures the budget with the app.
+- `tiles.first_load(requests)` checks a run's request list. For scale, the whole map box is 20 tiles at z10 and 9 at
+  z9, so the default view needs about a dozen tiles plus the PMTiles header and directories. G1a measures it with the
+  app.
 
 ## Commands and tests
 
@@ -295,7 +297,7 @@ python3 basemap/ground/ground.py spec                               # the grid, 
 python3 basemap/ground/ground.py check-export DIR                   # one export folder
 python3 basemap/ground/ground.py status --archive $TVT_ARCHIVE      # what the ground would read; exit 3 = flat
 python3 basemap/ground/ground.py flat --tiles DIR --archive $TVT_ARCHIVE
-python3 -m unittest discover -s basemap/ground -t .                 # standard-library tests; the worker's skip
+python3 -m unittest discover -s basemap/ground -t .                 # the worker tests skip here
 docker run --rm --memory 1g --cpus 1 --network none -v "$PWD":/repo -w /repo tvt-worker \
   python -m unittest discover -s basemap/ground -t .                # all of them; a skip here is a failure
 ```
