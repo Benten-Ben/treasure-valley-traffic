@@ -21,8 +21,10 @@ tmpfs), and
 - averages the window onto the 2 m grid (the photo's red, green and blue, and its NDVI on Sentinel-2's scale), for
   the COG G1b reads.
 It writes `windows/<key>.npz` and `<cog>/parts/<key>.tif`, then deletes the decoded window, so a run stopped by its
-deadline resumes where it stopped (run it again with the same --out). It uses --workers processes (3 for
-`--cpus 3`), each holding one window (about 0.5 GB) and one decoded window in /tmp (about 20 MB).
+deadline resumes where it stopped (run it again with the same --out; `--limit N` does N windows at a time). It uses
+--workers processes (3 for `--cpus 3`), each holding one window (about 0.6 GB) and its decoded copy in /tmp (about
+20 MB): 1.8 GB in all, measured. The valley is 5,159 windows (452 of them in both counties), about 1.8 s each with
+three workers.
 
 **calibrate** measures the mask's bias in the ten land-cover boxes: in each box's 500 m class window (the spike's
 "as of July" classes, exp31) it compares, per ground type, the photo-v1 median with the median under the class mask
@@ -33,15 +35,16 @@ have no NAIP 2025: they're measured on their NAIP 2023 crops (0.6 m) with the 20
 **finish** adds the windows up, pools them to ground types with the fallbacks (pool.py), writes `stats.json` (the
 rows `python3 -m ingest soils-photo-load --build DIR` loads), `report.json` (the checks), and assembles the COG:
 
-    <cog>/naip2025_2m.tif    4 bands, uint8, on the ground's 2 m grid (EPSG:32611; the parts' extent: Ada's and
-                             Canyon's, cut to the grid), DEFLATE,
-                             512 px tiles, an internal mask (cells at least half covered by Ada's or Canyon's mosaic):
+    <cog>/naip2025_2m.tif    4 bands, uint8, on the ground's 2 m grid (EPSG:32611), over the parts' extent (Ada and
+                             Canyon, cut to the grid), DEFLATE, 512 px tiles, no overviews, an internal mask (cells at
+                             least half covered by Ada's or Canyon's mosaic):
                              1-3 red, green and blue, the area mean of the 0.6 m DNs; 4 ndvi, the photo's NDVI on
                              Sentinel-2's scale by its flight day's curve, coded 1..255 for -1..+1 (photo.encode_ndvi;
                              0 where no flight polygon covers it)
     <cog>/naip2025_2m.json   what it is: bands, coding, grid, flight days, sources and credits, sha256
-    <cog>/flights.fgb        the NAIP 2025 flight polygons (USDA's seamlines in the box) with their day and local time,
-                             for the sun angle G1b normalises by (C8)
+    <cog>/flights.fgb        the NAIP 2025 flight polygons (USDA's seamlines in the box, EPSG:32611): src_fid, idate
+                             (the flight day), sdate and edate (local time), camera; for the sun angle G1b normalises
+                             by (C8)
 
 Colour isn't normalised per flight day: finish measures whether it needs to be (report.json `flight_days`).
 """
@@ -805,6 +808,11 @@ def assemble_cog(run, cog_dir):
         "flights": "flights.fgb: USDA's NAIP 2025 seamline polygons in the box (EPSG:32611): src_fid, idate (the "
                    "flight day), sdate and edate (local time, MM/DD/YYYY hh:mm, read as MDT), camera",
         "colour_normalised": False,
+        "ndvi_note": "The curves were fitted on 20 m cells that weren't developed, water or mixed: bare and fallow "
+                     "ground reads up to 0.1 greener than Sentinel-2, developed land 0.02-0.07. In a July 24 strip "
+                     "near lon -116.02, lat 43.38-43.40 (about 13 km2) NAIP's near-infrared is below its red, so "
+                     "ndvi reads about -0.06 where Sentinel-2 reads 0.14 (dry rangeland: not green either way). "
+                     "Over water it isn't meaningful (naip_norm's caveats).",
         "colour_note": "The colour bands are the photo's DNs, not normalised per flight day: stats.json's "
                        "flight-day check says whether they need to be (report.json flight_days).",
         "inputs": [i for i in run["inputs"] if i["name"] in ("naip", "sentinel-2")],
