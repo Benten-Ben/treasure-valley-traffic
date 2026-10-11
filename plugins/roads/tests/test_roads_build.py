@@ -385,9 +385,9 @@ class BuildTest(unittest.TestCase):
         self.assertEqual(got[0][3]["surface"], sid)
         seg = self.one("select road_segment_id from roads.piece where osm_id = 1001 and seq = 3")[0]
         self.conn.execute("alter view roads.segment_bike_xsection rename to segment_bike_xsection_real")
-        self.conn.execute("""create view roads.segment_bike_xsection as
-                             select %s::bigint as road_segment_id, array['direction_conflicts_one_way'] as flags"""
-                          .replace("%s", str(int(seg))))
+        self.conn.execute(f"""create view roads.segment_bike_xsection as
+                              select {int(seg)}::bigint as road_segment_id,
+                                     array['direction_conflicts_one_way'] as flags""")
         got = self.q(B._REVIEW_SQL["bike_other_carriageway"])
         self.assertEqual([(r[1], r[2]) for r in got], [(1001, seg)])
 
@@ -448,7 +448,6 @@ class BuildTest(unittest.TestCase):
             with self.assertRaises(psycopg.errors.LockNotAvailable):
                 E.export(other, archive, build="20261011T000000Z")
             self.assertEqual(os.listdir(archive), [])
-
 
     def test_a_changed_source_marks_the_build(self):
         from plugins.roads.ingest import marks
@@ -573,6 +572,12 @@ class ClassRuleTest(unittest.TestCase):
         self.assertFalse(B.class_fits("residential", B.hpms_rank("02070AUS020"), None))   # 'US 20 Main'
         self.assertTrue(B.class_fits("residential", B.hpms_rank("12785AOH000"), True))
         self.assertFalse(B.class_fits("service", B.hpms_rank("54755AOH000"), None))
+        # A state route OpenStreetMap tags as a lesser road agrees by its ref.
+        self.assertTrue(B.names_agree("SH 45 Main", "12th Avenue Road", "ID 45"))
+        self.assertTrue(B.names_agree("US 20 Main", "Chinden Boulevard", "US 20;US 26"))
+        self.assertIsNone(B.names_agree("SH 45 Main", "12th Avenue Road", None))
+        self.assertFalse(B.names_agree("W Victory Rd", "South Milwaukee Lane", None))
+        self.assertTrue(B.names_agree("N Ten Mile Rd", "North Ten Mile Road", None))
 
 
 @unittest.skipUnless(DB_URL, "set TVT_TEST_DATABASE_URL to a test database migrated through 0021")

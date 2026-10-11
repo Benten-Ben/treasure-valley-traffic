@@ -84,6 +84,7 @@ CLASS_GAP = 2                      # a target this many classes above the piece 
 # road's own cells as developed, even a farm road's among fields, so the line itself says little.
 LAND_NEAR_M = 20.0
 LAND_FAR_M = 100.0
+LAND_SIMPLIFY_M = 2.0              # the line, simplified this much for its bands (80 m wide; the CDL's cells are 10 m)
 
 # Junctions ⚠️ (the design's numbers until the sheets say otherwise)
 CLUSTER_EPS = {"major": 30.0, "collector": 22.0, "local": 15.0}   # nodes joined by a piece this short are one junction
@@ -263,6 +264,18 @@ def hpms_rank(route_id):
     return HPMS_RANK.get(str(route_id or "")[6:8], HPMS_OTHER_RANK)
 
 
+_STATE_REF = re.compile(r"\bID[ -]?(?=\d)")
+
+
+def names_agree(other, name, ref=None):
+    """linematch.names_agree on the piece's name, or True where its ref agrees (OpenStreetMap's 'ID 44' is ITD's
+    'SH 44')."""
+    got = linematch.names_agree(other, name)
+    if got is not True and ref and linematch.names_agree(other, _STATE_REF.sub("SH ", ref)) is True:
+        return True
+    return got
+
+
 def class_fits(highway, rank, names):
     """Whether a piece of this class may take a match to a target of this rank (None: unknown, any): one CLASS_GAP
     or more above it only where the names agree (names: linematch.names_agree's True, False or None). An alley
@@ -295,12 +308,14 @@ def match_achd(conn):
         "select id, name, geom from core.road_segment where active",
         rule=ACHD_RULE)
     fclass = dict(conn.execute("select id, functional_class from core.road_segment where active").fetchall())
-    highway = dict(conn.execute("select id, highway from rb_piece where county = 'Ada'").fetchall())
+    highway, ref = {}, {}
+    for pid, hw, r in conn.execute("select id, highway, ref from rb_piece where county = 'Ada'").fetchall():
+        highway[pid], ref[pid] = hw, r
     best, left_out = {}, {}
     for m in found:
         pid = int(m["source_id"])
         key = (m["confidence"], m["overlap_m"])
-        names = linematch.names_agree(m.get("target_name"), m.get("line_name"))
+        names = names_agree(m.get("target_name"), m.get("line_name"), ref[pid])
         ok = class_fits(highway[pid], ACHD_RANK.get(fclass.get(m["target_id"])), names)
         into = best if ok else left_out
         if pid not in into or key > into[pid][0]:
@@ -334,7 +349,9 @@ def match_hpms(conn):
     route = {(k, s): r for k, s, r in conn.execute(
         "select kind, source_id, route_id from core.hpms_section where active and kind = any(%s)",
         (list(HPMS_KINDS),)).fetchall()}
-    highway = dict(conn.execute("select id, highway from rb_piece").fetchall())
+    highway, ref = {}, {}
+    for pid, hw, r in conn.execute("select id, highway, ref from rb_piece").fetchall():
+        highway[pid], ref[pid] = hw, r
     rows, left_out = [], {}
     for kinds, where in ((("through_lanes",), "road_segment_id is null"),
                          (("lane_width", "shoulders", "median"), "true")):
@@ -346,7 +363,7 @@ def match_hpms(conn):
             rule=ACHD_RULE, params={"kinds": list(kinds)})
         for m in found:
             pid, rid = int(m["target_id"]), route.get((m["source"], m["source_id"]))
-            names = linematch.names_agree(m.get("target_name"), m.get("line_name"))
+            names = names_agree(m.get("line_name"), m.get("target_name"), ref[pid])
             if class_fits(highway[pid], hpms_rank(rid), names):
                 rows.append((pid, m["source"], m["source_id"], m["confidence"], m["overlap_m"]))
             else:
@@ -431,10 +448,12 @@ create temp table rb_band on commit drop as
 select p.id as piece_id, s.side, b.g
 from rb_piece p
 cross join (values ('l'), ('r')) s(side)
+cross join lateral (select ST_SimplifyPreserveTopology(p.geom, %(simplify)s) as g) q
 cross join lateral (
   select ST_CollectionExtract(ST_MakeValid(ST_Transform(ST_CollectionExtract(ST_MakeValid(ST_Difference(
-           ST_MakeValid(ST_Buffer(p.geom, %(far)s, case s.side when 'l' then 'side=left' else 'side=right' end)),
-           ST_Buffer(p.geom, %(near)s, 'quad_segs=4'))), 3), %(land_srid)s)), 3) as g) b
+           ST_MakeValid(ST_Buffer(q.g, %(far)s, case s.side when 'l' then 'side=left quad_segs=2'
+                                                 else 'side=right quad_segs=2' end)),
+           ST_Buffer(q.g, %(near)s, 'quad_segs=2'))), 3), %(land_srid)s)), 3) as g) b
 where not ST_IsEmpty(b.g) and ST_Area(b.g) > 0;
 create index on rb_band using gist (g);
 analyze rb_band;
@@ -460,7 +479,7 @@ def developed(conn):
         conn, query="select 'p'::char(1) as t, id::bigint as id, ST_Transform(geom, 4326) as geom "
                     "from rb_piece").items()}
     run_sql(conn, _LAND_BANDS, {"near": LAND_NEAR_M, "far": LAND_FAR_M, "land_srid": land.SRID,
-                                "digits": land.DIGITS})
+                                "digits": land.DIGITS, "simplify": LAND_SIMPLIFY_M})
     for pid, side, share in conn.execute("select piece_id, side, share from rb_land").fetchall():
         out.setdefault(pid, [None, None, None])[1 if side == "l" else 2] = share
     with conn.cursor() as cur:
