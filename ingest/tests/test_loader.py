@@ -122,8 +122,8 @@ class RegistryTest(unittest.TestCase):
                           "farm-fields-load", "hydroshare-load", "match-intersections", "match-routes", "nhd-load",
                           "roads-build", "roads-developed-load", "roads-export", "rollup", "route-colors",
                           "segment-match", "shrubs-hedge-check", "shrubs-load", "soils-export", "soils-load",
-                          "trails-match", "transit-progress", "transit-ribbons", "trees-load", "water-build",
-                          "water-export", "wfigs-backfill"])
+                          "soils-photo-load", "trails-match", "transit-progress", "transit-ribbons", "trees-load",
+                          "water-build", "water-export", "wfigs-backfill"])
         self.assertFalse(set(registry.COMMANDS) & (set(BUILTINS) | set(CORE_COMMANDS)))
         for name in registry.COMMANDS:
             self.assertTrue(callable(registry.command(name)), name)
