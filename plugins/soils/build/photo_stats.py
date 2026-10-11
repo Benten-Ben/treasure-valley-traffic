@@ -739,8 +739,9 @@ def layer_inputs(m, names):
 def inputs_of(cfg, soils_m, mask_m, farm_m, mosaics, hashes=True):
     """The build's inputs, as manifest inputs (basemap/ground/manifest.py): the photo and Sentinel-2 entries made
     here, then every input of each export layer read (READS), copied whole with a note of the export it came through,
-    so a licence or credit can't drop out ("the strictest input wins"). An input met twice keeps its first entry and
-    adds the second's note. Also the files and builds read, for run.json."""
+    so a licence or credit can't drop out ("the strictest input wins"). An input met twice keeps its first entry, adds
+    the second's note and the stricter republish, and must have one licence. Also the files and builds read, for
+    run.json."""
     naip_files = [{"name": m.name, "file": os.path.basename(m.path),
                    "sha256": sha256(m.path) if hashes else None} for m in mosaics]
     gains = cfg.get("gains")
@@ -767,6 +768,11 @@ def inputs_of(cfg, soils_m, mask_m, farm_m, mosaics, hashes=True):
                 ins.append(e)
                 by_name[e["name"]] = e
             else:
+                if e.get("licence") != have.get("licence"):
+                    raise StatsError(f"input {e['name']!r} comes as {have.get('licence')} and as {e.get('licence')} "
+                                     f"({via}): one source, one licence")
+                if M.rank(e["republish"]) > M.rank(have["republish"]):
+                    have["republish"] = e["republish"]           # the strictest wins
                 have["note"] = f"{have['note']}; {via}" if have.get("note") else via
     files = {"soils": soils_m.build, "ground_mask": mask_m.build, "farm": farm_m.build,
              "july": cfg["july"], "fits": cfg["fits"], "flights": cfg["flights"], "gains": gains,

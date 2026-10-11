@@ -417,6 +417,28 @@ class PhotoStatsTest(unittest.TestCase):
         other = dict(cal, summary=dict(cal["summary"], rules=dict(cal["summary"]["rules"], dark_l=0.7)))
         self.assertIn("dark_l", self.S.calibration_mismatch(other, run))
 
+    def test_inputs_keep_the_strictest(self):
+        import copy
+        arg = lambda k: self.args[self.args.index(k) + 1]
+        soils_m, mask_m, farm_m = (M.read(arg(k), hashes=False) for k in ("--soils", "--mask", "--farm"))
+        cfg = {"july": arg("--july"), "fits": os.path.join(arg("--norm"), "fits.json"), "gains": None,
+               "flights": os.path.join(arg("--norm"), "flights_mapbox.gpkg")}
+        farm = copy.deepcopy(farm_m)
+        for e in farm.data["inputs"]:
+            if e["name"] == "cdl":
+                e["republish"] = "internal"                     # stricter than mask v0's cdl
+        ins, _ = self.S.inputs_of(cfg, soils_m, mask_m, farm, [], hashes=False)
+        cdl = [i for i in ins if i["name"] == "cdl"]
+        self.assertEqual(len(cdl), 1)
+        self.assertEqual(cdl[0]["republish"], "internal")
+        self.assertIn("ground_mask export", cdl[0]["note"])
+        self.assertIn("farm export", cdl[0]["note"])
+        for e in farm.data["inputs"]:
+            if e["name"] == "cdl":
+                e["licence"] = "none-stated"
+        with self.assertRaisesRegex(self.S.StatsError, "one licence"):
+            self.S.inputs_of(cfg, soils_m, mask_m, farm, [], hashes=False)
+
     def test_a_second_run_resumes_and_other_inputs_are_refused(self):
         log = io.StringIO()
         with contextlib.redirect_stdout(log):
