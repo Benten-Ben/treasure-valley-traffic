@@ -31,8 +31,8 @@ Field notes, checked Oct 11, 2026 (3,932 records):
   of the read itself: the whole layer is three requests (about 8 MB). An unchanged layer only
   confirms the versions it holds.
 - 1,282 records have no per-direction data (not field-checked: FieldVerified 'N/A'); 1,429 have no
-  TotalPavement. Pathways (FuncClass or Street 'Pathway', 177) and roads not built yet (Street or
-  BMPStatus 'New Road', 360) are kept but never matched to ACHD's road segments.
+  TotalPavement. Pathways (FuncClass or Street 'Pathway': 183) and roads not built yet (Street or
+  BMPStatus 'New Road': 348 more) are kept but never matched to ACHD's road segments.
 - Lanes, bike lanes, buffers and parking add up to TotalPavement within 2 ft on most field-checked
   records, plus about 12 ft where TotalLanes counts a centre turn lane: TotalPavement is curb to
   curb, and bike lanes lie inside it; raised bike lanes, cycle tracks and multi-use paths don't.
@@ -44,10 +44,10 @@ Each run (monthly) stores the versions in raw.record (without OBJECTID and Shape
 lengths rounded), the current state in roads.bike_facility, the notes, and then matches the street
 records to ACHD's road segments with core's line matcher under roads' rule
 (segment_match.METHODS["buffer15_bearing20"], loops off), dropping matches whose street names
-disagree, into roads.bike_facility_match. The
-match reruns when the records change, and when ACHD's segments have changed since the last match
-(also from achd_roads' run, through segment_match.rematch_all). roads.segment_bike_xsection gives
-P7 each matched ACHD segment's cross-section in metres, forward and backward as the segment is drawn.
+disagree, into roads.bike_facility_match. The match reruns when the records change, and when
+ACHD's segments have changed since the last match (also from achd_roads' run, through
+segment_match.rematch_all). roads.segment_bike_xsection gives P7 each matched ACHD segment's
+cross-section in metres, forward and backward as the segment is drawn.
 """
 
 import hashlib
@@ -107,7 +107,7 @@ DIRECTION = {"EBNB": {"northbound": "N", "eastbound": "E"}, "WBSB": {"southbound
 # into attributes as published.
 TYPED = {"LocationID", "Street", "City", "Agency", "FuncClass", "ExistingType", "LTS", "BikeLegend", "Speed",
          "SpeedField", "Volume", "YrBuilt", "YearAdded", "YearUpdated", "FieldVerified", "TotalLanes",
-         "TotalPavement", "TotalROW", "BMPStatus",
+         "TotalPavement", "TotalROW",
          *(f"{f}{s}" for s in SIDES for f in ("FacilityDirection", "FacilityType", "FacilityWidth", "AdjLaneWidth",
                                               "LaneCt", "PavementEdge", "RightTurn", "Parking", "ParkingWidth",
                                               "PavementMarkings", "BufferType", "BufferWidth"))}

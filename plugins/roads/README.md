@@ -1,10 +1,11 @@
 # roads
 
 The road network as data ([docs/15 §15.4](../../docs/15-plugins.md#154-the-plugins-we-already-have)):
-ACHD's road segments (the Streets layer's data), the lane inventories, and
-OpenStreetMap's ways, lanes and signal nodes, all matched to ACHD's segments
-by core's line matcher ([ingest/linematch.py](../../ingest/linematch.py)). The
-base map's streets (for drawing) stay in core (`basemap/`).
+ACHD's road segments (the Streets layer's data), the lane inventories,
+ACHD's bike network with its curb-to-curb widths, and OpenStreetMap's ways,
+lanes and signal nodes, all matched to ACHD's segments by core's line
+matcher ([ingest/linematch.py](../../ingest/linematch.py)). The base map's
+streets (for drawing) stay in core (`basemap/`).
 
 | Source | Runs | License | Credit | Republish |
 |---|---|---|---|---|
@@ -12,6 +13,7 @@ base map's streets (for drawing) stay in core (`basemap/`).
 | `itd_hpms` | monthly | none stated | Idaho Transportation Department | internal |
 | `achd_msm` | monthly | none stated | Ada County Highway District | internal |
 | `compass_centerline` | monthly | none stated (disclaimer only) | COMPASS and its member agencies | yes (open-data hub) |
+| `achd_bike_network` | monthly (skipped when unchanged) | none stated (disclaimer: not for planning determinations) | Ada County Highway District | internal |
 | `osm_valley` | by hand | ODbL | © OpenStreetMap contributors | yes, as ODbL |
 | `osm_street` | by hand | ODbL | © OpenStreetMap contributors | yes, as ODbL |
 
@@ -52,8 +54,11 @@ extract goes through `osm_valley` first (as the database owner), and
 **Tables:** `core.road_segment`, `core.segment_match`, `core.hpms_section`,
 `core.msm_arterial`, `core.compass_segment`, `core.osm_way`, `core.osm_lane`,
 `core.osm_node`, and the `core.segment_lanes` view with its four per-source
-views (migrations 0004, 0011, 0016–0018 in `db/migrations/`); in schema
-`roads`: `roads.osm_street` (`migrations/0001`).
+views (migrations 0004, 0011, 0016–0018 in `db/migrations/`). In the plugin's
+own schema `roads` ([migrations/](migrations/)): `roads.osm_street` (0001),
+`roads.bike_facility`, `roads.bike_facility_note` (internal),
+`roads.bike_facility_match` and the views `roads.bike_facility_side` and
+`roads.segment_bike_xsection` (0004).
 
 **Code:** `ingest/sources/` (the sources and consumers), `ingest/segment_match.py`
 (matching to ACHD's segments with core's line matcher, and
@@ -65,7 +70,8 @@ intersections plugin uses it too).
 ```bash
 TVT_ARCHIVE=data/archive python3 -m ingest osm-load --inbox            # an OSM extract downloaded by hand (needs osmium-tool)
 TVT_ARCHIVE=data/archive python3 -m ingest osm-load --only osm_street  # this consumer, on the extract we hold
-python3 -m ingest segment-match [itd_hpms achd_msm compass_centerline osm_valley]
+python3 -m ingest run achd_bike_network                                # ACHD's bike network (monthly when scheduled)
+python3 -m ingest segment-match [itd_hpms achd_msm compass_centerline osm_valley achd_bike_network]
 python3 -m unittest discover -s plugins/roads -t .
 ```
 
@@ -75,3 +81,70 @@ browser; neither OpenStreetMap source has download code or a schedule.
 Loading the remaining street classes was approved by the owner on Oct 8
 (decision 2a). Anything we publish that's derived from OpenStreetMap stays
 ODbL.
+
+## ACHD's bike network: widths for the real-width roads
+
+`achd_bike_network` reads ACHD's Official Bicycle Facility Network
+(landscape sprint package P7b; the owner brought it forward on Oct 8, 2026,
+decision 11) from `gis.achdidaho.org` (robots.txt: 404, no rules; never
+`more.achdidaho.org`) through the shared ArcGIS reader: the ID list, then two
+pages of 2,000, our User-Agent and a pause between requests. Catalog:
+[docs/sources/cycling.md](../../docs/sources/cycling.md#achd-official-bicycle-facility-network).
+On Oct 11, 2026 it held 3,932 records over 1,080 miles: 3,401 on streets,
+183 pathways and 348 roads not built yet; 2,503 with a curb-to-curb width,
+2,652 field-checked.
+
+- **Licence:** none stated; the hub's licence field holds a disclaimer
+  ("general reference purposes only and should not be used for planning
+  determinations"). Internal use, credited to the Ada County Highway District;
+  anything built from it (P7's cross-sections, the base bake) is internal
+  too. ACHD's LTS is ACHD's assessment, never ours.
+- **Versions and change check:** every record's versions in `raw.record` by
+  OBJECTID. The layer has no GlobalID and no edit dates, and a reload
+  renumbers its OBJECTIDs, so rows are carried over to new IDs (by LocationID
+  and street, then the line), and each run compares a content hash of the
+  whole read with the last one (`ops.layer_signature`): an unchanged layer
+  only confirms its versions. The hub's DCAT feed isn't read: it lists the
+  whole hub on another host, while the layer itself is three requests.
+- **Free text:** ACHD's `Comments` and `FieldNotes` stay in
+  `roads.bike_facility_note` (and `raw.record`). No view, export, tile set or
+  card reads them.
+- **Matching:** each street record is matched to ACHD's road segments by
+  core's line matcher under roads' rule (15 m, bearings within 20°, closed
+  lines failing), into `roads.bike_facility_match`. A match whose street
+  names disagree is dropped (150 of 8,478 on Oct 11: mostly another street's
+  segments beside or across the record), after ACHD's zero-padded numbers
+  ('08th St') are unpadded. Pathways and roads not built yet aren't matched.
+  On Oct 11: 3,312 of 3,401 street records matched, 8,328 matches on 8,105
+  ACHD segments (1,300 km). It reruns after a run that changes the records,
+  and after ACHD's segments change (`achd_roads`' rematch).
+
+**The interface for P7** (the real-width roads build). Read
+`roads.segment_bike_xsection`: one row per ACHD road segment the network lies
+along (`road_segment_id`), from its best record (share, then field-checked,
+then confidence). Metres, rounded to the centimetre; ACHD records feet.
+
+| Column | Meaning |
+|---|---|
+| `object_id`, `location_id`, `street`, `existing_type`, `lts`, `field_verified`, `year_updated` | The record: ACHD's OBJECTID (changes on a reload: key cards on `road_segment_id`), LocationID, street, what's there in ACHD's words, ACHD's LTS (1–4), whether ACHD checked it in the field, and when |
+| `share`, `confidence`, `method` | The match (`share` measures the ACHD segment) |
+| `seg_one_way` | The ACHD segment's one-way (`both`, `forward`, `backward`) |
+| `total_pavement_m`, `total_row_m` | Curb to curb, and the right of way: the whole road's (both carriageways where ACHD draws a divided road as two one-way segments) |
+| `total_lanes`, `centre_lanes` | Every lane; and what's left after both directions' lanes (a centre turn lane on most rows that have one); null when they disagree |
+| `unassigned_m` | Pavement left after both sides' `roadway_m`: the centre turn lane, a median, gutters. On Oct 11 its median was 3.8 m with a centre lane and 0.3 m without |
+| `forward_side` | `ebnb` or `wbsb`: which of ACHD's sides runs the way the segment is drawn. The record names its sides on one axis (north/south or east/west) and the segment's end-to-end bearing decides, within 75° of that axis; null otherwise |
+| `fwd_lanes`, `fwd_lane_w_m` | Travel lanes the forward way, and the width of the one next to the bike facility (ACHD's adjacent lane width) |
+| `fwd_bike`, `fwd_bike_w_m`, `fwd_bike_in_roadway` | The bike facility (`mixed_traffic`, `no_facility`, `bike_lane`, `buffered_bike_lane`, `protected_bike_lane`, `raised_bike_lane`, `cycle_track`, `multi_use_path`, `other`), its width (0 for mixed traffic or none), and whether it lies between the curbs (bike lanes, buffered and protected ones ⚠️; not raised lanes, cycle tracks or paths) |
+| `fwd_buffer`, `fwd_buffer_w_m`, `fwd_buffer_varies` | The buffer (`none`, `painted`, `landscaping`, `extruded_curb`, `jersey_barrier`, `delineator`, `parking`, `other`), its width (0 for none; null where it varies) |
+| `fwd_parking`, `fwd_parking_w_m` | Parking (`none`, `parallel`, `angled`) and its width (0 for none) |
+| `fwd_edge`, `fwd_right_turn` | The pavement edge (`curb_gutter`, `curb`, `shoulder`); right-turn lanes (`turn_lane`, `through_right_outside`, `through_right_shared`) |
+| `fwd_roadway_m` | This side's share of the pavement: lanes × lane width + parking + the facility and buffer when they're in the roadway; null when a part is unknown |
+| `bwd_*` | The same for the backward way. On a one-way street the side against the traffic has 0 lanes but keeps its edge and parking |
+| `flags` | `direction_unclear`, `lanes_disagree`, `components_exceed_pavement` (`unassigned_m` under −0.5 m), `pavement_exceeds_row`, `one_way_segment` |
+
+Width tier for the card: "inventoried (ACHD bike network, field-checked)"
+where `field_verified`; credit "Ada County Highway District". Records ACHD
+hasn't checked in the field have no sides (`forward_side` null, no flag) and
+mostly no widths. `roads.bike_facility_side` has each record's two sides in
+metres, unturned (`side` `ebnb` or `wbsb`), for anything that works on ACHD's
+lines rather than its segments. Neither view has free text.

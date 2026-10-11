@@ -26,7 +26,7 @@ names didn't change, so `ops.source` and `ops.fetch` carry on:
 |---|---|---|
 | [cameras](../plugins/cameras) | `achd_cameras`, `idaho511_views_oneoff`; stream `idaho511_frames` | `rollup` |
 | [transit](../plugins/transit) | `vrt_gtfs`; stream `vrt_realtime` | `match-routes`, `transit-progress`, `transit-ribbons`, `route-colors` |
-| [roads](../plugins/roads) | `achd_roads`, `itd_hpms`, `achd_msm`, `compass_centerline`; by hand (OpenStreetMap consumers) `osm_valley`, `osm_street` | `segment-match` |
+| [roads](../plugins/roads) | `achd_roads`, `itd_hpms`, `achd_msm`, `compass_centerline`, `achd_bike_network`; by hand (OpenStreetMap consumers) `osm_valley`, `osm_street` | `segment-match` |
 | [conditions](../plugins/conditions) | streams `itd_wzdx`, `idaho511_api` | |
 | [intersections](../plugins/intersections) | `fra_crossings`, `achd_signal_points`, `compass_signals`, `compass_regional_signals`, `intersections` | `match-intersections` |
 | [safety](../plugins/safety) | `compass_crashes` | |
@@ -124,6 +124,7 @@ when it's missing.
 | `itd_hpms` | open (ITD GIS, no robots.txt; no license stated, credit ITD) | monthly | `raw.record` (one source per layer, `itd_hpms_<kind>`, keyed `<EventID>@<RouteID>:<FromMeasure>`, plus `itd_hpms_road_names`), `core.hpms_section` (33,770 pieces touching the valley box: through lanes 19,507, turn lanes 637, lane width 558, median 738, shoulders 634, access control 5,376, peak lanes 1,384, facility type 4,936), `core.segment_match` |
 | `achd_msm` | open (ACHD GIS, no robots.txt; no license stated) | monthly | `raw.record` (by GlobalID; the bulk-stamped edit dates left out), `core.msm_arterial` (1,049 Master Street Map arterials; existing lanes on 896), `core.segment_match` (`buffer10_name`; `buffer10_bearing20` where a state-route name faces a street name) |
 | `compass_centerline` | open (COMPASS on swidrdc.org, no robots.txt rules; disclaimer only, credit COMPASS) | monthly | `raw.record` (by globalid), `core.compass_segment` (62,213 pieces in Ada and Canyon on 26,911 `pm_id`s; lanes on 61,404), `core.segment_match` (Canyon's pieces stay unmatched: no ACHD segments there) |
+| `achd_bike_network` | open (ACHD GIS on gis.achdidaho.org, robots.txt 404: no rules; no license stated, a disclaimer only: internal, credit ACHD) | monthly (a content hash of the read: an unchanged layer only confirms its versions) | `raw.record` (by OBJECTID, carried over when a reload renumbers them), `roads.bike_facility` (3,932 records on Oct 11, 2026: curb-to-curb and right-of-way widths, per-direction lanes, bike facilities, buffers and parking, ACHD's LTS), `roads.bike_facility_note` (ACHD's free text: internal, in no view or export), `roads.bike_facility_match` (street records on ACHD segments: `buffer15_bearing20`, names must not disagree); views `roads.bike_facility_side` and `roads.segment_bike_xsection` (per ACHD segment, forward and backward, in metres: the real-width roads build's input; [plugins/roads](../plugins/roads/README.md#achds-bike-network-widths-for-the-real-width-roads)) |
 | `vrt_gtfs` | open (VRT, CC BY 3.0) | daily | `core.transit_route`/`_stop`/`_shape`/`_trip`; each zip archived in `$TVT_ARCHIVE/vrt-gtfs/`. Picks each route's map color (routes sharing streets differ). |
 | `vrt_realtime` | open (VRT, CC BY 3.0) | stream, every 30 s | each changed feed archived in `$TVT_ARCHIVE/vrt-gtfs-rt/<date>/`; bus positions in `obs.vehicle_position` |
 | `itd_wzdx` | open (ITD's WZDx feed on 511 Idaho; may be republished, crediting ITD) | stream, every 5 min | each changed snapshot archived in `$TVT_ARCHIVE/wzdx/<date>/`; every work zone's versions in `raw.record`; cleaned rows in `evt.event` (fixes listed per row; [docs/08 §8.8](../docs/08-data-inventory.md#88-itds-work-zone-feed-checked-against-the-wzdx-spec-oct-6-2026)) |
@@ -155,7 +156,7 @@ TVT_ARCHIVE=data/archive python3 -m ingest osm-load --inbox             # OSM ex
 TVT_ARCHIVE=data/archive python3 -m ingest osm-load --only osm_street   # one consumer, on the extract we hold
 TVT_COMPASS_MAX_PAGES=3 python3 -m ingest run compass_crashes          # dev only: at most 3 pages per layer, logged as failed
 TVT_COMPASS_FORCE=1 python3 -m ingest run compass_growth               # skip the freshness and change checks
-python3 -m ingest segment-match [itd_hpms achd_msm compass_centerline osm_valley]   # rematch to ACHD segments by hand
+python3 -m ingest segment-match [itd_hpms achd_msm compass_centerline osm_valley achd_bike_network]   # rematch to ACHD segments by hand
 python3 -m ingest -h                                                    # every command, the plugins' included
 python3 -m unittest discover -s ingest/tests -t .                       # core
 python3 -m unittest discover -s plugins -t .                            # the plugins

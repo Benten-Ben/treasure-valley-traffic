@@ -174,6 +174,7 @@ class ParseTest(unittest.TestCase):
         self.assertNotIn("Shape__Length", a)
         self.assertNotIn("OBJECTID", a)
         self.assertNotIn("TotalPavement", a)                                  # typed, not repeated
+        self.assertEqual(a["BMPStatus"], "Complete")                          # read for the kind, kept
 
     def test_versions_leave_out_the_key_and_the_derived_length(self):
         a, b = page()[0], page()[0]
