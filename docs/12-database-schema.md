@@ -457,8 +457,8 @@ read by each plugin's consumers (`osm_consumers` in its manifest). No
 highway way has two owners; the owner is decided by its tags alone:
 osm_valley's keep rule above, unchanged, then the other streets and alleys
 (`roads.osm_street`), then sidewalks, crossings and the other service ways
-(`roads.osm_paving`, roads 0002), then paths (`trails.osm_paths`, later). On the
-Oct 5 extract that's 13,917 / 22,785 / 124,582 / 22,263 of the box's 185,358
+(`roads.osm_paving`, roads 0002), then paths (`trails.osm_paths`, later). On
+the Oct 5 extract that's 13,917 / 22,785 / 124,582 / 22,263 of the box's 185,358
 highway ways. 1,811 have no owner: 1,369 proposed, 350 under construction,
 65 indoor corridors and 10 other ways that aren't built or aren't roads
 (service areas, rest areas, a platform, an elevator), and 17 built ones that

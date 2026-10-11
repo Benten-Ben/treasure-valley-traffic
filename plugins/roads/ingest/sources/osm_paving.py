@@ -152,18 +152,11 @@ def surface_value(tags):
 
 
 def kind_default(kind, parking=None):
-    """(default material or None, whether it needs developed land)."""
+    """(default material or None, whether it needs developed land). Service ways and lots that need
+    it have `developed` measured, tagged or not."""
     if kind in ("lot", "space") and parking in STRUCTURES:
         return STRUCTURES[parking], False
     return KIND_DEFAULTS[kind]
-
-
-def needs_land(kind, tags):
-    """Whether this object's material depends on developed land (so `developed` is measured)."""
-    s = surface_value(tags)
-    if s in MATERIALS or s == PAVED:
-        return False
-    return kind_default(kind, tags.get("parking"))[1]
 
 
 def material(kind, tags, developed=None):

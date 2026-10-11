@@ -150,8 +150,7 @@ class RulesTest(unittest.TestCase):
                 self.assertEqual(pv.material(kind, {}, 0.49), ("unknown", None))
                 self.assertEqual(pv.material(kind, {}, None), ("unknown", None))
                 self.assertEqual(pv.material(kind, {"surface": "yes"}, None), ("unknown", None))   # not a value we read
-                self.assertTrue(pv.needs_land(kind, {}))
-                self.assertFalse(pv.needs_land(kind, {"surface": "gravel"}))
+                self.assertTrue(pv.kind_default(kind)[1])
         self.assertEqual(pv.material("driveway", {}, 0.9), ("concrete", "default"))
 
     def test_walkways_and_structures_take_their_default_anywhere(self):
@@ -159,11 +158,11 @@ class RulesTest(unittest.TestCase):
                            ("traffic_island", "concrete")]:
             with self.subTest(kind):
                 self.assertEqual(pv.material(kind, {}, None), (want, "default"))
-                self.assertFalse(pv.needs_land(kind, {}))
+                self.assertFalse(pv.kind_default(kind)[1])
         self.assertEqual(pv.material("lot", {"parking": "multi-storey"}, None), ("concrete", "default"))
         self.assertEqual(pv.material("lot", {"parking": "rooftop"}, 0.0), ("concrete", "default"))
         self.assertEqual(pv.material("lot", {"parking": "underground"}, 1.0), ("unknown", None))
-        self.assertFalse(pv.needs_land("lot", {"parking": "underground"}))
+        self.assertEqual(pv.kind_default("lot", "underground"), (None, False))
 
     def test_widths(self):
         self.assertEqual(pv.width("sidewalk", {}), (None, 1.5, "default"))
