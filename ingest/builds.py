@@ -14,9 +14,10 @@ data, and may mark the builds that follow it:
         ...                              # the build; run.note = "41,203 pieces"
 
 A mark made while the build ran stays for the next run (a run clears marks by id and count, as
-it saw them when it started). A run that fails clears nothing; its error is logged. Only one run
-of a build goes at a time in a database (an advisory lock), and a run stopped by SIGTERM (heavy's
-deadline) is logged as stopped.
+it saw them when it started). A run that fails clears nothing; its error is logged. Only one Run
+of a build goes at a time in a database (an advisory lock; `start` and `finish`, split across
+processes, can't hold it), and a run stopped by SIGTERM (heavy's deadline) is logged as stopped,
+its query in flight cancelled, and the process exits 143.
 
 A build's name is the command that runs it (`roads-build`), or for a worker step its job
 (`landscape-bake`): lower-case letters, digits, '.', '_' and '-'. `marked_by` names the source
@@ -33,7 +34,6 @@ From the command line (a worker step can't reach the database, so its run is log
 """
 
 import argparse
-import json
 import os
 import re
 import signal
@@ -61,15 +61,30 @@ class CommandFailed(RuntimeError):
         self.code = code
 
 
-class Stopped(BaseException):
-    """A build stopped by a signal (heavy's deadline sends SIGTERM). A BaseException, so a
-    build's own `except Exception` doesn't swallow it."""
+class Stopped(SystemExit):
+    """A build stopped by a signal (heavy's deadline sends SIGTERM). A SystemExit (status 128 +
+    the signal), so psycopg cancels a query in flight and a build's own `except Exception`
+    doesn't swallow it."""
+
+    def __init__(self, signum):
+        super().__init__(128 + signum)
+        self.signame = signal.Signals(signum).name
+
+    def __str__(self):
+        return self.signame
 
 
 def check_name(build):
     if not isinstance(build, str) or not NAME.fullmatch(build):
         raise ValueError(f"a build's name is 1-64 lower-case letters, digits, '.', '_' or '-', "
                          f"starting with a letter: {build!r}")
+
+
+def _check_then(build, then):
+    for b in then:
+        check_name(b)
+        if b == build:
+            raise ValueError(f"{build} can't mark itself when it finishes: it would never be built")
 
 
 def _marked_by(by):
@@ -111,8 +126,9 @@ def start(conn, build):
         raise RuntimeError(f"{build}: builds never run inside `ingest serve` (plan §0 item 27): mark it "
                            "with builds.mark() and run it by hand")
     run_id = conn.execute(
-        """insert into ops.build_run (build, covers)
-           select %s, coalesce(jsonb_agg(jsonb_build_object('id', p.id, 'marks', p.marks) order by p.id), '[]')
+        """insert into ops.build_run (build, started_at, covers)
+           select %s, clock_timestamp(),
+                  coalesce(jsonb_agg(jsonb_build_object('id', p.id, 'marks', p.marks) order by p.id), '[]')
            from ops.build_pending p where p.build = %s
            returning id""",
         (build, build)).fetchone()[0]
@@ -125,13 +141,12 @@ def finish(conn, run_id, *, ok, note=None, error=None, then=()):
     counted up since it started stays, dated no earlier than the run's start), and mark the
     builds in `then` (marked by this build). Uncommitted work on conn commits with it. Returns
     the number of marks cleared."""
-    for b in then:
-        check_name(b)
-    row = conn.execute("select build, started_at, finished_at from ops.build_run where id = %s",
+    row = conn.execute("select build, started_at, finished_at from ops.build_run where id = %s for update",
                        (run_id,)).fetchone()
     if row is None:
         raise ValueError(f"no build run {run_id}")
     build, started_at, finished_at = row
+    _check_then(build, then)
     if finished_at is not None:
         raise ValueError(f"build run {run_id} ({build}) has already finished")
     cleared = 0
@@ -149,7 +164,8 @@ def finish(conn, run_id, *, ok, note=None, error=None, then=()):
         for b in then:
             mark(conn, b, by=build, reason=f"{build} finished (run {run_id})")
     conn.execute(
-        """update ops.build_run set finished_at = greatest(now(), started_at), ok = %s, note = %s, error = %s
+        """update ops.build_run set finished_at = greatest(clock_timestamp(), started_at), ok = %s, note = %s,
+             error = %s
            where id = %s""",
         (bool(ok), note, None if error is None else str(error)[:1000], run_id))
     conn.commit()
@@ -164,8 +180,7 @@ class Run:
 
     def __init__(self, conn, build, then=(), note=None):
         check_name(build)
-        for b in then:
-            check_name(b)
+        _check_then(build, then)
         self.conn, self.build, self.then, self.note = conn, build, tuple(then), note
         self.id = None
         self.cleared = 0
@@ -190,7 +205,7 @@ class Run:
         if threading.current_thread() is threading.main_thread() \
                 and signal.getsignal(signal.SIGTERM) == signal.SIG_DFL:
             def stop(signum, _frame):
-                raise Stopped(signal.Signals(signum).name)
+                raise Stopped(signum)
             self._old_term = signal.signal(signal.SIGTERM, stop)
         return self
 
@@ -352,6 +367,9 @@ def main(argv=None):
             except CommandFailed as err:
                 print(f"{args.build}: {err}; logged as failed", file=sys.stderr)
                 return err.code if 0 < err.code < 256 else 1
+            except OSError as err:               # the command couldn't start (logged as failed)
+                print(f"{args.build}: {err}", file=sys.stderr)
+                return 127
             except RuntimeError as err:          # refused: already running, or inside ingest serve
                 print(f"{args.build}: {err}", file=sys.stderr)
                 return 75

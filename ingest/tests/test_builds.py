@@ -69,6 +69,8 @@ class MarkTest(unittest.TestCase):
                 builds.mark(conn, "roads-build", **kwargs)
         with self.assertRaises(ValueError):
             builds.mark(conn, "Roads", by="osm", reason="x")
+        with self.assertRaisesRegex(ValueError, "can't mark itself"):
+            builds.Run(conn, "roads-build", then=["landscape-bake", "roads-build"])
         self.assertEqual(conn.calls, [])
         builds.mark(conn, "roads-build", by="osm", reason="r" * 600)
         self.assertEqual(len(conn.calls[0][1][2]), builds.REASON_MAX)
@@ -218,12 +220,24 @@ class DatabaseTest(unittest.TestCase):
     def test_sigterm_is_logged_as_stopped(self):
         if signal.getsignal(signal.SIGTERM) != signal.SIG_DFL:
             self.skipTest("SIGTERM has a handler in this process")
-        with self.assertRaises(builds.Stopped):
+        with self.assertRaises(builds.Stopped) as stopped:
             with builds.Run(self.conn, self.b):
                 os.kill(os.getpid(), signal.SIGTERM)
                 time.sleep(5)
                 self.fail("SIGTERM didn't stop the build")
+        self.assertEqual(stopped.exception.code, 128 + signal.SIGTERM)
         self.assertEqual(signal.getsignal(signal.SIGTERM), signal.SIG_DFL)
+        self.assertEqual(self.status()["last_error"], "stopped: SIGTERM")
+        # A query in flight is cancelled, and the connection stays usable.
+        with self.assertRaises(builds.Stopped):
+            with builds.Run(self.conn, self.b):
+                self.conn.execute("select pg_sleep(0)")
+                signal.setitimer(signal.ITIMER_REAL, 0.2)
+                old = signal.signal(signal.SIGALRM, lambda *_: os.kill(os.getpid(), signal.SIGTERM))
+                try:
+                    self.conn.execute("select pg_sleep(5)")
+                finally:
+                    signal.signal(signal.SIGALRM, old)
         self.assertEqual(self.status()["last_error"], "stopped: SIGTERM")
 
     def test_one_run_of_a_build_at_a_time(self):
@@ -250,6 +264,9 @@ class DatabaseTest(unittest.TestCase):
         builds.mark(self.conn, self.b, by="water-build", reason="water built")
         self.assertEqual(builds.finish(self.conn, run_id, ok=True, note="landscape-3fa9c1.pmtiles"), 1)
         self.assertEqual(self.pending(), {"water-build": (1, "water built")})
+        [(started, finished)] = self.conn.execute(
+            "select started_at, finished_at from ops.build_run where id = %s", (run_id,)).fetchall()
+        self.assertGreater(finished, started)          # clock times, not the transaction's
         with self.assertRaisesRegex(ValueError, "already finished"):
             builds.finish(self.conn, run_id, ok=True)
         with self.assertRaisesRegex(ValueError, "no build run"):
