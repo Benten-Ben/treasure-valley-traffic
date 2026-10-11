@@ -109,8 +109,9 @@ class RegistryTest(unittest.TestCase):
 
     def test_commands_resolve_and_keep_clear_of_the_built_ins(self):
         self.assertEqual(sorted(registry.COMMANDS),
-                         ["match-intersections", "match-routes", "rollup", "route-colors", "segment-match",
-                          "soils-export", "soils-load", "transit-progress", "transit-ribbons", "trees-load"])
+                         ["farm-cdl-load", "farm-csb-load", "farm-export", "farm-fields-load", "match-intersections",
+                          "match-routes", "rollup", "route-colors", "segment-match", "soils-export", "soils-load",
+                          "transit-progress", "transit-ribbons", "trees-load"])
         self.assertFalse(set(registry.COMMANDS) & (set(BUILTINS) | set(CORE_COMMANDS)))
         for name in registry.COMMANDS:
             self.assertTrue(callable(registry.command(name)), name)

@@ -50,8 +50,11 @@ class SourceTest(unittest.TestCase):
     def test_the_manifest_lists_it_with_the_same_license_and_credit(self):
         plugin = manifest.load(PLUGIN)
         self.assertEqual((plugin.name, plugin.order, plugin.visibility, plugin.depends), ("farm", 67, "public", []))
-        [entry] = plugin.manifest["sources"]
+        # agrimet_et is its one scheduled source; the crop fields' sources (nass_csb, nass_cdl) are manual
+        [entry] = [e for e in plugin.manifest["sources"] if e["kind"] == "source"]
         self.assertEqual((entry["name"], entry["kind"]), (agrimet.SOURCE["name"], "source"))
+        self.assertEqual(sorted(e["name"] for e in plugin.manifest["sources"] if e["kind"] == "manual"),
+                         ["nass_cdl", "nass_csb"])
         self.assertEqual((entry["license"], entry["credit"]), (agrimet.SOURCE["license"], agrimet.SOURCE["credit"]))
 
     def test_every_station_is_in_the_ring_and_others_are_cut(self):
