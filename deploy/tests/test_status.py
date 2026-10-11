@@ -60,8 +60,15 @@ class Base(unittest.TestCase):
                 json.dump({"version": 1, "cadence_s": cadence, "heartbeat": self.t.timestamp() - age,
                            "rolling_up": roll, "paused_low_disk": paused}, f)
 
-    def camera_day(self, cam, day, video=True, failed=False):
-        os.makedirs(os.path.join(self.cameras, "jpeg", str(cam), day), exist_ok=True)
+    def camera_day(self, cam, day, video=True, failed=False, jpegs=True, frames=True):
+        """A camera-day in the archive: its JPEG folder (with frames, or empty), its video, its failure note."""
+        if jpegs:
+            jpeg = os.path.join(self.cameras, "jpeg", str(cam), day)
+            os.makedirs(jpeg, exist_ok=True)
+            if frames:
+                with open(os.path.join(jpeg, "index.csv"), "w") as f:
+                    f.write("fetched_at,file,bytes,sha256\n2026-10-10T14:00:00Z,140000.jpg,3,x\n")
+                open(os.path.join(jpeg, "140000.jpg"), "w").close()
         folder = os.path.join(self.cameras, "video", str(cam), day[:4])
         os.makedirs(folder, exist_ok=True)
         if video:
@@ -104,6 +111,29 @@ class TheVm(Base):
         self.assertIn("! roll-up:  not going, and 1 of 3 camera-day videos made for 2026-10-10, 1 failed, 1 missing", out)
         self.assertIn("! restart:  planned 2026-10-11 23:30 Boise", out)
         self.assertIn("3 things to look at", out)
+
+    def test_videos_count_after_their_jpegs_are_deleted(self):
+        # Low disk: the capture deleted yesterday's JPEGs once their videos were made (prune with
+        # one day kept); a failure note stays; an empty JPEG folder rolls up to nothing.
+        self.camera_day(652, "2026-10-10", jpegs=False)
+        self.camera_day(656, "2026-10-10", jpegs=False)
+        self.camera_day(674, "2026-10-10", video=False, failed=True, jpegs=False)
+        self.camera_day(680, "2026-10-10", video=False, frames=False)
+        self.camera_day(652, "2026-10-09", jpegs=False)                 # another day: not counted
+        with open(os.path.join(self.cameras, "video", "index-key.json"), "w") as f:
+            f.write("{}")
+        code, out = self.run_status()
+        self.assertIn("! roll-up:  not going, and 2 of 3 camera-day videos made for 2026-10-10, 1 failed\n", out)
+        self.assertNotIn("missing", out)
+        os.remove(os.path.join(self.cameras, "video", "674", "2026", "674-2026-10-10.mp4.failed"))
+        code, out = self.run_status()
+        self.assertEqual(code, 0, out)
+        self.assertIn("  roll-up:  finished: 2 of 2 camera-day videos made for 2026-10-10", out)
+
+    def test_an_empty_archive_needs_a_look(self):
+        code, out = self.run_status()
+        self.assertEqual(code, 1)
+        self.assertIn("! roll-up:  no camera videos or JPEGs for 2026-10-10 in the archive", out)
 
     def test_a_roll_up_still_going_after_six_holds_day_jobs(self):
         self.statuses(rolling=(True, False))
@@ -231,7 +261,12 @@ class TheDatabase(Base):
                 {"build": "landscape-bake", "state": "running", "age_s": None, "pending_s": None, "pending_by": None,
                  "pending_reason": None, "run_s": 1200, "last_error": None},
                 {"build": "soils-build", "state": "failed", "age_s": 3 * 86400, "pending_s": None, "pending_by": None,
-                 "pending_reason": None, "run_s": 4000, "last_error": "ValueError: bad geometry"}]}
+                 "pending_reason": None, "run_s": 4000, "last_error": "ValueError: bad geometry"},
+                {"build": "farm-build", "state": "failed", "age_s": None, "pending_s": 7200, "pending_by": ["osm_landuse"],
+                 "pending_reason": "new extract", "run_s": 3600,
+                 "last_error": "ended without logging its end (killed, or its connection was lost)"},
+                {"build": "water-build", "state": "running", "age_s": 86400, "pending_s": None, "pending_by": None,
+                 "pending_reason": None, "run_s": 20 * 3600, "last_error": None}]}
         code, out = self.run_status(["--db-container", "tvt-scratch-db"], db=self.fake(data))
         self.assertEqual(code, 1)
         self.assertIn("! sources:  4 scheduled in tvt (tvt-scratch-db): 2 fresh, 1 late, 1 never", out)
@@ -243,10 +278,16 @@ class TheDatabase(Base):
         self.assertIn("nws_wwa: failing, last good fetch 5 min ago (every 10 min); 2 failed tries since: "
                       "HTTPError: 503 for https://api.example.test/x?key=***&y=1", lines[i + 3])
         self.assertNotIn("abc123", out)
-        self.assertIn("! builds:   1 running, 1 pending, 1 failed", out)
+        self.assertIn("! builds:   2 failed, 2 running, 1 pending", out)
+        builds = lines[next(n for n, line in enumerate(lines) if "builds:" in line) + 1:-1]
+        self.assertEqual([b.split(":")[0].strip() for b in builds],
+                         ["farm-build", "soils-build", "landscape-bake", "water-build", "roads-build"])
         self.assertIn("landscape-bake: running for 20 min; never built", out)
+        self.assertIn("water-build: running for 20 h, longer than a run should take; last built 24 h ago", out)
         self.assertIn("roads-build: marked 5 h ago (osm_street; achd_roads), newest: new extract; last built 9 d ago", out)
         self.assertIn("soils-build: its last run failed: ValueError: bad geometry; last built 3 d ago", out)
+        self.assertIn("farm-build: its last run failed: ended without logging its end (killed, or its connection "
+                      "was lost); still marked, since 2 h ago (osm_landuse); never built", out)
 
     def test_before_the_migration_and_when_it_doesnt_answer(self):
         code, out = self.run_status([], db=self.fake({}, ready=False))

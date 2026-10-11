@@ -9,11 +9,13 @@ One line each (a line that needs a look starts with "!"):
             stops under 11; the camera capture pauses under 10), and on the cold drive
   heavy     heavy.lock: free, held (by whom, for how long) or shared (browser-spec runs); who waits
   roll-up   last night's camera roll-up: going or finished, and the day's videos made, failed
-            or missing (from the capture services' status files and the archive)
+            or missing (from the capture services' status files and the archive's videos, failure
+            notes and JPEG folders)
   restart   a planned VM restart in MAINTENANCE
   sources   the scheduled sources by state (ops.source_status: fresh, late, stale, never), with
             a line for each that isn't fresh or is failing, and its last error
-  builds    each build that is marked, running or failed (ops.build_status), and the rest's age
+  builds    each build that failed (or was killed), is running or is marked (ops.build_status),
+            and the rest's age
 
 The database is read with psql inside its container (docker exec, as its owner over the socket),
 read-only, with a 10 s statement timeout. Default: container tvt-db-1, database tvt, user tvt
@@ -39,6 +41,7 @@ import sys
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 DISK_LOOK_GB = 15               # under this, heavy jobs with any peak are close to refused
+RUNNING_LONG_S = 18 * 3600      # longer than heavy's day window: no run under heavy can still be going
 DB_TIMEOUT_S = 30
 PGOPTIONS = "-c default_transaction_read_only=on -c statement_timeout=10s"
 
@@ -143,23 +146,39 @@ def rollup_day(t):
     return t.date() - dt.timedelta(days=back)
 
 
-def videos(cameras, day):
-    """(camera-days with JPEGs, videos made, failed) for one local day in the camera archive."""
-    jpeg = os.path.join(cameras, "jpeg")
-    had = made = failed = 0
+def has_frames(folder):
+    """A JPEG day folder the roll-up would encode: its index and at least one picture. (One
+    without is skipped as empty, and makes neither a video nor a failure note.)"""
+    if not os.path.exists(os.path.join(folder, "index.csv")):
+        return False
     try:
-        cams = sorted(os.listdir(jpeg))
+        with os.scandir(folder) as entries:
+            return any(e.name.endswith(".jpg") for e in entries)
     except OSError:
-        return 0, 0, 0
-    for cam in cams:
-        if not os.path.isdir(os.path.join(jpeg, cam, day.isoformat())):
-            continue
-        had += 1
+        return False
+
+
+def videos(cameras, day):
+    """(camera-days, videos made, failed) for one local day in the camera archive
+    (plugins/cameras/ingest/camera_video.py's layout). A camera-day counts if it has a video, a
+    failure note, or JPEGs to encode: the capture deletes a day's JPEGs once its video is made,
+    after two days or sooner when disk is low, so the videos are counted for themselves."""
+    cams = set()
+    for sub in ("jpeg", "video"):
+        try:
+            with os.scandir(os.path.join(cameras, sub)) as entries:
+                cams.update(e.name for e in entries if e.is_dir())
+        except OSError:
+            pass
+    had = made = failed = 0
+    for cam in sorted(cams):
         video = os.path.join(cameras, "video", cam, f"{day:%Y}", f"{cam}-{day.isoformat()}.mp4")
         if os.path.exists(video):
-            made += 1
+            had, made = had + 1, made + 1
         elif os.path.exists(video + ".failed"):
-            failed += 1
+            had, failed = had + 1, failed + 1
+        elif has_frames(os.path.join(cameras, "jpeg", cam, day.isoformat())):
+            had += 1
     return had, made, failed
 
 
@@ -189,7 +208,7 @@ def rollup(report, t):
     elif tonight and not finished and had:
         report.ok("roll-up", f"tonight's hasn't finished yet ({why}): {counts}")
     elif had == 0:
-        report.look("roll-up", f"no camera JPEGs for {day.isoformat()} in the archive")
+        report.look("roll-up", f"no camera videos or JPEGs for {day.isoformat()} in the archive")
     elif missing or failed:
         report.look("roll-up", f"not going, and {counts}" + (f", {missing} missing" if missing else ""))
     else:
@@ -246,7 +265,7 @@ def psql_runner(container, db, user):
 
 
 SOURCE_ORDER = {"stale": 0, "never": 1, "late": 2, "fresh": 3}
-BUILD_ORDER = {"running": 0, "pending": 1, "failed": 2, "built": 3}
+BUILD_ORDER = {"failed": 0, "running": 1, "pending": 2, "built": 3}
 
 
 def database(report, run, where):
@@ -285,18 +304,18 @@ def database(report, run, where):
     (report.look if n["pending"] or n["running"] or n["failed"] else report.ok)("builds", text)
     for b in builds:
         built = "never built" if b["age_s"] is None else f"last built {ago(b['age_s'])} ago"
+        by = "; ".join(b.get("pending_by") or [])
         if b["state"] == "running":
-            line = f"{b['build']}: running for {ago(b['run_s'])}; {built}"
+            long = ", longer than a run should take" if (b["run_s"] or 0) > RUNNING_LONG_S else ""
+            line = f"{b['build']}: running for {ago(b['run_s'])}{long}; {built}"
         elif b["state"] == "pending":
-            by = "; ".join(b.get("pending_by") or [])
             line = (f"{b['build']}: marked {ago(b['pending_s'])} ago ({by}), newest: "
                     f"{redact(b.get('pending_reason'))}; {built}")
         elif b["state"] == "failed":
-            line = f"{b['build']}: its last run failed: {redact(b.get('last_error'))[:200]}; {built}"
+            marked = "" if b.get("pending_s") is None else f"; still marked, since {ago(b['pending_s'])} ago ({by})"
+            line = f"{b['build']}: its last run failed: {redact(b.get('last_error'))[:200]}{marked}; {built}"
         else:
             line = f"{b['build']}: {built}"
-        if b["state"] != "built" and b.get("last_error") and b["state"] != "failed":
-            line += f"; its last run failed: {redact(b['last_error'])[:120]}"
         report.sub(line)
 
 
