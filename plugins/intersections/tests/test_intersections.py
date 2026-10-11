@@ -360,6 +360,9 @@ class DatabaseTest(unittest.TestCase):
         c.execute("update core.intersection set geom = ST_Translate(geom, 0.00005, 0) where id = %s", (main[0],))
         stats, _ = ix.build(c, T0 + timedelta(days=2), AREA, reviews=[])
         self.assertEqual(self.roads_marks(), 2)
+        self.assertEqual(c.execute("""select reason from ops.build_pending where build = 'roads-build'
+                                      and marked_by = %s""", (ix.SOURCE["name"],)).fetchone(),
+                         ("intersections: 1 active signals changed",))
         rows3 = self.intersections()
         self.assertEqual([(r[0], r[2]) for r in rows3], [(main[0], "active"), (cand[0], "candidate")])
         self.assertEqual(stats["new"], 0)

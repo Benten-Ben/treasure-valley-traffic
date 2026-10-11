@@ -956,7 +956,8 @@ def build(conn, seen_at, area=None, reviews=None):
     if w["OSM links"]:
         stats["OSM links"] = w["OSM links"]
     details.update({"built": built, "camera_links": cam_links})
-    if roads_marks.mark(conn, SOURCE["name"], len(signals_before ^ roads_marks.signals(conn)), "active signals"):
+    changed = {sid for sid, *_ in signals_before ^ roads_marks.signals(conn)}       # each signal once, moved or not
+    if roads_marks.mark(conn, SOURCE["name"], len(changed), "active signals"):
         stats["roads-build marked"] = True
     return stats, details
 
