@@ -17,6 +17,7 @@
 		treeTitle,
 		trunkIn,
 		TYPE_NAME,
+		typedBySpring,
 		type TreeDetail,
 		type TreeRow
 	} from './trees.js';
@@ -139,7 +140,7 @@
 		</ol>
 	{/if}
 {/if}
-<p class="credit">{credits(kind, detail?.catalogue?.catalogue ?? (kind === 'placed' ? null : 'boise'), year).join(' · ')}</p>
+<p class="credit">{credits(kind, detail?.catalogue?.catalogue ?? (kind === 'placed' ? null : 'boise'), year, detail ? typedBySpring(detail) : false).join(' · ')}</p>
 
 <style>
 	.kind-line {

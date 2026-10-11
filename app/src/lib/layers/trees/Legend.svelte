@@ -90,7 +90,7 @@
 		{/each}
 	</div>
 {/if}
-<p class="credit">Our own trees: heights from USGS 3DEP lidar (2023); catalogued trees from the City of Boise's inventory; estimated sizes from the US Forest Service's Urban Tree Database.</p>
+<p class="credit">Our own trees: heights from USGS 3DEP lidar (2023); catalogued trees from the City of Boise's inventory; estimated sizes from the US Forest Service's Urban Tree Database; conifers over the mountains' April snow from a spring Sentinel-2 image (contains modified Copernicus Sentinel data 2025).</p>
 
 <style>
 	li {

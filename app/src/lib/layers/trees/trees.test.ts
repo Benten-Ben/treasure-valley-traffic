@@ -25,6 +25,7 @@ import {
 	lidarYear,
 	metresToPx,
 	MESH_OF_TYPE,
+	SENTINEL2_CREDIT,
 	modelFade,
 	stillServes,
 	TREE_GREENS,
@@ -38,6 +39,7 @@ import {
 	treesUrl,
 	treeTitle,
 	trunkIn,
+	typedBySpring,
 	wantedBox,
 	type Box,
 	type TreeDetail,
@@ -195,7 +197,7 @@ describe('crown discs (farther out, or without the scene)', () => {
 		expect((credit.layer as { maxzoom?: number }).maxzoom).toBeUndefined();
 		expect((credit.layer as { filter?: unknown }).filter).toEqual(['==', ['get', 'kind'], '']);
 		expect((credit.layer.paint as Record<string, unknown>)['circle-radius']).toBe(0);
-		expect(CREDIT).toBe('Trees: USGS 3DEP lidar, City of Boise, US Forest Service');
+		expect(CREDIT).toBe('Trees: USGS 3DEP lidar, City of Boise, US Forest Service; contains modified Copernicus Sentinel data 2025');
 	});
 });
 
@@ -279,6 +281,23 @@ describe('the words (the legend and the tree panel)', () => {
 		expect(est).toContain('22 m');
 	});
 
+	it('says when the spring Sentinel-2 image made a placed tree a conifer, and only then', () => {
+		const spring = { apr_ndvi: 0.45, jul_ndvi: 0.68, snow_share: 1, april_views: 2, crown_m2: 153, evergreen: true };
+		const yes = detail({ kind: 'placed', type: 'conifer', fit: { spring } });
+		expect(typedBySpring(yes)).toBe(true);
+		expect(howWeKnow(yes).join(' ')).toContain('green over the snow in an early-April 2025 Sentinel-2 image');
+		for (const d of [
+			detail({ kind: 'placed', type: 'narrow', fit: { spring } }),                       // the narrow rule came first
+			detail({ kind: 'placed', type: 'conifer', fit: { spring: { ...spring, evergreen: false } } }), // the width curve's call
+			detail({ kind: 'placed', type: 'conifer', fit: { spring: null } }),                // a build without Sentinel-2
+			detail({ kind: 'placed', type: 'conifer', fit: {} }),
+			detail({ kind: 'catalogued', type: 'conifer', fit: { spring } })                   // the genus says conifer
+		]) {
+			expect(typedBySpring(d)).toBe(false);
+			expect(howWeKnow(d).join(' ')).not.toContain('Sentinel-2');
+		}
+	});
+
 	it('names the log’s events and sums up each', () => {
 		expect(eventName('measured')).toBe('Measured by lidar');
 		expect(eventName('placed')).toBe('Placed from the lidar');
@@ -299,6 +318,10 @@ describe('the words (the legend and the tree panel)', () => {
 
 	it('credits the lidar always, the City for catalogued and estimated trees, the Urban Tree Database for estimated ones', () => {
 		expect(credits('placed', null)).toEqual(['USGS 3DEP lidar (2023)']);
+		// Copernicus for a tree the spring Sentinel-2 image typed
+		expect(credits('placed', null, '2023', true)).toEqual(['USGS 3DEP lidar (2023)', SENTINEL2_CREDIT]);
+		expect(SENTINEL2_CREDIT).toBe('Contains modified Copernicus Sentinel data 2025');
+		expect(credits('catalogued', 'boise', '2023', true)).not.toContain(SENTINEL2_CREDIT);
 		expect(credits('catalogued', 'boise')).toEqual(['USGS 3DEP lidar (2023)', 'City of Boise tree inventory']);
 		const est = credits('estimated', 'boise');
 		expect(est).toHaveLength(3);
