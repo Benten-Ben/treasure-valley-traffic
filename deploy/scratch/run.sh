@@ -181,16 +181,16 @@ until [ -n "$slot" ]; do
 done
 echo "$name $mode (pid $$, since $(boise '+%F %T'))" > "$SCRATCH_ROOT/slots/$slot.owner"
 
-# When it must stop: a heavy job at its deadline; a light one after --limit, and before midnight
-# if it holds more than 1 GB (the camera roll-up starts at 00:05).
+# When it must stop: a heavy job at its deadline; a light one after --limit, and at 23:15 if it
+# holds more than 1 GB (quiet hours: the camera roll-up starts at 00:05).
 now=$(date +%s)
 if [ $heavy_job = 1 ]; then
 	stop_at=$(timeq deadline "$deadline")
 else
 	stop_at=$((now + limit * 60))
 	if [ "$mem_mb" -gt 1024 ] && ! quiet; then
-		midnight=$(timeq deadline 00:00)
-		[ "$midnight" -lt "$stop_at" ] && stop_at=$midnight
+		quiet_at=$(timeq deadline 23:15)
+		[ "$quiet_at" -lt "$stop_at" ] && stop_at=$quiet_at
 	fi
 fi
 
@@ -201,7 +201,7 @@ ctr=tvt-scratch-$name
 docker container inspect "$ctr" >/dev/null 2>&1 && die "a container named $ctr already exists (docker rm -f $ctr if it's left over)"
 args=(run --rm --init --name "$ctr" --label tvt.scratch=job --label "tvt.scratch.name=$name"
 	--network "$SCRATCH_NET" --memory "${mem_mb}m" --memory-swap "${mem_mb}m" --cpus "$cpus" --cpu-shares 256
-	--pids-limit 2048 --user "$(id -u):$(id -g)" --env-file "$SCRATCH_ROOT/secrets/job-$( [ $user = tvt ] && echo owner || echo build ).env"
+	--pids-limit 2048 --cap-drop ALL --security-opt no-new-privileges --user "$(id -u):$(id -g)" --env-file "$SCRATCH_ROOT/secrets/job-$( [ $user = tvt ] && echo owner || echo build ).env"
 	-e "DATABASE_URL=postgresql://$user@$SCRATCH_DB:5432/$db" -e "PGDATABASE=$db" -e PGAPPNAME="scratch-$name"
 	-e HOME=/tmp -e TZ=America/Boise -e PYTHONDONTWRITEBYTECODE=1 -e PYTHONUNBUFFERED=1 -e TVT_SCRATCH=1
 	-e TVT_ARCHIVE=/srv/archive -e TVT_PROD_ARCHIVE=/srv/archive-prod -e TVT_SOURCES=/srv/sources

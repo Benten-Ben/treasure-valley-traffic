@@ -94,8 +94,8 @@ at its deadline.
 **The rules `run.sh` applies** (plan §4.4 and the lead's wave-1 rule):
 
 - Day (06:00–23:15 Boise): light jobs any time; heavy ones with a deadline by
-  23:15. A light job over 1 GB still going at midnight is stopped (the camera
-  roll-up starts at 00:05).
+  23:15. A light job over 1 GB still going at 23:15 is stopped (quiet hours;
+  the camera roll-up starts at 00:05).
 - Quiet hours (23:15–06:00): until the nightly camera roll-up has finished,
   jobs get 1 GB at most (pass `--memory 1g`) and no heavy job starts. The
   roll-up has finished when, after 00:05, both capture services' status files
