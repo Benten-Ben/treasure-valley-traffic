@@ -50,11 +50,11 @@
   {"image_id": 835, "lonlat": [-116.443596, 43.662895], "osm": "crossing of 9 point(s)"}
  ],
  "corridors": [
-  {"id": "eagle-rd", "name": "Eagle Road (SH-55), Overland Road to Chinden Boulevard", "line": [
+  {"id": "eagle-rd", "short": "Eagle Road", "name": "Eagle Road (SH-55), Overland Road to Chinden Boulevard", "line": [
    [-116.354506, 43.5904], [-116.354822, 43.5984], [-116.354834, 43.6044], [-116.354639, 43.6124],
    [-116.354468, 43.6304], [-116.354285, 43.6384], [-116.35433, 43.6484], [-116.354248, 43.6564],
    [-116.354264, 43.6584], [-116.354465, 43.6624]]},
-  {"id": "chinden-blvd", "name": "Chinden Boulevard (US 20/26), SH-16 to Veterans Memorial Parkway", "line": [
+  {"id": "chinden-blvd", "short": "Chinden Boulevard", "name": "Chinden Boulevard (US 20/26), SH-16 to Veterans Memorial Parkway", "line": [
    [-116.4737, 43.663004], [-116.4237, 43.662823], [-116.4187, 43.662846], [-116.4162, 43.662914],
    [-116.4012, 43.662838], [-116.3787, 43.662919], [-116.3637, 43.66288], [-116.3537, 43.662984],
    [-116.3462, 43.662927], [-116.3362, 43.662942], [-116.3337, 43.662818], [-116.3312, 43.662604],

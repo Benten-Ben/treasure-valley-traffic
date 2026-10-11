@@ -158,7 +158,7 @@ class SheetsTest(unittest.TestCase):
     def test_the_output_folder_is_private(self):
         path = self.sh.out_folder("p7")
         self.assertEqual(path, f"{self.root}/private/sheets/p7")
-        self.assertEqual(os.stat(path).st_mode & 0o7777, 0o2750)
+        self.assertEqual(os.stat(path).st_mode & 0o777, 0o750)
 
     def test_slots(self):
         fds = [self.sh.take_slot("a", 0), self.sh.take_slot("b", 0)]

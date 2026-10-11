@@ -115,7 +115,7 @@ ingest/                 the ingest core: CLI, polite HTTP, database helpers, sha
 plugins/                one folder per subject (roads, intersections, cameras, transit, conditions, safety, flow,
                         development): plugin.json, README, ingest code, migrations, tests (docs/15). Private
                         plugins live on the server (TVT_PLUGIN_PATH), never here
-deploy/                 Docker Compose + Caddy for the server VM, and the VM's heavy and worker-test tools (deploy/bin)
+deploy/                 Docker Compose + Caddy for the server VM, and the VM's heavy, worker-test and sheets tools (deploy/bin)
 tools/                  standalone research scripts (GPS run analysis, etc.)
 tvt/                    THROWAWAY PROTOTYPE ingestion package; lessons only, not the foundation
 tests/                  tests for tvt/
@@ -155,6 +155,9 @@ python3 -m unittest discover -s basemap/ground -t . # the ground's contract (wor
 python3 tools/check_public.py              # nothing private in what would be pushed
 /srv/tvt/work/bin/heavy --deadline HH:MM --runtime MIN --peak GB "<label>" <command>   # a heavy job on the VM (deploy/README.md)
 /srv/tvt/work/bin/worker-test -C <checkout> discover -s <dir> -t .   # worker-image tests on the VM; a skip fails
+python3 -m basemap.sheets.places          # the review places: ten boxes, 34 key cameras, Eagle and Chinden, three spots
+/srv/tvt/work/bin/sheets -C <checkout> --pkg <pkg> -- --places cameras --layer <plugin>/<layer>   # review sheets, into the private files
+cd app && node scripts/map-sheets.mjs --url <preview> --places cameras   # map screenshots of the same places (basemap/sheets/README.md)
 ```
 
 Front-end environment (app/README.md): `TVT_FRAME_SOURCE=fixture` serves

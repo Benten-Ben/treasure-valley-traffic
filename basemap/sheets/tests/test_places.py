@@ -81,6 +81,7 @@ class FramesTest(unittest.TestCase):
         self.assertEqual(ys, sorted(ys))                       # south to north, as drawn
         for a, b in zip(frames, frames[1:]):                   # neighbours touch or overlap
             self.assertLessEqual(math.dist(a.centre, b.centre), 600)
+        self.assertEqual(frames[2].name, f"Eagle Road, 3 of {len(frames)}")
         self.assertLessEqual(frames[0].window.south, line[0][1])
         self.assertGreaterEqual(frames[-1].window.north, line[-1][1])
 

@@ -259,11 +259,12 @@ def resolve(o, args):
 
 
 def out_folder(pkg):
-    """/srv/tvt/private/sheets/<pkg>, made private (2750, the private files' group) if new."""
+    """/srv/tvt/private/sheets/<pkg>, made private (750) if new. It inherits the private files' group and setgid bit
+    from its parent, so the sheets written in it take that group too. (No chmod: the server's user isn't in that
+    group, and a chmod would clear the setgid bit.)"""
     for path in (SHEETS, os.path.join(SHEETS, pkg)):
         if not os.path.isdir(path):
-            os.mkdir(path, 0o2750)
-            os.chmod(path, 0o2750)
+            os.mkdir(path, 0o750)
     return os.path.join(SHEETS, pkg)
 
 

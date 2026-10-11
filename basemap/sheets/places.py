@@ -161,8 +161,8 @@ def all_frames(places=None, cameras=None, res=None, size=None):
         for k, centre in enumerate(centres, 1):
             win = square(centre, _pick(cor, d["corridors"], "size", size), _pick(cor, d["corridors"], "res", res))
             out["corridors"].append(Frame(f"{cor['id']}-{k:02d}", "corridors", cor["id"],
-                                          f"{cor['name']}, {k} of {len(centres)}", win,
-                                          f"OSM centreline, every {step:g} m"))
+                                          f"{cor.get('short', cor['name'])}, {k} of {len(centres)}", win,
+                                          f"{cor['name']}: the OSM centreline, a frame every {step:g} m"))
 
     for sp in places["spots"]:
         lon, lat = sp["lonlat"]

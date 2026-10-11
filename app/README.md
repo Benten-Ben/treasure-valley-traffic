@@ -75,5 +75,5 @@ a package's environment.
 | `src/lib/contracts/` | The JSON contracts shared by server and client |
 | `src/lib/server/` | Database, data versions, tiles (`road-tiles.ts`; `mvt.ts` for toggled layers, with each plugin's definitions in `<plugin>/tiles.ts`), frames, the capture archive, the 511 fetcher and robots.txt, transit queries |
 | `src/lib/perf/` | Performance marks and the `?perf` HUD |
-| `scripts/` | The harness: seeds, the fake archive, database clones, the e2e server, `perf.mjs`, `bundle-budget.mjs`, `review-page.mjs` |
+| `scripts/` | The harness: seeds, the fake archive, database clones, the e2e server, `perf.mjs`, `bundle-budget.mjs`, `review-page.mjs`; `map-sheets.mjs`, screenshots of the preview at the review places ([basemap/sheets](../basemap/sheets/README.md)) |
 | `tests/e2e/` | Browser specs, one tag per package (`@wp0` … `@wp17`) |
