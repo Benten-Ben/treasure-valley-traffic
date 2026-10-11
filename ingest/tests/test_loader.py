@@ -114,8 +114,8 @@ class RegistryTest(unittest.TestCase):
         self.assertEqual(sorted(registry.COMMANDS),
                          ["burn-scars", "farm-cdl-load", "farm-csb-load", "farm-derive", "farm-export",
                           "farm-fields-load", "match-intersections", "match-routes", "roads-developed-load", "rollup",
-                          "route-colors", "segment-match", "soils-export", "soils-load", "transit-progress", "transit-ribbons",
-                          "trees-load", "wfigs-backfill"])
+                          "route-colors", "segment-match", "shrubs-hedge-check", "shrubs-load", "soils-export",
+                          "soils-load", "transit-progress", "transit-ribbons", "trees-load", "wfigs-backfill"])
         self.assertFalse(set(registry.COMMANDS) & (set(BUILTINS) | set(CORE_COMMANDS)))
         for name in registry.COMMANDS:
             self.assertTrue(callable(registry.command(name)), name)
