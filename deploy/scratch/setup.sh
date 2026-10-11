@@ -79,7 +79,7 @@ if ! docker container inspect "$SCRATCH_DB" >/dev/null 2>&1; then
 		-c max_parallel_maintenance_workers=1 -c timescaledb.max_background_workers=4 \
 		-c timescaledb.telemetry_level=off -c jit=off -c random_page_cost=1.1 \
 		-c wal_level=minimal -c max_wal_senders=0 -c archive_mode=off -c synchronous_commit=off \
-		-c max_wal_size=1GB -c min_wal_size=128MB -c checkpoint_timeout=15min \
+		-c max_wal_size=256MB -c min_wal_size=64MB -c checkpoint_timeout=15min \
 		-c log_temp_files=100MB -c log_min_duration_statement=-1 >/dev/null
 fi
 [ "$(docker inspect -f '{{.State.Running}}' "$SCRATCH_DB")" = true ] || docker start "$SCRATCH_DB" >/dev/null

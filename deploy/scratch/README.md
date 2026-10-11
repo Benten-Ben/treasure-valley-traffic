@@ -25,7 +25,7 @@ runbook, and its loads run as `tvt_build` too.
   reach out. Jobs also join `tvt-scratch-out`, a plain bridge network of their
   own, for downloads. Production's database is only on the Compose network,
   which neither reaches: a scratch job can't even resolve its name.
-- Volume `tvt-scratch-db-data`; database `tvt`, about 0.7 GB.
+- Volume `tvt-scratch-db-data`; database `tvt`, about 0.6 GB.
 - Secrets: random passwords made by `setup.sh` in
   `/srv/tvt/work/scratch/secrets/` (mode 600), never shown.
 
@@ -77,10 +77,10 @@ Inside a job:
 | `TVT_SCRATCH` | `1` |
 
 The tree is mounted read-write at `/repo` (the working directory), as uid and
-gid of the server's user, `HOME=/tmp`, `TZ=America/Boise`. Jobs reach the
-internet through a bridge network of their own, `tvt-scratch-out` (for a loader's download, under the
-usual rules: robots.txt, our User-Agent, approved sources only); `--offline`
-drops that. `--mount SRC:DST[:ro]` adds a folder: read-write under
+gid of the server's user, `HOME=/tmp`, `TZ=America/Boise`, with no Linux
+capabilities. Jobs reach the internet through a bridge network of their own,
+`tvt-scratch-out` (for a loader's download, under the usual rules: robots.txt,
+our User-Agent, approved sources only); `--offline` drops that. `--mount SRC:DST[:ro]` adds a folder: read-write under
 `/srv/tvt/work/` or the cold drive's `vm/`, read-only under production's archive
 or the cold drive. Private files, secrets and the e2e runner's folder can't be
 mounted.
@@ -121,7 +121,7 @@ applied"). Undo it by hand with `--owner psql` (drop what it made, then
 `delete from ops.schema_migration where name = '<plugin>/<file>'`) and migrate
 again. For work that needs its own copy (repeated loads, a destructive test),
 restore one: `refresh.sh --db tvt_<pkg> --from-dump latest` (heavy, about
-0.7 GB of disk; drop it when you're done) and pass `--db tvt_<pkg>`.
+0.6 GB of disk; drop it when you're done) and pass `--db tvt_<pkg>`.
 
 ## What tvt_build can do
 
@@ -202,8 +202,16 @@ since the dump (the collectors keep running) differ, nothing else should.
 A refresh **throws away everything builders put in the database**: they run
 `migrate` and their loads again. It waits up to 15 minutes for running jobs and
 starts no new ones meanwhile. Stopped early (deadline or error), it leaves the
-old database as it was, unless it was in the swap's two quick steps. Measured
-on Oct 11: see `refresh.json` on the server.
+old database as it was, unless it was in the swap's two quick steps.
+
+Measured on the first refresh (Oct 11, 02:39 Boise, after the roll-up): the
+dump took 10 s (a 65 MB `pg_dump` and 16 MB of raw rows, zstd), the restore
+56 s, the whole refresh 91 s. The copy is a 584 MB database (157,183 raw.record
+rows; production is 1.7 GB), and the volume about 1.2 GB with its WAL, which
+`max_wal_size=256MB` trims as it's reused. Of 48 tables counted against
+production, only `ops.fetch` (the collectors kept fetching) and
+`ops.schema_migration` (the private plugin's row) differed. A package's own copy
+from the last dump (`--from-dump latest --db ...`) took 45 s.
 
 ## Setting it up again
 
@@ -217,5 +225,5 @@ deploy/scratch/setup.sh --recreate   # new settings or image; the volume stays
 The server's own settings (the cold drive's mount and dump folder) are in
 `/srv/tvt/work/scratch/scratch.conf`, not here. To remove it all: stop the jobs,
 `docker rm -f tvt-scratch-db`, `docker volume rm tvt-scratch-db-data`,
-`docker network rm tvt-scratch`, then the folder; and on production, `drop
+`docker network rm tvt-scratch tvt-scratch-out`, then the folder; and on production, `drop
 owned by tvt_build; drop role tvt_build;`.
