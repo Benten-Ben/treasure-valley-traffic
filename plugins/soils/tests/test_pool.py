@@ -37,9 +37,10 @@ TYPES = {
     "nope:clay": soil(9, "Nope", "Clay", "playas", None),            # nothing to borrow
     "rock-outcrop": soil(10, "Rock outcrop", None, None, None, "rock"),
     "notcom": soil(11, "NOTCOM", None, None, None, "nodata"),
+    "dune-land": soil(12, "Dune land", None, None, None, "other"),     # one big polygon: measured all the same
 }
 L_OF = {"m1:silt-loam": 0.60, "m2:silt-loam": 0.65, "m3:silt-loam": 0.70, "m4:loam": 0.75, "m5:loam": 0.80,
-        "m1:loam": 0.62}
+        "m1:loam": 0.62, "dune-land": 0.85}
 
 
 def synthetic(outlier=True):
@@ -54,7 +55,7 @@ def synthetic(outlier=True):
     for i, t in enumerate(TYPES):
         if t not in L_OF:
             continue
-        n, count = {"m1:loam": (1000, 4), "m2:silt-loam": (60000, 20)}.get(t, (30000, 4))
+        n, count = {"m1:loam": (1000, 4), "m2:silt-loam": (60000, 20), "dune-land": (25000, 1)}.get(t, (30000, 4))
         for p in range(count):
             m = n // count
             L = rng.normal(L_OF[t], 0.03, m).astype(np.float32)
@@ -100,7 +101,7 @@ class PoolTest(unittest.TestCase):
 
     def test_measured_types(self):
         for t, L in L_OF.items():
-            if t == "m1:loam":
+            if t in ("m1:loam", "dune-land"):
                 continue
             r = self.by[("ground_type", t, None)]
             self.assertIsNone(r["fallback"])
@@ -108,7 +109,9 @@ class PoolTest(unittest.TestCase):
             want = L + (0.025 if t == "m1:silt-loam" else 0)
             self.assertAlmostEqual(r["lab_med"][0], want, delta=0.02)
         self.assertIn(("ground_type", "m1:silt-loam", "2025-06-18"), self.by)
-        self.assertEqual(self.report["counts"], {"measured": 5, "series": 1, "texture": 1, "albedo": 1, "none": 3})
+        self.assertEqual(self.report["counts"], {"measured": 6, "series": 1, "texture": 1, "albedo": 1, "none": 3})
+        dune = self.by[("ground_type", "dune-land", None)]
+        self.assertEqual((dune["fallback"], dune["n_polygons"]), (None, 1))
 
     def test_fallbacks(self):
         series = self.by[("ground_type", "m1:loam", None)]
@@ -151,11 +154,14 @@ class PoolTest(unittest.TestCase):
         finally:
             self.PL.MIN_PX = old
         fd = report["flight_days"]
-        self.assertEqual(fd["types_on_two_or_more"], 5)
+        self.assertEqual(fd["types_on_two_or_more"], 5)                     # dune land: one polygon, one day
         worst = {t["type"]: t["max_de"] for t in fd["types"]}
         self.assertAlmostEqual(worst["m1:silt-loam"], 5.0, delta=0.6)
         self.assertLess(worst["m3:silt-loam"], 1.0)
         self.assertFalse(fd["gains_needed"])                                 # the median type is under 3
+        off = fd["pair_offsets"]["2025-05-25/2025-06-18"]
+        self.assertEqual(off["types"], 5)
+        self.assertLess(abs(off["dL"]), 1.0)                                 # four of five types don't move
 
 
 class SpearmanTest(unittest.TestCase):

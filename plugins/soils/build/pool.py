@@ -15,7 +15,8 @@ Output: the rows of soils.photo_stats (as dicts) and a report of the checks.
      chroma, hue, spread and texture from the types of the same texture class (all measured soils when it has
      none). Needs the type's albedo.
   A type with none of these has no row: the ground paints it flat and says so. NRCS's NOTCOM ('nodata') is never
-  a soil, and a miscellaneous area borrows nothing (it has no series, texture or albedo of its own).
+  a soil, and a miscellaneous area borrows nothing (it has no series, texture or albedo of its own): it's measured
+  from fewer polygons instead, when it has MIN_PX pixels in at least one.
   Outside Ada and Canyon (no NAIP 2025 here) types are measured only where they also occur inside, else they
   borrow: flat type colours, labelled by their fallback. The 2023 tiles' colour fit for them is cut (plan §0).
 - **Checks** (report): the same type across flight days (dE over 3 means per-flight colour gains are needed); the
@@ -174,7 +175,10 @@ def pool(mapunits, types, flights, acc, polygons):
         idx = by_type.get(tid, [])
         tg[tid] = total(mu_groups[i] for i in idx)
         tflight[tid] = [total(mu_flight[i][f] for i in idx) for f in range(nf)]
-    measured = {t for t, g in tg.items() if g.measured and types[t].get("misc") != "nodata"}
+    # A miscellaneous area can't borrow (it has no series, texture or albedo of its own), so it keeps its own
+    # measurement from fewer polygons, as long as it has the pixels: one dune field is better than none.
+    measured = {t for t, g in tg.items() if types[t].get("misc") != "nodata"
+                and (g.measured or (types[t].get("misc") and g.n >= MIN_PX and g.polygons >= 1))}
     soils = [t for t in types if types[t].get("misc") is None]
 
     # The albedo fit over measured soils.
@@ -259,6 +263,24 @@ def pool(mapunits, types, flights, acc, polygons):
             worst = max(P.delta_e(a[1], b[1]) for i, a in enumerate(meds) for b in meds[i + 1:])
             spread.append({"type": tid, "flights": [m[0] for m in meds], "max_de": round(worst, 2)})
     des = [s["max_de"] for s in spread]
+    # How much of that is the flight, not the place: per pair of days, the median over types of the paired difference
+    # (later day minus earlier). A flight's own offset shows as a median far from 0 with a narrow spread; a type's
+    # spread over the valley shows as a wide one around 0.
+    pairs = {}
+    for tid in sorted(measured):
+        meds = {flights[f]: tflight[tid][f].summary()["med"] for f in range(nf) if tflight[tid][f].n >= MIN_PX}
+        days = sorted(meds)
+        for i, d1 in enumerate(days):
+            for d2 in days[i + 1:]:
+                pairs.setdefault(f"{d1}/{d2}", []).append([100 * (meds[d2][c] - meds[d1][c]) for c in range(3)])
+    offsets = {}
+    for k, v in pairs.items():
+        arr = np.array(v)
+        med = np.median(arr, axis=0)
+        q1, q3 = np.percentile(arr[:, 0], (25, 75))
+        offsets[k] = {"types": len(v), "dL": round(float(med[0]), 2), "da": round(float(med[1]), 2),
+                      "db": round(float(med[2]), 2), "dE": round(float(np.sqrt(np.sum(med ** 2))), 2),
+                      "dL_iqr": [round(float(q1), 2), round(float(q3), 2)]}
     report["flight_days"] = {
         "types_on_two_or_more": len(spread),
         "median_max_de": round(float(np.median(des)), 2) if des else None,
@@ -267,6 +289,10 @@ def pool(mapunits, types, flights, acc, polygons):
         "rule": f"per-flight colour gains are needed when the median type's largest dE between flight days is over "
                 f"{FLIGHT_DE:g}",
         "types": spread,
+        "pair_offsets": offsets,
+        "pair_offsets_about": "per pair of flight days, the median over the types measured on both of the paired "
+                              "difference (later minus earlier, OKLab x 100), with L's interquartile range: the "
+                              "flights' own offset, apart from the types' spread over the valley",
     }
 
     # Check: how much of the colour variance the types explain (pixels of measured types, by their means).
