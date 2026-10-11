@@ -24,7 +24,9 @@ REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 PLUGINS_DIR = os.path.join(REPO, "plugins")
 
 SOURCES_BEFORE = ["achd_cameras", "idaho511_views_oneoff", "idaho511_rwis_sites_oneoff",  # the last: WP16, Oct 7
-                  "vrt_gtfs", "achd_roads", "itd_hpms", "achd_msm", "compass_centerline", "fra_crossings",
+                  "vrt_gtfs", "achd_roads", "itd_hpms", "achd_msm", "compass_centerline",
+                  "achd_bike_network",                                      # P7b, landscape sprint (Oct 11)
+                  "fra_crossings",
                   "achd_signal_points", "compass_signals", "compass_regional_signals", "intersections",
                   # ch. 17 Wave A (Oct 7): hazards (order 60) runs before safety's crashes, the rest after
                   "idl_fire_restrictions", "nifc_wfigs_incidents", "nifc_wfigs_perimeters", "nasa_firms", "nws_wwa",
@@ -46,6 +48,7 @@ WHERE = {  # source: plugin (docs/15 §15.4)
     "idaho511_frames": "cameras",
     "vrt_gtfs": "transit", "vrt_realtime": "transit",
     "achd_roads": "roads", "itd_hpms": "roads", "achd_msm": "roads", "compass_centerline": "roads",
+    "achd_bike_network": "roads",
     "fra_crossings": "intersections", "achd_signal_points": "intersections", "compass_signals": "intersections",
     "compass_regional_signals": "intersections", "intersections": "intersections",
     "itd_wzdx": "conditions", "idaho511_api": "conditions",

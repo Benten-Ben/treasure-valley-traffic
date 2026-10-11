@@ -97,7 +97,8 @@ class RulesTest(unittest.TestCase):
         self.assertEqual(total["match rate"], "50.0%")
 
     def test_every_lane_source_and_osm_can_be_rematched(self):
-        self.assertEqual(sorted(sm.matchers()), ["achd_msm", "compass_centerline", "itd_hpms", "osm_valley"])
+        self.assertEqual(sorted(sm.matchers()),
+                         ["achd_bike_network", "achd_msm", "compass_centerline", "itd_hpms", "osm_valley"])
         with self.assertRaises(ValueError):
             sm.rematch_all(None, ["nonesuch"])
 
@@ -125,6 +126,12 @@ class RulesTest(unittest.TestCase):
         with mock.patch.object(sm, "matchers", return_value=fake), \
                 mock.patch.object(sm, "stale", side_effect=lambda conn, s, r: s == ["c"]):
             self.assertEqual(sm.rematch_all(Conn(), only_stale=True), {"c": {"matched lines": 2}})
+        # A source with matches of its own (the bike network) brings its own staleness check.
+        own = {"a": (lambda conn: {"matched lines": 1}, [], ["a"], lambda conn: False),
+               "d": (lambda conn: {"matched lines": 4}, [], ["d"], lambda conn: True)}
+        with mock.patch.object(sm, "matchers", return_value=own), \
+                mock.patch.object(sm, "stale", side_effect=AssertionError("core.segment_match's check")):
+            self.assertEqual(sm.rematch_all(Conn(), only_stale=True), {"d": {"matched lines": 4}})
 
 
 DB_URL = os.environ.get("TVT_TEST_DATABASE_URL")

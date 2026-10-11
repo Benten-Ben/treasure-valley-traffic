@@ -2,7 +2,9 @@
 
 Used by itd_hpms, achd_msm, compass_centerline and osm_valley after each run
 that changes them, and for all of them after achd_roads changes ACHD's
-segments (rematch_all). One source line can lie along many ACHD segments,
+segments (rematch_all). ACHD's bike network (achd_bike_network) is matched by
+the same rule, but keeps its matches in its own table,
+roads.bike_facility_match, and rematch_all reruns it too. One source line can lie along many ACHD segments,
 and one segment can carry several lines: HPMS's A and D routes and other
 divided carriageways are two lines along one ACHD centerline, and both match
 it.
@@ -32,7 +34,7 @@ unmatched and keep their own geometry; the stats say how many unmatched
 lines lie away from ACHD's network (no segment within 50 m) and how many lie
 near it (real misses).
 
-By hand: python3 -m ingest segment-match [itd_hpms achd_msm compass_centerline osm_valley]
+By hand: python3 -m ingest segment-match [itd_hpms achd_msm compass_centerline osm_valley achd_bike_network]
 """
 
 import sys
@@ -136,13 +138,15 @@ def stale(conn, sources, raw_sources=None):
 
 def matchers():
     """{source name: (match(conn) -> stats, the match sources it writes, its raw sources)}
-    for every source matched to ACHD's segments."""
-    from .sources import achd_msm, compass_centerline, itd_hpms, osm_valley
+    for every source matched to ACHD's segments. A source that keeps its matches outside
+    core.segment_match adds a fourth item, its own stale(conn)."""
+    from .sources import achd_bike_network, achd_msm, compass_centerline, itd_hpms, osm_valley
     return {
         "itd_hpms": (itd_hpms.match, itd_hpms.MATCH_SOURCES, itd_hpms.MATCH_SOURCES + [itd_hpms.NAMES_SOURCE]),
         "achd_msm": (achd_msm.match, ["achd_msm"], ["achd_msm"]),
         "compass_centerline": (compass_centerline.match, ["compass_centerline"], ["compass_centerline"]),
         "osm_valley": (osm_valley.match_achd_segments, ["osm_valley"], ["osm_valley"]),
+        "achd_bike_network": (achd_bike_network.match, [], ["achd_bike_network"], achd_bike_network.stale),
     }
 
 
@@ -156,9 +160,9 @@ def rematch_all(conn, names=None, only_stale=False):
         raise ValueError(f"unknown source(s): {', '.join(unknown)} (choose from {', '.join(found)})")
     out = {}
     for name in names or list(found):
-        match, sources, raw_sources = found[name]
+        match, sources, raw_sources, *own_stale = found[name]
         try:
-            if only_stale and not stale(conn, sources, raw_sources):
+            if only_stale and not (own_stale[0](conn) if own_stale else stale(conn, sources, raw_sources)):
                 continue
             out[name] = match(conn)
             conn.commit()
