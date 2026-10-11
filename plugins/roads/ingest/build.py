@@ -423,16 +423,27 @@ def sidewalks(conn):
     return {"pieces with a parallel sidewalk": n}
 
 
-# Each piece's bands either side, LAND_NEAR_M to LAND_FAR_M out (a one-sided buffer less the road's own), as
-# developed.measure() takes them: t 'l' or 'r', the piece's id, the band in EPSG:4326.
+# Each piece's bands either side, LAND_NEAR_M to LAND_FAR_M out (a one-sided buffer less the road's own), on NASS's
+# grid (equal-area, like developed.measure(); made valid again after the transform, which can fold a sliver), and the
+# share of each that's developed land, rounded as developed.measure() rounds.
 _LAND_BANDS = """
-select s.t, p.id::bigint as id, ST_Transform(b.g, 4326) as geom
+create temp table rb_band on commit drop as
+select p.id as piece_id, s.side, b.g
 from rb_piece p
-cross join (values ('l'::char(1), 'left'), ('r'::char(1), 'right')) s(t, side)
+cross join (values ('l'), ('r')) s(side)
 cross join lateral (
-  select ST_CollectionExtract(ST_MakeValid(ST_Difference(ST_MakeValid(ST_Buffer(p.geom, %(far)s, 'side=' || s.side)),
-                                                         ST_Buffer(p.geom, %(near)s, 'quad_segs=4'))), 3) as g) b
-where not ST_IsEmpty(b.g)
+  select ST_CollectionExtract(ST_MakeValid(ST_Transform(ST_CollectionExtract(ST_MakeValid(ST_Difference(
+           ST_MakeValid(ST_Buffer(p.geom, %(far)s, case s.side when 'l' then 'side=left' else 'side=right' end)),
+           ST_Buffer(p.geom, %(near)s, 'quad_segs=4'))), 3), %(land_srid)s)), 3) as g) b
+where not ST_IsEmpty(b.g) and ST_Area(b.g) > 0;
+create index on rb_band using gist (g);
+analyze rb_band;
+create temp table rb_land on commit drop as
+select b.piece_id, b.side,
+       round(least(1.0, coalesce((select sum(ST_Area(ST_Intersection(b.g, d.geom))) from roads.developed_land d
+                                  where ST_Intersects(d.geom, b.g)), 0) / ST_Area(b.g))::numeric, %(digits)s)::real
+         as share
+from rb_band b
 """
 
 
@@ -448,9 +459,10 @@ def developed(conn):
     out = {pid: [share, None, None] for (_, pid), share in land.measure(
         conn, query="select 'p'::char(1) as t, id::bigint as id, ST_Transform(geom, 4326) as geom "
                     "from rb_piece").items()}
-    for (t, pid), (share, _) in land.measure(conn, query=_LAND_BANDS, params={"near": LAND_NEAR_M, "far": LAND_FAR_M},
-                                             area=True).items():
-        out.setdefault(pid, [None, None, None])[1 if t.strip() == "l" else 2] = share
+    run_sql(conn, _LAND_BANDS, {"near": LAND_NEAR_M, "far": LAND_FAR_M, "land_srid": land.SRID,
+                                "digits": land.DIGITS})
+    for pid, side, share in conn.execute("select piece_id, side, share from rb_land").fetchall():
+        out.setdefault(pid, [None, None, None])[1 if side == "l" else 2] = share
     with conn.cursor() as cur:
         with cur.copy("copy rb_dev from stdin") as cp:
             for pid, (share, left, right) in out.items():
