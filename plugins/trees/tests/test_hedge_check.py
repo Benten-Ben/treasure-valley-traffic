@@ -34,6 +34,19 @@ class ReadTest(unittest.TestCase):
                 f.write("\x1e" + json.dumps(dict(HEDGE, properties={"osm_id": "w2"})) + "\n\n")
             self.assertEqual([i for i, _ in hedge_check.read_hedges(p)], ["w1", "w2"])
 
+    def test_osmiums_line_and_area_of_one_way_count_once(self):
+        ring = [[-116.2, 43.62], [-116.1999, 43.62], [-116.1999, 43.6201], [-116.2, 43.62]]
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "h.geojsonseq")
+            with open(p, "w") as f:
+                for g in ({"type": "LineString", "coordinates": ring}, {"type": "Polygon", "coordinates": [ring]}):
+                    f.write("\x1e" + json.dumps({"type": "Feature", "geometry": g,
+                                                 "properties": {"@type": "way", "@id": 5885}}) + "\n")
+                f.write("\x1e" + json.dumps({"type": "Feature", "geometry": {"type": "Polygon", "coordinates": [ring]},
+                                             "properties": {"@type": "relation", "@id": 5885}}) + "\n")
+            got = hedge_check.read_hedges(p)
+        self.assertEqual([(i, g["type"]) for i, g in got], [("w5885", "LineString"), ("r5885", "Polygon")])
+
     def test_verdicts(self):
         v = hedge_check.verdict
         self.assertEqual(v(0.6, 0.9, 1.0), "shrubs")

@@ -47,6 +47,8 @@ def verdict(shrub_cover, tree_cover, either_cover):
 
 
 def _hedge_id(props, n):
+    if props.get("@type") and props.get("@id") not in (None, ""):    # osmium export -a type,id: w123, r456
+        return f"{str(props['@type'])[:1]}{props['@id']}"
     for k in ("@id", "id", "osm_id", "fence_id"):
         v = props.get(k)
         if v not in (None, ""):
@@ -56,7 +58,8 @@ def _hedge_id(props, n):
 
 def read_hedges(path):
     """[(id, GeoJSON geometry)] from a GeoJSON FeatureCollection, a single Feature or a GeoJSON sequence (one feature
-    per line, RS characters allowed). Only lines and polygons are kept."""
+    per line, RS characters allowed). Only lines and polygons are kept, each id once: osmium exports a closed hedge
+    way both as a line and as an area, with one ring, and the first is kept."""
     with open(path, encoding="utf-8") as f:
         text = f.read()
     stripped = text.lstrip("\x1e \t\r\n")
@@ -70,12 +73,15 @@ def read_hedges(path):
             feats = doc.get("features", []) if doc.get("type") == "FeatureCollection" else [doc]
         else:
             feats = [json.loads(line.strip("\x1e \t\r")) for line in text.splitlines() if line.strip("\x1e \t\r")]
-    out = []
+    out, seen = [], set()
     for n, feat in enumerate(feats, 1):
         g = feat.get("geometry") or {}
         if g.get("type") not in ("LineString", "MultiLineString", "Polygon", "MultiPolygon"):
             continue
-        out.append((_hedge_id(feat.get("properties") or {}, n), g))
+        hid = _hedge_id(feat.get("properties") or {}, n)
+        if hid not in seen:
+            seen.add(hid)
+            out.append((hid, g))
     return out
 
 
@@ -87,10 +93,7 @@ def hedges_from_extract(pbf, workdir):
                     "a/barrier=hedge"], check=True)
     subprocess.run(["osmium", "export", "--overwrite", "-f", "geojsonseq", "-a", "type,id", "-o", seq,
                     "--geometry-types", "linestring,polygon", filtered], check=True)
-    out = []
-    for hid, g in read_hedges(seq):
-        out.append((hid, g))
-    return out
+    return read_hedges(seq)
 
 
 def hedges_from_fences(conn):
@@ -193,11 +196,13 @@ def main(argv=None):
             if hedges is None:
                 raise SystemExit("no hedges: fences.fence isn't there yet; pass --hedges FILE or --extract PBF")
         results = check(conn, hedges, args.near_m)
+        tree_areas = [a for (a,) in conn.execute("select distinct area from trees.tree order by 1").fetchall()]
         conn.rollback()
     report = {"summary": summary(results, len(hedges), source, args.near_m), "hedges": results}
     s = report["summary"]
+    s["tree_areas"] = tree_areas            # a hedge grown into trees shows only where trees are built
     print(f"hedge check ({source}): {s['hedges_in_shrub_areas']} of {s['hedges_read']} hedges are in built shrub areas,"
-          f" {s['length_m']} m")
+          f" {s['length_m']} m (trees are built in: {', '.join(tree_areas) or 'none'})")
     for v in VERDICTS:
         b = s["by_verdict"][v]
         if b["hedges"]:
