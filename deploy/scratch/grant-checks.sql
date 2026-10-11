@@ -21,6 +21,8 @@ DECLARE
   expect constant text[] := ARRAY[
     'ops.source',          'INSERT,UPDATE',                         'DELETE,TRUNCATE',
     'ops.fetch',           'INSERT,UPDATE',                         'DELETE,TRUNCATE',
+    'ops.osm_consumer',    'INSERT,UPDATE',                         'DELETE,TRUNCATE',
+    'roads.osm_street',    'INSERT,UPDATE,DELETE,TRUNCATE,MAINTAIN', 'REFERENCES,TRIGGER',
     'ops.layer_signature', 'INSERT,UPDATE',                         'DELETE,TRUNCATE',
     'ops.schema_migration', '',                                     'INSERT,UPDATE,DELETE,TRUNCATE',
     'raw.record',          'INSERT,UPDATE',                         'DELETE,TRUNCATE',
@@ -159,9 +161,9 @@ BEGIN
   -- No writes anywhere in the read schemas but the shared tables.
   FOR rel IN SELECT c.oid::regclass FROM pg_class c JOIN pg_namespace ns ON ns.oid = c.relnamespace
               WHERE ns.nspname = ANY (read_schemas) AND c.relkind IN ('r', 'p', 'v', 'm', 'f')
-                AND ns.nspname || '.' || c.relname <> ALL (ARRAY['ops.source', 'ops.fetch', 'ops.layer_signature', 'raw.record',
-                                                        'evt.event', 'core.source_link', 'core.layer_version', 'ops.build_pending',
-                                                        'ops.build_run']) LOOP
+                AND ns.nspname || '.' || c.relname <> ALL (ARRAY['ops.source', 'ops.fetch', 'ops.osm_consumer', 'ops.layer_signature',
+                                                        'raw.record', 'evt.event', 'core.source_link', 'core.layer_version',
+                                                        'ops.build_pending', 'ops.build_run']) LOOP
     IF has_table_privilege(rel, 'INSERT') OR has_table_privilege(rel, 'UPDATE')
        OR has_table_privilege(rel, 'DELETE') OR has_table_privilege(rel, 'TRUNCATE') THEN
       failures := failures || format('a write on %s', rel);

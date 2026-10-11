@@ -15,19 +15,31 @@
      "license": "none stated (disclaimer only)",
      "credit": "COMPASS (Community Planning Association of Southwest Idaho) and its member agencies", "republish": "yes"},
     {"name": "osm_valley", "module": "ingest.sources.osm_valley", "kind": "manual",
+     "license": "ODbL", "credit": "© OpenStreetMap contributors", "republish": "yes"},
+    {"name": "osm_street", "module": "ingest.sources.osm_street", "kind": "manual",
      "license": "ODbL", "credit": "© OpenStreetMap contributors", "republish": "yes"}
   ],
   "tables": [
     "core.road_segment", "core.segment_match", "core.hpms_section", "core.msm_arterial", "core.compass_segment",
     "core.osm_way", "core.osm_lane", "core.osm_node", "core.segment_lanes", "core.segment_lanes_hpms",
-    "core.segment_lanes_msm", "core.segment_lanes_compass", "core.segment_lanes_osm"
+    "core.segment_lanes_msm", "core.segment_lanes_compass", "core.segment_lanes_osm",
+    "roads.osm_street"
   ],
   "commands": [
-    {"name": "osm-load", "module": "ingest.osm_load",
-     "help": "load an OpenStreetMap extract downloaded by hand (--inbox, or --file PATH)"},
     {"name": "segment-match", "module": "ingest.segment_match",
      "help": "rematch the lane sources and OpenStreetMap to ACHD's segments by hand [names...]"}
   ],
-  "storage": "Small: reference layers re-read weekly or monthly; raw.record grows only by changed versions. The last two OpenStreetMap extracts are kept in $TVT_ARCHIVE/osm/.",
+  "osm_consumers": [
+    {"source": "osm_valley",
+     "tags": ["w/highway", "n/highway=traffic_signals", "n/crossing=traffic_signals", "n/crossing:signals=yes",
+              "n/railway=level_crossing"],
+     "geometry": ["point", "linestring"],
+     "tables": ["core.osm_way", "core.osm_lane", "core.osm_node", "core.segment_match"]},
+    {"source": "osm_street",
+     "tags": ["w/highway=residential,unclassified,living_street,road,busway,service"],
+     "geometry": ["linestring"],
+     "tables": ["roads.osm_street"]}
+  ],
+  "storage": "Small: reference layers re-read weekly or monthly; raw.record grows only by changed versions (osm_valley). roads.osm_street: about 30k ways, roughly 20 MB with its index, versioned in place (no raw.record copies). The last two OpenStreetMap extracts are kept in $TVT_ARCHIVE/osm/, and the valley cut of the newest in $TVT_ARCHIVE/osm/cut/ (about 40 MB).",
   "ethics": "OpenStreetMap is ODbL: credit \"© OpenStreetMap contributors\", and anything published from it stays ODbL. Geofabrik's robots.txt disallows scripted downloads, so extracts are downloaded by hand and there is no download code. ACHD's and ITD's layers state no license: used internally, credited."
 }

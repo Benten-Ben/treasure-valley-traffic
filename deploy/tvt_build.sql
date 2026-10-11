@@ -75,6 +75,7 @@ DECLARE
   shared_writes text[] := ARRAY[
     'ops.source',          'INSERT, UPDATE',           -- db.ensure_source: a source's registry row
     'ops.fetch',           'INSERT, UPDATE',           -- db.Fetch: one row per load
+    'ops.osm_consumer',    'INSERT, UPDATE',           -- S1: each OpenStreetMap consumer's MD5 gate (0019)
     'ops.layer_signature', 'INSERT, UPDATE',           -- compass_layer: a layer's change check
     'raw.record',          'INSERT, UPDATE',           -- db.store_records, removals: versions are never deleted
     'evt.event',           'INSERT, UPDATE',           -- ingest/events.py: lifecycles (the canal season)

@@ -134,6 +134,41 @@ class CheckTest(unittest.TestCase):
                     manifest.find([folder.path])
                 self.assertIn(word, str(cm.exception))
 
+    def test_osm_consumers(self):
+        def consumer(**kw):
+            return {"source": "osm_x", "tags": ["w/highway=path,track", "r/route=hiking"],
+                    "geometry": ["linestring", "relation"], "tables": ["t.osm_x"], **kw}
+
+        def with_consumer(name, c, kind="manual"):
+            return plugin(name, [entry("osm_x", kind=kind)], tables=["t.osm_x"], osm_consumers=[c])
+
+        self.folder.write(with_consumer("good", consumer()))
+        (p,) = manifest.find([self.folder.path])
+        self.assertEqual(p.osm_consumers[0]["source"], "osm_x")
+        cases = [
+            (with_consumer("a", consumer(), kind="source"), "manual"),
+            (with_consumer("b", consumer(source="osm_y")), "manual"),
+            (with_consumer("c", {**consumer(), "help": "x"}), "exactly"),
+            (with_consumer("d", consumer(tags=["highway=path"])), "tags-filter"),
+            (with_consumer("e", consumer(tags=["w/highway!=path"])), "tags-filter"),
+            (with_consumer("f", consumer(tags=["ww/highway"])), "tags-filter"),
+            (with_consumer("g", consumer(tags=[])), "tags"),
+            (with_consumer("h", consumer(geometry=["multipolygon"])), "geometry"),
+            (with_consumer("i", consumer(geometry=["linestring", "linestring"])), "geometry"),
+            (with_consumer("j", consumer(tags=["w/highway=path"])), "relation needs"),
+            (with_consumer("k", consumer(tables=["other.table"])), "tables"),
+            (plugin("l", [entry("osm_x", kind="manual")], tables=["t.osm_x"],
+                    osm_consumers=[consumer(), consumer()]), "twice"),
+            (plugin("m", [entry("osm_x", kind="manual")], tables=["t.osm_x"], osm_consumers={}), "list"),
+        ]
+        for m, word in cases:
+            with self.subTest(m["name"]):
+                folder = Folder(self)
+                folder.write(m)
+                with self.assertRaises(manifest.ManifestError) as cm:
+                    manifest.find([folder.path])
+                self.assertIn(word, str(cm.exception))
+
     def test_folders_without_a_manifest_are_not_plugins(self):
         os.makedirs(os.path.join(self.folder.path, "notes"))
         os.makedirs(os.path.join(self.folder.path, "__pycache__"))

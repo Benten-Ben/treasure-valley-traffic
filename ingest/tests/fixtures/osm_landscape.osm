@@ -1,0 +1,379 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Synthetic OpenStreetMap-format fixture for core's OpenStreetMap loader (ingest/osm_extract.py)
+     and its consumers. Everything here is made up: ids, names and coordinates are invented, not
+     copied from OpenStreetMap. Highway ways stand in a row near (-116.30, 43.60), one per
+     partition case (each way's comment names its owner). Way 224 crosses the valley box's west
+     edge; way 225 lies far outside it; the lake (relation 401) crosses its south edge, and its ways
+     305 and 307 lie wholly outside, so only a smart cut holds the whole lake. Objects are sorted by
+     type and id, as osmium extract requires. -->
+<osm version="0.6" generator="hand-written">
+  <node id="801" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6005000" lon="-116.2780000">
+    <tag k="highway" v="crossing"/>
+    <tag k="crossing" v="marked"/>
+  </node>
+  <node id="2011" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6000000" lon="-116.3000000"/>
+  <node id="2012" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6010000" lon="-116.3000000">
+    <tag k="highway" v="traffic_signals"/>
+  </node>
+  <node id="2021" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6000000" lon="-116.2980000"/>
+  <node id="2022" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6010000" lon="-116.2980000"/>
+  <node id="2031" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6000000" lon="-116.2960000"/>
+  <node id="2032" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6010000" lon="-116.2960000"/>
+  <node id="2041" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6000000" lon="-116.2940000"/>
+  <node id="2042" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6010000" lon="-116.2940000"/>
+  <node id="2051" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6000000" lon="-116.2920000"/>
+  <node id="2052" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6010000" lon="-116.2920000"/>
+  <node id="2061" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6000000" lon="-116.2900000"/>
+  <node id="2062" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6010000" lon="-116.2900000"/>
+  <node id="2071" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6000000" lon="-116.2880000"/>
+  <node id="2072" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6010000" lon="-116.2880000"/>
+  <node id="2081" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6000000" lon="-116.2860000"/>
+  <node id="2082" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6010000" lon="-116.2860000"/>
+  <node id="2091" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6000000" lon="-116.2840000"/>
+  <node id="2092" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6010000" lon="-116.2840000"/>
+  <node id="2101" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6000000" lon="-116.2820000"/>
+  <node id="2102" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6010000" lon="-116.2820000"/>
+  <node id="2111" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6000000" lon="-116.2800000"/>
+  <node id="2112" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6010000" lon="-116.2800000"/>
+  <node id="2121" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6000000" lon="-116.2780000"/>
+  <node id="2122" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6010000" lon="-116.2780000"/>
+  <node id="2131" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6000000" lon="-116.2760000"/>
+  <node id="2132" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6010000" lon="-116.2760000"/>
+  <node id="2141" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6000000" lon="-116.2740000"/>
+  <node id="2142" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6010000" lon="-116.2740000"/>
+  <node id="2151" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6000000" lon="-116.2720000"/>
+  <node id="2152" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6010000" lon="-116.2720000"/>
+  <node id="2161" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6000000" lon="-116.2700000"/>
+  <node id="2162" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6010000" lon="-116.2700000"/>
+  <node id="2171" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6000000" lon="-116.2680000"/>
+  <node id="2172" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6010000" lon="-116.2680000"/>
+  <node id="2181" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6000000" lon="-116.2660000"/>
+  <node id="2182" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6010000" lon="-116.2660000"/>
+  <node id="2191" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6100000" lon="-116.2500000"/>
+  <node id="2192" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6100000" lon="-116.2490000"/>
+  <node id="2193" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6110000" lon="-116.2490000"/>
+  <node id="2194" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6110000" lon="-116.2500000"/>
+  <node id="2201" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6000000" lon="-116.2640000"/>
+  <node id="2202" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6010000" lon="-116.2640000"/>
+  <node id="2211" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6000000" lon="-116.2620000"/>
+  <node id="2212" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6010000" lon="-116.2620000"/>
+  <node id="2221" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6000000" lon="-116.2600000"/>
+  <node id="2222" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6010000" lon="-116.2600000"/>
+  <node id="2231" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6000000" lon="-116.2580000"/>
+  <node id="2232" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6010000" lon="-116.2580000"/>
+  <node id="2241" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.5000000" lon="-117.0600000"/>
+  <node id="2242" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.5000000" lon="-117.0400000"/>
+  <node id="2251" version="1" timestamp="2026-09-01T00:00:00Z" lat="42.6000000" lon="-114.5000000"/>
+  <node id="2252" version="1" timestamp="2026-09-01T00:00:00Z" lat="42.6100000" lon="-114.5000000"/>
+  <node id="2261" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6000000" lon="-116.2560000"/>
+  <node id="2262" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6010000" lon="-116.2560000"/>
+  <node id="2271" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6000000" lon="-116.2540000"/>
+  <node id="2272" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6010000" lon="-116.2540000"/>
+  <node id="2281" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6000000" lon="-116.2520000"/>
+  <node id="2282" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6010000" lon="-116.2520000"/>
+  <node id="2291" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6000000" lon="-116.2500000"/>
+  <node id="2292" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6010000" lon="-116.2500000"/>
+  <node id="2311" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6000000" lon="-116.2480000"/>
+  <node id="2312" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6010000" lon="-116.2480000"/>
+  <node id="2321" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6000000" lon="-116.2460000"/>
+  <node id="2322" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6010000" lon="-116.2460000"/>
+  <node id="2331" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6000000" lon="-116.2440000"/>
+  <node id="2332" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6010000" lon="-116.2440000"/>
+  <node id="2341" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6000000" lon="-116.2420000"/>
+  <node id="2342" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6010000" lon="-116.2420000"/>
+  <node id="3011" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6100000" lon="-116.2400000"/>
+  <node id="3012" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6100000" lon="-116.2390000"/>
+  <node id="3013" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6110000" lon="-116.2390000"/>
+  <node id="3014" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6110000" lon="-116.2400000"/>
+  <node id="3021" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6000000" lon="-116.2300000"/>
+  <node id="3022" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6050000" lon="-116.2200000"/>
+  <node id="3031" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.0100000" lon="-116.5000000"/>
+  <node id="3032" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.0100000" lon="-116.4800000"/>
+  <node id="3033" version="1" timestamp="2026-09-01T00:00:00Z" lat="42.9900000" lon="-116.4800000"/>
+  <node id="3051" version="1" timestamp="2026-09-01T00:00:00Z" lat="42.9850000" lon="-116.4900000"/>
+  <node id="3052" version="1" timestamp="2026-09-01T00:00:00Z" lat="42.9900000" lon="-116.5000000"/>
+  <node id="3053" version="1" timestamp="2026-09-01T00:00:00Z" lat="42.9860000" lon="-116.4850000">
+    <tag k="highway" v="traffic_signals"/>
+  </node>
+  <node id="7011" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6100000" lon="-116.2460000"/>
+  <node id="7012" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6100000" lon="-116.2450000"/>
+  <node id="7013" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6110000" lon="-116.2450000"/>
+  <node id="7014" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6110000" lon="-116.2460000"/>
+  <!-- osm_valley: a major road -->
+  <way id="201" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="2011"/><nd ref="2012"/>
+    <tag k="highway" v="primary"/>
+    <tag k="name" v="Fixture Parkway"/>
+  </way>
+  <!-- osm_street -->
+  <way id="202" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="2021"/><nd ref="2022"/>
+    <tag k="highway" v="residential"/>
+    <tag k="name" v="Quiet Street"/>
+    <tag k="surface" v="asphalt"/>
+  </way>
+  <!-- osm_valley: a street tagged with lanes -->
+  <way id="203" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="2031"/><nd ref="2032"/>
+    <tag k="highway" v="residential"/>
+    <tag k="name" v="Laned Street"/>
+    <tag k="lanes" v="2"/>
+  </way>
+  <!-- osm_street -->
+  <way id="204" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="2041"/><nd ref="2042"/>
+    <tag k="highway" v="unclassified"/>
+  </way>
+  <!-- osm_street -->
+  <way id="205" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="2051"/><nd ref="2052"/>
+    <tag k="highway" v="living_street"/>
+    <tag k="name" v="Shared Lane"/>
+  </way>
+  <!-- osm_street -->
+  <way id="206" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="2061"/><nd ref="2062"/>
+    <tag k="highway" v="road"/>
+  </way>
+  <!-- osm_street -->
+  <way id="207" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="2071"/><nd ref="2072"/>
+    <tag k="highway" v="busway"/>
+    <tag k="oneway" v="yes"/>
+  </way>
+  <!-- osm_street: an alley -->
+  <way id="208" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="2081"/><nd ref="2082"/>
+    <tag k="highway" v="service"/>
+    <tag k="service" v="alley"/>
+  </way>
+  <!-- osm_paving -->
+  <way id="209" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="2091"/><nd ref="2092"/>
+    <tag k="highway" v="service"/>
+    <tag k="service" v="driveway"/>
+  </way>
+  <!-- osm_paving: untagged service -->
+  <way id="210" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="2101"/><nd ref="2102"/>
+    <tag k="highway" v="service"/>
+  </way>
+  <!-- osm_paving -->
+  <way id="211" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="2111"/><nd ref="2112"/>
+    <tag k="highway" v="footway"/>
+    <tag k="footway" v="sidewalk"/>
+  </way>
+  <!-- osm_paving (crossing node 801 on it) -->
+  <way id="212" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="2121"/><nd ref="801"/><nd ref="2122"/>
+    <tag k="highway" v="footway"/>
+    <tag k="footway" v="crossing"/>
+  </way>
+  <!-- osm_paving: a path carrying the sidewalk tag -->
+  <way id="213" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="2131"/><nd ref="2132"/>
+    <tag k="highway" v="path"/>
+    <tag k="footway" v="sidewalk"/>
+  </way>
+  <!-- osm_paths -->
+  <way id="214" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="2141"/><nd ref="2142"/>
+    <tag k="highway" v="footway"/>
+  </way>
+  <!-- osm_paths -->
+  <way id="215" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="2151"/><nd ref="2152"/>
+    <tag k="highway" v="path"/>
+    <tag k="name" v="Fixture Trail"/>
+  </way>
+  <!-- osm_paths -->
+  <way id="216" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="2161"/><nd ref="2162"/>
+    <tag k="highway" v="track"/>
+    <tag k="tracktype" v="grade3"/>
+  </way>
+  <!-- osm_valley: the named exception (a lane-tagged cycleway) -->
+  <way id="217" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="2171"/><nd ref="2172"/>
+    <tag k="highway" v="cycleway"/>
+    <tag k="lanes" v="1"/>
+  </way>
+  <!-- osm_valley: the named exception (a lane-tagged track) -->
+  <way id="218" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="2181"/><nd ref="2182"/>
+    <tag k="highway" v="track"/>
+    <tag k="lanes" v="2"/>
+  </way>
+  <!-- osm_paths: an area -->
+  <way id="219" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="2191"/><nd ref="2192"/><nd ref="2193"/><nd ref="2194"/><nd ref="2191"/>
+    <tag k="highway" v="pedestrian"/>
+    <tag k="area" v="yes"/>
+    <tag k="name" v="Fixture Plaza"/>
+  </way>
+  <!-- osm_paths -->
+  <way id="220" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="2201"/><nd ref="2202"/>
+    <tag k="highway" v="steps"/>
+  </way>
+  <!-- osm_paths -->
+  <way id="221" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="2211"/><nd ref="2212"/>
+    <tag k="highway" v="bridleway"/>
+  </way>
+  <!-- nobody: not built -->
+  <way id="222" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="2221"/><nd ref="2222"/>
+    <tag k="highway" v="proposed"/>
+    <tag k="proposed" v="residential"/>
+  </way>
+  <!-- nobody: not built -->
+  <way id="223" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="2231"/><nd ref="2232"/>
+    <tag k="highway" v="construction"/>
+    <tag k="construction" v="residential"/>
+  </way>
+  <!-- osm_street: crosses the box's west edge -->
+  <way id="224" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="2241"/><nd ref="2242"/>
+    <tag k="highway" v="residential"/>
+    <tag k="name" v="Edge Street"/>
+  </way>
+  <!-- outside the box: not in the cut -->
+  <way id="225" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="2251"/><nd ref="2252"/>
+    <tag k="highway" v="residential"/>
+    <tag k="name" v="Faraway Street"/>
+  </way>
+  <!-- osm_valley: an alley tagged with lanes -->
+  <way id="226" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="2261"/><nd ref="2262"/>
+    <tag k="highway" v="service"/>
+    <tag k="service" v="alley"/>
+    <tag k="lanes" v="1"/>
+  </way>
+  <!-- osm_street -->
+  <way id="227" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="2271"/><nd ref="2272"/>
+    <tag k="highway" v="residential"/>
+    <tag k="name" v="  Bridge   Lane "/>
+    <tag k="bridge" v="yes"/>
+    <tag k="layer" v="1"/>
+    <tag k="width" v="8 m"/>
+    <tag k="oneway" v="-1"/>
+    <tag k="surface" v="concrete"/>
+    <tag k="access" v="private"/>
+    <tag k="maxspeed" v="25 mph"/>
+  </way>
+  <!-- osm_street -->
+  <way id="228" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="2281"/><nd ref="2282"/>
+    <tag k="highway" v="unclassified"/>
+    <tag k="tunnel" v="culvert"/>
+    <tag k="layer" v="-1"/>
+  </way>
+  <!-- osm_paving -->
+  <way id="229" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="2291"/><nd ref="2292"/>
+    <tag k="highway" v="cycleway"/>
+    <tag k="footway" v="crossing"/>
+  </way>
+  <!-- osm_paving -->
+  <way id="231" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="2311"/><nd ref="2312"/>
+    <tag k="highway" v="footway"/>
+    <tag k="footway" v="traffic_island"/>
+  </way>
+  <!-- osm_paving -->
+  <way id="232" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="2321"/><nd ref="2322"/>
+    <tag k="highway" v="footway"/>
+    <tag k="footway" v="access_aisle"/>
+  </way>
+  <!-- nobody: not drawn -->
+  <way id="233" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="2331"/><nd ref="2332"/>
+    <tag k="highway" v="corridor"/>
+  </way>
+  <!-- nobody: a street drawn as an area (open, so a line) -->
+  <way id="234" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="2341"/><nd ref="2342"/>
+    <tag k="highway" v="residential"/>
+    <tag k="area" v="yes"/>
+  </way>
+  <!-- a pond -->
+  <way id="301" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="3011"/><nd ref="3012"/><nd ref="3013"/><nd ref="3014"/><nd ref="3011"/>
+    <tag k="natural" v="water"/>
+    <tag k="water" v="pond"/>
+  </way>
+  <!-- a canal -->
+  <way id="302" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="3021"/><nd ref="3022"/>
+    <tag k="waterway" v="canal"/>
+    <tag k="name" v="Fixture Canal"/>
+  </way>
+  <!-- the lake's ring, in the box -->
+  <way id="303" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="3031"/><nd ref="3032"/><nd ref="3033"/>
+  </way>
+  <!-- the lake's ring, outside the box -->
+  <way id="305" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="3033"/><nd ref="3053"/><nd ref="3051"/>
+    <tag k="highway" v="secondary"/>
+    <tag k="name" v="Outside Road"/>
+  </way>
+  <!-- the lake's ring, back into the box -->
+  <way id="306" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="3052"/><nd ref="3031"/>
+  </way>
+  <!-- the lake's ring, outside the box -->
+  <way id="307" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="3051"/><nd ref="3052"/>
+    <tag k="highway" v="residential"/>
+    <tag k="name" v="Outside Lane"/>
+  </way>
+  <!-- a parking lot (not a highway) -->
+  <way id="701" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="7011"/><nd ref="7012"/><nd ref="7013"/><nd ref="7014"/><nd ref="7011"/>
+    <tag k="amenity" v="parking"/>
+    <tag k="parking" v="surface"/>
+  </way>
+  <!-- a lake across the south edge -->
+  <relation id="401" version="3" timestamp="2026-09-03T00:00:00Z">
+    <member type="way" ref="303" role="outer"/>
+    <member type="way" ref="305" role="outer"/>
+    <member type="way" ref="307" role="outer"/>
+    <member type="way" ref="306" role="outer"/>
+    <tag k="type" v="multipolygon"/>
+    <tag k="natural" v="water"/>
+    <tag k="water" v="lake"/>
+    <tag k="name" v="Fixture Lake"/>
+  </relation>
+  <!-- hiking -->
+  <relation id="501" version="3" timestamp="2026-09-03T00:00:00Z">
+    <member type="way" ref="215" role=""/>
+    <member type="way" ref="214" role=""/>
+    <member type="way" ref="202" role=""/>
+    <tag k="type" v="route"/>
+    <tag k="route" v="hiking"/>
+    <tag k="name" v="Fixture Loop"/>
+  </relation>
+  <!-- a bus route -->
+  <relation id="502" version="3" timestamp="2026-09-03T00:00:00Z">
+    <member type="way" ref="201" role=""/>
+    <tag k="type" v="route"/>
+    <tag k="route" v="bus"/>
+    <tag k="ref" v="99"/>
+  </relation>
+  <!-- bicycle -->
+  <relation id="503" version="3" timestamp="2026-09-03T00:00:00Z">
+    <member type="way" ref="217" role="forward"/>
+    <member type="way" ref="224" role=""/>
+    <member type="way" ref="999999" role=""/>
+    <tag k="type" v="route"/>
+    <tag k="route" v="bicycle"/>
+    <tag k="name" v="Fixture Ride"/>
+  </relation>
+</osm>

@@ -18,7 +18,7 @@ import unittest
 
 from ingest import manifest
 from ingest import sources as registry
-from ingest.__main__ import BUILTINS, main
+from ingest.__main__ import BUILTINS, CORE_COMMANDS, main
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 PLUGINS_DIR = os.path.join(REPO, "plugins")
@@ -73,7 +73,7 @@ class RegistryTest(unittest.TestCase):
             self.assertEqual(registry.PLUGIN_OF[name], plugin, name)
             module = (registry.SOURCES.get(name) or registry.STREAMS[name]).__name__
             self.assertTrue(module.startswith(f"plugins.{plugin}.ingest."), module)
-        self.assertEqual([e["name"] for _, e in registry.MANUAL if _.name == "roads"], ["osm_valley"])
+        self.assertEqual([e["name"] for _, e in registry.MANUAL if _.name == "roads"], ["osm_valley", "osm_street"])
         self.assertEqual([e["name"] for _, e in registry.MANUAL if _.name == "soils"], ["ssurgo"])
 
     def test_the_plugins(self):
@@ -106,11 +106,15 @@ class RegistryTest(unittest.TestCase):
 
     def test_commands_resolve_and_keep_clear_of_the_built_ins(self):
         self.assertEqual(sorted(registry.COMMANDS),
-                         ["match-intersections", "match-routes", "osm-load", "rollup", "route-colors", "segment-match",
+                         ["match-intersections", "match-routes", "rollup", "route-colors", "segment-match",
                           "soils-export", "soils-load", "transit-progress", "transit-ribbons", "trees-load"])
-        self.assertFalse(set(registry.COMMANDS) & set(BUILTINS))
+        self.assertFalse(set(registry.COMMANDS) & (set(BUILTINS) | set(CORE_COMMANDS)))
         for name in registry.COMMANDS:
             self.assertTrue(callable(registry.command(name)), name)
+        # osm-load moved to core with the landscape sprint's loader (ingest/osm_extract.py).
+        self.assertEqual(sorted(CORE_COMMANDS), ["osm-load"])
+        for name, (module, _) in CORE_COMMANDS.items():
+            self.assertTrue(callable(importlib.import_module(module).main), name)
 
     def test_tables_exist_and_have_one_owner(self):
         created = set()
@@ -151,8 +155,12 @@ class CommandLineTest(unittest.TestCase):
     def test_help_lists_the_plugin_commands(self):
         code, out = self.run_main("-h")
         self.assertEqual(code, 0)
-        for name in registry.COMMANDS:
+        for name in [*registry.COMMANDS, *CORE_COMMANDS]:
             self.assertIn(name, out)
+
+    def test_a_core_command_gets_its_own_arguments(self):
+        code, _ = self.run_main("osm-load", "--no-such-flag")
+        self.assertEqual(code, 2)                     # osm_extract's own parser refused it
 
 
 if __name__ == "__main__":

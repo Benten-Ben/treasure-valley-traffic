@@ -93,6 +93,7 @@ CREATE TABLE raw.record (source text, first_fetch bigint);
 CREATE TABLE ops.source (name text PRIMARY KEY);
 CREATE TABLE ops.fetch (id bigserial PRIMARY KEY, source text);
 CREATE TABLE ops.layer_signature (layer text PRIMARY KEY);
+CREATE TABLE ops.osm_consumer (consumer text PRIMARY KEY);
 CREATE TABLE ops.schema_migration (name text PRIMARY KEY);
 CREATE TABLE ops.build_run (id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, build text);
 CREATE TABLE ops.build_pending (id bigint GENERATED ALWAYS AS IDENTITY, build text, marked_by text,
@@ -143,7 +144,8 @@ class OnADatabase(unittest.TestCase):
         return """
 SELECT 'PRIVS ' || string_agg(t || ':' || p, ' ' ORDER BY t, p)
   FROM unnest(ARRAY['core.layer_version', 'trees.tree_log', 'trees.tree', 'core.intersection', 'ops.fetch',
-                    'restricted.crash_unit', 'ops.build_run', 'ops.build_pending']) t,
+                    'ops.osm_consumer', 'roads.osm_street', 'restricted.crash_unit', 'ops.build_run',
+                    'ops.build_pending']) t,
        unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'MAINTAIN']) p
  WHERE has_table_privilege('tvt_build', t, p);
 """
@@ -163,6 +165,9 @@ SELECT 'PRIVS ' || string_agg(t || ':' || p, ' ' ORDER BY t, p)
         self.assertIn("trees.tree:MAINTAIN", privs)
         self.assertIn("core.intersection:SELECT", privs)
         self.assertNotIn("core.intersection:INSERT", privs)
+        self.assertLessEqual({"ops.osm_consumer:INSERT", "ops.osm_consumer:UPDATE"}, privs)    # S1's gate (0019)
+        self.assertNotIn("ops.osm_consumer:DELETE", privs)
+        self.assertLessEqual({"roads.osm_street:INSERT", "roads.osm_street:UPDATE", "roads.osm_street:DELETE"}, privs)
         self.assertFalse(any(p.startswith("restricted.") for p in privs))
         self.assertTrue({"ops.build_run:INSERT", "ops.build_run:UPDATE", "ops.build_pending:INSERT",
                          "ops.build_pending:UPDATE", "ops.build_pending:DELETE"} <= privs)

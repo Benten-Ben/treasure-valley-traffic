@@ -1,10 +1,12 @@
 """python3 -m ingest sources | run NAME... | run all | serve | stream NAME | backfill NAME PATH | COMMAND ...
 
-COMMAND is a plugin's own subcommand, registered in its plugin.json (e.g.
-match-intersections, rollup, osm-load); `python3 -m ingest -h` lists them.
+COMMAND is core's osm-load (ingest/osm_extract.py: the OpenStreetMap extract,
+into every plugin's consumers) or a plugin's own subcommand, registered in its
+plugin.json (e.g. match-intersections, rollup); `python3 -m ingest -h` lists them.
 """
 
 import argparse
+import importlib
 import os
 import sys
 import time
@@ -14,6 +16,11 @@ from . import builds, db
 from .sources import COMMANDS, SOURCES, STREAMS, command
 
 BUILTINS = ("sources", "run", "serve", "stream", "backfill")
+CORE_COMMANDS = {   # name: (module, help); each module's main(argv) gets the arguments after the name
+    "osm-load": ("ingest.osm_extract",
+                 "load an OpenStreetMap extract downloaded by hand into every plugin's consumers "
+                 "(--inbox, --file PATH, --archived; --only CONSUMER, --cut-only, --list)"),
+}
 
 
 def due(conn, name, schedule, retry_after="1 hour"):
@@ -66,8 +73,10 @@ def serve(check_every_s):
 
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
-    if clash := sorted(set(COMMANDS) & set(BUILTINS)):
+    if clash := sorted(set(COMMANDS) & (set(BUILTINS) | set(CORE_COMMANDS))):
         sys.exit(f"plugin command(s) {', '.join(clash)} clash with the built-in ones")
+    if argv and argv[0] in CORE_COMMANDS:
+        sys.exit(importlib.import_module(CORE_COMMANDS[argv[0]][0]).main(argv[1:]))
     if argv and argv[0] in COMMANDS:
         sys.exit(command(argv[0])(argv[1:]))
 
@@ -84,6 +93,8 @@ def main(argv=None):
     bf = sub.add_parser("backfill", help="load a streaming source's raw archive into the database")
     bf.add_argument("name", choices=sorted(n for n, m in STREAMS.items() if hasattr(m, "backfill")))
     bf.add_argument("path", help="archive folder, e.g. $TVT_ARCHIVE/vrt-gtfs-rt")
+    for name, (_, text) in CORE_COMMANDS.items():
+        sub.add_parser(name, help=text, add_help=False)
     for name, (plugin, entry) in COMMANDS.items():
         sub.add_parser(name, help=f"{entry['help']} ({plugin.name})", add_help=False)
     args = ap.parse_args(argv)
