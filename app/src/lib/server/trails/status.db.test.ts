@@ -53,15 +53,17 @@ describe.skipIf(!URL)('trail status (database)', () => {
 				                 ST_GeomFromEWKT('SRID=4326;LINESTRING(-116.1895 43.7, -116.1895 43.703)'))`;
 				await tx`insert into trails.link (source, source_id, osm_id, share, method, matched_at)
 				         values ('r2r_trails', 'test-1', ${B + 1}, 1, 'buffer15_bearing20', ${t0})`;
-				await tx`insert into trails.matched_line (source, source_id, line_fp, line_m, covered_m, links, matched_at, matched_by)
-				         values ('r2r_trails', 'test-1', 'fp1', 600, 600, 1, ${t0}, 'trails-match'),
-				                ('r2r_trails', 'test-2', 'fp2', 333, null, 0, ${t0}, 'trails-match')`;
+				await tx`insert into trails.matched_line (source, source_id, line_fp, line_m, covered_m, gap, gap_m, links, matched_at, matched_by)
+				         values ('r2r_trails', 'test-1', 'fp1', 600, 600, null, 0, 1, ${t0}, 'trails-match'),
+				                ('r2r_trails', 'test-2', 'fp2', 333, null,
+				                 ST_Multi(ST_GeomFromEWKT('SRID=4326;LINESTRING(-116.19 43.7, -116.19 43.703)')), 333, 0, ${t0}, 'trails-match')`;
 				const got = await trailStatus(tx as unknown as Sql);
 				const ridge = got.agencies.find((a) => a.id === 'test-1')!;
 				expect(ridge).toMatchObject({ kind: 'trail', name: 'Example Ridge', state: 'dry', severity: 'open', ways: [B + 1], own_line: false, covered: 1 });
 				expect(typeof ridge.line_id).toBe('number');
 				expect(ridge.set_at).toBe('2026-10-11T12:00:00.000Z');
-				expect(got.agencies.find((a) => a.id === 'test-2')).toMatchObject({ state: 'closed', own_line: true, covered: null, ways: [] });
+				expect(got.agencies.find((a) => a.id === 'test-2')).toMatchObject({ state: 'closed', own_line: true, gap_m: 333, covered: null, ways: [] });
+				expect(ridge.own_line).toBe(false);
 				expect(got.ways).toEqual({ [String(B + 1)]: 'open' });
 				expect(got.hidden).toEqual([B + 9]);                       // informal, about 40 m from the closed trail
 				expect(got.counts).toEqual({ dry: 1, closed: 1 });

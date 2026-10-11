@@ -197,7 +197,9 @@ comment on table trails.route_line is
 -- How an agency's line (an R2R trail, a Greenbelt closure or detour) lies on OpenStreetMap's
 -- ways: one row per way it matched, from core's line matcher (buffer 15 m, bearing 20°, a 60%
 -- share of the way or of the line). share and overlap_m measure the way; line_share the line,
--- when the way's share didn't pass (method way_in_...: the line covers only part of the way).
+-- when the way's share didn't pass (method way_in_...: a partial link, the line covers only part
+-- of a longer way). A way takes its line's state only on a full link: its own share passed, so
+-- it lies along the line. Elsewhere, partial links included, the line draws itself (its gap).
 create table trails.link (
   source         text not null references ops.source,
   source_id      text not null,
@@ -218,7 +220,10 @@ comment on table trails.link is
 
 -- Each agency line's last match: the line as matched (its fingerprint) and the extract
 -- osm_paths held, so a poll rematches only the lines it changed. line_id is a stable number for
--- the line (a map feature's id is -line_id where the line draws itself).
+-- the line (a map feature's id is -line_id where the line draws itself). The gap is where it
+-- does: its stretches of 20 m or more farther than 15 m from every way it's fully linked to (the
+-- whole line when it has none). So every metre of an agency's line shows its state, on a way that
+-- lies along it or drawn as itself, and no way shows a state beyond the line.
 create table trails.matched_line (
   line_id        bigint generated always as identity unique,
   source         text not null references ops.source,
@@ -226,7 +231,9 @@ create table trails.matched_line (
   line_fp        text,                              -- raw.record payload's _geom when it was matched
   osm_md5        text,                              -- the extract osm_paths held then
   line_m         real,
-  covered_m      real,                              -- of the line, within 15 m of the ways it linked to
+  covered_m      real,                              -- of the line, within 15 m of the ways it's fully linked to
+  gap            geometry(MultiLineString, 4326),   -- where the line draws itself, or null
+  gap_m          real not null default 0,
   links          int not null check (links >= 0),
   matched_at     timestamptz not null,
   matched_by     text not null check (matched_by in ('poll', 'trails-match')),
@@ -234,8 +241,10 @@ create table trails.matched_line (
   primary key (source, source_id)
 );
 
+create index matched_line_gap on trails.matched_line using gist (gap);
+
 comment on table trails.matched_line is
-  'Each agency trail line''s last match (trails-match). Internal: the City''s ids; republish: aggregates';
+  'Each agency trail line''s last match and where it draws itself (trails-match). Internal: the City''s ids and lines; republish: aggregates';
 
 -- Tracks along a canal bank: irrigation access, not trails (plan C18; cut-first). Within 15 m and
 -- parallel to a canal, lateral, ditch or drain of water's build, without access=yes|permissive.
@@ -250,13 +259,13 @@ create table trails.canal_track (
 comment on table trails.canal_track is
   'OpenStreetMap tracks along canal banks, taken as irrigation access (trails-match). License ODbL (© OpenStreetMap contributors); republish: yes';
 
--- The valley-zoom network (z10-12): named, linked and cycleway ways, and the agencies' lines
--- that no way matched, simplified once per build (plan C4). fid is the map feature's id:
--- osm_id, or -line_id for an agency line drawn as itself.
+-- The valley-zoom network (z10-12): the drawn ways with minzoom 10 (linked, the Greenbelt,
+-- cycleways, named ways), simplified once per build (plan C4). fid is the map feature's id, the
+-- way's osm_id. The agencies' own lines are in trails.agency_gap, at every zoom.
 create table trails.path_lo (
   fid            bigint primary key,
   network        text not null check (network in ('r2r', 'greenbelt', 'cycleway', 'named')),
-  kind           text not null,                     -- the OSM kind, or 'r2r_trails' / 'boise_greenbelt_closures'
+  kind           text not null,                     -- the OSM kind
   name           text,
   surface        text,
   geom           geometry(Geometry, 4326) not null,
@@ -265,7 +274,7 @@ create table trails.path_lo (
 create index path_lo_geom on trails.path_lo using gist (geom);
 
 comment on table trails.path_lo is
-  'The trails network at valley zoom (trails-match). ODbL (© OpenStreetMap contributors) with the City of Boise''s own lines where no way matched; republish: aggregates';
+  'The trails network at valley zoom (trails-match). License ODbL (© OpenStreetMap contributors); republish: yes';
 
 -- ---- views ------------------------------------------------------------------------------------
 
@@ -330,6 +339,15 @@ order by r.source, r.source_id, r.last_seen desc, r.first_seen desc;
 -- share passed), `partial` those it covers only part of (the line's share passed): a closure
 -- 125 m long on a 1 km way. Internal: the City's rows (republish aggregates).
 create view trails.agency_state as
+with ev as (    -- each line's event in effect, found once: R2R's by trail, the Greenbelt's by row
+  select distinct on (e.source, k.key) e.source, k.key, e.id, e.attributes, e.severity, e.description, e.declared,
+         e.observed
+  from evt.event e
+  cross join lateral (select case when e.source = 'r2r_trails' then e.attributes->>'trail' else e.source_id end
+                      as key) k
+  where e.active and ((e.source = 'r2r_trails' and e.kind = 'trail_condition')
+                      or e.source = 'boise_greenbelt_closures')
+  order by e.source, k.key, lower(e.observed) desc, e.id desc)
 select l.source, l.source_id, l.kind, l.name, l.system,
        case when l.source = 'r2r_trails' then coalesce(e.attributes->>'state', 'unset')
             when e.id is null then 'ended' else l.kind end as state,
@@ -338,28 +356,32 @@ select l.source, l.source_id, l.kind, l.name, l.system,
        e.description as label,
        lower(e.declared) as set_at,
        lower(e.observed) as since,
-       m.line_id, m.links, m.line_m, m.covered_m, m.matched_at, m.osm_md5,
+       m.line_id, m.links, m.line_m, m.covered_m, m.gap_m, m.matched_at, m.osm_md5,
        coalesce(k.ways, '{}') as ways, coalesce(k.partial, '{}') as partial
 from trails.agency_line l
-left join lateral (
-  select e.* from evt.event e
-  where e.source = l.source and e.active
-    and ((l.source = 'r2r_trails' and e.kind = 'trail_condition' and e.attributes->>'trail' = l.source_id)
-         or (l.source = 'boise_greenbelt_closures' and e.source_id = l.source_id))
-  order by lower(e.observed) desc limit 1) e on true
+left join ev e on e.source = l.source and e.key = l.source_id
 left join trails.matched_line m on m.source = l.source and m.source_id = l.source_id
 left join lateral (
-  select array_agg(k.osm_id order by k.osm_id) filter (where k.method not like 'way\_in\_%') as ways,
-         array_agg(k.osm_id order by k.osm_id) filter (where k.method like 'way\_in\_%') as partial
+  select array_agg(k.osm_id order by k.osm_id) filter (where not starts_with(k.method, 'way_in_')) as ways,
+         array_agg(k.osm_id order by k.osm_id) filter (where starts_with(k.method, 'way_in_')) as partial
   from trails.link k where k.source = l.source and k.source_id = l.source_id) k on true;
+
+-- Where the agencies' lines draw themselves (the 'trails.agency' tiles): each line's gap, with
+-- fid -line_id, its feature-state key in /api/trails/status. Internal: the City's lines.
+create view trails.agency_gap as
+select -m.line_id as fid, m.line_id, m.source, m.source_id, l.kind, l.name, m.gap as geom, m.gap_m
+from trails.matched_line m
+join trails.agency_line l on l.source = m.source and l.source_id = m.source_id
+where m.gap is not null;
 
 -- The Trails layer's ways (plan C18), for the tiles and the card: every way that could be a
 -- trail, with its effective surface (a path that R2R's trail runs along is dirt by default:
 -- OpenStreetMap says unpaved for 94% of that length), whether it's drawn and why not, whether
 -- it reads as informal (informal=yes, unless an agency's line runs along it), what links it to
--- the agencies and the Greenbelt (a Greenbelt closure or detour on it, or a route named for the
--- Greenbelt), and the zoom it comes in at: 10 for the named network (R2R's trails, the
--- Greenbelt, cycleways and named ways), 13 for the rest, 16 for informal ways.
+-- the agencies and the Greenbelt (r2r: an R2R trail runs along it, a full link; on_r2r: any link;
+-- greenbelt: a Greenbelt closure or detour on it, or a route named for the Greenbelt), and the
+-- zoom it comes in at: 10 for the named network (R2R's trails, the Greenbelt, cycleways and named
+-- ways), 13 for the rest, 16 for informal ways.
 create view trails.path as
 select a.osm_id, a.kind, a.name, a.ref, a.held_in,
        case when a.surface_from = 'none' and lk.r2r then 'dirt' else a.surface end as surface,
@@ -369,22 +391,23 @@ select a.osm_id, a.kind, a.name, a.ref, a.held_in,
        coalesce(a.width_m, a.width_est_m) as width_m,
        case when a.width_m is not null then 'osm' else 'estimated' end as width_from,
        a.access, a.no_access,
-       a.informal and not coalesce(lk.r2r or lk.closure, false) as informal,
+       a.informal and not coalesce(lk.on_r2r or lk.closure, false) as informal,
        (c.osm_id is not null) as canal_track,
        not a.no_access and c.osm_id is null as drawn,
        case when a.no_access then 'private, no public access'
             when c.osm_id is not null then 'irrigation access along a canal' end as not_drawn,
-       coalesce(lk.r2r, false) as r2r,
+       coalesce(lk.r2r, false) as r2r, coalesce(lk.on_r2r, false) as on_r2r,
        coalesce(lk.closure, false) or gb.on_greenbelt as greenbelt,
-       case when a.informal and not coalesce(lk.r2r or lk.closure, false) then 16
-            when coalesce(lk.r2r or lk.closure, false) or gb.on_greenbelt or a.kind = 'cycleway'
+       case when a.informal and not coalesce(lk.on_r2r or lk.closure, false) then 16
+            when coalesce(lk.on_r2r or lk.closure, false) or gb.on_greenbelt or a.kind = 'cycleway'
                  or a.name is not null then 10
             else 13 end as minzoom,
        a.bridge, a.layer, a.length_m, a.tags, a.geom, a.osm_version, a.osm_timestamp
 from trails.any_way a
 left join trails.canal_track c on c.osm_id = a.osm_id
 left join lateral (
-  select bool_or(k.source = 'r2r_trails') as r2r, bool_or(k.source = 'boise_greenbelt_closures') as closure
+  select bool_or(k.source = 'r2r_trails' and not starts_with(k.method, 'way_in_')) as r2r,
+         bool_or(k.source = 'r2r_trails') as on_r2r, bool_or(k.source = 'boise_greenbelt_closures') as closure
   from trails.link k where k.osm_id = a.osm_id) lk on true
 cross join lateral (
   select exists (select 1 from trails.osm_route r
@@ -396,12 +419,17 @@ cross join lateral (
 create function trails.hidden_informal(near_m double precision default 100)
 returns table (osm_id bigint, source text, source_id text)
 language sql stable as $$
-  select distinct on (p.osm_id) p.osm_id, s.source, s.source_id
-  from trails.any_way p
-  join trails.agency_state s on s.severity = 'closed'
-  join trails.agency_line l on l.source = s.source and l.source_id = s.source_id
-  where p.informal and l.geom is not null
-    and ST_DWithin(p.geom::geography, l.geom::geography, near_m)
-    and not exists (select 1 from trails.link k where k.osm_id = p.osm_id)
-  order by p.osm_id, s.source, s.source_id
+  with closed as materialized (
+    select s.source, s.source_id, l.geom
+    from trails.agency_state s
+    join trails.agency_line l on l.source = s.source and l.source_id = s.source_id
+    where s.severity = 'closed' and l.geom is not null),
+  informal as materialized (
+    select p.osm_id, p.geom from trails.any_way p
+    where p.informal and not exists (select 1 from trails.link k where k.osm_id = p.osm_id))
+  select distinct on (i.osm_id) i.osm_id, c.source, c.source_id
+  from informal i
+  join closed c on i.geom && ST_Expand(c.geom, near_m / 75000.0)   -- a box first: 75 km a degree or more here
+                and ST_DWithin(i.geom::geography, c.geom::geography, near_m)
+  order by i.osm_id, c.source, c.source_id
 $$;

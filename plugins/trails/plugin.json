@@ -22,7 +22,7 @@
     "trails.osm_path", "trails.osm_area", "trails.osm_route", "trails.route_line", "trails.link",
     "trails.matched_line", "trails.canal_track", "trails.path_lo",
     "trails.exception_way", "trails.any_way", "trails.target_way", "trails.agency_line", "trails.agency_state",
-    "trails.path"
+    "trails.agency_gap", "trails.path"
   ],
   "commands": [
     {"name": "trails-match", "module": "ingest.match",

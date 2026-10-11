@@ -6,16 +6,28 @@ OpenStreetMap's paths (landscape sprint, plan C18, package P6-data).
 
 OpenStreetMap draws the network (trails.osm_path, and the named exception's
 ways in core.osm_way); the City of Boise's lines carry the status. Each agency
-line (an R2R trail from raw.record, a Greenbelt closure or detour) is matched
-to the ways it lies along with core's line matcher (ingest/linematch.py):
-buffer 15 m, bearing within 20°, at least 60% of the way within the line's
-buffer, or of the line (20 m or more) within the way's. Closed lines (park
-loops) are measured by their quarters (the matcher's `loops`, on). Only public
-ways are targets: a way closed to the public, or a track taken as canal
-access, is never a trail, and an R2R trail on one draws from its own line. A
-line no way matches draws from its own line too. Measured before the build
-(Oct 8, design): 88.5% of R2R's length lies within 15 m of an OSM path or
-track, and most of the rest is R2R's "Access Road", which OSM maps as roads.
+line (an R2R trail from raw.record, a Greenbelt closure or detour) is linked to
+the ways it lies along with core's line matcher (ingest/linematch.py), in
+pieces: the line is cut into pieces of at most PIECE_M (150 m), each piece is
+matched to the ways around it (buffer 15 m, bearing within 20°, 60% of the way
+within the piece's buffer or of the piece within the way's), and a way is
+**fully linked** to the line when 60% of it lies within 15 m of pieces that
+matched it; **partly** (method way_in_...) when only 20 m or more does: the
+way is longer than the line, or runs on past it. Only full links paint the
+line's state on a way. Wherever else the line runs (its **gap**: stretches of
+20 m or more farther than 15 m from its fully linked ways, or all of it), it
+draws itself. So every metre of the line shows its state, and no way shows a
+state beyond the line.
+
+Why pieces (measured on scratch, Oct 11, the Oct 5 extract): matched whole, a
+long winding trail fails the bearing check against a long winding OSM way that
+lies right along it, since the check compares end-to-end chords (Freddys Stack
+Rock Trail, 4.8 km, with an OSM path within 15 m for 4.6 km, had no link).
+Whole, R2R's multi-use trails were linked along 308 of their 353 km; in pieces
+of 150 m, 320 km. Most of the rest is R2R's "Access Road" (50 km), which OSM
+maps as roads, so it draws itself. Only public ways are targets: a way closed
+to the public, or a track taken as canal access, is never a trail, so an R2R
+trail on one draws itself too.
 
 Two ways it runs (plan P6-data; docs/15 "Builds and their marks"):
 
@@ -64,12 +76,15 @@ SOURCE = {
 BUILD = "trails-match"
 SOURCES = ("r2r_trails", "boise_greenbelt_closures")
 OSM_CONSUMER = "trails.osm_paths"
-RULE = linematch.Rule(near_m=15, check="bearing")          # loops on: park and pond loops match
+RULE = linematch.Rule(near_m=15, check="bearing")          # each piece of a line against each way
+PIECE_M = 150.0               # agency lines are matched in pieces this long at most
+METHOD = f"pieces{PIECE_M:g}_{RULE.method}"                 # 'pieces150_buffer15_bearing20'
 CANAL_RULE = linematch.Rule(near_m=15, check="bearing")
 CANAL_KINDS = ("canal", "lateral", "ditch", "drain")
 NEAR_DEG = 0.0005             # a way within this many degrees (40-55 m here) of a line is a candidate
 POLL_MAX_LINES = 40           # more changed lines than this in one poll: left for the build
 LO_TOLERANCE_M = 5.0          # the valley-zoom network's simplification (UTM metres)
+MIN_GAP_M = 20.0              # an agency line's stretch off its ways shorter than this isn't drawn as itself
 UTM = linematch.SRID
 
 CITY_CREDIT = "City of Boise Parks & Recreation (Ridge to Rivers); City of Boise Parks and Recreation"
@@ -128,10 +143,35 @@ def matched_sources(conn, source):
 
 _KEYS = """create temp table if not exists tm_key (source text, source_id text) on commit drop;
            truncate tm_key"""
-LINES_SQL = """select l.source, l.source_id, l.name, l.geom from trails.agency_line l
-               join pg_temp.tm_key k on k.source = l.source and k.source_id = l.source_id"""
+# Each line in pieces of at most PIECE_M (each part cut into equal pieces), in UTM.
+_PIECES = f"""create temp table tm_piece on commit drop as
+  select l.source, l.source_id, l.source_id || '#' || coalesce(d.path[1], 1) || '.' || i as piece_id, l.name,
+         ST_LineSubstring(d.geom, i::float8 / kk.k, (i + 1)::float8 / kk.k) as g
+  from trails.agency_line l
+  join tm_key t on t.source = l.source and t.source_id = l.source_id
+  cross join lateral ST_Dump(ST_Transform(l.geom, {UTM})) d
+  cross join lateral (select greatest(1, ceil(ST_Length(d.geom) / %(piece)s))::int as k) kk
+  cross join lateral generate_series(0, kk.k - 1) i
+  where l.geom is not null and ST_Length(d.geom) > 0"""
+LINES_SQL = "select source, piece_id as source_id, name, ST_Transform(g, 4326) as geom from pg_temp.tm_piece"
 TARGETS_SQL = """select t.osm_id as id, t.name, t.geom from trails.target_way t
                  where exists (select 1 from pg_temp.tm_box b where t.geom && b.box)"""
+# Each (line, way): how much of the way lies along the line's pieces that matched it (within 15 m
+# of them), and how much of the line those pieces are.
+_LINKS = f"""create temp table tm_link on commit drop as
+  with pm as (
+    select p.source, p.source_id, m.osm_id, p.g, ST_Length(p.g) as piece_m, m.bearing_diff, m.confidence
+    from tm_pm m join tm_piece p on p.piece_id = m.piece_id),
+  agg as (
+    select source, source_id, osm_id, ST_Union(ST_Buffer(g, %(near)s, 'quad_segs=4')) as buf, sum(piece_m) as pieces_m,
+           sum(coalesce(bearing_diff, 0) * piece_m) / sum(piece_m) as bearing_diff,
+           sum(confidence * piece_m) / sum(piece_m) as confidence
+    from pm group by 1, 2, 3)
+  select a.source, a.source_id, a.osm_id, a.pieces_m, a.bearing_diff, a.confidence,
+         ST_Length(ST_Intersection(w.g, a.buf)) as overlap_m, ST_Length(w.g) as way_m,
+         (select sum(ST_Length(p.g)) from tm_piece p where p.source = a.source and p.source_id = a.source_id) as line_m
+  from agg a
+  join (select osm_id, ST_Transform(geom, {UTM}) as g from trails.any_way) w on w.osm_id = a.osm_id"""
 
 
 def _stage_keys(conn, keys):
@@ -140,12 +180,43 @@ def _stage_keys(conn, keys):
         with cur.copy("copy tm_key (source, source_id) from stdin") as cp:
             for k in keys:
                 cp.write_row(k)
-    conn.execute("drop table if exists pg_temp.tm_box")
+    for table in ("tm_box", "tm_piece", "tm_pm", "tm_link"):
+        conn.execute(f"drop table if exists pg_temp.{table}")
+    conn.execute(_PIECES, {"piece": PIECE_M})
     conn.execute(
         """create temp table tm_box on commit drop as
            select ST_Expand(ST_Envelope(l.geom), %s) as box from trails.agency_line l
            join tm_key k on k.source = l.source and k.source_id = l.source_id where l.geom is not null""",
         (NEAR_DEG,))
+
+
+def link_rows(conn, matches):
+    """The links from the pieces' matches: [(source, source_id, osm_id, overlap_m, share, line_share,
+    bearing_diff, confidence, method)]. A way is fully linked when RULE.min_share of it lies along
+    pieces that matched it; otherwise partly (way_in_...), when 20 m or more of it does."""
+    conn.execute("create temp table tm_pm (piece_id text, osm_id bigint, bearing_diff real, confidence real) "
+                 "on commit drop")
+    with conn.cursor() as cur:
+        with cur.copy("copy tm_pm (piece_id, osm_id, bearing_diff, confidence) from stdin") as cp:
+            for m in matches:
+                cp.write_row((m["source_id"], m["target_id"], m["bearing_diff"], m["confidence"]))
+    conn.execute(_LINKS, {"near": RULE.near_m})
+    out = []
+    for source, source_id, osm_id, pieces_m, bearing, confidence, overlap, way_m, line_m in conn.execute(
+            "select source, source_id, osm_id, pieces_m, bearing_diff, confidence, overlap_m, way_m, line_m "
+            "from tm_link order by 1, 2, 3").fetchall():
+        share = overlap / way_m if way_m else 0.0
+        line_share = min(pieces_m / line_m, 1.0) if line_m else None
+        if share >= RULE.min_share:
+            method, scale = METHOD, min(share, 1.0)
+        elif overlap >= RULE.min_line_m:
+            method, scale = linematch.WAY_IN + METHOD, (line_share or 0.0)
+        else:
+            continue
+        out.append((source, source_id, osm_id, round(overlap, 1), round(share, 3),
+                    None if line_share is None else round(line_share, 3), round(bearing, 1),
+                    round(max(0.0, min(1.0, confidence * scale)), 3), method))
+    return out
 
 
 def relink(conn, keys, gone, md5, now, matched_by, fetch_id=None):
@@ -159,41 +230,46 @@ def relink(conn, keys, gone, md5, now, matched_by, fetch_id=None):
     if not keys:
         return stats
     _stage_keys(conn, keys)
-    matches = linematch.match(conn, LINES_SQL, TARGETS_SQL, RULE)
-    cover = linematch.coverage(conn, matches)
+    rows = link_rows(conn, linematch.match(conn, LINES_SQL, TARGETS_SQL, RULE))
     conn.execute("""delete from trails.link k using tm_key t
                     where k.source = t.source and k.source_id = t.source_id""")
     with conn.cursor() as cur:
         cur.executemany(
             """insert into trails.link (source, source_id, osm_id, overlap_m, share, line_share, bearing_diff,
                                         confidence, method, matched_at)
-               values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
-            [(m["source"], m["source_id"], m["target_id"], round(m["overlap_m"], 1), round(m["share"], 3),
-              None if m["line_share"] is None else round(m["line_share"], 3), m["bearing_diff"], m["confidence"],
-              m["method"], now) for m in matches])
-    # Each line's match: how much of it lies within 15 m of the ways it linked to.
+               values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""", [(*r, now) for r in rows])
+    # Each line's match: how much of it lies within 15 m of the ways it's fully linked to (they lie
+    # along it), and its gap, where it draws itself: the rest, in stretches of MIN_GAP_M or more.
+    # Partial links (way_in_: a longer way) take no state, so they leave a gap.
     conn.execute(
-        f"""insert into trails.matched_line (source, source_id, line_fp, osm_md5, line_m, covered_m, links,
+        f"""insert into trails.matched_line (source, source_id, line_fp, osm_md5, line_m, covered_m, gap, gap_m, links,
                                              matched_at, matched_by, fetch_id)
-            select t.source, t.source_id, l.line_fp, %(md5)s,
-                   ST_Length(l.geom::geography),
-                   (select ST_Length(ST_Intersection(ST_Transform(l.geom, {UTM}),
-                                                     ST_Buffer(ST_Collect(ST_Transform(w.geom, {UTM})), %(near)s)))
-                    from trails.link k join trails.any_way w on w.osm_id = k.osm_id
-                    where k.source = t.source and k.source_id = t.source_id),
-                   (select count(*) from trails.link k where k.source = t.source and k.source_id = t.source_id),
-                   %(now)s, %(by)s, %(fetch)s
+            select t.source, t.source_id, l.line_fp, %(md5)s, ST_Length(l.geom::geography), c.covered_m, g.gap,
+                   coalesce(ST_Length(g.gap::geography), 0), n.links, %(now)s, %(by)s, %(fetch)s
             from tm_key t join trails.agency_line l on l.source = t.source and l.source_id = t.source_id
+            cross join lateral (select ST_Transform(l.geom, {UTM}) as lg) u
+            cross join lateral (
+              select ST_Buffer(ST_Collect(ST_Transform(w.geom, {UTM})), %(near)s) as buf
+              from trails.link k join trails.any_way w on w.osm_id = k.osm_id
+              where k.source = t.source and k.source_id = t.source_id and not starts_with(k.method, 'way_in_')) b
+            cross join lateral (
+              select case when b.buf is not null then ST_Length(ST_Intersection(u.lg, b.buf)) end as covered_m) c
+            cross join lateral (
+              select ST_Transform(ST_Multi(ST_Collect(d.geom order by d.path)), 4326) as gap
+              from ST_Dump(ST_LineMerge(ST_CollectionExtract(
+                     case when b.buf is null then u.lg else ST_Difference(u.lg, b.buf) end, 2))) d
+              where ST_Length(d.geom) >= %(min_gap)s) g
+            cross join lateral (
+              select count(*) as links from trails.link k where k.source = t.source and k.source_id = t.source_id) n
             on conflict (source, source_id) do update set
               line_fp = excluded.line_fp, osm_md5 = excluded.osm_md5, line_m = excluded.line_m,
-              covered_m = excluded.covered_m, links = excluded.links, matched_at = excluded.matched_at,
-              matched_by = excluded.matched_by, fetch_id = excluded.fetch_id""",
-        {"md5": md5, "near": RULE.near_m, "now": now, "by": matched_by, "fetch": fetch_id})
-    stats["links"] = len(matches)
-    stats["matched lines"] = len({(m["source"], m["source_id"]) for m in matches})
-    for source, c in cover.items():
-        stats[f"{source}: unmatched near the paths"] = c["unmatched near"]
-        stats[f"{source}: unmatched away from them"] = c["unmatched away"]
+              covered_m = excluded.covered_m, gap = excluded.gap, gap_m = excluded.gap_m, links = excluded.links,
+              matched_at = excluded.matched_at, matched_by = excluded.matched_by, fetch_id = excluded.fetch_id""",
+        {"md5": md5, "near": RULE.near_m, "min_gap": MIN_GAP_M, "now": now, "by": matched_by, "fetch": fetch_id})
+    full = [r for r in rows if not r[8].startswith(linematch.WAY_IN)]
+    stats.update({"links": len(rows), "full links": len(full), "partial links": len(rows) - len(full),
+                  "matched lines": len({(r[0], r[1]) for r in rows}),
+                  "unmatched lines": len(keys) - len({(r[0], r[1]) for r in rows})})
     return stats
 
 
@@ -395,11 +471,11 @@ def build(conn, now, out=print):
     routes, drawn = route_lines(conn, now)
     lo = network(conn, now)
     paths = conn.execute("select count(*) from trails.path where drawn").fetchone()[0]
-    agency = conn.execute("select count(*) from trails.agency_state where coalesce(links, 0) = 0").fetchone()[0]
+    agency = conn.execute("select count(*) from trails.agency_gap").fetchone()[0]
     versions = record_versions(conn, LAYERS, BUILD, {"trails.paths": paths, "trails.routes": drawn,
                                                      "trails.agency": agency})
     stats.update({"canal tracks": "skipped" if canal is None else canal, "routes": routes, "routes drawn": drawn,
-                  "valley-zoom ways": lo, "ways drawn": paths, "lines drawn as themselves": agency,
+                  "valley-zoom ways": lo, "ways drawn": paths, "lines drawing a gap": agency,
                   "extract": md5[:8], **{f"version {k}": v for k, v in versions.items()}})
     note = (f"{stats['links']} links for {stats['matched lines']} of {stats['lines']} lines; {routes} routes; "
             f"extract {md5[:8]}")
@@ -407,13 +483,15 @@ def build(conn, now, out=print):
 
 
 def summary(conn, out=print):
-    """Each source's lines, linked or not, and their coverage, after a build."""
-    for source, lines, linked, covered, length in conn.execute(
-            """select source, count(*), count(*) filter (where links > 0),
-                      sum(coalesce(covered_m, 0)), sum(coalesce(line_m, 0))
+    """Each source's lines, linked or not, how much lies along the ways they're on, and how much
+    draws itself, after a build."""
+    for source, lines, linked, covered, gap, length in conn.execute(
+            """select source, count(*), count(*) filter (where links > 0), sum(coalesce(covered_m, 0)),
+                      sum(gap_m), sum(coalesce(line_m, 0))
                from trails.matched_line group by 1 order by 1""").fetchall():
-        share = f"{covered / length:.1%}" if length else "-"
-        out(f"  {source}: {linked} of {lines} lines linked; {share} of their length within 15 m of a linked way")
+        share = (lambda v: f"{v / length:.1%}" if length else "-")
+        out(f"  {source}: {linked} of {lines} lines linked; {share(covered)} of their length along the ways they're "
+            f"on, {share(gap)} drawn as themselves ({length / 1000:.0f} km)")
 
 
 def main(argv=None):

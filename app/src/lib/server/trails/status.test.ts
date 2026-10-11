@@ -41,6 +41,7 @@ const row = (o: Record<string, unknown>) => ({
 	links: 2,
 	line_m: 600,
 	covered_m: 597.4,
+	gap_m: 0,
 	...o
 });
 
@@ -60,7 +61,7 @@ describe('trailStatus', () => {
 					rows: [
 						row({}),
 						row({ source_id: 'test-2', name: 'Sample Gulch', state: 'closed', severity: 'closed', label: 'CLOSED', ways: ['9500000002'], line_id: '8', links: 1 }),
-						row({ source_id: 'test-3', name: 'Lonely Trail', state: 'not_evaluated', severity: null, ways: [], line_id: '9', links: 0, covered_m: null }),
+						row({ source_id: 'test-3', name: 'Lonely Trail', state: 'not_evaluated', severity: null, ways: [], line_id: '9', links: 0, covered_m: null, gap_m: 600 }),
 						row({
 							source: 'boise_greenbelt_closures',
 							source_id: 'construction:1',
@@ -76,7 +77,8 @@ describe('trailStatus', () => {
 							line_id: '10',
 							links: 1,
 							line_m: 120,
-							covered_m: 120
+							covered_m: null,
+							gap_m: 120.2
 						})
 					],
 					hidden: [9500000009]
@@ -90,8 +92,8 @@ describe('trailStatus', () => {
 		expect(got.polled).toEqual({ r2r_trails: '2026-10-11T18:30:00.000Z', boise_greenbelt_closures: null });
 		const ridge = got.agencies[0];
 		expect(ridge).toMatchObject({ id: 'test-1', ways: [9500000001, 9500000002], line_id: 7, own_line: false, covered: 0.996, set_at: '2026-09-11T14:00:00.000Z' });
-		expect(got.agencies[2]).toMatchObject({ own_line: true, covered: null, severity: null });
-		expect(got.agencies[3]).toMatchObject({ kind: 'closure', partial: [9500000005], ways: [] });
+		expect(got.agencies[2]).toMatchObject({ own_line: true, gap_m: 600, covered: null, severity: null });
+		expect(got.agencies[3]).toMatchObject({ kind: 'closure', partial: [9500000005], ways: [], own_line: true, gap_m: 120 });
 		expect(seen.find((s) => s.text.includes('hidden_informal'))?.values).toEqual([HIDDEN_NEAR_M]);
 		expect(got.republish).toBe('aggregates');
 	});
@@ -113,6 +115,7 @@ describe('wayStates', () => {
 		partial: [],
 		line_id: null,
 		own_line: false,
+		gap_m: 0,
 		covered: null
 	});
 

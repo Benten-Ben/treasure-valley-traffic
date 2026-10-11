@@ -8,10 +8,12 @@
  * paint state, not data).
  *
  * - `agencies`: one entry per agency line, in R2R's or the City's own words
- *   (`label`), with `ways` (the ways it runs along) and `partial` (ways it
- *   covers only part of: a 120 m closure on a 1 km way, drawn from its own
- *   line). `own_line` when no way matched it: the map draws its own line
- *   (feature id `-line_id` in the `trails.agency` tiles).
+ *   (`label`), with `ways` (the ways it runs along, which take its state) and
+ *   `partial` (longer ways it covers only part of, which don't: a 120 m
+ *   closure on a 1 km way). Where no way it's on lies along it, the line draws
+ *   itself (`own_line`, `gap_m`): its gap, feature id `-line_id` in the
+ *   `trails.agency` tiles (the view trails.agency_gap). So every metre of it
+ *   shows its state, and no way shows a state beyond it.
  * - `ways`: each linked way's state, the worst of the lines along it:
  *   closed, do_not_use, caution, detour, open, then not_evaluated.
  * - `hidden`: informal ways near a closure (plan C18), which the map hides.
@@ -58,7 +60,10 @@ export interface AgencyState {
 	ways: number[];
 	partial: number[];
 	line_id: number | null;
+	/** Whether it draws itself somewhere (its gap: away from the ways that lie along it). */
 	own_line: boolean;
+	/** How much of it draws itself, in metres. */
+	gap_m: number;
 	/** The share of its line within 15 m of the ways it's on (null when no way matched it, or before trails-match). */
 	covered: number | null;
 }
@@ -108,7 +113,7 @@ export async function trailStatus(sql: Sql): Promise<TrailStatus> {
 	if (!r?.ready) return empty();
 	const rows = await sql`
 		select source, source_id, kind, name, system, state, severity, label, set_at, since, ways, partial,
-		       line_id, links, line_m, covered_m
+		       line_id, links, line_m, covered_m, gap_m
 		from trails.agency_state order by source, name, source_id`;
 	const agencies: AgencyState[] = rows.map((x) => ({
 		source: String(x.source),
@@ -124,7 +129,8 @@ export async function trailStatus(sql: Sql): Promise<TrailStatus> {
 		ways: ids(x.ways),
 		partial: ids(x.partial),
 		line_id: x.line_id === null || x.line_id === undefined ? null : Number(x.line_id),
-		own_line: !Number(x.links ?? 0),
+		own_line: Number(x.gap_m ?? 0) > 0,
+		gap_m: Math.round(Number(x.gap_m ?? 0)),
 		covered: x.line_m && x.covered_m !== null && x.covered_m !== undefined ? Math.round((Number(x.covered_m) / Number(x.line_m)) * 1000) / 1000 : null
 	}));
 	const hidden = (await sql`select osm_id from trails.hidden_informal(${HIDDEN_NEAR_M}) order by osm_id`).map((h) => Number(h.osm_id));

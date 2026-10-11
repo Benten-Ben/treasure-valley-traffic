@@ -213,6 +213,29 @@ class SortTest(unittest.TestCase):
                                           "left out: linestring highway=residential": 1}))
 
 
+@unittest.skipUnless(HAVE_OSMIUM, "needs osmium-tool (the ingest image)")
+class PipelineTest(unittest.TestCase):
+    """The synthetic fixture through the loader's cut and osmium export, as this consumer gets it."""
+
+    def test_the_fixture_s_paths_areas_and_routes(self):
+        with tempfile.TemporaryDirectory() as d:
+            cut, _, _ = osm_extract.make_cut(FIXTURE, "f" * 32, "osm_landscape.osm", os.path.join(d, "cut"))
+            work = os.path.join(d, "work")
+            os.makedirs(work)
+            run = osm_extract.Run(consumer(), FIXTURE, "osm_landscape.osm", "f" * 32, cut, work, None, T0)
+            counts = Counter()
+            paths, areas, routes = osm_paths.sort_features(run.features(), counts)
+        self.assertEqual({r[0]: r[1] for r in paths},
+                         {214: "footway", 215: "path", 216: "track", 220: "steps", 221: "bridleway"})
+        self.assertEqual([(r[0], r[1], r[3]) for r in areas], [("w", 219, "Fixture Plaza")])     # the plaza, as an area
+        self.assertEqual({r[0]: r[7] for r in routes}, {501: [215, 214, 202], 503: [217, 224, 999999]})
+        self.assertEqual(json.loads(next(r for r in areas)[-1])["type"], "MultiPolygon")
+        # The partition kept osm_valley's lane-tagged cycleway and track (217, 218) and the sidewalks out.
+        self.assertGreater(run.counts["dropped: the partition gives it to osm_valley"], 0)
+        self.assertGreater(run.counts["dropped: the partition gives it to osm_paving"], 0)
+        self.assertNotIn(219, [r[0] for r in paths])
+
+
 class FakeRun:
     def __init__(self, features, seen_at=T0, allow_shrink=False):
         self._features, self.seen_at, self.allow_shrink = features, seen_at, allow_shrink

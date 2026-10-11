@@ -49,11 +49,12 @@ def square(x, y, side):
 
 
 class SettingsTest(unittest.TestCase):
-    def test_the_rule_is_roads_buffer_and_bearing_with_loops(self):
+    def test_the_rule_is_roads_buffer_and_bearing_in_pieces(self):
         self.assertEqual((match.RULE.near_m, match.RULE.check, match.RULE.max_bearing, match.RULE.min_share),
                          (15, "bearing", 20.0, 0.6))
-        self.assertTrue(match.RULE.loops)                    # park and pond loops match (S4's advice for trails)
+        self.assertTrue(match.RULE.loops)                    # S4's advice for trails (a piece is rarely closed)
         self.assertEqual(match.RULE.method, "buffer15_bearing20")
+        self.assertEqual((match.PIECE_M, match.METHOD), (150.0, "pieces150_buffer15_bearing20"))
 
     def test_the_tile_sets_licences(self):
         self.assertEqual(match.LAYERS["trails.paths"]["republish"], "yes")
@@ -179,11 +180,11 @@ class DatabaseTest(unittest.TestCase):
             f(B + 9, line((7000, 0), (7000, 300)), highway="path", informal="yes"),             # informal, by trail 6
         ]
 
-    def world(self, load=True):
-        """Load the ways, the agencies' lines and their states; osm_paths' gate."""
+    def world(self, load=True, extra=()):
+        """Load the ways (and extra ones), the agencies' lines and their states; osm_paths' gate."""
         c = self.conn
         if load:
-            osm_paths.consume(c, FakeRunLike(self.ways() + [
+            osm_paths.consume(c, FakeRunLike(self.ways() + list(extra) + [
                 {"type": "r", "osm_id": B + 20, "geometry": "relation", "geom": None, "osm_version": 1,
                  "osm_timestamp": T0, "tags": {"type": "route", "route": "bicycle", "name": "Fixture Greenbelt Ride"},
                  "members": [{"type": "w", "ref": B + 5, "role": ""}, {"type": "w", "ref": B + 8, "role": ""},
@@ -236,14 +237,16 @@ class DatabaseTest(unittest.TestCase):
     def test_the_build_links_each_kind_of_case(self):
         self.world()
         stats, note, lines = self.build()
-        self.assertEqual(self.links(GID[1]), {1: "buffer15_bearing20", 2: "buffer15_bearing20"})   # not 3 or 4
-        self.assertEqual(self.links(CLOSURE), {5: "way_in_buffer15_bearing20"})   # 120 m of a 1 km way: partial
+        full, part = match.METHOD, "way_in_" + match.METHOD
+        self.assertEqual(self.links(GID[1]), {1: full, 2: full})                  # not 3 (beyond it) or 4 (across)
+        self.assertEqual(self.links(CLOSURE), {5: part})                          # 120 m of a 1 km way: partial
         self.assertEqual(self.links(GID[2]), {})                                  # far from every way
         self.assertEqual(self.links(GID[3]), {})                                  # its way is private: not a target
-        self.assertEqual(self.links(GID[4]), {7: "buffer15_bearing20"})           # a loop on a loop
-        self.assertEqual(self.links(GID[5]), {8: "buffer15_bearing20"})           # the named exception's way
+        self.assertEqual(self.links(GID[4]), {7: full})                           # a loop on a loop
+        self.assertEqual(self.links(GID[5]), {8: full})                           # the named exception's way
         self.assertEqual(self.links(GID[6]), {})                                  # 40 m from the informal way: too far
-        self.assertEqual((stats["lines"], stats["matched lines"], stats["links"]), (7, 4, 5))
+        self.assertEqual((stats["lines"], stats["matched lines"], stats["links"], stats["full links"],
+                          stats["unmatched lines"]), (7, 4, 5, 4, 3))
         if not self.has_water():
             self.assertIn("canal-bank rule: skipped", lines[0])
         self.assertIn("5 links for 4 of 7 lines", note)
@@ -255,19 +258,68 @@ class DatabaseTest(unittest.TestCase):
         self.assertEqual((links, by), (2, "trails-match"))
         self.assertEqual(self.conn.execute("select links, covered_m from trails.matched_line where source_id = %s",
                                            (GID[2],)).fetchone(), (0, None))
+        # Where each line draws itself: nowhere on its ways, all of it without one, and all of the
+        # closure, whose way is longer than it (a partial link paints nothing).
+        gaps = {k: (round(v) if v else 0) for k, v in self.conn.execute(
+            "select source_id, gap_m from trails.matched_line").fetchall()}
+        self.assertEqual({k: gaps[k] for k in (GID[1], GID[4], GID[5])}, {GID[1]: 0, GID[4]: 0, GID[5]: 0})
+        for k, want in ((GID[2], 400), (GID[3], 400), (GID[6], 300), (CLOSURE, 120)):
+            self.assertAlmostEqual(gaps[k], want, delta=2, msg=k)
+        drawn = dict(self.conn.execute("select source_id, fid from trails.agency_gap").fetchall())
+        self.assertEqual(set(drawn), {GID[2], GID[3], GID[6], CLOSURE})
+        self.assertTrue(all(fid < 0 for fid in drawn.values()))
+        self.assertEqual(stats["lines drawing a gap"], 4)
         # Each tile set got a version, with its licence.
         got = dict(self.conn.execute(
             "select layer, republish from core.layer_version_current where layer like 'trails.%'").fetchall())
         self.assertEqual(got, {"trails.paths": "yes", "trails.routes": "yes", "trails.agency": "aggregates"})
 
+    def test_a_winding_trail_on_a_way_that_runs_on_past_it(self):
+        """Why pieces: a switchback trail, and an OSM way along all of it that runs on 335 m past its
+        end. Matched whole, the way's end-to-end chord points off the trail and the bearing check
+        fails; in pieces, 73% of the way lies along the trail: a full link."""
+        zigzag = [(0, 0), (200, 100), (0, 200), (200, 300), (0, 400)]
+        self.world(extra=[
+            {"type": "w", "osm_id": B + 40, "geometry": "linestring", "osm_version": 1, "osm_timestamp": T0,
+             "tags": {"highway": "path"}, "geom": line(*[(x + 10000 + 4, y) for x, y in zigzag], (10000 - 300, 250))}])
+        self.store_r2r({**self.lines, GID[2]: ("Switchback Trail", line(*[(x + 10000, y) for x, y in zigzag]))},
+                       T0 + timedelta(hours=1))
+        whole = linematch.match(
+            self.conn, "select source, source_id, name, geom from trails.agency_line where source_id = %(id)s",
+            f"select osm_id as id, name, geom from trails.osm_path where osm_id = {B + 40}", match.RULE,
+            params={"id": GID[2]})
+        self.assertEqual(whole, [])                                            # the whole-line check misses it
+        self.build()
+        self.assertEqual(self.links(GID[2]), {40: match.METHOD})
+        share, gap = self.conn.execute(
+            """select k.share, m.gap_m from trails.link k join trails.matched_line m using (source, source_id)
+               where k.source_id = %s""", (GID[2],)).fetchone()
+        self.assertAlmostEqual(share, 0.73, delta=0.02)
+        self.assertEqual(gap, 0)
+
+    def test_a_way_is_fully_linked_when_most_of_it_lies_along_the_line(self):
+        f = lambda osm_id, geom: {"type": "w", "osm_id": osm_id, "geometry": "linestring", "osm_version": 1,
+                                  "osm_timestamp": T0, "tags": {"highway": "path"}, "geom": geom}
+        self.world(extra=[f(B + 41, line((12000, 0), (12000, 1000))),          # 700 m of it along trail 2: full
+                          f(B + 42, line((13000, 0), (13000, 1000)))])         # 500 m along trail 3: partial
+        self.store_r2r({**self.lines, GID[2]: ("Seven Hundred", line((12003, 0), (12003, 700))),
+                        GID[3]: ("Five Hundred", line((13003, 0), (13003, 500)))}, T0 + timedelta(hours=1))
+        self.build()
+        self.assertEqual(self.links(GID[2]), {41: match.METHOD})
+        self.assertEqual(self.links(GID[3]), {42: "way_in_" + match.METHOD})
+        gaps = dict(self.conn.execute("select source_id, round(gap_m) from trails.matched_line where source_id in (%s, %s)",
+                                      (GID[2], GID[3])).fetchall())
+        self.assertEqual(gaps[GID[2]], 0)                                      # it paints its way
+        self.assertAlmostEqual(gaps[GID[3]], 500, delta=2)                     # it draws itself over the longer way
+
     def test_the_layer_s_view_after_the_build(self):
         self.world()
         self.build()
         rows = {r[0] - B: r[1:] for r in self.conn.execute(
-            """select osm_id, r2r, greenbelt, minzoom, surface, surface_from, surface_default, informal, drawn
+            """select osm_id, r2r, greenbelt, minzoom, surface, surface_from, surface_default, informal, drawn, on_r2r
                from trails.path where osm_id > %s""", (B,)).fetchall()}
-        self.assertEqual(rows[1], (True, False, 10, "dirt", "default", "Ridge to Rivers trail", False, True))
-        self.assertEqual(rows[3], (False, False, 13, "unknown", "none", None, False, True))
+        self.assertEqual(rows[1], (True, False, 10, "dirt", "default", "Ridge to Rivers trail", False, True, True))
+        self.assertEqual(rows[3], (False, False, 13, "unknown", "none", None, False, True, False))
         self.assertEqual(rows[5][:3], (False, True, 10))                       # the closure's way, and its route
         self.assertEqual(rows[6][-1], False)                                   # private: never drawn
         self.assertEqual(rows[9][2], 16)                                       # informal: close in only
@@ -287,7 +339,7 @@ class DatabaseTest(unittest.TestCase):
         self.world()
         self.build()
         rows = {r[1]: r for r in self.conn.execute(
-            """select source, source_id, kind, name, state, severity, ways, partial, links, line_id
+            """select source, source_id, kind, name, state, severity, ways, partial, links, line_id, round(gap_m)
                from trails.agency_state""").fetchall()}
         ridge = rows[GID[1]]
         self.assertEqual(ridge[2:9], ("trail", "Fixture Ridge", "dry", "open", [B + 1, B + 2], [], 2))
@@ -295,6 +347,7 @@ class DatabaseTest(unittest.TestCase):
         closure = rows[CLOSURE]
         self.assertEqual(closure[2:8], ("closure", "Fixture repair", "closure", "closed", [], [B + 5]))
         self.assertIsNotNone(rows[GID[2]][9])                                   # a line drawn as itself has an id
+        self.assertEqual((rows[GID[1]][10], rows[CLOSURE][10]), (0, 120))
         # An informal way 40 m from a closed trail is hidden; at 30 m it wouldn't be near enough.
         hidden = self.conn.execute("select osm_id, source_id from trails.hidden_informal(100)").fetchall()
         self.assertEqual(hidden, [(B + 9, GID[6])])
@@ -378,7 +431,7 @@ class DatabaseTest(unittest.TestCase):
         conn = Nested(self.conn)
         got = match.after_poll(conn, "r2r_trails", True)
         self.assertEqual(got["links"], "1 for 1 changed lines (0 gone)")
-        self.assertEqual(self.links(GID[2]), {3: "buffer15_bearing20"})
+        self.assertEqual(self.links(GID[2]), {3: match.METHOD})
         self.assertEqual(self.fetches(), [(True, 1, None)])
         by, fetch_id = self.conn.execute("select matched_by, fetch_id from trails.matched_line where source_id = %s",
                                          (GID[2],)).fetchone()
@@ -386,7 +439,7 @@ class DatabaseTest(unittest.TestCase):
         self.assertIsNotNone(fetch_id)
         after = dict(self.conn.execute("select source_id, matched_at from trails.matched_line").fetchall())
         self.assertEqual({k for k in before if before[k] != after[k]}, {GID[2]})       # the others untouched
-        self.assertEqual(self.links(GID[1]), {1: "buffer15_bearing20", 2: "buffer15_bearing20"})
+        self.assertEqual(self.links(GID[1]), {1: match.METHOD, 2: match.METHOD})
         self.assertGreaterEqual(conn.commits, 2)                                       # the fetch row, then the links
         # Nothing changed since: nothing to do, and no fetch row.
         self.assertEqual(match.after_poll(Nested(self.conn), "r2r_trails", True), {})
