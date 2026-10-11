@@ -130,8 +130,8 @@ A command logs its run one way, never both. A command that uses
 `python3 -m ingest <command>`. `python3 -m ingest.builds run` is for a
 command that doesn't log itself; a `builds.Run` of the same build inside
 it refuses. When it's stopped, it stops its command (SIGINT, so a Python
-command's psycopg cancels its query; then SIGTERM; then SIGKILL; 35 s at
-most, inside heavy's 60 s grace), and when the command fails or is
+command's psycopg cancels its query; then SIGTERM; then SIGKILL; 20 s at
+most, well inside heavy's 60 s grace), and when the command fails or is
 stopped it ends the database sessions the command left (they carry
 `application_name` `tvt-build-<run id>`). Its note is the command's
 first words, stopping at anything that could carry a secret; `--note`

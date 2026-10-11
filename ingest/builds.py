@@ -31,7 +31,7 @@ A command logs its run one way or the other, never both. A command that uses Run
 README says so) is run plainly. `run` is for one that doesn't log itself: it runs the command as
 a run of the build, and a Run of the same build inside it refuses (TVT_BUILD_RUN says why). When
 `run` is stopped, it stops its command (SIGINT first, so a Python command's psycopg cancels its
-query; then SIGTERM; then SIGKILL; 35 s at most, inside heavy's 60 s grace), and when the command
+query; then SIGTERM; then SIGKILL; 20 s at most, well inside heavy's grace), and when the command
 fails or is stopped it ends any database session the command left: the command's sessions carry
 the run's tag (PGAPPNAME=tvt-build-<run id>), and a query goes on on the server after its client
 dies. A worker step can't reach the database, so its run is logged around it (`start`, `finish`).
@@ -62,10 +62,11 @@ LOCK_KEY = "select hashtextextended('tvt build ' || %s, 0)"   # ops.build_status
 # What ops.build_status says of a run that ended without logging its end, and what the build's
 # next Run writes in its row.
 KILLED = "ended without logging its end (killed, or its connection was lost)"
-# How run_command stops its command: each signal, then how long to wait for it (s). 35 s in all,
-# so the run is logged as stopped well inside heavy's grace (GRACE_S, 60 s: then SIGKILL, and
-# `docker stop -t 60` for a container).
-STOP_STEPS = ((signal.SIGINT, 20.0), (signal.SIGTERM, 10.0), (signal.SIGKILL, 5.0))
+# How run_command stops its command: each signal, then how long to wait for it (s). 20 s in all
+# (psycopg's cancel takes a moment), so the command's leftover sessions are ended and the run is
+# logged as stopped well inside the grace before SIGKILL: heavy's 60 s (GRACE_S, and `docker stop
+# -t 60` for its containers), the scratch wrapper's 30 s (`docker stop -t 30`).
+STOP_STEPS = ((signal.SIGINT, 10.0), (signal.SIGTERM, 5.0), (signal.SIGKILL, 5.0))
 # A run's default note and a failed command's message show at most the command's first words,
 # stopping at one that could carry a secret (a URL, key=value, user@host, a password option).
 _PLAIN = re.compile(r"[A-Za-z0-9_./:,+-]+")
@@ -387,7 +388,7 @@ def _end_sessions(conn, build, tag):
     into statement_timeout. Returns how many were ended."""
     try:
         ended = conn.execute(
-            """select count(*) filter (where pg_terminate_backend(pid, 5000))::int from pg_stat_activity
+            """select count(*) filter (where pg_terminate_backend(pid, 3000))::int from pg_stat_activity
                where application_name = %s and usename = current_user and pid <> pg_backend_pid()""",
             (tag,)).fetchone()[0]
     except Exception as err:
