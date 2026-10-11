@@ -4,16 +4,15 @@ Standard library only; the writer itself (G1a) runs in the worker image.
 Two PMTiles files of 512 px lossy WebP tiles (XYZ, Web Mercator), opaque, Valley only:
 - valley: z8-z15 over the map box (1.73 m per pixel at z15, which matches the 2 m painter), made from the painter
   grid: z15 tile by tile, each from its own window of the grid (tile_window), never a full mosaic; z14 down to z8
-  each from its four children (2 x 2 average), as basemap/imagery.py does;
-- detail: z16-z17 in the tiles touching the ten class boxes (0.43 m per pixel at z17), from the 0.5 m classes, with
-  the valley paint resampled outside each box (the class edge feathers inside the box), so detail tiles are opaque
-  and the step from the valley tiles is never a hole. z16 is there so the boxes don't jump from overzoomed z15 tiles
-  straight to z17.
+  each from its four children (2 x 2 average), as basemap/imagery.py does. z16 overzooms z15, the boxes included;
+- detail: z17 in the tiles touching the ten class boxes (0.43 m per pixel), from the 0.5 m classes, with the valley
+  paint resampled outside each box (the class edge feathers inside the box), so detail tiles are opaque and the step
+  from the valley tiles is never a hole.
 
-Pixels outside the grid are the flat Valley colour. Files are versioned by their inputs (ground-<digest>.pmtiles and
-ground-detail-<digest>.pmtiles, never overwritten) and switched in with tiles/manifest.json's "ground" entry, written
-atomically last. Without a painted ground the entry is flat_entry(reason) (or absent: not built yet), and the app
-keeps today's flat Valley and Clay ground and says so.
+Pixels outside the grid are the flat Valley colour. Files are versioned by everything they're made from
+(ground-<digest>.pmtiles and ground-detail-<digest>.pmtiles, never overwritten) and switched in with
+tiles/manifest.json's "ground" entry, written atomically last. Without a painted ground the entry is
+flat_entry(reason) (or absent: not built yet), and the app keeps today's flat Valley and Clay ground and says so.
 
 **Budget** (spec.json "budget"): at the default view (z10, pitch 45, 1280 x 800) in Valley, the ground's requests (the
 PMTiles header, directories and tiles) add up to at most 0.6 MB and 14 requests; in Clay, none.
@@ -109,20 +108,25 @@ def counts():
 
 
 def digest(plan, painter="", spec_text=None):
-    """The build's version: sha256 over the tile spec, the painter's version and every input the plan reads (export
-    layers by their sha256, raw inputs by name and credit, fallbacks by name). Same inputs, same name."""
+    """The build's version: sha256 over the tile spec, the painter's version, the version of every RAW input the plan
+    reads (the painter's own, and its fallbacks') and the sha256 of every export layer it reads, the ground's products
+    (mask v0, the classes) included. A new OSM cut, NAIP release, CDL year, mask v0 or class build gives a new name;
+    the same inputs give the same name. Raises ValueError when a raw input the plan reads has no version."""
+    if missing := plan.missing_versions:
+        raise ValueError(f"the plan reads {', '.join(missing)} without a version: give each one's checksum, release "
+                         "or year (inputs.resolve(..., versions=))")
     if spec_text is None:
         with open(grid.SPEC_PATH, encoding="utf-8") as f:
             spec_text = f.read()
     h = hashlib.sha256()
     h.update(spec_text.encode("utf-8"))
     h.update(f"\npainter {painter}\n".encode("utf-8"))
-    for r in plan.raw:
-        h.update(f"raw {r.name} {r.credit}\n".encode("utf-8"))
+    for name in plan.raw_names:
+        h.update(f"raw {name} {plan.versions[name]}\n".encode("utf-8"))
     for c in plan.choices:
-        if c.layer is not None:
-            h.update(f"export {c.layer.ref} {c.layer['sha256']}\n".encode("utf-8"))
-        else:
+        for lay in c.layers:
+            h.update(f"export {lay.ref} {lay['sha256']}\n".encode("utf-8"))
+        if c.fallback:
             h.update(f"fallback {c.use.ref} {c.use.fallback}\n".encode("utf-8"))
     return h.hexdigest()
 
@@ -137,6 +141,8 @@ def painted_entry(plan, digest_hex, built=None, boxes=None):
     """tiles/manifest.json's "ground" entry for a painted ground."""
     if plan.status != "painted":
         raise ValueError(f"the plan is {plan.status}: {plan.reason}")
+    if missing := plan.missing_versions:
+        raise ValueError(f"the plan reads {', '.join(missing)} without a version")
     valley, detail = file_names(digest_hex)
     return {
         "status": "painted",
@@ -150,7 +156,7 @@ def painted_entry(plan, digest_hex, built=None, boxes=None):
         "attribution": "; ".join(plan.credits),
         "licence": plan.licence,
         "republish": plan.republish,
-        "inputs": plan.refs,
+        "inputs": plan.refs + [f"raw/{n}@{plan.versions[n]}" for n in plan.raw_names],
         "fallbacks": [f"{c.use.ref}: {c.use.fallback}" for c in plan.choices if c.fallback],
         "built": built or dt.date.today().isoformat(),
         "spec": SPEC_VERSION,

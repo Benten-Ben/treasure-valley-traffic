@@ -25,12 +25,19 @@ the ingest image that writes the exports as well as in the worker image that rea
 
 Layers are vectors (FlatGeobuf, in the grid's CRS, EPSG:32611). The two non-vector exports are a JSON table
 (soils' palette.json: "schema" names its shape) and a GeoTIFF on the ground grid (farm's crop_cover.tif: "grid" and
-"bands"). Licences and republish (C3, C17):
+"bands"); the ground's own products (mask v0, the box classes) use the same contract. Licences and republish (C3,
+C17):
 - every input names a licence from LICENCES and a republish value no looser than that licence allows;
+- an input taken from a plugin source names it (`"source": "<plugin>/<source>"`) and is no looser than that source's
+  republish in its plugin.json, which is the owner's decision; a `none-stated` input must name one;
 - a layer's republish is at least as strict as each of its inputs' (strictest wins), its credit carries every
-  input's credit, and a layer with a share-alike input (ODbL) is ODbL itself;
+  input's credit, and its licence is one of its inputs': the share-alike one (ODbL) when there is one, otherwise one
+  of the strictest;
 - `base: true` marks a layer for the base bake (S5b): a FlatGeobuf with an integer `id` field (MapLibre's promoteId).
 republish values are plugin.json's (docs/15): yes, aggregates, internal, no, from loosest to strictest.
+
+read() checks the files too: sizes and sha256, a FlatGeobuf's header (fgb.py), a GeoTIFF's size, bands and
+georeferencing (tif.py), and that a JSON file parses (and, when it states a "schema", that it's the manifest's).
 """
 
 import datetime as dt
@@ -41,7 +48,7 @@ import re
 import tempfile
 from dataclasses import dataclass, field
 
-from basemap.ground import fgb, grid
+from basemap.ground import fgb, grid, tif
 
 CONTRACT = 1
 FILE = "manifest.json"
@@ -56,28 +63,41 @@ class Licence:
     loosest: str          # the loosest republish value this licence allows
     share_alike: bool     # derived layers must carry the same licence
     about: str
+    per_source: bool = False   # no licence grant: the input names its plugin source, whose republish decides
 
 
 # Licence classes. Add one here (in review) before an export can name it.
 LICENCES = {
-    "public-domain": Licence("yes", False, "US federal works: USGS (3DEP, NHD), USDA (NAIP, NASS's CDL and CSB, "
+    "public-domain": Licence("yes", False, "US federal works: USGS (3DEP, NHD, RCMAP), USDA (NAIP, NASS's CDL and CSB, "
                                            "NRCS's SSURGO)"),
     "CC0-1.0": Licence("yes", False, "e.g. ITD's WZDx work zones (owner, Oct 6)"),
-    "ODbL-1.0": Licence("yes", True, "OpenStreetMap, and Overture's buildings. Derived databases stay ODbL; a produced "
-                                     "work (tiles, images) credits it"),
+    "ODbL-1.0": Licence("yes", True, "OpenStreetMap, and Overture's themes made from it: buildings, transportation, "
+                                     "divisions, and the base theme's OSM types (check each theme's licence before "
+                                     "use). Derived databases stay ODbL; a produced work (tiles, images) credits it"),
     "CC-BY-4.0": Licence("yes", False, "e.g. the HydroShare canal network (cite its creators and DOI)"),
-    "CDLA-Permissive-2.0": Licence("yes", False, "e.g. Overture's themes other than buildings"),
+    "CDLA-Permissive-2.0": Licence("yes", False, "e.g. Overture's places (check each theme's licence before use)"),
     "Copernicus": Licence("yes", False, "Sentinel data: free, full and open use; credit 'Contains modified "
                                         "Copernicus Sentinel data <year>'"),
-    "none-stated": Licence("aggregates", False, "agency data with no licence grant (ACHD, ITD's tables, IDWR, Ridge "
-                                                "to Rivers, the City's trails): internal, or aggregates in public "
-                                                "where the owner allowed it"),
+    "none-stated": Licence("yes", False, "agency data with no licence grant. What may be published is the owner's "
+                                         "call for each source, recorded as its republish in plugin.json (e.g. "
+                                         "COMPASS's hub layers and NIFC's WFIGS yes; ACHD's and ITD's tables "
+                                         "internal; Ridge to Rivers aggregates), so the input names its source",
+                           per_source=True),
     "restricted": Licence("no", False, "data we may use but never publish (private plugins)"),
 }
 
+
+def strictness(licence):
+    """How strict a licence class is, for choosing a layer's: what it lets us publish, then whether that rests on a
+    per-source decision rather than a licence grant."""
+    lic = LICENCES[licence]
+    return rank(lic.loosest), lic.per_source
+
+
 _TOP = {"contract", "plugin", "build", "created", "command", "inputs", "layers", "note"}
 _TOP_REQUIRED = {"contract", "plugin", "build", "created", "inputs", "layers"}
-_INPUT = {"name", "licence", "republish", "credit", "version", "url", "doi", "sha256", "retrieved", "note"}
+_INPUT = {"name", "licence", "republish", "credit", "source", "version", "url", "doi", "sha256", "retrieved",
+          "note"}
 _INPUT_REQUIRED = {"name", "licence", "republish", "credit"}
 _LAYER_COMMON = {"name", "file", "format", "bytes", "sha256", "inputs", "licence", "republish", "credit", "base"}
 _LAYER_OPTIONAL = {"title", "note"}
@@ -93,6 +113,7 @@ _NAME = re.compile(r"^[a-z][a-z0-9_]*$")
 _INPUT_NAME = re.compile(r"^[a-z0-9][a-z0-9_.-]*$")
 _FIELD = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _SHA = re.compile(r"^[0-9a-f]{64}$")
+_SOURCE = re.compile(r"^[a-z_][a-z0-9_]*/[a-z0-9_]+$")
 
 
 class ManifestError(ValueError):
@@ -179,6 +200,11 @@ def check(m, where="manifest", folder=None):
                 bad(f"{label}: {key} must be a non-empty string")
         if "sha256" in e and not _SHA.match(e["sha256"]):
             bad(f"{label}: sha256 must be 64 lower-case hex digits")
+        if "source" in e and not _SOURCE.match(e["source"]):
+            bad(f"{label}: source must name a plugin source as <plugin>/<source>")
+        if LICENCES[e["licence"]].per_source and "source" not in e:
+            bad(f"{label}: a {e['licence']} input names its plugin source (\"source\": \"<plugin>/<source>\"), "
+                "whose republish in plugin.json is the owner's decision")
         by_name[e["name"]] = e
 
     layers = m["layers"]
@@ -235,6 +261,12 @@ def check(m, where="manifest", folder=None):
                 bad(f"{label}: republish {lay['republish']!r} is looser than input {n!r} ({src['republish']!r})")
             if LICENCES[src["licence"]].share_alike and lay["licence"] != src["licence"]:
                 bad(f"{label}: input {n!r} is {src['licence']} (share-alike), so the layer must be too")
+        own = {by_name[n]["licence"] for n in lin}
+        if lay["licence"] not in own:
+            bad(f"{label}: licence {lay['licence']} isn't one of its inputs' ({', '.join(sorted(own))})")
+        if not LICENCES[lay["licence"]].share_alike and strictness(lay["licence"]) < max(map(strictness, own)):
+            top = sorted(x for x in own if strictness(x) == max(map(strictness, own)))
+            bad(f"{label}: licence {lay['licence']} is looser than its input's {' or '.join(top)}")
         credit = lay["credit"]
         if not isinstance(credit, list) or not credit or not all(isinstance(c, str) and c.strip() for c in credit):
             bad(f"{label}: credit must be a non-empty list of strings")
@@ -407,9 +439,11 @@ def sha256_of(path):
     return h.hexdigest()
 
 
-def read(path, verify=True, hashes=True):
-    """Read and check an export's manifest (path: the export folder or its manifest.json). verify also checks each
-    file: it exists, has its bytes and (with hashes) its sha256, and a FlatGeobuf's header agrees with its entry."""
+def read(path, verify=True, hashes=True, registry=None):
+    """Read and check an export's manifest (path: the export folder or its manifest.json). The manifest's plugin must
+    be the folder's (<archive>/<plugin>/export/<build>), and every input that names a plugin source is checked against
+    that source's plugin.json (registry: plugin_sources(), loaded when needed). verify also checks each file: it
+    exists, has its bytes and (with hashes) its sha256, and its header agrees with its entry (verify_layer)."""
     folder = path if os.path.isdir(path) else os.path.dirname(path)
     mpath = os.path.join(folder, FILE)
     try:
@@ -418,6 +452,11 @@ def read(path, verify=True, hashes=True):
     except (OSError, ValueError) as err:
         raise ManifestError(f"{mpath}: {err}") from None
     check(data, mpath, folder)
+    parent = os.path.dirname(os.path.normpath(os.path.abspath(folder)))
+    if os.path.basename(parent) == "export" and os.path.basename(os.path.dirname(parent)) != data["plugin"]:
+        raise ManifestError(f"{mpath}: plugin {data['plugin']!r} isn't the folder's "
+                            f"({os.path.basename(os.path.dirname(parent))!r})")
+    check_sources(data, registry, mpath)
     m = Manifest(folder, data)
     if verify:
         for lay in m.layers:
@@ -425,8 +464,44 @@ def read(path, verify=True, hashes=True):
     return m
 
 
+def plugin_sources(folders=None):
+    """Every plugin source's entry from plugin.json ({"<plugin>/<source>": entry}, with its "republish", "license"
+    and "credit"), read with ingest/manifest.py from this repository's plugins/ and TVT_PLUGIN_PATH (folders: other
+    plugin folders instead). Raises ManifestError when the plugin manifests can't be read."""
+    try:
+        from ingest import manifest as plugin_manifest
+    except ImportError as err:
+        raise ManifestError(f"can't read the plugins' manifests to check an input's source ({err})") from None
+    try:
+        plugins = plugin_manifest.find(folders)
+    except plugin_manifest.ManifestError as err:
+        raise ManifestError(f"can't read the plugins' manifests to check an input's source ({err})") from None
+    return {f"{p.name}/{e['name']}": e for p in plugins for e in p.manifest["sources"]}
+
+
+def check_sources(m, registry=None, where="manifest"):
+    """Check every input that names a plugin source against plugin.json: the source exists, and the input's republish
+    is no looser than the source's (the owner's decision for that source). registry: {"<plugin>/<source>": entry};
+    plugin_sources() when None and an input names a source."""
+    named = [e for e in m["inputs"] if "source" in e]
+    if not named:
+        return
+    if registry is None:
+        registry = plugin_sources()
+    for e in named:
+        src = registry.get(e["source"])
+        if src is None:
+            raise ManifestError(f"{where}: input {e['name']!r} names source {e['source']!r}, which no plugin.json "
+                                "lists")
+        if rank(e["republish"]) < rank(src["republish"]):
+            raise ManifestError(f"{where}: input {e['name']!r} is republish {e['republish']!r}, looser than its "
+                                f"source {e['source']} ({src['republish']!r} in plugin.json)")
+
+
 def verify_layer(lay, hashes=True):
-    """Check one layer's file against its manifest entry. Raises ManifestError."""
+    """Check one layer's file against its manifest entry: size and sha256, and what its header says (a FlatGeobuf's
+    geometry, fields, count and CRS; a GeoTIFF's size, bands, sample types, pixel corners and EPSG code; that a JSON
+    file parses and names the manifest's schema if it names one). Raises ManifestError."""
     where = f"{lay.ref} ({lay.path})"
     try:
         size = os.path.getsize(lay.path)
@@ -442,6 +517,44 @@ def verify_layer(lay, hashes=True):
         except fgb.FgbError as err:
             raise ManifestError(f"{where}: {err}") from None
         check_header(where, lay.spec, h)
+    elif lay["format"] == "GeoTIFF":
+        try:
+            h = tif.read_header(lay.path)
+        except tif.TiffError as err:
+            raise ManifestError(f"{where}: {err}") from None
+        check_raster_header(where, lay.spec, h)
+    else:
+        try:
+            with open(lay.path, encoding="utf-8") as f:
+                doc = json.load(f)
+        except (OSError, ValueError) as err:
+            raise ManifestError(f"{where}: not JSON ({err})") from None
+        if isinstance(doc, dict) and "schema" in doc and doc["schema"] != lay["schema"]:
+            raise ManifestError(f"{where}: the file says schema {doc['schema']!r}, the manifest {lay['schema']!r}")
+
+
+def check_raster_header(where, spec, h):
+    """A GeoTIFF's header against its manifest entry: exactly the grid window, bands and CRS it declares."""
+    g = spec["grid"]
+    if (h.width, h.height) != (g["width"], g["height"]):
+        raise ManifestError(f"{where}: the file is {h.width} x {h.height}, the manifest says {g['width']} x "
+                            f"{g['height']}")
+    if h.transform is None:
+        raise ManifestError(f"{where}: the file isn't georeferenced")
+    x0, rx, rxy, y0, ryx, ry = h.transform
+    res = float(g["res"])
+    if abs(rx - res) > 1e-9 * res or abs(ry + res) > 1e-9 * res or rxy or ryx:
+        raise ManifestError(f"{where}: the file's cells are {rx:g} x {-ry:g} m (north-up {res:g} m in the manifest)")
+    if abs(x0 - g["west"]) > 1e-6 or abs(y0 - g["north"]) > 1e-6:
+        raise ManifestError(f"{where}: the file's corner is E {x0!r} N {y0!r}, the manifest says E {g['west']} "
+                            f"N {g['north']}")
+    epsg = int(spec["crs"].split(":")[1])
+    if h.epsg != epsg:
+        raise ManifestError(f"{where}: the file's CRS is EPSG:{h.epsg or '(unstated)'}, the manifest says "
+                            f"{spec['crs']}")
+    want = tuple(b["type"] for b in spec["bands"])
+    if h.sample_types != want:
+        raise ManifestError(f"{where}: the file's bands are {list(h.sample_types)}, the manifest says {list(want)}")
 
 
 def check_header(where, spec, h):
@@ -469,21 +582,27 @@ def builds(archive, plugin):
                   if BUILD_RE.match(b) and os.path.isfile(os.path.join(root, b, FILE)))
 
 
-def latest(archive, plugin, verify=True, hashes=True):
+def latest(archive, plugin, verify=True, hashes=True, registry=None):
     """The plugin's newest finished export, read and checked; None when it has none. A newest export that fails its
     checks raises ManifestError rather than falling back to an older one silently."""
     b = builds(archive, plugin)
-    return read(export_dir(archive, plugin, b[-1]), verify=verify, hashes=hashes) if b else None
+    if not b:
+        return None
+    m = read(export_dir(archive, plugin, b[-1]), verify=verify, hashes=hashes, registry=registry)
+    if m.plugin != plugin:                             # read() checks this too, for any path ending export/<build>
+        raise ManifestError(f"{m.folder}: plugin {m.plugin!r} isn't the folder's ({plugin!r})")
+    return m
 
 
-def find(archive, verify=True, hashes=True):
-    """Every plugin's newest export under the archive: {plugin: Manifest}."""
+def find(archive, verify=True, hashes=True, registry=None):
+    """Every plugin's newest export under the archive: {plugin: Manifest}. For the base bake, which reads every
+    export; the ground reads only its own inputs (inputs.exports())."""
     out = {}
     if not os.path.isdir(archive):
         return out
     for plugin in sorted(os.listdir(archive)):
         if plugin.isidentifier() and os.path.isdir(os.path.join(archive, plugin, "export")):
-            m = latest(archive, plugin, verify=verify, hashes=hashes)
+            m = latest(archive, plugin, verify=verify, hashes=hashes, registry=registry)
             if m is not None:
                 out[plugin] = m
     return out
@@ -491,12 +610,13 @@ def find(archive, verify=True, hashes=True):
 
 # --- writing ----------------------------------------------------------------------------------------------------
 
-def write(folder, plugin, inputs, layers, build=None, created=None, command=None, note=None):
+def write(folder, plugin, inputs, layers, build=None, created=None, command=None, note=None, registry=None):
     """Write an export's manifest.json after its files, filling in what the files say: bytes and sha256 for every
     layer; for a FlatGeobuf, its geometry type, fields and feature count from the header when the layer doesn't give
     them; credit (every input's), republish (the strictest input's) and licence (a share-alike input's, or the one
-    licence all its inputs share) when not given. The manifest is checked before it's written, and written
-    atomically, last. Returns the Manifest.
+    strictest licence among its inputs) when not given. The manifest is checked (with its inputs' sources against
+    plugin.json, and each file against its entry) before it's written, and written atomically, last. Returns the
+    Manifest.
 
     inputs: [{"name", "licence", "republish", "credit", ...}]; layers: [{"name", "file", "format", "inputs",
     "base", ...}] (for FlatGeobuf, "crs" defaults to the grid's). build defaults to the folder's name."""
@@ -515,12 +635,13 @@ def write(folder, plugin, inputs, layers, build=None, created=None, command=None
         if "credit" not in lay:
             lay["credit"] = list(dict.fromkeys(s["credit"] for s in srcs))
         if "licence" not in lay:
-            every = {s["licence"] for s in srcs}
-            shared = {name for name in every if name in LICENCES and LICENCES[name].share_alike}
+            every = {s["licence"] for s in srcs if s.get("licence") in LICENCES}
+            shared = {name for name in every if LICENCES[name].share_alike}
+            top = {name for name in every if strictness(name) == max(map(strictness, every))} if every else set()
             if len(shared) == 1:
                 lay["licence"] = shared.pop()
-            elif len(every) == 1:
-                lay["licence"] = every.pop()
+            elif len(top) == 1:
+                lay["licence"] = top.pop()
             else:
                 raise ManifestError(f"layer {lay['name']!r}: its inputs have several licences ({sorted(every)}); "
                                     "name the layer's licence")
@@ -556,10 +677,14 @@ def write(folder, plugin, inputs, layers, build=None, created=None, command=None
     m["inputs"] = [dict(e) for e in inputs]
     m["layers"] = out_layers
     check(m, os.path.join(folder, FILE), folder)
+    parent = os.path.dirname(os.path.normpath(os.path.abspath(folder)))
+    if os.path.basename(parent) == "export" and os.path.basename(os.path.dirname(parent)) != plugin:
+        raise ManifestError(f"{folder}: plugin {plugin!r} isn't the folder's "
+                            f"({os.path.basename(os.path.dirname(parent))!r})")
+    check_sources(m, registry, os.path.join(folder, FILE))
     result = Manifest(folder, m)
     for lay in result.layers:
-        if lay["format"] == "FlatGeobuf":
-            check_header(lay.ref, lay.spec, fgb.read_header(lay.path))
+        verify_layer(lay, hashes=False)                # the sha256 was just taken
     fd, tmp = tempfile.mkstemp(prefix=".manifest-", suffix=".json", dir=folder)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:

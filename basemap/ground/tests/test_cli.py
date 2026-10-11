@@ -9,8 +9,8 @@ import tempfile
 import unittest
 
 from basemap.ground import ground, manifest as M
-from basemap.ground.tests.test_inputs import fgb_layer, write_export
-from basemap.ground.tests.test_manifest import SSURGO
+from basemap.ground.tests.test_inputs import fgb_layer, write_export, write_mask
+from basemap.ground.tests.test_manifest import ACHD, SSURGO
 
 
 def run(*argv):
@@ -45,20 +45,31 @@ class CliTest(unittest.TestCase):
         self.assertEqual(code, 3)
         self.assertIn("Flat ground", out)
         m = write_export(self.archive, "soils", [fgb_layer("ground", ["ssurgo"])], [SSURGO])
+        write_mask(self.archive)
         code, out, _ = run("status", "--archive", self.archive)
         self.assertEqual(code, 0)
         self.assertIn(f"soils/ground@{m.build}", out)
+        self.assertIn("ground_mask/roofs@", out)
         self.assertIn("fallback: CSB 2025 fields plus CDL 2025 crop pixels (C7)", out)
         code, out, _ = run("check-export", m.folder)
         self.assertEqual(code, 0)
         self.assertIn("ground: ground.fgb (FlatGeobuf; MultiPolygon, 3 features)", out)
 
     def test_status_refuses_internal(self):
-        achd = {"name": "achd", "licence": "none-stated", "republish": "internal", "credit": "ACHD"}
-        write_export(self.archive, "soils", [fgb_layer("ground", ["achd"])], [achd])
+        write_export(self.archive, "soils", [fgb_layer("ground", ["achd-roads"])], [ACHD])
         code, _, err = run("status", "--archive", self.archive)
         self.assertEqual(code, 2)
         self.assertIn("public inputs only", err)
+
+    def test_a_missing_archive_is_refused(self):
+        missing = os.path.join(self.dir, "not-mounted")
+        code, _, err = run("status", "--archive", missing)
+        self.assertEqual(code, 2)
+        self.assertIn("no archive folder", err)
+        code, _, err = run("flat", "--tiles", self.tiles, "--archive", missing)
+        self.assertEqual(code, 2)
+        with open(os.path.join(self.tiles, "manifest.json"), encoding="utf-8") as f:
+            self.assertEqual(json.load(f), {"zoom": 10})                 # left alone
 
     def test_check_export_reports_problems(self):
         m = write_export(self.archive, "soils", [fgb_layer("ground", ["ssurgo"])], [SSURGO])
@@ -78,9 +89,18 @@ class CliTest(unittest.TestCase):
         code, _, _ = run("flat", "--tiles", self.tiles, "--reason", "Flat ground: the painter is being rebuilt.")
         self.assertEqual(code, 0)
         write_export(self.archive, "soils", [fgb_layer("ground", ["ssurgo"])], [SSURGO])
+        write_mask(self.archive)
         code, _, err = run("flat", "--tiles", self.tiles, "--archive", self.archive)
         self.assertEqual(code, 2)                                   # it could be painted: nothing to record
         self.assertTrue(M.find(self.archive))
+
+    def test_flat_refuses_without_a_traceback(self):
+        write_export(self.archive, "soils", [fgb_layer("ground", ["achd-roads"])], [ACHD])
+        code, _, err = run("flat", "--tiles", self.tiles, "--archive", self.archive)
+        self.assertEqual(code, 2)
+        self.assertIn("refused: ", err)
+        with open(os.path.join(self.tiles, "manifest.json"), encoding="utf-8") as f:
+            self.assertEqual(json.load(f), {"zoom": 10})
 
 
 if __name__ == "__main__":

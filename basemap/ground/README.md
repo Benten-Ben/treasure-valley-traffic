@@ -11,7 +11,7 @@ This folder holds the contract every piece of the ground shares:
 | Piece | File | Runs in |
 |---|---|---|
 | The grid: one grid for every raster, with the ten class boxes | [`grid.py`](grid.py), [`spec.json`](spec.json) | anywhere (standard library) |
-| Export manifests: what a plugin's export holds, under which licence | [`manifest.py`](manifest.py), [`fgb.py`](fgb.py) | the ingest image (writes), the worker image (reads) |
+| Export manifests: what a plugin's export holds, under which licence | [`manifest.py`](manifest.py), [`fgb.py`](fgb.py), [`tif.py`](tif.py) | the ingest image (writes), the worker image (reads) |
 | What the ground reads, the republish rule and the flat fallback | [`inputs.py`](inputs.py) | anywhere |
 | The tile writer's spec, the tiles-manifest entry and the first-load budget | [`tiles.py`](tiles.py), [`spec.json`](spec.json) | anywhere |
 | The window-rasterising helper P2 and G1 share | [`rasterize.py`](rasterize.py) | the worker image |
@@ -59,7 +59,9 @@ true NAD83(2011)-to-WGS 84 offset here is about 1 m ⚠️, under the painter's 
 grid-based NAD83 transform. The worker image sets `PROJ_NETWORK=ON`, so PROJ tries to download NOAA's HPGN grid from
 cdn.proj.org; offline that transform returns inf or fails (checked Oct 10 in `tvt-worker`). `rasterize.py` switches
 PROJ's network off and applies the policy: `rasterize.srs_of(crs)` for vectors, and `rasterize.warp_srs(crs)` as
-`gdal.Warp`'s `srcSRS` for rasters (P2's NAIP to the 2 m COG). Code that uses pyproj directly calls
+`gdal.Warp`'s `srcSRS` for rasters (P2's NAIP to the 2 m COG). A compound CRS keeps only its horizontal part: the
+QL1 lidar is NAD83(2011) / UTM 11N + NAVD88 heights (EPSG:6340+5703), and a raster written with vertical GeoKeys opens
+as compound, but the ground is 2D and heights are values, never coordinates. Code that uses pyproj directly calls
 `pyproj.network.set_network_enabled(False)` first: `docker run -e PROJ_NETWORK=OFF` doesn't help, because the image's
 conda activation sets it back to ON.
 
@@ -86,7 +88,16 @@ rasters, so every box lies on the 0.5 m class grid.
 A plugin's export command writes its files to `$TVT_ARCHIVE/<plugin>/export/<build>/`, then `manifest.json`, last.
 A folder without a manifest is unfinished, and readers skip it. `<build>` is the UTC time, `20261012T031500Z`, with
 an optional `-suffix`. The ground and the base bake read exports only through `manifest.read()`, `latest()` and
-`find()`. All three check the files, not only the manifest.
+`find()`, and all three check the files, not only the manifest:
+- **every file:** its size and sha256;
+- **FlatGeobuf:** the header's geometry type, fields, feature count and CRS (`fgb.py`);
+- **GeoTIFF:** the size, the bands' count and sample types, the pixel corners and the EPSG code (`tif.py`, from the
+  tags, never the pixels), so a raster half a cell off the grid, or the wrong size, is refused;
+- **JSON:** that it parses, and that its `"schema"`, if it states one, is the manifest's.
+
+The manifest's `plugin` must be its folder's (`<archive>/<plugin>/export/<build>`). The ground reads only the
+plugins and products it uses (`inputs.exports()`), so a broken export of another plugin can't hold it up. The bake
+reads every export with `find()`.
 
 Exports are **vectors** (FlatGeobuf, in EPSG:32611). Everything that rasterises lives here, in `basemap/ground/`.
 The two non-vector exports are soils' `palette.json` (a JSON table) and farm's `crop_cover.tif` (a GeoTIFF on the
@@ -117,7 +128,7 @@ The two non-vector exports are soils' `palette.json` (a JSON table) and farm's `
 | `contract` | 1 |
 | `plugin`, `build`, `created` | the plugin's name; the folder's name; the UTC time it was written |
 | `command`, `note` | optional |
-| `inputs[]` | every source the layers were made from: `name`, `licence`, `republish`, `credit`, and optionally `version`, `url`, `doi`, `sha256`, `retrieved`, `note`. Every input must be used by a layer |
+| `inputs[]` | every source the layers were made from: `name`, `licence`, `republish`, `credit`, and optionally `source` (the plugin source it came from, `<plugin>/<source>`), `version`, `url`, `doi`, `sha256`, `retrieved`, `note`. Every input must be used by a layer |
 | `layers[]` (all) | `name`, `file` (a plain name in the folder), `format`, `bytes`, `sha256`, `inputs` (names), `licence`, `republish`, `credit` (a list), `base`; optionally `title`, `note` |
 | FlatGeobuf | `crs` (EPSG:32611), `geometry` (Point, LineString, Polygon, or their Multi forms), `fields` (name: type), `features`; optionally `minzoom`, `maxzoom` |
 | GeoTIFF | `crs` (EPSG:32611), `grid` (`res`, `west`, `north`, `width`, `height`, on the ground grid), `bands` (`name`, `type`, and optionally `nodata`, `values` (code: label), `about`) |
@@ -135,16 +146,24 @@ Field types are FlatGeobuf's, in lower case: `byte`, `ubyte`, `bool`, `short`, `
 |---|---|---|
 | `public-domain` | yes | USGS (3DEP, NHD), USDA (NAIP, NASS's CDL and CSB, NRCS's SSURGO) |
 | `CC0-1.0` | yes | e.g. ITD's WZDx (owner, Oct 6) |
-| `ODbL-1.0` | yes | OpenStreetMap; Overture's buildings. Share-alike |
+| `ODbL-1.0` | yes | OpenStreetMap; Overture's themes made from it: buildings, transportation, divisions, and the base theme's OSM types ⚠️. Share-alike |
 | `CC-BY-4.0` | yes | e.g. the HydroShare canal network (cite its DOI) |
-| `CDLA-Permissive-2.0` | yes | Overture's other themes |
+| `CDLA-Permissive-2.0` | yes | e.g. Overture's places ⚠️ |
 | `Copernicus` | yes | Sentinel data ("Contains modified Copernicus Sentinel data 2025") |
-| `none-stated` | aggregates | ACHD, ITD's tables, IDWR, Ridge to Rivers, the City's trails |
+| `none-stated` | per source | agency data with no licence grant. The owner decides per source, in its plugin.json: COMPASS's hub layers and NIFC's WFIGS are `yes`; ACHD's and ITD's tables `internal`; Ridge to Rivers `aggregates` |
 | `restricted` | no | data we may use but never publish |
 
+- Overture's licence differs by theme (and the base theme's land cover is ESA WorldCover's ⚠️): check the theme's
+  before naming its class.
+- An input taken from a plugin source names it in `source`, e.g. `"roads/achd_roads"`. A `none-stated` input must
+  name one, because its republish is the owner's call for that source, not a licence's. `read()` and `write()` check
+  each named source against plugin.json (this repository's plugins and `TVT_PLUGIN_PATH`'s): the source must exist,
+  and the input is no looser than its republish there.
 - A layer's republish is at least as strict as each of its inputs': the strictest wins.
 - Its `credit` carries every input's credit.
-- A layer with an ODbL input is ODbL itself.
+- Its licence is one of its inputs'. A layer with an ODbL input is ODbL itself, and its republish carries any
+  stricter input's limit. Otherwise it's the strictest input's: a layer made from public-domain and `restricted`
+  data is `restricted`, and from public-domain and `none-stated` data, `none-stated`.
 - A new licence class is added to `LICENCES` in review, before any export names it.
 
 **`base: true`** marks a layer for the base bake (S5b). It must be a FlatGeobuf with an integer `id` field (the bake's
@@ -167,8 +186,8 @@ manifest.write(folder, "soils",
 
 `write()` fills in what the files say. That's bytes and sha256 for every layer. For a FlatGeobuf, it's the geometry
 type, fields and feature count from the file's header. It also sets each layer's credit (every input's), republish
-(the strictest input's) and licence (the share-alike input's, or the one licence all its inputs share). It checks the
-result, and writes the manifest atomically.
+(the strictest input's) and licence (the share-alike input's, or else the strictest input's). It checks the result,
+the inputs' sources and every file's header, and writes the manifest atomically.
 
 Notes from the checks:
 - `ST_AsFlatGeobuf` refuses `numeric` columns ("column type not supported"): cast them to `float8`.
@@ -182,9 +201,35 @@ Notes from the checks:
 The ground is an **ODbL produced work built from public inputs only** (C17), so every input is republish `yes`.
 `inputs.resolve()` refuses an export layer that isn't, or that reads anything that isn't, rather than quietly making
 the ground internal. The roads build is never read: its widths come from ACHD and ITD (internal), so the ground keeps
-OSM's class widths (C6).
+OSM's class widths (C6). It reads three kinds of input.
 
-Raw inputs, read from files (mask v0 and the painter):
+**Plugin exports.** The layer names and the fields marked here are what the ground looks for. A plugin that changes
+one changes this table and `inputs.USES` in the same review.
+
+| Export layer | Format | Needs | Without it | Made by |
+|---|---|---|---|---|
+| `soils/ground` | FlatGeobuf, polygons | integer `ground_type` | **the ground stays flat** | P1-data |
+| `soils/palette` | JSON `soils.palette/1` | | flat colours per ground type, labelled | P2 |
+| `farm/crop_cover` | GeoTIFF, 10 m grid | bands group, state, confidence | CSB 2025 plus CDL 2025 (C7) | P3-data |
+| `farm/fields` | FlatGeobuf, polygons | numeric `bearing` (degrees from north) | CSB 2025, no row bearing | P3-data |
+| `water/mask` | FlatGeobuf, polygons | | mask v0's NHD and OSM water | P4-data |
+
+**The ground's own products** are written through the same export contract, under `$TVT_ARCHIVE/<product>/export/
+<build>/`, so their inputs, licences and sha256 are declared and checked like a plugin's. No plugin may take these
+names. A product may be made from the raw inputs below only, each under its licence there, so nothing internal can
+reach the ground through it, however it's labelled.
+
+| Product | Format | Needs | Without it | Made by |
+|---|---|---|---|---|
+| `ground_mask` (mask v0) | FlatGeobuf layers, named by S5a-2 | | **the ground stays flat** | S5a-2 |
+| `ground_classes` | one GeoTIFF per box on the 0.5 m grid, named by the box's id (`a`, …, `downtown`, …), exactly on its window | | the boxes show the valley paint | G1a |
+
+The spike's classes can't go in as they are. Their road reference, and the rule that keeps cells within 2 m of a
+mapped road from turning green, read ACHD's segments (internal). They have to be rebuilt with OSM's roads only, or
+the owner has to accept them, before G1a uses them. RCMAP, which calibrates their bare cut, has no recorded origin
+and an unconfirmed version (v7 or v8) ⚠️.
+
+**Raw inputs**, read from files: what the products are made from, and what the painter reads directly.
 
 | Input | Licence | What |
 |---|---|---|
@@ -195,20 +240,23 @@ Raw inputs, read from files (mask v0 and the painter):
 | `naip` | public domain | NAIP 2025 (0.3 m) for Ada and Canyon; NAIP 2023 (0.6 m) in boxes h–j |
 | `3dep` | public domain | the 2023–24 QL1 lidar products in the boxes; the DEM for slope and aspect |
 | `sentinel-2` | Copernicus | the July 2025 NDVI median, on the 10 m grid |
+| `rcmap` | public domain | RCMAP fractional cover (30 m), which calibrates the classes' bare cut |
 
-Plugin exports. The layer names and the fields marked here are what the ground looks for; a plugin that changes one
-changes this table and `inputs.USES` in the same review.
+The painter names the raw inputs it reads directly, each with its **version**: a checksum, release or year, such as
+the OSM cut's MD5, `"2025"` for CDL, or NAIP's release. A fallback's raw inputs (CSB and CDL behind the crop cover)
+need one too. `tiles.digest()` refuses a plan that reads a raw input without one, so a new release always gives a new
+tile name. The ground's attribution credits exactly what it reads: those raw inputs, then every export layer's
+credits.
 
-| Export layer | Format | Needs | Without it | Made by |
-|---|---|---|---|---|
-| `soils/ground` | FlatGeobuf, polygons | integer `ground_type` | **the ground stays flat** | P1-data |
-| `soils/palette` | JSON `soils.palette/1` | | flat colours per ground type, labelled | P2 |
-| `farm/crop_cover` | GeoTIFF, 10 m grid | bands group, state, confidence | CSB 2025 plus CDL 2025 (C7) | P3-data |
-| `farm/fields` | FlatGeobuf, polygons | numeric `bearing` (degrees from north) | CSB 2025, no row bearing | P3-data |
-| `water/mask` | FlatGeobuf, polygons | | mask v0's NHD and OSM water | P4-data |
+```python
+from basemap.ground import inputs
+plan = inputs.resolve(inputs.exports(archive), versions={"cdl": "2025", "csb": "2025", "naip": "2025 county mosaics",
+                                                          "sentinel-2": "<the NDVI file's sha256>"})
+```
 
 `python3 basemap/ground/ground.py status --archive $TVT_ARCHIVE` shows what the ground would read today, each
-fallback and why, the credits, and whether it can be painted.
+fallback and why, the credits, and whether it can be painted. It opens only the exports above. A missing archive
+folder is an error (exit 2), never "nothing exported yet".
 
 ## The rasterising helper
 
@@ -217,7 +265,7 @@ fallback and why, the credits, and whether it can be painted.
 ```python
 from basemap.ground import grid, rasterize as R
 for core, padded in grid.windows(grid.LEVELS["painter"], 2048, halo_m=20):
-    roofs = R.rasterize(padded, "mask_v0.fgb", "roofs")                    # 1 inside, 0 outside
+    roofs = R.rasterize(padded, mask_roofs)                                # mask v0's roofs (a manifest.Layer)
     sample = ~R.grow(roofs, 1.0, padded.res)                                # leave roofs plus 1 m out of sampling
     types = R.rasterize(padded, soils_ground, attribute="ground_type", dtype="uint16")   # a manifest.Layer
     weight = R.feather(types == 7, 20.0, padded.res)[core.inner(padded)]   # 20 m soft edge, cut to the core
@@ -238,13 +286,14 @@ Pad each window by the largest buffer or feather you use (`halo_m`), and the win
 
 ## The flat fallback
 
-Without soils' `ground` layer there's nothing to paint on. The ground then stays **today's flat ground**: Valley
+Without soils' `ground` layer or mask v0 there's nothing to paint on. The ground then stays **today's flat ground**: Valley
 `#EEE7DA`, Clay `#F3EDE2` (`app/src/lib/map/flavors.ts` `GROUND`; `spec.json` keeps a copy that a test compares). It
 also **says so**:
 - `inputs.resolve()` returns a flat plan with the reason in plain words ("Flat ground: the painted ground needs the
-  soil survey's ground types, which isn't built yet.").
+  soil survey's ground types and mask v0, which aren't built yet.").
 - `ground.py flat --tiles <dir> --archive $TVT_ARCHIVE` writes that reason into `tiles/manifest.json`'s `ground`
-  entry (`{"status": "flat", "reason": …}`). With no entry at all, the ground hasn't been built.
+  entry (`{"status": "flat", "reason": …}`). With no entry at all, the ground hasn't been built. A missing archive
+  folder, or an export it would read that is broken or not public, is refused (exit 2), and the entry is left alone.
 - The app (G1a's wiring) keeps the flat ground and shows the reason, never another source in its place.
 
 Clay is flat in v1 whatever the ground's state ([DECISIONS](../../docs/DECISIONS.md), Oct 8).
@@ -255,8 +304,8 @@ What G1a's writer makes (`spec.json` "tiles", `tiles.py`):
 
 | | Valley file | Detail file |
 |---|---|---|
-| Zooms | z8–z15 | z16–z17 |
-| Where | the map box: 14,573 tiles (10,807 at z15) | the tiles touching the ten boxes: 797 (612 at z17) |
+| Zooms | z8–z15 | z17 |
+| Where | the map box: 14,573 tiles (10,807 at z15) | the tiles touching the ten boxes: 612 |
 | Pixel at the valley's middle latitude | 1.73 m at z15, matching the 2 m painter | 0.43 m at z17, finer than the 0.5 m classes |
 | Made from | the painter grid: each z15 tile from its own window (`tiles.tile_window`), never a full mosaic; z14 to z8 each from its four children (2 x 2 average), as `basemap/imagery.py` does | the 0.5 m classes, with the valley paint resampled outside each box; the class edge feathers inside the box |
 | File | `ground-<digest>.pmtiles` | `ground-detail-<digest>.pmtiles` |
@@ -264,20 +313,25 @@ What G1a's writer makes (`spec.json` "tiles", `tiles.py`):
 - **All tiles:** 512 px, lossy WebP (quality 80 to start; G1a may lower it per zoom to meet the budget), opaque, XYZ
   in Web Mercator. Pixels outside the grid are the flat Valley colour, so the ground's edge matches the flat ground
   beyond it.
-- **Why z16 is in the detail file:** the plan says "a z17 detail source". z16 is added (185 tiles), so the boxes don't
-  jump from overzoomed z15 straight to z17. Elsewhere, z16 and up overzoom z15.
+- **z16** overzooms z15 everywhere, the boxes included, as the plan's §3.5 has it. If the boxes' step from
+  overzoomed z15 to the z17 classes looks abrupt, adding z16 to the detail file is 185 more tiles and one number in
+  `spec.json` (`tiles.detail.minzoom`).
 - **Size:** about 0.6 GB valley-wide, about 40 KB a tile, and tens of MB for the detail file.
-- **Versions:** `<digest>` is `tiles.digest(plan, painter_version)`: the spec, the painter's version and every input's
-  sha256. The same inputs give the same name. Files are never overwritten, and the last two are kept.
+- **Versions:** `<digest>` is `tiles.digest(plan, painter_version)`. It covers the spec, the painter's version, the
+  version of every raw input the plan reads, and the sha256 of every export layer, mask v0 and the classes
+  included. A new OSM cut, NAIP release, CDL year, mask v0 or class build gives a new name, and the same inputs give
+  the same name. Files are never overwritten (`/tiles/` is cached for an hour, and PMTiles clients keep the header),
+  and the last two are kept.
 - **Switching in:** `tiles.painted_entry(...)` is written last with `tiles.update_manifest()`, atomically:
 
 ```json
 "ground": {"status": "painted", "file": "ground-0123456789ab.pmtiles", "tileSize": 512, "format": "webp",
            "minzoom": 8, "maxzoom": 15,
-           "detail": {"file": "ground-detail-0123456789ab.pmtiles", "minzoom": 16, "maxzoom": 17,
+           "detail": {"file": "ground-detail-0123456789ab.pmtiles", "minzoom": 17, "maxzoom": 17,
                       "boxes": ["a", "b", "c", "d", "e", "f", "downtown", "h", "i", "j"]},
            "attribution": "© OpenStreetMap contributors; …", "licence": "ODbL-1.0", "republish": "yes",
-           "inputs": ["soils/ground@20261012T031500Z"], "fallbacks": ["soils/palette: …"],
+           "inputs": ["soils/ground@20261012T031500Z", "ground_mask/roofs@20261011T040000Z", "raw/cdl@2025"],
+           "fallbacks": ["soils/palette: …"],
            "built": "2026-10-20", "spec": 1}
 ```
 
@@ -303,4 +357,6 @@ docker run --rm --memory 1g --cpus 1 --network none -v "$PWD":/repo -w /repo tvt
 ```
 
 The fixtures are synthetic. `tests/fixtures/squares.fgb` and `lines-no-index.fgb` were written by PostGIS's
-`ST_AsFlatGeobuf`, the exports' real writer. The worker tests make their own vectors with GDAL.
+`ST_AsFlatGeobuf`, the exports' real writer. `tests/tiffs.py` writes small GeoTIFFs with the standard library, and
+the worker tests check that `tif.py` reads GDAL's own (plain, COG, BigTIFF, big-endian, PixelIsPoint) the same way.
+The worker tests make their own vectors with GDAL. The source checks read the repository's real plugin.json files.

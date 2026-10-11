@@ -7,8 +7,8 @@ import shutil
 import tempfile
 import unittest
 
-from basemap.ground import grid as G, inputs as I, manifest as M, tiles as T
-from basemap.ground.tests.test_inputs import fgb_layer, write_export
+from basemap.ground import grid as G, inputs as I, tiles as T
+from basemap.ground.tests.test_inputs import fgb_layer, write_classes, write_export, write_mask
 from basemap.ground.tests.test_manifest import SSURGO
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -18,8 +18,7 @@ class SpecTest(unittest.TestCase):
     def test_the_spec(self):
         self.assertEqual((T.TILE_SIZE, T.FORMAT), (512, "webp"))
         self.assertEqual(T.VALLEY_ZOOMS, (8, 15))
-        self.assertEqual(T.DETAIL_ZOOMS, (16, 17))
-        self.assertEqual(T.DETAIL_ZOOMS[0], T.VALLEY_ZOOMS[1] + 1)      # no gap between the two files
+        self.assertEqual(T.DETAIL_ZOOMS, (17, 17))                      # plan §3.5: z16 overzooms z15
         self.assertTrue(T.TILES["opaque"])
         self.assertEqual(T.BUDGET["valleyDefault"], {"maxBytes": 600000, "maxRequests": 14})
         self.assertEqual(T.BUDGET["clayDefault"], {"maxBytes": 0, "maxRequests": 0})
@@ -60,7 +59,8 @@ class TileMathTest(unittest.TestCase):
     def test_counts(self):
         c = T.counts()
         self.assertEqual(sorted(c["valley"]), list(range(8, 16)))
-        self.assertEqual(sorted(c["detail"]), [16, 17])
+        self.assertEqual(sorted(c["detail"]), [17])
+        self.assertEqual(c["detail"][17], 612)
         self.assertTrue(10000 < c["valley"][15] < 12000, c["valley"][15])
         self.assertLess(sum(c["valley"].values()), 16000)            # about 0.6 GB at about 40 KB a tile
         self.assertLessEqual(c["valley"][10], 20)                     # the whole map box at z10
@@ -70,7 +70,7 @@ class TileMathTest(unittest.TestCase):
             self.assertTrue({(x, y) for x in xs for y in ys} <= detail, b.id)
 
     def test_detail_tiles_are_inside_the_valley_file(self):
-        for z in range(*T.DETAIL_ZOOMS):
+        for z in range(T.DETAIL_ZOOMS[0], T.DETAIL_ZOOMS[1] + 1):
             parents = {(x >> (z - 15), y >> (z - 15)) for x, y in T.detail_tiles(z)}
             self.assertTrue(parents <= set(T.valley_tiles(15)))
 
@@ -100,34 +100,57 @@ class EntryTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             T.flat_entry("  ")
 
+    def plan(self, versions=None):
+        return I.resolve(I.exports(self.dir), {"cdl": "2025", "csb": "2025"} if versions is None else versions)
+
     def test_painted_entry(self):
         write_export(self.dir, "soils", [fgb_layer("ground", ["ssurgo"])], [SSURGO])
-        plan = I.resolve(M.find(self.dir))
+        mask = write_mask(self.dir)
+        plan = self.plan()
         d = T.digest(plan, painter="g1a-test")
         e = T.painted_entry(plan, d, built="2026-10-20")
         T.check_entry(e)
         self.assertEqual(e["file"], f"ground-{d[:12]}.pmtiles")
         self.assertEqual(e["detail"]["file"], f"ground-detail-{d[:12]}.pmtiles")
+        self.assertEqual((e["detail"]["minzoom"], e["detail"]["maxzoom"]), (17, 17))
         self.assertEqual(e["detail"]["boxes"], [b.id for b in G.boxes()])
         self.assertEqual((e["licence"], e["republish"]), ("ODbL-1.0", "yes"))
         self.assertIn("© OpenStreetMap contributors", e["attribution"])
         self.assertIn(SSURGO["credit"], e["attribution"])
-        self.assertEqual(e["inputs"], ["soils/ground@20261012T031500Z"])
-        self.assertEqual(len(e["fallbacks"]), 4)
+        self.assertEqual(e["inputs"], ["soils/ground@20261012T031500Z", f"ground_mask/roofs@{mask.build}",
+                                       "raw/cdl@2025", "raw/csb@2025"])
+        self.assertEqual(len(e["fallbacks"]), 5)
         bad = dict(e, republish="internal")
         with self.assertRaises(ValueError):
             T.check_entry(bad)
         with self.assertRaises(ValueError):
             T.painted_entry(I.resolve({}), d)                          # nothing to paint
+        with self.assertRaises(ValueError):
+            T.painted_entry(self.plan({}), d)                          # raw inputs read without versions
 
     def test_digest_follows_the_inputs(self):
         write_export(self.dir, "soils", [fgb_layer("ground", ["ssurgo"])], [SSURGO])
-        plan = I.resolve(M.find(self.dir))
+        write_mask(self.dir)
+        plan = self.plan()
         a = T.digest(plan, "v1")
-        self.assertEqual(a, T.digest(plan, "v1"))
+        self.assertEqual(a, T.digest(self.plan(), "v1"))
         self.assertNotEqual(a, T.digest(plan, "v2"))
-        plan.choices[0].layer.spec["sha256"] = "f" * 64
-        self.assertNotEqual(a, T.digest(plan, "v1"))
+        # a raw input's new release (CDL 2026 behind the crop fallback), or one more raw input the painter reads
+        self.assertNotEqual(a, T.digest(self.plan({"cdl": "2026", "csb": "2025"}), "v1"))
+        self.assertNotEqual(a, T.digest(self.plan({"cdl": "2025", "csb": "2025", "naip": "2025"}), "v1"))
+        with self.assertRaises(ValueError) as ctx:
+            T.digest(self.plan({"cdl": "2025"}), "v1")                 # csb is read without a version
+        self.assertIn("csb", str(ctx.exception))
+        # a rebuilt mask v0, and the classes arriving
+        write_mask(self.dir, build="20261012T050000Z")
+        b = T.digest(self.plan(), "v1")
+        self.assertNotEqual(a, b)
+        write_classes(self.dir, boxes=("a",))
+        self.assertNotEqual(b, T.digest(self.plan(), "v1"))
+        plan = self.plan()
+        c = T.digest(plan, "v1")
+        plan.choice("soils/ground").layer.spec["sha256"] = "f" * 64
+        self.assertNotEqual(c, T.digest(plan, "v1"))
 
     def test_update_manifest_keeps_the_rest(self):
         tiles_dir = os.path.join(self.dir, "tiles")

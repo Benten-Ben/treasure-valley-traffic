@@ -18,7 +18,7 @@ try:
 except ImportError:                                  # outside the worker image
     np = None
 
-from basemap.ground import fgb, grid as G, manifest as M
+from basemap.ground import fgb, grid as G, manifest as M, tif
 from basemap.ground.tests.test_manifest import SSURGO
 
 X0, Y0 = 500000.0, 4800000.0                         # a corner well inside the grid, on every level
@@ -177,6 +177,39 @@ class RasterizeTest(unittest.TestCase):
         ct = osr.CoordinateTransformation(srs_from_wkt(R.warp_srs("EPSG:5070")), srs(32611))
         self.assertTrue(all(math.isfinite(v) for v in ct.TransformPoint(-1500000.0, 2500000.0)[:2]))
 
+    def test_compound_crs_keeps_its_projection(self):
+        # The QL1 lidar is NAD83(2011) / UTM 11N + NAVD88: the vertical part goes, the projection stays, null shift.
+        for code in ("EPSG:6340+5703", "EPSG:26911+5703"):
+            s = R.srs_of(code)
+            self.assertTrue(s.IsProjected(), code)
+            self.assertFalse(s.IsCompound(), code)
+            for wkt_or_code in (code, R.warp_srs(code)):
+                ct = osr.CoordinateTransformation(R.srs_of(wkt_or_code), srs(32611))
+                px, py = ct.TransformPoint(550000.0, 4820000.0)[:2]
+                self.assertAlmostEqual(px, 550000.0, places=6, msg=code)
+                self.assertAlmostEqual(py, 4820000.0, places=6, msg=code)
+        s = R.srs_of("EPSG:4269+5703")                          # NAD83 lon/lat + NAVD88: WGS 84 lon/lat
+        self.assertTrue(s.IsGeographic())
+        self.assertTrue(s.IsSame(R.srs_of("EPSG:4326")))
+        # a raster that opens as compound (vertical GeoKeys) burns and warps like a plain 6340 one
+        path = self.path("dsm.tif")
+        ds = gdal.GetDriverByName("GTiff").Create(path, 40, 40, 1, gdal.GDT_Float32)
+        ds.SetGeoTransform((X0, 2.0, 0.0, Y0 + 80, 0.0, -2.0))
+        c = osr.SpatialReference()
+        c.SetFromUserInput("EPSG:6340+5703")
+        ds.SetSpatialRef(c)
+        ds.GetRasterBand(1).Fill(830.0)
+        ds = None
+        t = R.target_of(path)
+        p = write_layer(self.path("sq32611.fgb"), 32611, [(square(X0 + 20, Y0 + 20, 40), {"id": 1, "ground_type": 1})])
+        self.assertEqual(int(R.rasterize(t, p).sum()), 400)
+        out = gdal.Warp("", path, format="MEM", srcSRS=R.warp_srs(gdal.Open(path).GetProjection()),
+                        dstSRS="EPSG:32611", outputBounds=(X0, Y0, X0 + 80, Y0 + 80), xRes=2.0, yRes=2.0)
+        self.assertEqual((out.RasterXSize, out.RasterYSize), (40, 40))
+        self.assertEqual(float(out.GetRasterBand(1).ReadAsArray().min()), 830.0)
+        with self.assertRaises(ValueError):
+            R.srs_of("EPSG:5703")                               # a vertical CRS alone
+
     def test_raster_targets(self):
         # target_of: a raster's own grid, e.g. a NAIP window at 0.6 m in EPSG:26911, burned from grid-CRS vectors.
         path = self.path("naip.tif")
@@ -253,6 +286,76 @@ class HeaderAgreesWithGdalTest(unittest.TestCase):
         self.assertEqual(ogr.GeometryTypeToName(lyr.GetGeomType()).replace(" ", "").lower(), h.geometry_type.lower())
         self.assertEqual(lyr.GetSpatialRef().GetAuthorityCode(None), "32611")
         self.assertEqual(tuple(lyr.GetExtent()), (h.envelope[0], h.envelope[2], h.envelope[1], h.envelope[3]))
+
+
+@unittest.skipIf(np is None, "needs the worker image (GDAL)")
+class TiffHeaderAgreesWithGdalTest(unittest.TestCase):
+    """tif.py reads GDAL's GeoTIFFs (plain, COG, BigTIFF, big-endian, PixelIsPoint) as GDAL does, so manifest.read()
+    checks a crop_cover or class raster's grid without GDAL."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.dir)
+
+    def source(self, types=(gdal.GDT_Byte,) * 3 if np is not None else (), point=False):
+        path = os.path.join(self.dir, "src.tif")
+        ds = gdal.GetDriverByName("GTiff").Create(path, 300, 200, len(types), types[0])
+        if point:
+            ds.SetMetadataItem("AREA_OR_POINT", "Point")
+        ds.SetGeoTransform((G.ORIGIN_X + 1200.0, 10.0, 0.0, G.ORIGIN_Y - 800.0, 0.0, -10.0))
+        ds.SetProjection(srs(32611).ExportToWkt())
+        for i in range(len(types)):
+            ds.GetRasterBand(i + 1).Fill(i + 1)
+        ds = None
+        return path
+
+    def check_same(self, path, label):
+        h = tif.read_header(path)
+        ds = gdal.Open(path)
+        self.assertEqual((h.width, h.height, h.bands), (ds.RasterXSize, ds.RasterYSize, ds.RasterCount), label)
+        for a, b in zip(h.transform, ds.GetGeoTransform()):
+            self.assertAlmostEqual(a, b, places=9, msg=label)
+        self.assertEqual(h.epsg, 32611, label)
+        names = {gdal.GDT_Byte: "uint8", gdal.GDT_UInt16: "uint16", gdal.GDT_Int16: "int16",
+                 gdal.GDT_Float32: "float32", gdal.GDT_Float64: "float64", gdal.GDT_Int32: "int32"}
+        self.assertEqual(h.sample_types, tuple(names[ds.GetRasterBand(i + 1).DataType]
+                                               for i in range(ds.RasterCount)), label)
+        return h
+
+    def test_gdal_layouts(self):
+        src = self.source()
+        self.check_same(src, "GTiff")
+        for label, opts in (("COG", dict(format="COG", creationOptions=["COMPRESS=DEFLATE", "BLOCKSIZE=128",
+                                                                        "OVERVIEWS=AUTO"])),
+                            ("BigTIFF", dict(format="GTiff", creationOptions=["BIGTIFF=YES", "TILED=YES",
+                                                                              "COMPRESS=LZW"])),
+                            ("big-endian", dict(format="GTiff", creationOptions=["ENDIANNESS=BIG"]))):
+            out = os.path.join(self.dir, f"{label}.tif")
+            gdal.Translate(out, src, **opts)
+            h = self.check_same(out, label)
+            if label == "BigTIFF":
+                self.assertTrue(h.bigtiff)
+            if label == "COG":                              # its first image is the full one, before the overviews
+                cog = gdal.Open(out)
+                self.assertGreater(cog.GetRasterBand(1).GetOverviewCount(), 0)
+        self.assertTrue(self.check_same(self.source(point=True), "PixelIsPoint").pixel_is_point)
+        mixed = self.source(types=(gdal.GDT_Float32, gdal.GDT_Float32))
+        self.assertEqual(self.check_same(mixed, "float32").sample_types, ("float32", "float32"))
+
+    def test_manifest_checks_a_gdal_crop_cover(self):
+        folder = M.export_dir(self.dir, "farm", "20261012T031500Z")
+        os.makedirs(folder)
+        gdal.Translate(os.path.join(folder, "crop_cover.tif"), self.source(), format="COG")
+        g = {"res": 10, "west": G.ORIGIN_X + 1200, "north": G.ORIGIN_Y - 800, "width": 300, "height": 200}
+        lay = {"name": "crop_cover", "file": "crop_cover.tif", "format": "GeoTIFF", "crs": "EPSG:32611", "grid": g,
+               "bands": [{"name": n, "type": "uint8"} for n in ("group", "state", "confidence")],
+               "inputs": ["ssurgo"], "base": False}
+        M.write(folder, "farm", [SSURGO], [lay])
+        M.read(folder)
+        with self.assertRaises(M.ManifestError):
+            M.write(folder, "farm", [SSURGO], [dict(lay, grid=dict(g, west=g["west"] + 10))])
 
 
 def srs_from_wkt(wkt):

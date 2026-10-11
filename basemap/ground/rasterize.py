@@ -78,12 +78,18 @@ def target_of(path, window=None):
 
 def srs_of(crs):
     """An osr.SpatialReference for 'EPSG:n', WKT or an osr object, in x/y (lon/lat) order, with the grid's datum
-    policy: a NAD83-based CRS gets WGS 84 as its datum, which is the null shift (grid.py)."""
+    policy: a NAD83-based CRS gets WGS 84 as its datum, which is the null shift (grid.py). A compound CRS (the QL1
+    lidar's NAD83(2011) / UTM 11N + NAVD88, EPSG:6340+5703) keeps only its horizontal part: the ground is 2D, and
+    heights are values, never coordinates."""
     if isinstance(crs, osr.SpatialReference):
         s = crs.Clone()
     else:
         s = osr.SpatialReference()
         s.SetFromUserInput(str(crs))
+    if s.IsCompound():
+        s.StripVertical()
+    if not (s.IsProjected() or s.IsGeographic()) or s.IsCompound():
+        raise ValueError(f"{crs}: not a horizontal CRS the ground can place on its grid")
     datum = (s.GetAttrValue("DATUM") or "").upper()
     if any(d in datum for d in _NAD83):
         s.SetWellKnownGeogCS("WGS84")

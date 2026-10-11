@@ -41,9 +41,9 @@
     "quality": 80,
     "opaque": true,
     "valley": {"minzoom": 8, "maxzoom": 15, "from": "painter"},
-    "detail": {"minzoom": 16, "maxzoom": 17, "from": "classes", "boxes": "all"},
+    "detail": {"minzoom": 17, "maxzoom": 17, "from": "classes", "boxes": "all"},
     "outside": "valley",
-    "about": "512 px lossy WebP, opaque (no alpha), XYZ tiles in Web Mercator. Valley-wide z8-z15 (1.73 m per pixel at z15, matching the 2 m painter), built from the painter grid; z16-z17 only in tiles touching the ten class boxes (0.43 m per pixel at z17), built from the 0.5 m classes with the valley paint outside each box. Pixels outside the grid are the flat Valley colour, so the edge of the ground matches the flat ground beyond it. quality is the starting value; G1a may lower it per zoom to meet the budget."
+    "about": "512 px lossy WebP, opaque (no alpha), XYZ tiles in Web Mercator. Valley-wide z8-z15 (1.73 m per pixel at z15, matching the 2 m painter), built from the painter grid; z16 overzooms z15. z17 only in tiles touching the ten class boxes (0.43 m per pixel), built from the 0.5 m classes with the valley paint outside each box (plan §3.5). Pixels outside the grid are the flat Valley colour, so the edge of the ground matches the flat ground beyond it. quality is the starting value; G1a may lower it per zoom to meet the budget."
   },
   "budget": {
     "valleyDefault": {"maxBytes": 600000, "maxRequests": 14},

@@ -7,8 +7,10 @@
     python3 basemap/ground/ground.py flat --tiles DIR (--archive DIR | --reason TEXT)
                                                                        # record a flat ground in tiles/manifest.json
 
-status and flat read each plugin's newest export under $TVT_ARCHIVE (or --archive). status exits 0 when the ground
-can be painted, 3 when it would stay flat, and 2 when an export it would read isn't public or isn't the right shape.
+status and flat read the newest export of each plugin and product the ground uses (inputs.USES) under $TVT_ARCHIVE
+(or --archive), and nothing else there. status exits 0 when the ground can be painted, 3 when it would stay flat, and
+2 when the archive folder is missing or an export it would read is broken, isn't public or isn't the right shape;
+flat refuses the same way (exit 2) and then leaves tiles/manifest.json alone.
 """
 
 import argparse
@@ -39,7 +41,9 @@ def cmd_spec(_args):
     print(f"  valley z{tiles.VALLEY_ZOOMS[0]}-z{tiles.VALLEY_ZOOMS[1]}: {sum(c['valley'].values()):,} tiles "
           f"({', '.join(f'z{z} {n:,}' for z, n in c['valley'].items())}); "
           f"{tiles.mpp(tiles.VALLEY_ZOOMS[1], lat):.2f} m per pixel at z{tiles.VALLEY_ZOOMS[1]}")
-    print(f"  detail z{tiles.DETAIL_ZOOMS[0]}-z{tiles.DETAIL_ZOOMS[1]}: {sum(c['detail'].values()):,} tiles "
+    dz = (f"z{tiles.DETAIL_ZOOMS[0]}" if tiles.DETAIL_ZOOMS[0] == tiles.DETAIL_ZOOMS[1] else
+          f"z{tiles.DETAIL_ZOOMS[0]}-z{tiles.DETAIL_ZOOMS[1]}")
+    print(f"  detail {dz} in the boxes: {sum(c['detail'].values()):,} tiles "
           f"({', '.join(f'z{z} {n:,}' for z, n in c['detail'].items())}); "
           f"{tiles.mpp(tiles.DETAIL_ZOOMS[1], lat):.2f} m per pixel at z{tiles.DETAIL_ZOOMS[1]}")
     b = tiles.BUDGET
@@ -68,25 +72,31 @@ def cmd_check_export(args):
 
 
 def _plan(args):
+    """The plan from the archive, or None after saying why it was refused."""
     archive = args.archive or os.environ.get("TVT_ARCHIVE")
     if not archive:
-        raise SystemExit("give --archive or set TVT_ARCHIVE")
-    return inputs.resolve(manifest.find(archive, verify=True, hashes=not args.no_hash))
+        print("refused: give --archive or set TVT_ARCHIVE", file=sys.stderr)
+        return None
+    try:
+        return inputs.resolve(inputs.exports(archive, verify=True, hashes=not args.no_hash))
+    except (manifest.ManifestError, inputs.InputError) as err:
+        print(f"refused: {err}", file=sys.stderr)
+        return None
 
 
 def cmd_status(args):
-    try:
-        plan = _plan(args)
-    except (manifest.ManifestError, inputs.InputError) as err:
-        print(f"refused: {err}", file=sys.stderr)
+    plan = _plan(args)
+    if plan is None:
         return 2
     for c in plan.choices:
-        if c.layer is not None:
-            print(f"  {c.use.ref:18} {c.layer.ref} ({c.layer['licence']}, republish {c.layer['republish']})")
+        if c.layers:
+            for lay in c.layers:
+                print(f"  {c.use.ref:18} {lay.ref} ({lay['licence']}, republish {lay['republish']})")
         else:
             print(f"  {c.use.ref:18} {'FLAT' if c.use.fallback is None else 'fallback: ' + c.use.fallback} "
                   f"({c.reason})")
-    print("Raw inputs: " + ", ".join(f"{r.name} ({r.licence})" for r in plan.raw))
+    print("Raw inputs the ground's products and painter may read: " +
+          ", ".join(f"{r.name} ({r.licence})" for r in inputs.RAW))
     if plan.status == "flat":
         print(plan.reason)
         return 3
@@ -100,6 +110,8 @@ def cmd_flat(args):
         reason = args.reason
     else:
         plan = _plan(args)
+        if plan is None:
+            return 2
         if plan.status != "flat":
             print("the ground can be painted; nothing to record as flat", file=sys.stderr)
             return 2

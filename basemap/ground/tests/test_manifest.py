@@ -19,12 +19,17 @@ import tempfile
 import unittest
 
 from basemap.ground import fgb, manifest as M
+from basemap.ground.tests.tiffs import grid_tiff
 
 FIXTURES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures")
 SSURGO = {"name": "ssurgo", "licence": "public-domain", "republish": "yes",
           "credit": "USDA NRCS Soil Survey Geographic Database (SSURGO)", "version": "FY2027"}
 OSM = {"name": "osm", "licence": "ODbL-1.0", "republish": "yes", "credit": "© OpenStreetMap contributors"}
-ACHD = {"name": "achd-roads", "licence": "none-stated", "republish": "internal", "credit": "ACHD"}
+ACHD = {"name": "achd-roads", "licence": "none-stated", "republish": "internal", "credit": "ACHD",
+        "source": "roads/achd_roads"}
+# What plugin.json says of a few sources (plugin_sources() reads the real ones).
+REGISTRY = {"roads/achd_roads": {"republish": "internal"}, "trails/r2r_trails": {"republish": "aggregates"},
+            "hazards/nifc_wfigs_perimeters": {"republish": "yes"}}
 BUILD = "20261012T031500Z"
 
 
@@ -146,8 +151,14 @@ class CheckTest(unittest.TestCase):
         self.bad(m, "licence 'MIT'")
         m = valid_manifest()
         m["inputs"][0] = dict(ACHD, name="csb")
-        m["inputs"][0]["republish"] = "yes"
-        self.bad(m, "looser than none-stated allows")
+        del m["inputs"][0]["source"]
+        self.bad(m, "names its plugin source")
+        m = valid_manifest()
+        m["inputs"][0] = dict(ACHD, name="csb", source="ACHD roads")
+        self.bad(m, "source must name a plugin source")
+        m = valid_manifest()
+        m["inputs"][0] = dict(ACHD, name="csb", licence="restricted", republish="internal")
+        self.bad(m, "looser than restricted allows")
         m = valid_manifest()
         m["inputs"][0]["republish"] = "sometimes"
         self.bad(m, "republish must be one of")
@@ -173,6 +184,33 @@ class CheckTest(unittest.TestCase):
         m = valid_manifest()
         m["layers"][0]["licence"] = "public-domain"
         self.bad(m, "share-alike")
+
+    def test_a_layer_carries_its_inputs_licence(self):
+        m = valid_manifest()
+        m["layers"][1]["licence"] = "CC0-1.0"                    # crop_cover is made from csb (public domain) only
+        self.bad(m, "isn't one of its inputs'")
+        # a restricted input can't hide behind a looser label, even with republish no
+        m = valid_manifest()
+        m["inputs"].append({"name": "private", "licence": "restricted", "republish": "no", "credit": "Private"})
+        m["layers"][1].update(inputs=["csb", "private"], republish="no",
+                              credit=["USDA NASS Crop Sequence Boundaries", "Private"])
+        self.bad(m, "looser than its input's restricted")
+        m["layers"][1]["licence"] = "restricted"
+        M.check(m)
+        # nor a none-stated one behind public-domain: its republish rests on the owner's decision, not a grant
+        m = valid_manifest()
+        m["inputs"].append(dict(ACHD))
+        m["layers"][1].update(inputs=["csb", "achd-roads"], republish="internal",
+                              credit=["USDA NASS Crop Sequence Boundaries", "ACHD"])
+        self.bad(m, "looser than its input's none-stated")
+        m["layers"][1]["licence"] = "none-stated"
+        M.check(m)
+        # with a share-alike input the layer is ODbL, and republish carries any restriction
+        m = valid_manifest()
+        m["inputs"].append({"name": "private", "licence": "restricted", "republish": "no", "credit": "Private"})
+        m["layers"][0].update(inputs=["csb", "osm", "private"], republish="no",
+                              credit=m["layers"][0]["credit"] + ["Private"])
+        M.check(m)
 
     def test_credit_carries_every_input(self):
         m = valid_manifest()
@@ -278,7 +316,51 @@ class CheckTest(unittest.TestCase):
         for name, lic in M.LICENCES.items():
             self.assertIn(lic.loosest, M.REPUBLISH, name)
         self.assertTrue(M.LICENCES["ODbL-1.0"].share_alike)
-        self.assertNotEqual(M.LICENCES["none-stated"].loosest, "yes")
+        self.assertTrue(M.LICENCES["none-stated"].per_source)
+        self.assertEqual(M.LICENCES["restricted"].loosest, "no")
+        # Overture: places is CDLA-Permissive-2.0; buildings, transportation and divisions are ODbL (from OSM)
+        self.assertIn("places", M.LICENCES["CDLA-Permissive-2.0"].about)
+        for theme in ("buildings", "transportation", "divisions"):
+            self.assertIn(theme, M.LICENCES["ODbL-1.0"].about)
+            self.assertNotIn(theme, M.LICENCES["CDLA-Permissive-2.0"].about)
+
+
+class SourcesTest(unittest.TestCase):
+    """Inputs that name a plugin source are no looser than its plugin.json (the owner's decision for it)."""
+
+    def manifest(self, entry):
+        m = valid_manifest()
+        m["inputs"][0] = dict(entry, name="csb")
+        for lay in m["layers"]:
+            lay["republish"] = M.strictest([lay["republish"], entry["republish"]])
+            if lay["licence"] != "ODbL-1.0":
+                lay["licence"] = entry["licence"]
+            lay["credit"] = [entry["credit"] if c == "USDA NASS Crop Sequence Boundaries" else c
+                             for c in lay["credit"]]
+        M.check(m)
+        return m
+
+    def test_against_a_registry(self):
+        M.check_sources(self.manifest(ACHD), REGISTRY)
+        with self.assertRaises(M.ManifestError) as ctx:
+            M.check_sources(self.manifest(dict(ACHD, republish="aggregates")), REGISTRY)
+        self.assertIn("looser than its source roads/achd_roads ('internal' in plugin.json)", str(ctx.exception))
+        wfigs = {"licence": "none-stated", "republish": "yes", "source": "hazards/nifc_wfigs_perimeters",
+                 "credit": "NIFC"}
+        M.check_sources(self.manifest(wfigs), REGISTRY)
+        with self.assertRaises(M.ManifestError) as ctx:
+            M.check_sources(self.manifest(dict(wfigs, source="hazards/nope")), REGISTRY)
+        self.assertIn("which no plugin.json lists", str(ctx.exception))
+        M.check_sources(valid_manifest(), {})                     # nothing named: nothing to look up
+
+    def test_the_real_plugin_manifests(self):
+        reg = M.plugin_sources()
+        for key, entry in REGISTRY.items():
+            self.assertEqual(reg[key]["republish"], entry["republish"], key)
+        self.assertEqual(reg["roads/compass_centerline"]["republish"], "yes")
+        M.check_sources(self.manifest(ACHD))
+        with self.assertRaises(M.ManifestError):
+            M.check_sources(self.manifest(dict(ACHD, republish="yes")))
 
 
 class WriteReadTest(unittest.TestCase):
@@ -323,6 +405,83 @@ class WriteReadTest(unittest.TestCase):
         with self.assertRaises(M.ManifestError):
             M.write(folder, "soils", [nhd, cop], [ground_layer(inputs=["nhd", "s2"])])
         M.write(folder, "soils", [nhd, cop], [ground_layer(inputs=["nhd", "s2"], licence="public-domain")])
+        m = M.write(folder, "soils", [nhd, ACHD], [ground_layer(inputs=["nhd", "achd-roads"])], registry=REGISTRY)
+        self.assertEqual((m.layer("ground")["licence"], m.layer("ground")["republish"]), ("none-stated", "internal"))
+
+    def test_write_checks_sources(self):
+        folder = export(self.archive, "roads")
+        with self.assertRaises(M.ManifestError):
+            M.write(folder, "roads", [dict(ACHD, republish="aggregates")],
+                    [ground_layer(name="surface", inputs=["achd-roads"])], registry=REGISTRY)
+        self.assertFalse(os.path.exists(os.path.join(folder, M.FILE)))
+        M.write(folder, "roads", [ACHD], [ground_layer(name="surface", inputs=["achd-roads"])], registry=REGISTRY)
+        with self.assertRaises(M.ManifestError):                       # read() checks too
+            M.read(folder, registry={"roads/achd_roads": {"republish": "no"}})
+
+    def test_plugin_is_the_folders(self):
+        folder = export(self.archive, "soils")
+        with self.assertRaises(M.ManifestError) as ctx:
+            M.write(folder, "farm", [SSURGO], [ground_layer()])
+        self.assertIn("isn't the folder's", str(ctx.exception))
+        M.write(folder, "soils", [SSURGO], [ground_layer()])
+        mpath = os.path.join(folder, M.FILE)
+        with open(mpath, encoding="utf-8") as f:
+            data = json.load(f)
+        data["plugin"] = "farm"
+        with open(mpath, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+        for call in (lambda: M.read(folder), lambda: M.latest(self.archive, "soils"), lambda: M.find(self.archive)):
+            with self.assertRaises(M.ManifestError):
+                call()
+
+    def test_geotiff_and_json_files_are_verified(self):
+        folder = export(self.archive, "farm", files=())
+        g = {"res": 10, "west": 495920, "north": 4855750, "width": 6, "height": 4}
+        bands = [{"name": "group", "type": "uint8"}, {"name": "state", "type": "uint8"}]
+        lay = {"name": "crop_cover", "file": "crop_cover.tif", "format": "GeoTIFF", "crs": "EPSG:32611",
+               "grid": g, "bands": bands, "inputs": ["ssurgo"], "base": False}
+        pal = {"name": "palette", "file": "palette.json", "format": "JSON", "schema": "farm.palette/1",
+               "inputs": ["ssurgo"], "base": False}
+        tif_path, json_path = os.path.join(folder, "crop_cover.tif"), os.path.join(folder, "palette.json")
+        with open(json_path, "w", encoding="utf-8") as f:
+            json.dump({"schema": "farm.palette/1", "types": {}}, f)
+        for wrong, words in ((dict(g, width=7), "7 x 4"), (dict(g, north=4855755), "corner"),
+                             (dict(g, res=5), "cells are 5 x 5 m")):
+            grid_tiff(tif_path, wrong, bands)
+            with self.assertRaises(M.ManifestError, msg=words) as ctx:
+                M.write(folder, "farm", [SSURGO], [lay, pal])
+            self.assertIn(words, str(ctx.exception))
+        grid_tiff(tif_path, g, bands[:1])
+        with self.assertRaises(M.ManifestError) as ctx:
+            M.write(folder, "farm", [SSURGO], [lay, pal])
+        self.assertIn("bands", str(ctx.exception))
+        grid_tiff(tif_path, g, [{"type": "uint8"}, {"type": "float32"}])
+        with self.assertRaises(M.ManifestError):
+            M.write(folder, "farm", [SSURGO], [lay, pal])
+        from basemap.ground.tests.tiffs import write_geotiff
+        write_geotiff(tif_path, 6, 4, (495920, 10, 0, 4855750, 0, -10), epsg=26911, types=("uint8", "uint8"))
+        with self.assertRaises(M.ManifestError) as ctx:
+            M.write(folder, "farm", [SSURGO], [lay, pal])
+        self.assertIn("EPSG:26911", str(ctx.exception))
+        grid_tiff(tif_path, g, bands, point=True)                       # PixelIsPoint, the same corners
+        m = M.write(folder, "farm", [SSURGO], [lay, pal])
+        M.read(folder)
+        with open(json_path, "w", encoding="utf-8") as f:
+            f.write('{"schema": "farm.palette/2", "types": {}}')
+        m.data["layers"][1].update(bytes=os.path.getsize(json_path), sha256=M.sha256_of(json_path))
+        with open(os.path.join(folder, M.FILE), "w", encoding="utf-8") as f:
+            json.dump(m.data, f)
+        with self.assertRaises(M.ManifestError) as ctx:
+            M.read(folder)
+        self.assertIn("schema", str(ctx.exception))
+        with open(json_path, "w", encoding="utf-8") as f:
+            f.write("{not json")
+        m.data["layers"][1].update(bytes=os.path.getsize(json_path), sha256=M.sha256_of(json_path))
+        with open(os.path.join(folder, M.FILE), "w", encoding="utf-8") as f:
+            json.dump(m.data, f)
+        with self.assertRaises(M.ManifestError) as ctx:
+            M.read(folder)
+        self.assertIn("not JSON", str(ctx.exception))
 
     def test_write_refuses_what_the_file_contradicts(self):
         folder = export(self.archive)
