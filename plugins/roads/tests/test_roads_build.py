@@ -1,7 +1,7 @@
 """The real-width roads build (plugins/roads/ingest/build.py) on a synthetic town, in PostGIS.
 
-Needs TVT_TEST_DATABASE_URL: a test database migrated through roads 0004 (its own: the test deletes the roads
-and OpenStreetMap tables' rows inside one transaction and rolls it back). Coordinates are made up: a few streets
+Needs TVT_TEST_DATABASE_URL: a test database migrated through roads 0004 (its own: the test deletes the roads,
+OpenStreetMap and intersections tables' rows inside one transaction and rolls it back). Coordinates are made up: a few streets
 laid out in metres east and north of a point in Ada County.
 
     TVT_TEST_DATABASE_URL=postgresql://postgres@127.0.0.1:5433/tvt_test_p7 \
@@ -85,9 +85,11 @@ def osm_street(conn, osm_id, highway, pts, tags=None, oneway="no", name=None):
 
 def town(conn):
     """Fill the input tables with the synthetic town (inside the caller's transaction)."""
+    # The rows that point at intersections and segments go first, so a seeded copy works too.
     for t in ("roads.review", "roads.arrow", "roads.marking", "roads.edge", "roads.surface", "roads.xsection",
               "roads.junction", "roads.piece", "roads.build", "roads.osm_walk_node", "roads.osm_paving",
-              "roads.osm_street", "core.osm_lane", "core.osm_way", "core.segment_match", "core.intersection",
+              "roads.osm_street", "core.osm_lane", "core.osm_way", "core.segment_match", "roads.bike_facility_match",
+              "core.approach", "core.signal_device", "core.rail_crossing", "core.intersection",
               "roads.developed_land", "roads.developed_build"):
         conn.execute(f"delete from {t}")
     conn.execute("delete from core.road_segment")
