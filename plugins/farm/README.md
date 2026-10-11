@@ -266,7 +266,7 @@ only after
 
 ```bash
 python3 -m ingest farm-derive              # letters, growth, plats; the dissolves and a new tile version if a field changed
-python3 -m ingest farm-derive --dry-run    # how many fields would change; rolls back
+python3 -m ingest farm-derive --dry-run    # how many fields would change (no dissolves); rolls back
 ```
 
 It reads no new farm data. With nothing changed it writes nothing and takes

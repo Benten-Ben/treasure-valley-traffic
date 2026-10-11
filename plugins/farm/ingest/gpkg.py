@@ -100,11 +100,16 @@ class GeoPackage:
         uri = pathlib.Path(os.path.abspath(path)).as_uri() + "?mode=ro&immutable=1"
         try:
             self.db = sqlite3.connect(uri, uri=True)
+        except sqlite3.DatabaseError as err:
+            raise GpkgError(f"{path}: can't open it as SQLite ({err})") from None
+        try:
             app = self.db.execute("pragma application_id").fetchone()[0]
             tables = {r[0] for r in self.db.execute("select name from sqlite_master where type in ('table', 'view')")}
         except sqlite3.DatabaseError as err:
+            self.db.close()
             raise GpkgError(f"{path}: not a SQLite database ({err})") from None
         if not {"gpkg_contents", "gpkg_geometry_columns", "gpkg_spatial_ref_sys"} <= tables:
+            self.db.close()
             raise GpkgError(f"{path}: not a GeoPackage (no gpkg_contents, gpkg_geometry_columns or "
                             "gpkg_spatial_ref_sys)")
         self.application_id = app

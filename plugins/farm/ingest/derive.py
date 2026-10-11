@@ -16,7 +16,7 @@ Growth and plats rest on development's tables, which its sources update (plats w
 farm loads they drift. `farm-derive` refreshes them by hand from what those tables hold now, with no new farm data:
 
     python3 -m ingest farm-derive              # about 3 minutes when something changed (the dissolves), seconds if not
-    python3 -m ingest farm-derive --dry-run    # what would change; rolls back
+    python3 -m ingest farm-derive --dry-run    # how many fields would change (no dissolves); rolls back
 
 It rebuilds the dissolves and gives the tiles a new version only when a field's letters, group, growth or plats
 changed. Builds and derives never run inside `ingest serve` (plan item 27); once ops.build_pending is in (M1),
@@ -250,9 +250,9 @@ def fingerprint(conn):
     return dict(conn.execute(FINGERPRINT).fetchall())
 
 
-def run(conn, build, note, classes=None, only_if_changed=False):
+def run(conn, build, note, classes=None, only_if_changed=False, check_only=False):
     """Steps 1-5 above. Doesn't commit. Returns stats. only_if_changed: steps 4 and 5 only when steps 1-3 changed a
-    field (farm-derive)."""
+    field (farm-derive); check_only: count the changed fields and stop there (farm-derive --dry-run)."""
     classes = classes or C.read()
     stats = {"fields (current)": conn.execute(
         "select count(*) from farm.field where valid_to is null").fetchone()[0]}
@@ -271,6 +271,9 @@ def run(conn, build, note, classes=None, only_if_changed=False):
         if not changed:
             stats["tiles"] = "unchanged: no new version"
             return stats
+        if check_only:
+            stats["tiles"] = "would get new dissolves and a new version"
+            return stats
     lo = dissolves(conn)
     stats["dissolved rows"] = "/".join(f"z{z} {n}" for z, n in sorted(lo.items()))
     version = tile_version(conn, build, stats["fields (current)"], note)
@@ -285,27 +288,28 @@ def current_build(conn):
     return row[0] if row else None
 
 
-def refresh(conn, now=None):
-    """farm-derive: steps 1-3 again from development's tables as they are now, and 4-5 if a field changed. Doesn't
-    commit. Returns stats."""
+def refresh(conn, now=None, dry_run=False):
+    """farm-derive: steps 1-3 again from development's tables as they are now, and 4-5 if a field changed (not on a
+    dry run). Doesn't commit. Returns stats."""
     now = now or datetime.now(timezone.utc)
     if not conn.execute("select exists (select 1 from farm.field where valid_to is null)").fetchone()[0]:
         raise DeriveError("no current crop fields (farm-csb-load first)")
     build = current_build(conn) or conn.execute(
         "select edition from farm.edition order by last_year desc, loaded_at desc limit 1").fetchone()[0]
-    return run(conn, build, f"{COMMAND}: permits and plats as of {now.date().isoformat()}", only_if_changed=True)
+    return run(conn, build, f"{COMMAND}: permits and plats as of {now.date().isoformat()}", only_if_changed=True,
+               check_only=dry_run)
 
 
 def main(argv=None):
     ap = argparse.ArgumentParser(prog=f"python3 -m ingest {COMMAND}",
                                  description="Work the crop fields' growth, plats and dissolves out again from "
                                              "development's permits and plats as they are now")
-    ap.add_argument("--dry-run", action="store_true", help="work it out, report what would change, and roll back")
+    ap.add_argument("--dry-run", action="store_true", help="count the fields that would change, and roll back")
     args = ap.parse_args(argv)
     try:
         from ingest import db
         with db.connect() as conn:
-            stats = refresh(conn)
+            stats = refresh(conn, dry_run=args.dry_run)
             if args.dry_run:
                 conn.rollback()
             else:

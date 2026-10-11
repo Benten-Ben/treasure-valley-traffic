@@ -435,6 +435,12 @@ class DeriveTest(DbTest):
                values (990003, 'Later Farms', 'Approved', '2026-09-01',
                        ST_Multi(ST_Transform(ST_MakeEnvelope(%s, %s, %s, %s, 5070), 4326)), true, now(), now())""",
             (S.X0 - 50, S.Y0 - 50, S.X0 + 450, S.Y0 + 150))
+        with self.conn.transaction():                     # the command rolls a dry run back
+            dry = derive.refresh(self.conn, now=NOW, dry_run=True)
+            raise psycopg.Rollback()
+        self.assertEqual(dry["fields changed"], 2)
+        self.assertNotIn("dissolved rows", dry)
+        self.assertEqual(self.version(), v0)
         stats = derive.refresh(self.conn, now=NOW)
         self.assertEqual(stats["fields changed"], 2)
         self.assertEqual(self.one("select growth from farm.field where field_id = %s", (S.F3,))[0], "being_built")
