@@ -168,9 +168,10 @@ class SheetTest(unittest.TestCase):
         cc = frame["overlays"][f"farm/crop_cover@{BUILD}"]
         self.assertEqual(set(cc["categories"]), {"1", "2"})
         self.assertEqual(frame["panels"], ["photo: " + frame["photo"], "with the overlays"])
-        img = Image.open(os.path.join(self.out, folder, "box-c.png"))
-        self.assertGreater(img.size[0], 2 * frame["size_px"][0])   # photo beside the overlays
-        self.assertIn("box-c", open(os.path.join(self.out, folder, "index.html")).read())
+        with Image.open(os.path.join(self.out, folder, "box-c.png")) as img:
+            self.assertGreater(img.size[0], 2 * frame["size_px"][0])   # photo beside the overlays
+        with open(os.path.join(self.out, folder, "index.html")) as f:
+            self.assertIn("box-c", f.read())
 
     def test_vector_fill_outline_and_hole(self):
         frame = P.select(["c"], res=2)[0]
@@ -224,6 +225,14 @@ class SheetTest(unittest.TestCase):
         self.assertEqual(a2[100, 2, 3], round(0.6 * 255))
         self.assertLess(a2[100, 2, :3].sum(), a2[100, 240, :3].sum())  # dark violet to yellow
         self.assertEqual(ov2.credit, ["USGS 3DEP"])
+        ov3 = S.file_overlay(f"{path},min=10,max=30,clip=1", "raster", "#ffffff")
+        img3, st3 = S.draw_raster(ov3, frame)
+        a3 = np.asarray(img3)
+        self.assertEqual(a3[100, 2, 3], 0)                             # under 10: clear
+        self.assertGreater(a3[100, 240, 3], 0)
+        rows = S.legend_rows([ov3], {ov3.ref: st3})
+        self.assertEqual([r[0] for r in rows], ["head", "ramp"])
+        self.assertEqual(rows[1][2], "10 to 30, clear outside")
 
     def test_photo_from_the_imagery_tiles(self):
         frame = P.select(["at:-116.33447,43.66286,600,1"])[0]
@@ -237,6 +246,26 @@ class SheetTest(unittest.TestCase):
         self.assertTrue(np.abs(img[300, 2].astype(int) - (200, 20, 160)).max() <= 3, img[300, 2])   # west: detail
         self.assertTrue(np.abs(img[300, -3].astype(int) - (10, 200, 30)).max() <= 3, img[300, -3])  # east: valley
         photos.close()
+
+    def test_the_newest_crop_that_covers_the_frame(self):
+        # A 2023 crop covering all of box c, and the 2025 one a metre short: the 2025 one is drawn.
+        w, s, e, n = BOX.utm
+        os.makedirs(os.path.join(self.naip, "naip2023"))
+        ds = gdal.GetDriverByName("GTiff").Create(os.path.join(self.naip, "naip2023", "c.tif"), 245, 244, 4,
+                                                  gdal.GDT_Byte)
+        ds.SetGeoTransform((w - 1, 6, 0, n + 1, 0, -6))
+        ref = osr.SpatialReference()
+        ref.ImportFromEPSG(26911)
+        ds.SetProjection(ref.ExportToWkt())
+        ds = None
+        photos = S.Photos(None, self.naip)
+        crop, share = photos.crop_for(P.select(["c"])[0])
+        self.assertEqual((crop["year"], crop["box"]), ("2025", "c"))
+        self.assertGreater(share, 0.99)
+        # a frame the 2025 crop covers only half of: the 2023 one covers more of it
+        frame = P.select([f"at:{(G.lonlat_of(BOX.utm)[0] + 0.0005):.5f},43.6285,600,1"])[0]
+        crop, share = photos.crop_for(frame)
+        self.assertEqual(crop["year"], "2023")
 
     def test_no_photo_says_so(self):
         frame = P.select(["at:-116.33447,43.66286,200,1"])[0]
@@ -287,6 +316,11 @@ class SheetTest(unittest.TestCase):
         self.assertEqual(index["overlays"], [])
         self.assertEqual(fr["panels"], ["photo: the map's imagery tiles, z14-16"])   # the photo alone
         self.assertTrue(os.path.isfile(os.path.join(self.out, folder, "cam-752.png")))
+        code, out, err = run(["draw", "--places", "cam-752", "--res", "0.5", "--size", "200", "--tiles", self.tiles,
+                              "--out", self.out, "--format", "jpg", "--label", "jpeg"])
+        self.assertEqual(code, 0, err)
+        folder = [d for d in os.listdir(self.out) if d.endswith("-jpeg")][0]
+        self.assertIn("cam-752.jpg", os.listdir(os.path.join(self.out, folder)))
 
     def test_refusals(self):
         args = ["draw", "--places", "c", "--res", "2", "--archive", self.archive, "--out", self.out]

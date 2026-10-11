@@ -28,7 +28,8 @@ Style options follow a layer, comma-separated (`--layer roads/surfaces,by=materi
   label=FIELD  write a field's value on each feature (at most 300 a frame)
   where=SQL    an OGR attribute filter (no commas)      name=TEXT the legend's name
   layer=NAME   the layer of a multi-layer vector file   band=N    a raster's band (default 1)
-  kind=cat|ramp, min=, max=, alpha=0..1 (rasters; default 0.6), credit=TEXT (files outside an export)
+  kind=cat|ramp, min=, max=, clip=1 (clear outside min-max), alpha=0..1 (rasters; default 0.6)
+  credit=TEXT  the credit of a file outside an export
 """
 
 import argparse
@@ -69,7 +70,7 @@ CATEGORY = ["#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#
             "#EE8866", "#EEDD88", "#FFAABB", "#99DDFF"]
 RAMP = np.array([(68, 1, 84), (59, 81, 139), (33, 144, 141), (92, 200, 99), (253, 231, 37)], float)   # viridis
 STYLE_KEYS = {"by", "color", "fill", "width", "size", "label", "where", "name", "layer", "band", "kind", "min",
-              "max", "alpha", "credit"}
+              "max", "clip", "alpha", "credit"}
 MAX_LABELS = 300
 MAX_FEATURES = 250_000
 THUMB = 360
@@ -234,16 +235,21 @@ class Photos:
         return self._readers[name]
 
     def crop_for(self, frame):
-        """(crop, share of the frame it covers) for the best NAIP crop over the frame, or (None, 0)."""
+        """(crop, share of the frame it covers) for the NAIP crop to draw the frame from, or (None, 0): the newest
+        that covers at least 99% of it (crops are cut to the box, give or take a metre), else the one covering most,
+        if that's at least half."""
         w, s, e, n = frame.bounds
-        best, share = None, 0.0
+        scored = []
         for c in self.crops:
             cw, cs, ce, cn = c["bounds"]
             ix = max(0.0, min(e, ce) - max(w, cw))
             iy = max(0.0, min(n, cn) - max(s, cs))
-            sh = ix * iy / ((e - w) * (n - s))
-            if sh > share + 1e-9 or (best is not None and abs(sh - share) < 1e-9 and c["year"] > best["year"]):
-                best, share = c, sh
+            share = ix * iy / ((e - w) * (n - s))
+            whole = share >= 0.99
+            scored.append((whole, c["year"] if whole else "", share, c))
+        if not scored:
+            return None, 0.0
+        _whole, _year, share, best = max(scored, key=lambda x: x[:3])
         return (best, share) if share >= 0.5 else (None, 0.0)
 
     def render(self, frame):
@@ -344,6 +350,13 @@ class Photos:
     def close(self):
         for r in self._readers.values():
             r.close()
+        self._readers = {}
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
 
 
 # --- overlays ------------------------------------------------------------------------------------------------------
@@ -672,6 +685,8 @@ def draw_raster(ov, frame):
                 p2, p98 = np.percentile(arr[valid], [2, 98])
                 lo = float(p2) if lo is None else lo
                 hi = float(p98) if hi is None else hi
+            if ov.style.get("clip"):
+                valid &= (arr >= lo) & (arr <= hi)
             t = np.clip((arr.astype(np.float64) - lo) / ((hi - lo) or 1), 0, 1) * (len(RAMP) - 1)
             i = np.minimum(t.astype(int), len(RAMP) - 2)
             f = (t - i)[..., None]
@@ -694,10 +709,13 @@ def legend_rows(overlays, stats):
             n = st.get("features", 0)
             head = f"{ov.name}: {n} feature{'s' if n != 1 else ''} here"
         else:
-            head = f"{ov.name}: {st.get('cells', 0):,} cells here" + \
-                (f", ramp {st['ramp'][0]:g} to {st['ramp'][1]:g}" if st.get("ramp") else "")
+            head = f"{ov.name}: {st.get('cells', 0):,} cells here"
         cats = st.get("categories") or {}
-        rows.append(("head", None if cats else ov.color, head))
+        rows.append(("head", None if cats or st.get("ramp") else ov.color, head))
+        if st.get("ramp"):
+            lo, hi = st["ramp"]
+            clip = ", clear outside" if ov.style.get("clip") else ""
+            rows.append(("ramp", None, f"{lo:g} to {hi:g}{clip}"))
         if cats:
             items = sorted(cats.items(), key=lambda kv: -kv[1])
             for value, count in items[:24]:
@@ -735,7 +753,8 @@ def compose(frame, photo, overlays, stats, layer_img, labels, info, run, panels)
     credits = credit_line(overlays, info)
     credit_lines = wrap(scratch, credits, f_small, width - 2 * m)
     leg_cols = max(1, (width - 2 * m) // 420)
-    leg_h = math.ceil(len(rows) / leg_cols) * 22 if rows else 0
+    per_col = max(math.ceil(len(rows) / leg_cols), min(len(rows), 8)) if rows else 0
+    leg_h = per_col * 22
     top = m + 36 + 22 * len(sub_lines) + 8
     height = top + 26 + h + 12 + leg_h + 10 + 19 * len(credit_lines) + m
     sheet = Image.new("RGB", (width, height), BG)
@@ -754,7 +773,6 @@ def compose(frame, photo, overlays, stats, layer_img, labels, info, run, panels)
         sheet.paste(img.convert("RGB"), (x, top + 22))
     y = top + 26 + h + 12
     col_w = (width - 2 * m) // leg_cols
-    per_col = math.ceil(len(rows) / leg_cols) if rows else 0
     for i, (kind, colour, text) in enumerate(rows):
         cx = m + (i // per_col) * col_w
         cy = y + (i % per_col) * 22
@@ -762,8 +780,18 @@ def compose(frame, photo, overlays, stats, layer_img, labels, info, run, panels)
         if colour is not None:
             d.rectangle([cx + indent, cy + 2, cx + indent + 16, cy + 16], fill=colour, outline=INK)
             indent += 22
-        text = text if d.textlength(text, font=f_small) < col_w - indent - 8 else text[:60] + "..."
-        d.text((cx + indent, cy + 1), text, font=f_small if kind != "head" else f_text, fill=INK)
+        elif kind == "ramp":
+            for k in range(60):
+                t = k / 59 * (len(RAMP) - 1)
+                j = min(int(t), len(RAMP) - 2)
+                c = RAMP[j] * (1 - (t - j)) + RAMP[j + 1] * (t - j)
+                d.line([cx + indent + k, cy + 2, cx + indent + k, cy + 16], fill=tuple(int(v) for v in c))
+            d.rectangle([cx + indent, cy + 2, cx + indent + 59, cy + 16], outline=INK)
+            indent += 66
+        fnt = f_small if kind != "head" else f_text
+        while len(text) > 8 and d.textlength(text, font=fnt) > col_w - indent - 8:
+            text = text[:-4].rstrip() + "..."
+        d.text((cx + indent, cy + 1), text, font=fnt, fill=INK)
     y += leg_h + 10
     for line in credit_lines:
         d.text((m, y), line, font=f_small, fill=MUTED)
@@ -910,7 +938,11 @@ def draw(args):
     panels = set(args.panels.split(","))
     if not panels <= {"photo", "overlay"}:
         raise SheetError("--panels takes photo, overlay or photo,overlay")
-    photos = Photos(args.tiles, args.naip)
+    with Photos(args.tiles, args.naip) as photos:
+        return _draw(args, frames, overlays, panels, photos)
+
+
+def _draw(args, frames, overlays, panels, photos):
     if args.list:
         for f in frames:
             crop, share = photos.crop_for(f)
@@ -945,8 +977,11 @@ def draw(args):
     for i, frame in enumerate(frames, 1):
         try:
             sheet, panel, record = draw_frame(frame, photos, overlays, run, panels)
-            name = f"{frame.id}.png"
-            sheet.save(os.path.join(folder, name), optimize=False, compress_level=6)
+            name = f"{frame.id}.{args.format}"
+            if args.format == "png":
+                sheet.save(os.path.join(folder, name), compress_level=6)
+            else:
+                sheet.save(os.path.join(folder, name), quality=92, subsampling=0)
             record["file"] = name
             record["bytes"] = os.path.getsize(os.path.join(folder, name))
             thumb = panel.convert("RGB")
@@ -970,7 +1005,6 @@ def draw(args):
     with open(os.path.join(folder, "index.json"), "w", encoding="utf-8") as f:
         json.dump(index, f, indent=1, ensure_ascii=False)
         f.write("\n")
-    photos.close()
     print(f"sheets: {len(frames) - len(index['failed'])} of {len(frames)} frames in {folder} "
           f"({index['bytes'] / 1e6:.1f} MB, {index['seconds']} s)")
     return 1 if index["failed"] else 0
@@ -998,6 +1032,8 @@ def parser():
     d.add_argument("--res", type=float, help="metres a pixel for every frame (a level of the ground grid)")
     d.add_argument("--size", type=float, help="every frame's width in metres")
     d.add_argument("--panels", default="photo,overlay", help="photo,overlay (default), overlay or photo")
+    d.add_argument("--format", choices=("png", "jpg"), default="png",
+                   help="the frames' format (default png; jpg, at quality 92, is about a fifth of the size)")
     d.add_argument("--max-frames", type=int, default=200, help="refuse a run of more frames (default 200)")
     d.add_argument("--no-verify", action="store_true", help="skip the exports' file checks (sizes, sha256)")
     d.add_argument("--list", action="store_true", help="list the frames, their photo and the overlays; draw nothing")

@@ -1,0 +1,319 @@
+#!/usr/bin/env python3
+"""sheets: draw review sheets on the VM (basemap/sheets) into the private files.
+
+  sheets -C DIR --pkg PKG [--db NAME | --archive DIR] [--in SRC[:NAME]]... [--timeout MIN] [--wait MIN]
+         [--dry-run] [--] <draw args>
+
+  sheets -C /srv/tvt/work/sheets-src/p7 --pkg p7 -- --places cameras --layer roads/surfaces,by=material --label r1
+  sheets -C /srv/tvt/work/sheets-src/f8 --pkg f8 --in /srv/tvt/work/f8:f8 -- --places c --raster /in/f8/chm.tif
+
+  -C DIR          the checkout (default: the current folder), mounted read-only at /repo
+  --pkg PKG       the package the sheets are for: they go to /srv/tvt/private/sheets/<PKG>/<run>/ (a-z 0-9 . _ -)
+  --db NAME       read exports from that scratch database's archive (default tvt):
+                  /srv/tvt/work/scratch/archive/<NAME>/, read-only at /srv/archive ($TVT_ARCHIVE)
+  --archive DIR   another archive of exports instead, read-only (a folder under the work folder, or production's)
+  --in SRC[:NAME] a folder of other inputs (for --vector and --raster), read-only at /in/<NAME> (default: its name)
+  --timeout MIN   stop the run after MIN minutes (default 60; exit 124)
+  --wait MIN      wait at most MIN minutes for a free slot (default 30; exit 75)
+  --dry-run       print the docker command and stop
+
+The draw arguments are `python -m basemap.sheets.sheet draw`'s (basemap/sheets/README.md); --out is given.
+It runs
+
+  docker run --rm --init --memory 1g --memory-swap 1g --cpus 1 --network none --read-only --tmpfs /tmp (256 MB)
+    --user <you> -v DIR:/repo:ro -v <archive>:/srv/archive:ro -v /srv/tvt/tiles:/srv/tiles:ro
+    -v /srv/tvt/work/landcover/naip2025:/srv/naip/naip2025:ro (and naip2023) -v <SRC>:/in/<NAME>:ro
+    -v /srv/tvt/private/sheets/<PKG>:/out tvt-worker python -m basemap.sheets.sheet draw --out /out <args>
+
+A run is light (1 GB, 1 CPU, no network), but it isn't a unit test, so it keeps the quiet-hours rule: from 23:15 to
+06:00 Boise it starts only once tonight's camera roll-up has finished (heavy's reading of the capture services'
+status files). It needs 12 GB free on / plus 1 GB, doesn't start within its timeout of a planned VM restart
+(MAINTENANCE), and at most two runs go at once (a third waits for a slot). The private files, secrets and the
+City of Boise's tree data are never mounted.
+
+Exit: the run's (0 every frame drawn; 1 a frame failed, see index.json; 2 bad arguments); 2 usage or a refused
+mount; 73 not enough disk; 75 not now (quiet hours, a restart, or no slot); 124 timed out; 125 docker couldn't start.
+
+Source: deploy/bin/sheets in the repo; installed in /srv/tvt/work/bin beside heavy, whose rules it asks.
+"""
+import datetime as dt
+import fcntl
+import importlib.machinery
+import importlib.util
+import os
+import re
+import subprocess
+import sys
+import time
+
+IMAGE = "tvt-worker"
+MEMORY = "1g"
+CPUS = "1"
+TMP_MB = 256
+SLOTS = 2
+PEAK_GB = 1
+EX_USAGE, EX_DISK, EX_LATER, EX_TIMEOUT = 2, 73, 75, 124
+
+# The VM's folders (the tests point these at a scratch tree).
+WORK = "/srv/tvt/work"
+TILES = "/srv/tvt/tiles"
+NAIP = "/srv/tvt/work/landcover"
+PROD_ARCHIVE = "/srv/tvt/archive"
+PRIVATE = "/srv/tvt/private"
+SHEETS = "/srv/tvt/private/sheets"
+SCRATCH_ARCHIVE = "/srv/tvt/work/scratch/archive"
+SLOT_DIR = "/srv/tvt/work/sheets.slots"
+HEAVY = os.path.join(os.path.dirname(os.path.realpath(__file__)), "heavy")
+
+# Never mounted: folders with these names anywhere in the path, the work folder's tools, and production's trees
+# archive (its builds carry rows derived from the City of Boise's inventory, which this work never reads).
+NEVER_NAMES = {"private", "secrets", ".ssh", "plugins-private", "city_trees", "boise-trees"}
+WORK_NEVER = ("bin", "e2e", "worker-test", "worker-test.slots", "sheets.slots")
+
+
+class Refused(Exception):
+    def __init__(self, message, code=EX_USAGE):
+        super().__init__(message)
+        self.code = code
+
+
+def load_heavy(path=None):
+    """F7's heavy as a module (it runs nothing on import)."""
+    path = path or HEAVY
+    if not os.path.isfile(path):
+        raise Refused(f"no heavy at {path}: sheets asks heavy for the quiet-hours rule (install both)", EX_LATER)
+    loader = importlib.machinery.SourceFileLoader("heavy_for_sheets", path)
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+    return module
+
+
+# --- when ----------------------------------------------------------------------------------------------------------
+
+def may_start(h, t, statuses, maint, timeout_min):
+    """None if a run may start at t, else why not. Quiet hours (outside heavy's day window): only once tonight's
+    camera roll-up has finished. A planned restart: not within the run's timeout plus heavy's margin."""
+    clock = t.time()
+    if not (h.DAY[0] <= clock < h.DAY[1]):
+        if clock >= h.DAY[1] or clock < h.NIGHT[0]:
+            return (f"it's {h.hm(t)} in Boise: from 23:15 until tonight's camera roll-up (from 00:05) has finished, "
+                    "only unit tests and scratch queries run")
+        done, why = h.rollup_finished(t, statuses)
+        if not done:
+            return f"it's {h.hm(t)} in Boise and {why}: quiet hours, until the roll-up has finished"
+    if maint is not None:
+        text, restart = maint
+        if restart is None:
+            return f"a VM restart is planned and MAINTENANCE gives no time heavy can read: {text[:200]!r}"
+        if t + dt.timedelta(minutes=timeout_min) > restart - h.MAINTENANCE_MARGIN:
+            return (f"a VM restart is planned at {restart:%Y-%m-%d %H:%M} Boise, within this run's "
+                    f"{timeout_min:g} min (--timeout) and heavy's margin")
+    return None
+
+
+# --- what's mounted ------------------------------------------------------------------------------------------------
+
+def _inside(path, root):
+    return path == root or path.startswith(root.rstrip("/") + "/")
+
+
+def check_input(src, what="--in"):
+    """The real path of a folder that may be mounted read-only, or raise Refused."""
+    real = os.path.realpath(src)
+    if not os.path.isdir(real):
+        raise Refused(f"{what} {src}: no such folder (only folders are mounted)")
+    private = os.path.realpath(PRIVATE)
+    if _inside(real, private) or _inside(private, real):
+        raise Refused(f"{what} {src}: private files, secrets and the City's tree data are never mounted")
+    work, prod = os.path.realpath(WORK), os.path.realpath(PROD_ARCHIVE)
+    root = work if _inside(real, work) and real != work else prod if _inside(real, prod) else None
+    if root is None:
+        raise Refused(f"{what} {src}: only folders under {WORK}/ or production's archive ({PROD_ARCHIVE}) are "
+                      "mounted")
+    if set(real[len(root):].split("/")) & NEVER_NAMES:
+        raise Refused(f"{what} {src}: private files, secrets and the City's tree data are never mounted")
+    if root == prod:
+        if _inside(real, os.path.join(prod, "trees")):
+            raise Refused(f"{what} {src}: production's trees archive holds rows derived from the City's inventory")
+        return real
+    top = real[len(work) + 1:].split("/", 1)[0]
+    scratch = os.path.realpath(SCRATCH_ARCHIVE)
+    if top == "scratch" and not (_inside(real, scratch) and real != scratch):
+        raise Refused(f"{what} {src}: of the scratch folder, only a database's archive is mounted")
+    if top in WORK_NEVER or top.startswith("worker-test"):
+        raise Refused(f"{what} {src}: {os.path.join(work, top)} holds the tools and state that enforce the rules; "
+                      "it isn't mounted")
+    return real
+
+
+def command(repo, pkg, archive, inputs, args, image=IMAGE, uid=None, gid=None, name=None):
+    """The docker run for a sheets run."""
+    uid = os.getuid() if uid is None else uid
+    gid = os.getgid() if gid is None else gid
+    name = name or f"sheets-{os.getpid()}"
+    cmd = ["docker", "run", "--rm", "--init", "--name", name, "--label", "tvt.sheets=1",
+           "--memory", MEMORY, "--memory-swap", MEMORY, "--cpus", CPUS, "--cpu-shares", "256",
+           "--pids-limit", "256", "--network", "none", "--read-only",
+           "--tmpfs", f"/tmp:rw,nosuid,nodev,size={TMP_MB}m", "--user", f"{uid}:{gid}",
+           "-e", "HOME=/tmp", "-e", "PYTHONDONTWRITEBYTECODE=1", "-e", "PYTHONPATH=/repo", "-e", "TZ=America/Boise",
+           "-e", "TVT_ARCHIVE=/srv/archive", "-e", "TVT_TILES=/srv/tiles", "-e", "TVT_NAIP_CROPS=/srv/naip",
+           "-v", f"{os.path.abspath(repo)}:/repo:ro", "-v", f"{archive}:/srv/archive:ro",
+           "-v", f"{TILES}:/srv/tiles:ro"]
+    for year in ("naip2025", "naip2023"):
+        if os.path.isdir(os.path.join(NAIP, year)):
+            cmd += ["-v", f"{os.path.join(NAIP, year)}:/srv/naip/{year}:ro"]
+    for src, label in inputs:
+        cmd += ["-v", f"{src}:/in/{label}:ro"]
+    cmd += ["-v", f"{os.path.join(SHEETS, pkg)}:/out", "-w", "/repo", image,
+            "python", "-m", "basemap.sheets.sheet", "draw", "--out", "/out", *args]
+    return cmd
+
+
+def take_slot(label, wait_s, folder=None, slots=SLOTS, poll_s=2.0):
+    """Hold one of the slot files (an exclusive flock for this process's life); the open fd, or None."""
+    folder = folder or SLOT_DIR
+    os.makedirs(folder, mode=0o775, exist_ok=True)
+    end, said = time.monotonic() + wait_s, False
+    while True:
+        for n in range(1, slots + 1):
+            fd = os.open(os.path.join(folder, str(n)), os.O_RDWR | os.O_CREAT, 0o664)
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                os.close(fd)
+                continue
+            os.ftruncate(fd, 0)
+            os.write(fd, f"{label}\n".encode())
+            return fd
+        if time.monotonic() >= end:
+            return None
+        if not said:
+            print(f"sheets: {slots} runs going; waiting for one to end", file=sys.stderr)
+            said = True
+        time.sleep(poll_s)
+
+
+def parse(argv):
+    o = {"repo": ".", "pkg": None, "db": "tvt", "archive": None, "inputs": [], "timeout": 60.0, "wait": 30.0,
+         "dry": False}
+    i = 0
+    takes = {"-C": "repo", "--pkg": "pkg", "--db": "db", "--archive": "archive", "--timeout": "timeout",
+             "--wait": "wait"}
+    while i < len(argv):
+        a = argv[i]
+        if a in ("-h", "--help"):
+            o["help"] = True
+            return o, []
+        if a == "--dry-run":
+            o["dry"], i = True, i + 1
+        elif a == "--in":
+            if i + 1 >= len(argv):
+                raise Refused("--in takes SRC[:NAME]")
+            o["inputs"].append(argv[i + 1])
+            i += 2
+        elif a in takes:
+            if i + 1 >= len(argv):
+                raise Refused(f"{a} takes a value")
+            o[takes[a]] = argv[i + 1]
+            i += 2
+        elif a == "--":
+            i += 1
+            break
+        else:
+            break
+    try:
+        o["timeout"], o["wait"] = float(o["timeout"]), float(o["wait"])
+    except ValueError:
+        raise Refused("--timeout and --wait take minutes") from None
+    return o, argv[i:]
+
+
+def resolve(o, args):
+    """(repo, pkg, archive, [(src, name)], args) checked, or raise Refused."""
+    if not o["pkg"] or not re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,47}", o["pkg"]):
+        raise Refused("--pkg names the package the sheets are for: 1-48 of a-z 0-9 . _ - (e.g. p7, s5a)")
+    if not os.path.isfile(os.path.join(o["repo"], "basemap", "sheets", "sheet.py")):
+        raise Refused(f"-C {o['repo']}: not a checkout with basemap/sheets")
+    if any(a == "--out" or a.startswith("--out=") for a in args):
+        raise Refused("--out is given by sheets (the private files); leave it out")
+    if o["archive"]:
+        archive = check_input(o["archive"], "--archive")
+    else:
+        if not re.fullmatch(r"[a-z0-9_]{1,63}", o["db"] or ""):
+            raise Refused("--db names a scratch database (tvt, tvt_<pkg>)")
+        path = os.path.join(SCRATCH_ARCHIVE, o["db"])
+        if not os.path.isdir(path):
+            raise Refused(f"--db {o['db']}: no archive at {path}")
+        archive = check_input(path, "--db")
+    inputs, names = [], set()
+    for spec in o["inputs"]:
+        src, _, label = spec.partition(":")
+        real = check_input(src)
+        label = label or os.path.basename(real.rstrip("/"))
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", label) or label in names:
+            raise Refused(f"--in {spec}: NAME must be a plain, unused name (it's mounted at /in/NAME)")
+        names.add(label)
+        inputs.append((real, label))
+    return os.path.realpath(o["repo"]), o["pkg"], archive, inputs, args
+
+
+def out_folder(pkg):
+    """/srv/tvt/private/sheets/<pkg>, made private (2750, the private files' group) if new."""
+    for path in (SHEETS, os.path.join(SHEETS, pkg)):
+        if not os.path.isdir(path):
+            os.mkdir(path, 0o2750)
+            os.chmod(path, 0o2750)
+    return os.path.join(SHEETS, pkg)
+
+
+def main(argv, heavy=None, now=None, free_gb=None):
+    try:
+        o, args = parse(argv)
+        if o.get("help"):
+            print(__doc__.strip())
+            return 0
+        repo, pkg, archive, inputs, args = resolve(o, args)
+        if not o["dry"]:
+            h = heavy or load_heavy()
+            t = now or h.now()
+            why = may_start(h, t, h.read_statuses(), h.maintenance(t), o["timeout"])
+            if why:
+                raise Refused(f"not now: {why}", EX_LATER)
+            have = (free_gb or h.free_gb)("/")
+            if have < h.FREE_MIN_GB + PEAK_GB:
+                raise Refused(f"{have:.1f} GB free on /; a run needs {h.FREE_MIN_GB} GB + {PEAK_GB} GB", EX_DISK)
+    except Refused as err:
+        print(f"sheets: {err}", file=sys.stderr)
+        return err.code
+    name = f"sheets-{os.getpid()}"
+    cmd = command(repo, pkg, archive, inputs, args, name=name)
+    if o["dry"]:
+        print(" ".join(cmd))
+        return 0
+    out_folder(pkg)
+    try:
+        slot = take_slot(f"{name}: {pkg} (since {time.strftime('%H:%M:%S %Z')})", o["wait"] * 60)
+    except KeyboardInterrupt:
+        return 130
+    if slot is None:
+        print(f"sheets: no slot came free in {o['wait']:g} min; try again later", file=sys.stderr)
+        return EX_LATER
+    print(f"sheets: {pkg}: drawing into {os.path.join(SHEETS, pkg)}/ (1 GB, 1 CPU, no network; at most "
+          f"{o['timeout']:g} min)", file=sys.stderr, flush=True)
+    proc = subprocess.Popen(cmd)
+    try:
+        return proc.wait(timeout=o["timeout"] * 60)
+    except subprocess.TimeoutExpired:
+        print(f"sheets: over {o['timeout']:g} min; stopping {name}", file=sys.stderr)
+        subprocess.run(["docker", "stop", "-t", "10", name], stdout=subprocess.DEVNULL)
+        proc.wait()
+        return EX_TIMEOUT
+    except KeyboardInterrupt:
+        subprocess.run(["docker", "stop", "-t", "5", name], stdout=subprocess.DEVNULL)
+        proc.wait()
+        return 130
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
