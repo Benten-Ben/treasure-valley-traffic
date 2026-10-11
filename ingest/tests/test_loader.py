@@ -76,7 +76,8 @@ class RegistryTest(unittest.TestCase):
             self.assertEqual(registry.PLUGIN_OF[name], plugin, name)
             module = (registry.SOURCES.get(name) or registry.STREAMS[name]).__name__
             self.assertTrue(module.startswith(f"plugins.{plugin}.ingest."), module)
-        self.assertEqual([e["name"] for _, e in registry.MANUAL if _.name == "roads"], ["osm_valley", "osm_street"])
+        self.assertEqual([e["name"] for _, e in registry.MANUAL if _.name == "roads"],
+                         ["osm_valley", "osm_street", "osm_paving"])
         self.assertEqual([e["name"] for _, e in registry.MANUAL if _.name == "soils"], ["ssurgo"])
         self.assertEqual([e["name"] for _, e in registry.MANUAL if _.name == "hazards"],
                          ["nifc_wfigs_perimeters_backfill"])

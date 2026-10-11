@@ -20,13 +20,15 @@
     {"name": "osm_valley", "module": "ingest.sources.osm_valley", "kind": "manual",
      "license": "ODbL", "credit": "© OpenStreetMap contributors", "republish": "yes"},
     {"name": "osm_street", "module": "ingest.sources.osm_street", "kind": "manual",
+     "license": "ODbL", "credit": "© OpenStreetMap contributors", "republish": "yes"},
+    {"name": "osm_paving", "module": "ingest.sources.osm_paving", "kind": "manual",
      "license": "ODbL", "credit": "© OpenStreetMap contributors", "republish": "yes"}
   ],
   "tables": [
     "core.road_segment", "core.segment_match", "core.hpms_section", "core.msm_arterial", "core.compass_segment",
     "core.osm_way", "core.osm_lane", "core.osm_node", "core.segment_lanes", "core.segment_lanes_hpms",
     "core.segment_lanes_msm", "core.segment_lanes_compass", "core.segment_lanes_osm",
-    "roads.osm_street",
+    "roads.osm_street", "roads.osm_paving", "roads.osm_parking", "roads.osm_walk_node",
     "roads.bike_facility", "roads.bike_facility_note", "roads.bike_facility_match", "roads.bike_facility_side",
     "roads.segment_bike_xsection"
   ],
@@ -43,8 +45,13 @@
     {"source": "osm_street",
      "tags": ["w/highway=residential,unclassified,living_street,road,busway,service"],
      "geometry": ["linestring"],
-     "tables": ["roads.osm_street"]}
+     "tables": ["roads.osm_street"]},
+    {"source": "osm_paving",
+     "tags": ["w/highway=service,footway,path,cycleway", "a/amenity=parking,parking_space", "n/highway=crossing",
+              "n/crossing", "n/kerb"],
+     "geometry": ["point", "linestring", "polygon"],
+     "tables": ["roads.osm_paving", "roads.osm_parking", "roads.osm_walk_node"]}
   ],
-  "storage": "Small: reference layers re-read weekly or monthly; raw.record grows only by changed versions (osm_valley). roads.osm_street: about 23k ways, 11 MB with its indexes, versioned in place (no raw.record copies). The last two OpenStreetMap extracts are kept in $TVT_ARCHIVE/osm/ (about 130 MB each), and the valley cut of the newest in $TVT_ARCHIVE/osm/cut/ (about 32 MB).",
-  "ethics": "OpenStreetMap is ODbL: credit \"© OpenStreetMap contributors\", and anything published from it stays ODbL. Geofabrik's robots.txt disallows scripted downloads, so extracts are downloaded by hand and there is no download code. ACHD's and ITD's layers state no license: used internally, credited. ACHD's bike network's free-text Comments and FieldNotes stay in roads.bike_facility_note, out of every view, export, tile and card."
+  "storage": "Small: reference layers re-read weekly or monthly; raw.record grows only by changed versions (osm_valley). roads.osm_street: about 23k ways, 11 MB with its indexes; roads.osm_paving, osm_parking and osm_walk_node: about 125k ways, 4k lots and stalls and 70k nodes; all versioned in place (no raw.record copies). The last two OpenStreetMap extracts are kept in $TVT_ARCHIVE/osm/ (about 130 MB each), and the valley cut of the newest in $TVT_ARCHIVE/osm/cut/ (about 32 MB).",
+  "ethics": "OpenStreetMap is ODbL: credit \"© OpenStreetMap contributors\", and anything published from it stays ODbL. Geofabrik's robots.txt disallows scripted downloads, so extracts are downloaded by hand and there is no download code. ACHD's and ITD's layers state no license: used internally, credited. ACHD's bike network's free-text Comments and FieldNotes stay in roads.bike_facility_note, out of every view, export, tile and card. osm_paving reads USDA NASS's Cropland Data Layer 2025 (public domain, a hand download kept with the sources) for developed land."
 }
