@@ -118,30 +118,42 @@ curl -X POST http://localhost:8080/api/views/<id>/frame \
 That call writes: it keeps the view's newest frame as its calibration
 reference in `FRAMES_DIR`, so try it on a view nobody has calibrated.
 
-## Toggled layers' tiles: the tvt_tiles role
+## Toggled layers' tiles: the tvt_tiles login
 
 The app's tiles for toggled layers (soils, crop fields, trails, ...:
 `/api/<plugin>/tiles/<layer>/…`, `app/src/lib/server/mvt.ts`) go to anyone
-who can open the map, so their cuts read as **`tvt_tiles`**: a role that
-can't log in or write, granted only core and the tile plugins' own schemas,
-never `restricted` or a private plugin's schema (`private_<name>`,
-`city_trees`). The app's tile connections switch to it (`TILES_DB_ROLE` in
-`docker-compose.yml` and `compose.preview.yml`).
+who can open the map, so their cuts log in as **`tvt_tiles`**: a plain login
+(no superuser, a member of no other role) that can't write and is granted
+only core and the tile plugins' own schemas, never `restricted` or a private
+plugin's schema (`private_<name>`, `city_trees`). The app's tile pool
+connects with `TILES_DATABASE_URL`, which `docker-compose.yml` and
+`compose.preview.yml` build from `TILES_DB_PASSWORD` in `.env`. It's a login
+of its own rather than a role the app's connections switch to, because
+those are `tvt`'s, a superuser, which can always switch back.
 
-[`tvt_tiles.sql`](tvt_tiles.sql) makes the role and its grants. It's
-idempotent; run it as `tvt` once before the first toggled layer goes live,
-and again after migrations that add a plugin schema (a deploy step, beside
-`tvt_build.sql`'s):
+[`tvt_tiles.sql`](tvt_tiles.sql) makes the login and its grants, and ends
+by checking what it can reach (PUBLIC's grants included). It's idempotent;
+run it as `tvt` before the first toggled layer goes live, and again after
+migrations that add a plugin schema (a deploy step, beside
+`tvt_build.sql`'s). The first time, also generate a password on the server
+(`openssl rand -hex 24`), put it in `.env` as `TILES_DB_PASSWORD`, set it
+in the database, and recreate the app:
 
 ```bash
 docker compose exec -T db psql -X -v ON_ERROR_STOP=1 -U tvt -d tvt -f - < tvt_tiles.sql
+# First time only. The password goes from .env to the database without being
+# typed or shown (it's hex, so the quotes are safe):
+grep '^TILES_DB_PASSWORD=.' .env | cut -d= -f2- | sed "s/.*/ALTER ROLE tvt_tiles PASSWORD '&';/" \
+  | docker compose exec -T db psql -X -q -v ON_ERROR_STOP=1 -U tvt -d tvt
+docker compose up -d app    # and app-next while the preview is on
 ```
 
-Until it has run, those tiles answer 500 (the role doesn't exist); a schema
-added since the last run answers empty tiles with `x-tile-status: denied`,
-logged in `docker compose logs app`. To serve tiles from a new plugin's
-schema, add it to the file's `tile_schemas` list; the app's unit tests check
-the list against the registered layers.
+Until both are done, those tiles answer 500 (the login fails), logged in
+`docker compose logs app`; nothing else in the app uses the login. A schema
+added since the last run answers empty tiles with `x-tile-status: denied`.
+To serve tiles from a new plugin's schema, add it to the file's
+`tile_schemas` list; the app's unit tests check the list against the
+registered layers.
 
 ## Loading an OpenStreetMap extract (by hand)
 

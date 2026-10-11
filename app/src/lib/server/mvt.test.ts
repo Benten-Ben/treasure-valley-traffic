@@ -285,7 +285,7 @@ describe('the tile server', () => {
 		}
 	});
 
-	it('answers an empty tile when the tile role may not read a table (deploy/tvt_tiles.sql)', async () => {
+	it('answers an empty tile when the tile login may not read a table (deploy/tvt_tiles.sql)', async () => {
 		const { s, cut } = server();
 		cut.mockRejectedValueOnce(pgError('42501'));
 		const res = await s.respond(SOILS, T, 's1', 'gzip');
@@ -439,7 +439,7 @@ describe('definitions', () => {
 		expect(mvt.tileLayer('nope', 'nothing')).toBeUndefined();
 	});
 
-	it("serves only schemas deploy/tvt_tiles.sql grants the tile role, and it grants none tiles never read", () => {
+	it("serves only schemas deploy/tvt_tiles.sql grants the tile login, and it grants none tiles never read", () => {
 		const text = readFileSync(new URL('../../../../deploy/tvt_tiles.sql', import.meta.url), 'utf8');
 		const list = text.match(/tile_schemas text\[\] := ARRAY\[([^\]]*)\]/)?.[1];
 		expect(list, 'tile_schemas in deploy/tvt_tiles.sql').toBeTruthy();
@@ -454,6 +454,25 @@ describe('definitions', () => {
 		}
 		// And it takes back what tiles never read, with neverTiled's names.
 		expect(text).toContain("nspname IN ('restricted', 'city_trees') OR nspname LIKE 'private\\_%'");
+		// A plain login of its own, a member of no other role: never a role a superuser's session switches to.
+		const sql = text.replace(/--.*$/gm, '');
+		expect(sql).toMatch(/ALTER ROLE tvt_tiles LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS/);
+		expect(sql).not.toMatch(/GRANT\s+tvt_tiles\s+TO/i);
+		// It's granted reads and nothing else: no membership, no writes.
+		expect(sql).not.toMatch(/GRANT\s+(?!(?:USAGE|SELECT|CONNECT)\b)[^;']*?\bTO\s+tvt_tiles/i);
+		expect(sql).not.toMatch(/PASSWORD\s+'/i);
+	});
+
+	it("keeps each tiles.ts to the cut's own connection: none imports the shared pool (db.ts) or makes one", () => {
+		// A `cut` that reached db.ts's pool would read as the app's own (superuser) login, past the tile login's grants.
+		const sources = import.meta.glob('./*/tiles.ts', { query: '?raw', import: 'default', eager: true }) as Record<string, string>;
+		expect(Object.keys(sources).sort()).toEqual(Object.keys(import.meta.glob('./*/tiles.ts')).sort());
+		for (const [path, text] of Object.entries(sources)) {
+			expect(text, path).not.toMatch(/from\s+['"](?:#lib\/server\/db|\.\.?\/(?:\.\.\/)*db)(?:\.js|\.ts)?['"]/);
+			expect(text, path).not.toMatch(/import\(\s*['"][^'"]*\/db(?:\.js|\.ts)?['"]\s*\)/);
+			expect(text, path).not.toMatch(/^\s*import\s+(?!type\b)[^;]*from\s+['"]postgres['"]/m);
+			expect(text, path).not.toMatch(/\b(?:DATABASE_URL|TILES_DATABASE_URL)\b/);
+		}
 	});
 
 	it("parses tiles within the layer's zooms and the grid", () => {
@@ -532,13 +551,13 @@ describe('the SQL a definition makes', () => {
 		expect(query).not.toHaveBeenCalled();
 	});
 
-	it('uses a pool of its own: 3 connections, statement_timeout 3 s, read-only, as the tile role when given', () => {
+	it('uses a pool of its own: 3 connections, statement_timeout 3 s, read-only, logged in as its URL says', () => {
 		const o = tilePoolOptions();
 		expect(o.max).toBe(3);
 		expect(o.connection.statement_timeout).toBe(3000);
 		expect(o.connection.default_transaction_read_only).toBe(true);
+		// No `role` to switch to: the login is the boundary (TILES_DATABASE_URL, deploy/tvt_tiles.sql).
 		expect(o.connection).not.toHaveProperty('role');
 		expect(mvt.DEADLINE_MS).toBeGreaterThan(o.connection.statement_timeout);
-		expect(tilePoolOptions('tvt_tiles').connection).toMatchObject({ role: 'tvt_tiles', default_transaction_read_only: true, statement_timeout: 3000 });
 	});
 });

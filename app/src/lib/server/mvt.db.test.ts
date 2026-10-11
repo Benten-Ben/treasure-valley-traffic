@@ -14,17 +14,28 @@ type TileLayerDef = import('./mvt.js').TileLayerDef;
  * the SQL a definition makes, the tile pool's statement timeout and
  * read-only connections, the deadline's cancel, an empty tile before a
  * migration, the version read in the cut's own snapshot, /api/meta's layer
- * versions (migration 0020), the tile role (deploy/tvt_tiles.sql), and a cut
+ * versions (migration 0020), the tile login (deploy/tvt_tiles.sql), and a cut
  * of every registered layer.
  *
  * Runs only with TVT_TEST_DATABASE_URL, a scratch database migrated with
- * db/migrate.py (never `tvt`). The tile role's tests run once
- * deploy/tvt_tiles.sql has run there (as a superuser) and skip until then.
+ * db/migrate.py (never `tvt`). The tile login's tests run once
+ * deploy/tvt_tiles.sql has run there (as a superuser) and skip until then;
+ * they log in as tvt_tiles with TVT_TEST_TILES_DATABASE_URL, or else with
+ * TVT_TEST_DATABASE_URL's address and no password (a laptop's trust login).
  * Its made-up rows go in the made-up plugin `tvt_test`'s schema (and a
  * made-up private one) and layer names under `tvt_test.`, all removed
  * afterwards.
  */
 const URL = process.env.TVT_TEST_DATABASE_URL;
+
+/** The tile login's URL for the test database. */
+function tilesLoginUrl(): string {
+	if (process.env.TVT_TEST_TILES_DATABASE_URL) return process.env.TVT_TEST_TILES_DATABASE_URL;
+	const u = new globalThis.URL(URL!);
+	u.username = 'tvt_tiles';
+	u.password = '';
+	return u.toString();
+}
 /** The made-up plugin's own schema, as a plugin's tables are (plan C3). */
 const SCHEMA = 'tvt_test';
 const PRIVATE = 'private_tvt_test';
@@ -62,14 +73,14 @@ const BOISE = [-116.2, 43.6] as const;
 describe.skipIf(!URL)('toggled-layer tiles on PostGIS', () => {
 	let admin: postgres.Sql;
 	let tiles: postgres.Sql;
-	/** The tile pool as deploy/tvt_tiles.sql's role, when that has run in this database. */
+	/** The tile pool logged in as deploy/tvt_tiles.sql's login, when that has run in this database. */
 	let asRole: postgres.Sql | undefined;
 
 	beforeAll(async () => {
 		admin = postgres(URL!, { max: 2, onnotice: () => {} });
 		tiles = postgres(URL!, tilePoolOptions());
 		const [{ ok, role }] = await admin`select to_regclass('core.layer_version') is not null as ok,
-			to_regrole('tvt_tiles') is not null and pg_has_role(current_user, 'tvt_tiles', 'MEMBER')
+			coalesce((select rolcanlogin from pg_roles where rolname = 'tvt_tiles'), false)
 			  and has_schema_privilege('tvt_tiles', 'core', 'USAGE') as role`;
 		if (!ok) throw new Error('core.layer_version is missing: apply migration 0020 to the test database');
 		await admin.unsafe(`
@@ -95,7 +106,10 @@ describe.skipIf(!URL)('toggled-layer tiles on PostGIS', () => {
 		if (role) {
 			// As a plugin's schema is granted by deploy/tvt_tiles.sql's list (made-up plugins aren't in it).
 			await admin.unsafe(`grant usage on schema ${SCHEMA} to tvt_tiles; grant select on all tables in schema ${SCHEMA} to tvt_tiles`);
-			asRole = postgres(URL!, tilePoolOptions('tvt_tiles'));
+			asRole = postgres(tilesLoginUrl(), tilePoolOptions());
+			await asRole`select 1`.catch((e) => {
+				throw new Error(`deploy/tvt_tiles.sql has run here, but tvt_tiles can't log in (set TVT_TEST_TILES_DATABASE_URL): ${e.message}`);
+			});
 		}
 	});
 
@@ -228,7 +242,7 @@ describe.skipIf(!URL)('toggled-layer tiles on PostGIS', () => {
 		expect(current).toEqual({ version: 'a2', credit: 'USGS; NRCS' });
 	});
 
-	describe('as the tile role (deploy/tvt_tiles.sql)', () => {
+	describe('as the tile login (deploy/tvt_tiles.sql)', () => {
 		const ownCut = (table: string): TileLayerDef => ({
 			plugin: 'tvt_test',
 			layer: 'units',
@@ -239,8 +253,8 @@ describe.skipIf(!URL)('toggled-layer tiles on PostGIS', () => {
 
 		it("cuts the plugin's own tables", async (ctx) => {
 			if (!asRole) return ctx.skip();
-			const [{ who }] = await asRole`select current_user as who`;
-			expect(who).toBe('tvt_tiles');
+			const [{ who, session }] = await asRole`select current_user as who, session_user as session`;
+			expect([who, session]).toEqual(['tvt_tiles', 'tvt_tiles']);
 			const z14 = decode(await mvtOf(cutLayerTile(asRole, UNITS, tileAt(-116.2, 43.6, 14), signal())));
 			expect(z14.layers.units.length).toBe(1);
 		});
@@ -254,8 +268,28 @@ describe.skipIf(!URL)('toggled-layer tiles on PostGIS', () => {
 				expect(res.headers.get('x-tile-status'), table).toBe('denied');
 			}
 			expect(log.mock.calls[0][0]).toMatch(/answered empty \(denied\) .*: 42501 permission denied for schema restricted/);
-			// The superuser-or-owner pool would have read them: the role is what refuses.
+			// The superuser-or-owner pool would have read them: the login is what refuses.
 			expect((await cutLayerTile(tiles, ownCut(`${PRIVATE}.secret`), tileAt(-116.2, 43.6, 14), signal())).mvt.length).toBe(1);
+		});
+
+		it("can't become anyone else: no superuser, a member of nothing", async (ctx) => {
+			if (!asRole) return ctx.skip();
+			const [me] = await asRole`select rolsuper, rolbypassrls from pg_roles where rolname = session_user`;
+			expect(me).toEqual({ rolsuper: false, rolbypassrls: false });
+			const [{ n }] = await asRole`select count(*)::int as n from pg_auth_members where member = session_user::regrole`;
+			expect(n).toBe(0);
+			// What a superuser's session could do (and a cut of its own might try) is refused.
+			const [{ owner, root }] = await admin`select pg_get_userbyid(datdba) as owner,
+				(select rolname from pg_roles where rolsuper order by oid limit 1) as root from pg_database where datname = current_database()`;
+			await asRole.begin(async (tx) => {
+				const ident = (name: string) => `"${name.replaceAll('"', '""')}"`;
+				for (const attempt of [`set local role ${ident(owner)}`, `set local session authorization ${ident(owner)}`, `set local role ${ident(root)}`])
+					await expect(tx.savepoint((sp) => sp.unsafe(attempt)), attempt).rejects.toMatchObject({ code: '42501' });
+				await tx`set local role none`;
+				const [{ who }] = await tx`select current_user as who`;
+				expect(who).toBe('tvt_tiles');
+				await expect(tx.savepoint((sp) => sp`select count(*) from restricted.crash_unit`)).rejects.toMatchObject({ code: '42501' });
+			});
 		});
 
 		it("can't write, even with read-only switched off", async (ctx) => {
@@ -269,7 +303,7 @@ describe.skipIf(!URL)('toggled-layer tiles on PostGIS', () => {
 
 	it('cuts a tile of every registered layer at each of its zoom bands, with nothing missing or refused', async () => {
 		// The layers in #lib/server/<plugin>/tiles.ts against this database, migrated with their plugins'
-		// migrations: a misspelled table or column, or a schema the tile role isn't granted, fails here.
+		// migrations: a misspelled table or column, or a schema the tile login isn't granted, fails here.
 		const pool = asRole ?? tiles;
 		for (const def of TILE_LAYERS.values()) {
 			const zooms = def.parts ? [...new Set(def.parts.flatMap((p) => p.sources.map((src) => src.minzoom)))] : [def.minzoom];

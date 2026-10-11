@@ -2,7 +2,7 @@ import { promisify } from 'node:util';
 import { constants, gunzip as gunzipCb, gzip as gzipCb } from 'node:zlib';
 import { error } from '@sveltejs/kit';
 import postgres from 'postgres';
-import { DATABASE_URL, TILES_DB_ROLE } from '$app/env/private';
+import { DATABASE_URL, TILES_DATABASE_URL } from '$app/env/private';
 import { LAYER_NAME, layerKey } from '#lib/contracts/layer-tiles.js';
 import { versionedCacheControl } from './cache-headers.js';
 import { CONTENT_TYPE, SHORT_CACHE, type TileId } from './road-tiles.js';
@@ -20,9 +20,11 @@ import { CONTENT_TYPE, SHORT_CACHE, type TileId } from './road-tiles.js';
  * - Tiles go to anyone who can open the map, so they read only the plugin's
  *   own schema and core (plan C3), never `restricted` or a private plugin's
  *   schema: definitions are checked against that (`tileLayerProblems`), and
- *   with TILES_DB_ROLE set the tile pool reads as the role
- *   deploy/tvt_tiles.sql grants only those schemas, so the database refuses
- *   the rest (a layer's own `cut` included).
+ *   on the server the tile pool logs in as tvt_tiles (TILES_DATABASE_URL), a
+ *   plain login deploy/tvt_tiles.sql grants only those schemas, so the
+ *   database refuses the rest, to a layer's own `cut` too. (Not a role the
+ *   app's own connections switch to: those are a superuser's, which can
+ *   always switch back.)
  * - Cuts run on their own pool (3 connections, `statement_timeout` 3 s,
  *   read-only: `tilePoolOptions`), so a slow cut never holds up /api/meta,
  *   the road tiles or anything else on the shared pool.
@@ -113,9 +115,11 @@ export interface TileLayerDef {
 	 * A cut of its own: raw MVT bytes for one tile. It runs in a read-only,
 	 * repeatable-read transaction on the tile pool (so it sees the data of the
 	 * version read beside it), and reads only the plugin's own schema and core,
-	 * as `parts` do; with TILES_DB_ROLE set the database holds it to that. Run
-	 * queries through `cancelOnAbort(signal, ...)` so a cut past the deadline
-	 * stops in the database too.
+	 * as `parts` do; on the server the tile login holds it to that. It uses
+	 * only the `sql` it's given (a tiles.ts never imports db.ts's shared
+	 * pool; mvt.test.ts checks). Run queries through
+	 * `cancelOnAbort(signal, ...)` so a cut past the deadline stops in the
+	 * database too.
 	 */
 	cut?: (sql: postgres.TransactionSql, t: TileId, signal: AbortSignal) => Promise<Uint8Array>;
 }
@@ -279,18 +283,13 @@ export async function cutLayerTile(sql: postgres.Sql, def: TileLayerDef, t: Tile
 	return { mvt: row?.mvt ? new Uint8Array(row.mvt) : new Uint8Array(), version: row?.version ?? null };
 }
 
-/** The tile pool's postgres.js options; with `role`, its connections read as that role (deploy/tvt_tiles.sql). */
-export function tilePoolOptions(role?: string) {
+/** The tile pool's postgres.js options (its login comes from the URL: tvt_tiles on the server). */
+export function tilePoolOptions() {
 	return {
 		max: POOL_MAX,
 		idle_timeout: 30,
 		connect_timeout: 10,
-		connection: {
-			statement_timeout: STATEMENT_TIMEOUT_MS,
-			default_transaction_read_only: true,
-			application_name: 'tvt-app-tiles',
-			...(role ? { role } : {})
-		}
+		connection: { statement_timeout: STATEMENT_TIMEOUT_MS, default_transaction_read_only: true, application_name: 'tvt-app-tiles' }
 	} satisfies postgres.Options<Record<string, never>>;
 }
 
@@ -298,18 +297,20 @@ let pool: postgres.Sql | undefined;
 
 /**
  * The tile pool: 3 connections of its own beside db.ts's shared 5, read-only,
- * each statement stopped after 3 s, reading as TILES_DB_ROLE when it's set
- * (the server sets tvt_tiles). Throws a 503 if no database is configured.
+ * each statement stopped after 3 s, logged in with TILES_DATABASE_URL (the
+ * server's is tvt_tiles), else DATABASE_URL. Throws a 503 if no database is
+ * configured.
  */
 export function tilesDb(): postgres.Sql {
-	if (!DATABASE_URL) error(503, 'The database is not configured (set DATABASE_URL).');
+	const url = TILES_DATABASE_URL ?? DATABASE_URL;
+	if (!url) error(503, 'The database is not configured (set DATABASE_URL).');
 	if (!pool) {
-		if (!TILES_DB_ROLE)
+		if (!TILES_DATABASE_URL)
 			console.warn(
-				"Toggled layers' tiles read as the app's own role: set TILES_DB_ROLE=tvt_tiles (deploy/tvt_tiles.sql) " +
-					'so the database keeps them out of restricted and private schemas.'
+				"Toggled layers' tiles use DATABASE_URL's login: set TILES_DATABASE_URL to tvt_tiles's " +
+					'(deploy/tvt_tiles.sql) so the database keeps them out of restricted and private schemas.'
 			);
-		pool = postgres(DATABASE_URL, tilePoolOptions(TILES_DB_ROLE));
+		pool = postgres(url, tilePoolOptions());
 	}
 	return pool;
 }
@@ -324,7 +325,7 @@ export function emptyReason(e: unknown): Exclude<EmptyReason, 'unversioned'> | n
 	if (code === '57014') return 'timeout';
 	// undefined_table, invalid_schema_name, undefined_column: before the plugin's migration (or a typo).
 	if (code === '42P01' || code === '3F000' || code === '42703') return 'missing';
-	// insufficient_privilege: the tile role may not read it (deploy/tvt_tiles.sql).
+	// insufficient_privilege: the tile login may not read it (deploy/tvt_tiles.sql).
 	if (code === '42501') return 'denied';
 	return null;
 }

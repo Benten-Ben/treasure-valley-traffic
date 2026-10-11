@@ -138,9 +138,10 @@ services:
       HOST_HEADER: x-forwarded-host
       # Live camera images stay off here (CAMERA_IMAGES_ENABLED is off unless
       # set); compose.live-images.yml turns them on with the archive mounts.
-      # Toggled layers' tile cuts read as tvt_tiles, which may read only core
-      # and the tile plugins' schemas (deploy/tvt_tiles.sql: run it first).
-      TILES_DB_ROLE: tvt_tiles
+      # Toggled layers' tile cuts log in as tvt_tiles, which may read only
+      # core and the tile plugins' schemas (deploy/tvt_tiles.sql: run it and
+      # set TILES_DB_PASSWORD first; until then those tiles answer 500).
+      TILES_DATABASE_URL: postgres://tvt_tiles:${TILES_DB_PASSWORD:-}@db:5432/tvt
     volumes:
       - ${FRAMES_DIR:?set FRAMES_DIR in deploy/.env}:/srv/frames
     depends_on:

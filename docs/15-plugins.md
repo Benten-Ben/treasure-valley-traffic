@@ -147,7 +147,7 @@ How the pieces plug in:
   `/api/<plugin>/tiles/<layer>/{z}/{x}/{y}?v=`. They read only the
   plugin's own schema and core, never `restricted` or a private plugin's
   schema: the definitions are checked for it, and on the server the cuts
-  read as a role granted nothing else
+  log in as `tvt_tiles`, a plain login granted nothing else
   ([deploy/tvt_tiles.sql](../deploy/tvt_tiles.sql)). Each build that
   changes a layer adds a row to `core.layer_version`
   (`ingest/layer_version.py`), in the same transaction as its data, with

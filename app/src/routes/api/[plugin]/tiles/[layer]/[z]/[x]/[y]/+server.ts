@@ -8,7 +8,7 @@ import { dataMeta } from '#lib/server/versions.js';
  * the tile pool, gzipped once and kept per version in the shared LRU.
  * Immutable for the current `?v=` (/api/meta's `versions.layers`), else
  * `max-age=60`; an empty tile with a short cache on a timeout, before the
- * plugin's migration, when the tile role may not read a table, or before
+ * plugin's migration, when the tile login may not read a table, or before
  * the layer's first build (no version, so no licence on record). Static
  * routes (`/api/tiles/roads`, `/api/trees/...`) take precedence over this one.
  */
