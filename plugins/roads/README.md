@@ -43,6 +43,12 @@ The lane-tagged cycleways, tracks and pedestrian ways that `osm_valley`
 already keeps (12 in the Oct 5 extract) stay in `core.osm_way`; trails reads
 them through a view.
 
+`osm_street` loads only the extract `osm_valley` holds, so `core.osm_way` and
+`roads.osm_street` always split one extract's ways between them: a new
+extract goes through `osm_valley` first (as the database owner), and
+`--only osm_street` then follows it. A build that reads the two together
+(the real-width build, P7) calls `osm_extract.check_partition(conn)` first.
+
 **Tables:** `core.road_segment`, `core.segment_match`, `core.hpms_section`,
 `core.msm_arterial`, `core.compass_segment`, `core.osm_way`, `core.osm_lane`,
 `core.osm_node`, and the `core.segment_lanes` view with its four per-source

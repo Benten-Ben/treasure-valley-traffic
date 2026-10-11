@@ -7,7 +7,10 @@ robots.txt disallows scripts), and
     python3 -m ingest osm-load --inbox              # a new extract: every consumer
     python3 -m ingest osm-load --only osm_street    # this one, on the extract we hold
 
-loads it, with its own MD5 gate in ops.osm_consumer (migration 0019).
+loads it, with its own MD5 gate in ops.osm_consumer (migration 0019). It
+loads only the extract osm_valley holds (or loads in the same run), so
+core.osm_way and roads.osm_street always split one extract's ways between
+them; a build that reads both calls osm_extract.check_partition() first.
 
 What it keeps: the highway ways core's partition gives it (osm_extract.owner),
 by tags alone: residential, unclassified, living_street, road and busway, and

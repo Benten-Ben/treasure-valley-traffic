@@ -6,7 +6,7 @@
     python3 -m ingest osm-load --only roads.osm_street # one consumer (on the newest archived extract,
                                                        # unless --inbox or --file says otherwise)
     python3 -m ingest osm-load --cut-only              # just make the valley cut (S5a's mask reads it)
-    python3 -m ingest osm-load --list                  # the consumers and what each loaded last
+    python3 -m ingest osm-load --list                  # the consumers, what each loaded last, the partition
 
 Where extracts come from: by hand only. Geofabrik's robots.txt (read Oct 6,
 2026) disallows its extracts and their .md5 files for every robot, so the
@@ -30,16 +30,19 @@ A load:
      strategy: every way with a node in the box, whole, and every multipolygon
      with a member in it, whole (lots and water bodies that cross the edge).
      The cut is kept at $TVT_ARCHIVE/osm/cut/valley.osm.pbf, with valley.json
-     saying which extract it came from, and reused while that's the extract;
-  4. runs each consumer in plugin order, each in its own transaction with its
-     own ops.fetch row. osm_valley runs its own unchanged pipeline over the cut
-     (its complete_ways cut of the smart cut is the same as of the whole
-     extract). The others get their features from `Run.features()`: osmium
-     export of the cut, then their expressions, the box and the partition,
-     applied here;
+     saying which extract it came from, and reused while that's the extract.
+     Making it is heavy (osmium peaks at about 3.9 GB), so only a run that
+     loads osm_valley (heavy anyway), `--make-cut` or `--cut-only` makes it;
+     any other run stops before loading anything when it's missing;
+  4. runs each consumer, osm_valley first, then in plugin order, each in its
+     own transaction with its own ops.fetch row. osm_valley runs its own
+     unchanged pipeline over the cut (its complete_ways cut of the smart cut is
+     the same as of the whole extract). The others get their features from
+     `Run.features()`: osmium export of the cut, then their expressions, the
+     box and the partition, applied here;
   5. archives the file (the last two extracts are kept) if any consumer loaded it.
 A consumer that fails is logged in ops.fetch and the others go on; rerun it
-with `--only`. The command exits 1 if any failed.
+with `--only`. The command exits 1 if any failed or was held back.
 
 Which consumer owns a highway way is decided by `owner()`, by tags alone
 (plan C10): osm_valley's keep rule first, unchanged; then the streets and
@@ -48,7 +51,19 @@ alleys (osm_street); then sidewalks, crossings and the other service ways
 named get only the highway ways the partition gives them, so no way is drawn
 twice. The 12 lane-tagged cycleways, tracks and pedestrian ways osm_valley
 already keeps are the named exception (`named_exception()`): they stay
-osm_valley's, and trails reads them through a view.
+osm_valley's, and trails reads them through a view. No way has two owners;
+some have none (unbuilt and indoor ways, roads drawn as areas, raceways:
+`unowned_reason()`).
+
+The partition holds only while its owners hold the same extract: a way that
+gained a lanes tag would otherwise be in core.osm_way and roads.osm_street
+both, and one that lost it in neither. So they load one extract together:
+osm_valley leads, and osm_street, osm_paving and osm_paths load only the
+extract osm_valley holds (or loaded in the same run). One that would load
+another is held back, unless `--allow-mixed`. If a follower fails after
+osm_valley loaded, the load says the owners differ until it's rerun, `--list`
+says so too, and a build that reads their tables together calls
+`check_partition()` first and refuses a mixed union.
 
 Versioning (plan C2). osm_valley keeps raw.record versions as before. The new
 consumers make no raw.record copies: their typed tables keep osm_version,
@@ -86,6 +101,7 @@ COVERAGE = ("Geofabrik's Idaho extract: the box's Oregon part (Malheur County) h
 OSM_SUFFIXES = (".osm.pbf", ".osm.bz2", ".osm.gz", ".osm")
 OSMIUM_TIMEOUT_S = 1800
 SHRINK_GUARD = 0.5            # refuse to retire objects when a load brings fewer than half the active ones
+CUT_MEMORY = "osmium peaks at about 3.9 GB: give it 5 GB"
 STATE_TABLE = "ops.osm_consumer"
 CUT_DIR, CUT_NAME, CUT_INFO = "cut", "valley.osm.pbf", "valley.json"
 
@@ -118,6 +134,7 @@ PAVING_FOOTWAYS = {"sidewalk", "crossing", "access_aisle", "traffic_island"}   #
 WALKWAYS = {"footway", "path", "cycleway"}
 PATH_CLASSES = {"track", "path", "footway", "cycleway", "bridleway", "steps", "pedestrian"}
 OWNERS = ("osm_valley", "osm_street", "osm_paving", "osm_paths")
+LEADER = OWNERS[0]          # the others load only the extract it holds
 
 
 def owner(tags):
@@ -456,14 +473,24 @@ def write_json(path, data):
     os.replace(tmp, path)
 
 
+def cut_ready(cut_dir, md5):
+    """valley.json's info when cut_dir holds the valley cut of this extract (its MD5, and the size
+    valley.json recorded), else None."""
+    if not cut_dir:
+        return None
+    path, info = os.path.join(cut_dir, CUT_NAME), read_json(os.path.join(cut_dir, CUT_INFO))
+    if info.get("md5") == md5 and os.path.isfile(path) and os.path.getsize(path) == info.get("bytes"):
+        return info
+    return None
+
+
 def make_cut(src, md5, extract_name, cut_dir, data_as_of=None):
     """The valley cut of an extract in cut_dir ($TVT_ARCHIVE/osm/cut/ on the server): valley.osm.pbf,
     and valley.json saying which extract it is of. Reused while it's of the same extract (same MD5
-    and size). Returns (path, info, made)."""
+    and size). Making it is a heavy job (osmium peaks at about 3.9 GB). Returns (path, info, made)."""
     os.makedirs(cut_dir, exist_ok=True)
     path, info_path = os.path.join(cut_dir, CUT_NAME), os.path.join(cut_dir, CUT_INFO)
-    info = read_json(info_path)
-    if info.get("md5") == md5 and os.path.isfile(path) and os.path.getsize(path) == info.get("bytes"):
+    if info := cut_ready(cut_dir, md5):
         return path, info, False
     part = os.path.join(cut_dir, f".{CUT_NAME}.{os.getpid()}.part")
     try:
@@ -637,7 +664,9 @@ def store_objects(conn, table, columns, rows, seen_at, key=("osm_id",), geometry
     columns: [(name, SQL type)] staged as given, the geometry column left out; rows: tuples in that
     order, then the geometry as GeoJSON text (geometry_sql turns it into the column's type). The
     table needs active, first_seen and last_seen, and a unique key. Refuses to retire when the load
-    has fewer than half the active objects (SHRINK_GUARD), unless allow_shrink. Doesn't commit.
+    has fewer than half the active objects (SHRINK_GUARD, at any size), unless allow_shrink, and
+    refuses an empty load whenever anything is active, even then (like db.check_snapshot): a broken
+    export or a wrong filter looks like that. Doesn't commit.
     Returns {objects, new, changed, unchanged, reactivated, retired}."""
     table, geometry = _ident(table), _ident(geometry)
     names = [_ident(c) for c, _ in columns]
@@ -656,7 +685,10 @@ def store_objects(conn, table, columns, rows, seen_at, key=("osm_id",), geometry
     if n != distinct:
         raise RuntimeError(f"{table}: {n - distinct} objects twice in one load (key {keys})")
     active = conn.execute(f"select count(*) from {table} where active").fetchone()[0]
-    if not allow_shrink and active >= 1000 and n < active * SHRINK_GUARD:
+    if n == 0 and active:
+        raise RuntimeError(f"{table}: no objects in this load against {active} active; not retiring them (check "
+                           "the file and the consumer's tags; an empty load is never taken)")
+    if not allow_shrink and n < active * SHRINK_GUARD:
         raise RuntimeError(f"{table}: only {n} objects in this extract against {active} active; not retiring "
                            "the rest (check the file, or load it with --allow-shrink)")
     join = " and ".join(f"t.{k} = s.{k}" for k in key)
@@ -719,7 +751,55 @@ def loaded_md5(conn, consumer, module, folder):
     """The MD5 of the extract the consumer loaded last (None if it hasn't, or can't tell)."""
     if own_gate(module):
         return module.loaded_md5(folder) if folder else None
-    return db_state(conn, consumer.id).get("md5")
+    return db_state(conn, consumer.id).get("md5") if conn is not None else None
+
+
+# ---- the partition's owners hold one extract -------------------------------
+
+def partition_gates(conn, all_consumers, folder):
+    """[(consumer, MD5 of the extract it loaded last, or None)] for each installed partition owner,
+    in OWNERS order. None: it hasn't loaded one, or its gate can't be read (osm_valley's needs the
+    archive folder; the others' need conn)."""
+    out = []
+    for name in OWNERS:
+        for c in all_consumers:
+            if c.name == name:
+                try:
+                    out.append((c, loaded_md5(conn, c, c.module(), folder)))
+                except Exception:                         # a module that won't import holds nothing we know
+                    out.append((c, None))
+    return out
+
+
+def partition_note(gates):
+    """A warning when the partition's owners that have loaded an extract hold different ones, else None."""
+    held = [(c, m) for c, m in gates if m]
+    if len({m for _, m in held}) <= 1:
+        return None
+    return ("partition: its owners hold different extracts (" + ", ".join(f"{c.id} {m[:8]}" for c, m in held)
+            + "), so a way can be in two of their tables or in none; a build that reads them together refuses "
+            "until they match: load the ones behind with --only")
+
+
+def check_partition(conn, names=(LEADER, "osm_street"), all_consumers=None, folder=None):
+    """For a build that reads several partition owners' tables together (P7: core.osm_way with
+    roads.osm_street): the MD5 of the one extract they all hold. Raises RuntimeError when one isn't
+    installed, hasn't loaded an extract (or its gate can't be read: osm_valley's needs TVT_ARCHIVE),
+    or holds another extract than the rest, since their union would then have a way twice or not
+    at all."""
+    if unknown := sorted(set(names) - set(OWNERS)):
+        raise ValueError(f"not partition owners: {', '.join(unknown)} (they are {', '.join(OWNERS)})")
+    every = consumers() if all_consumers is None else all_consumers
+    folder = archive_dir(required=False) if folder is None else folder
+    gates = {c.name: (c, m) for c, m in partition_gates(conn, every, folder) if c.name in names}
+    if missing := [n for n in names if n not in gates]:
+        raise RuntimeError(f"partition: {', '.join(missing)} isn't installed")
+    if unloaded := [c.id for c, m in gates.values() if not m]:
+        raise RuntimeError(f"partition: {', '.join(unloaded)} hasn't loaded an extract (or its gate can't be read: "
+                           "osm_valley's is in $TVT_ARCHIVE/osm/)")
+    if len({m for _, m in gates.values()}) > 1:
+        raise RuntimeError(partition_note(list(gates.values())))
+    return next(iter(gates.values()))[1]
 
 
 # ---- a load ----------------------------------------------------------------
@@ -728,41 +808,87 @@ def _stats_text(stats):
     return ", ".join(f"{k} {v}" for k, v in stats.items())
 
 
-def load_extract(conn, path, chosen, *, force=False, allow_shrink=False, keep=True, out=print):
-    """Load one extract into the chosen consumers (each by its own gate, unless force). With keep
-    (--inbox, --file), the file is archived once any consumer has loaded it, and the archive pruned
-    to the last two. Returns {consumer id: 'loaded' | 'skipped' | 'failed'}."""
+def load_extract(conn, path, chosen, *, every=None, force=False, allow_mixed=False, make_cut_ok=False,
+                 allow_shrink=False, keep=True, out=print):
+    """Load one extract into the chosen consumers (each by its own gate, unless force). every: all
+    the installed consumers (default: chosen), where the partition's leader is found.
+
+    The partition's owners load one extract together: osm_valley (the leader) runs first, and
+    osm_street, osm_paving and osm_paths load only the extract it holds or loaded in this run; one
+    that would load another is 'held' (unless allow_mixed; force doesn't do it). The valley cut is
+    made when osm_valley is due (that run is heavy anyway) or with make_cut_ok; otherwise a missing
+    cut stops the load before anything runs. A consumer whose module won't import, or whose source
+    row can't be written, fails alone. With keep (--inbox, --file), the file is archived once any
+    consumer has loaded it, and the archive pruned to the last two.
+    Returns {consumer id: 'loaded' | 'skipped' | 'held' | 'failed'}."""
     if not _suffix(path):
         raise SystemExit(f"{path}: expected a .osm.pbf, .osm, .osm.bz2 or .osm.gz file")
     folder = archive_dir(required=False)
     md5 = check_md5(path)
     name = kept_name(path, folder, md5) if keep else os.path.basename(path)
-    modules = {c.id: c.module() for c in chosen}
-    if any(not own_gate(m) for m in modules.values()) and not state_table_ready(conn):
+    every = list(chosen) if every is None else list(every)
+    leader = next((c for c in every if c.name == LEADER), None)
+    result, modules = {}, {}
+    for c in chosen:
+        try:
+            modules[c.id] = c.module()
+        except Exception as err:                                 # the others go on
+            result[c.id] = "failed"
+            out(f"{c.id}: FAILED (its module didn't import: {type(err).__name__}: {err})")
+    ready = [c for c in chosen if c.id in modules]
+    if any(not own_gate(modules[c.id]) for c in ready) and not state_table_ready(conn):
         raise SystemExit(f"{STATE_TABLE} is missing: apply migration 0019 (python3 db/migrate.py)")
     due = []
-    result = {}
-    for c in chosen:
+    for c in ready:
         if not force and loaded_md5(conn, c, modules[c.id], folder) == md5:
             result[c.id] = "skipped"
             out(f"{c.id}: skipped, extract {md5[:8]} already loaded")
         else:
             due.append(c)
+    due.sort(key=lambda c: c.name != LEADER)                     # the leader first; the rest keep their order
+    leader_due = any(c.name == LEADER for c in due)
+
+    def held_back(c):
+        """Whether c, a follower, must wait for the leader to hold this extract (and say so)."""
+        if leader is None or allow_mixed or c.name not in OWNERS or c.name == LEADER:
+            return False
+        if result.get(leader.id) == "loaded":
+            return False
+        try:
+            holds = loaded_md5(conn, leader, modules.get(leader.id) or leader.module(), folder)
+        except Exception:
+            holds = None
+        if holds == md5:
+            return False
+        result[c.id] = "held"
+        out(f"{c.id}: held back: {leader.id} holds {'extract ' + holds[:8] if holds else 'no extract'}, not "
+            f"{md5[:8]}, and the partition's owners load one extract together. Load {leader.id} first (as the "
+            "database owner; it writes core.osm_way), or pass --allow-mixed")
+        return True
+
+    if not leader_due:
+        due = [c for c in due if not held_back(c)]
     if not due:
         if keep:
             out(f"nothing to load from {os.path.basename(path)} (left in place)")
         return result
 
+    cut_dir = os.path.join(folder, CUT_DIR) if folder else None
+    if not (leader_due or make_cut_ok or cut_ready(cut_dir, md5)):
+        raise SystemExit(f"no valley cut of {name} yet ({cut_dir or 'set TVT_ARCHIVE'}): make it first with "
+                         f"'osm-load --cut-only', or add --make-cut, in a heavy job ({CUT_MEMORY}). A consumer's "
+                         "load on a cut already made is light (under 0.2 GB)")
     stamp = data_timestamp(path)
     with tempfile.TemporaryDirectory(prefix="osm-load-", dir=folder) as work:
-        cut_dir = os.path.join(folder, CUT_DIR) if folder else os.path.join(work, CUT_DIR)
-        cut, info, made = make_cut(path, md5, name, cut_dir, stamp)
+        cut, info, made = make_cut(path, md5, name, cut_dir or os.path.join(work, CUT_DIR), stamp)
         out(f"cut: {cut} ({'made' if made else 'reused'}, {info['bytes'] / 1e6:.1f} MB, extract {md5[:8]})")
         for c in due:
+            if held_back(c):                                     # the leader ran in this run and failed
+                continue
             module = modules[c.id]
-            db.ensure_source(conn, module.SOURCE)
-            conn.commit()
             try:
+                db.ensure_source(conn, module.SOURCE)
+                conn.commit()
                 with tempfile.TemporaryDirectory(prefix=f"{c.name}-", dir=work) as cwork:
                     with db.Fetch(conn, c.name) as f:            # no request made: robots and status stay empty
                         f.bytes = os.path.getsize(path)
@@ -774,7 +900,7 @@ def load_extract(conn, path, chosen, *, force=False, allow_shrink=False, keep=Tr
                         if not own_gate(module):
                             set_db_state(conn, c, md5, name, stamp, f.id, stats.get("objects"),
                                          {**stats, **{k: v for k, v in run.counts.items()}})
-            except Exception as err:                             # logged in ops.fetch; the others go on
+            except Exception as err:                 # logged in ops.fetch (once it has a row); the others go on
                 conn.rollback()
                 result[c.id] = "failed"
                 out(f"{c.id}: FAILED ({type(err).__name__}: {err})")
@@ -793,6 +919,8 @@ def load_extract(conn, path, chosen, *, force=False, allow_shrink=False, keep=Tr
         for c in due:
             if result[c.id] == "loaded" and own_gate(modules[c.id]):
                 modules[c.id].mark_loaded(folder, md5, path)
+    if note := partition_note(partition_gates(conn, every, folder)):
+        out(note)
     return result
 
 
@@ -824,6 +952,14 @@ def list_consumers(all_consumers, out=print):
             out(f"{c.id:24} {', '.join(c.geometry):32} last loaded {md5[:8] if md5 else '-':8} ({where})")
             out(f"{'':24} tags {' '.join(c.tags)}")
             out(f"{'':24} writes {', '.join(c.tables)}; {c.source['license']}, republish {c.source['republish']}")
+        gates = partition_gates(conn, all_consumers, folder)
+        if note := partition_note(gates):
+            out(note)
+        elif conn is not None and folder:
+            held = {m for _, m in gates if m}
+            waiting = [c.id for c, m in gates if not m]
+            out("partition: " + (f"one extract ({held.pop()[:8]})" if held else "nothing loaded yet")
+                + (f"; not loaded yet: {', '.join(waiting)}" if held and waiting else ""))
     finally:
         if conn is not None:
             conn.close()
@@ -841,7 +977,13 @@ def main(argv=None):
     ap.add_argument("--force", action="store_true", help="load it even into consumers that already have it")
     ap.add_argument("--allow-shrink", action="store_true",
                     help="retire objects even when this extract has fewer than half the active ones")
-    ap.add_argument("--cut-only", action="store_true", help="just make the valley cut, in $TVT_ARCHIVE/osm/cut/")
+    ap.add_argument("--allow-mixed", action="store_true",
+                    help="let osm_street, osm_paving and osm_paths load an extract osm_valley doesn't hold "
+                         "(their tables and core.osm_way then disagree)")
+    ap.add_argument("--cut-only", action="store_true",
+                    help=f"just make the valley cut, in $TVT_ARCHIVE/osm/cut/ (heavy: {CUT_MEMORY})")
+    ap.add_argument("--make-cut", action="store_true",
+                    help="make the valley cut if it's missing (heavy); a run that loads osm_valley makes it anyway")
     ap.add_argument("--list", action="store_true", help="list the consumers and the extract each loaded last")
     args = ap.parse_args(argv)
 
@@ -870,8 +1012,9 @@ def main(argv=None):
         return 0
     chosen = select(every, args.only)
     with db.connect() as conn:
-        result = load_extract(conn, path, chosen, force=args.force, allow_shrink=args.allow_shrink, keep=keep)
-    return 1 if "failed" in result.values() else 0
+        result = load_extract(conn, path, chosen, every=every, force=args.force, allow_mixed=args.allow_mixed,
+                              make_cut_ok=args.make_cut, allow_shrink=args.allow_shrink, keep=keep)
+    return 1 if {"failed", "held"} & set(result.values()) else 0
 
 
 if __name__ == "__main__":

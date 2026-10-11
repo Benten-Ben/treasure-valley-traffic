@@ -65,9 +65,25 @@ are split between consumers by tags alone (`owner()`): osm_valley's keep rule,
 unchanged, then streets and alleys (`osm_street`), sidewalks, crossings and
 other service ways (`osm_paving`), then paths (`osm_paths`); the lane-tagged
 cycleways, tracks and pedestrian ways osm_valley already keeps are the named
-exception. The new consumers' tables are versioned in place (`store_objects`:
-OpenStreetMap's version and timestamp, first and last seen, active), with no
+exception. No way has two owners; 1,811 of the Oct 5 extract's 185,358 have
+none (unbuilt, indoor, and 17 raceways and odd classes no consumer names:
+[docs/12](../docs/12-database-schema.md)). The partition holds only while its
+owners hold one extract, so osm_valley loads first and `osm_street`,
+`osm_paving` and `osm_paths` load only the extract it holds: one that would
+load another is held back (`--allow-mixed` overrides it; `--force` doesn't).
+A build that reads their tables together calls `check_partition(conn,
+names)` first, which returns the one extract's MD5 or raises; `--list` and
+each load say when the owners differ. The new consumers' tables are
+versioned in place (`store_objects`: OpenStreetMap's version and timestamp,
+first and last seen, active, and the shrink guard at any size), with no
 `raw.record` copies.
+
+A consumer's manifest entry is checked (`manifest.py`): its source is one of
+the plugin's by-hand sources, with license ODbL and the credit "©
+OpenStreetMap contributors"; each type its tags name has its geometry and
+each geometry its type (n/ point, w/ linestring, a/ polygon, r/ relation).
+osmium export makes areas only from a/ expressions, so a lot or a lake needs
+`a/amenity=parking`, not `nwr/amenity=parking`.
 
 | Consumer | Tags | Writes |
 |---|---|---|
@@ -78,8 +94,9 @@ OpenStreetMap's version and timestamp, first and last seen, active), with no
 python3 -m ingest osm-load --inbox                  # a new extract: every consumer (a heavy job: see below)
 python3 -m ingest osm-load --only roads.osm_street  # one consumer, on the extract we hold
 python3 -m ingest osm-load --archived [--force]     # every consumer due, on the extract we hold
-python3 -m ingest osm-load --cut-only               # just the valley cut
-python3 -m ingest osm-load --list                   # the consumers and what each loaded last
+python3 -m ingest osm-load --cut-only               # just the valley cut (heavy)
+python3 -m ingest osm-load --only osm_paths --make-cut   # make the cut if it's missing, then load (heavy)
+python3 -m ingest osm-load --list                   # the consumers, what each loaded last, the partition
 ```
 
 **Memory** (measured Oct 11 on the Oct 5 extract, 129 MB). osmium keeps a
@@ -90,6 +107,9 @@ it 5 GB: [deploy/README.md](../deploy/README.md)). The other consumers don't
 use osmium's tags-filter, which would need 1.9 GB even on the 32 MB cut: they
 export the cut's tagged objects (about 140 MB) and pick theirs in Python, so a
 consumer on a cut already made is light (`osm_street`: 16 s, under 0.2 GB).
+So a load never makes the cut by surprise: only a run that loads osm_valley,
+`--make-cut` or `--cut-only` makes it, and any other run stops before loading
+when it's missing.
 
 **Status:** camera sources (for the calibrator), Valley Regional Transit (buses), ITD's work zones and the 511 Idaho API.
 

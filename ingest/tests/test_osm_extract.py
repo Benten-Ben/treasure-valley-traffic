@@ -133,10 +133,11 @@ class PartitionTest(unittest.TestCase):
         for w, t in ways.items():
             self.assertEqual(EXPECTED[w] is None, ox.unowned_reason(t) is not None, w)
 
-    def test_each_highway_way_has_exactly_one_owner_among_the_consumers(self):
+    def test_each_highway_way_has_one_owner_or_none_for_a_stated_reason(self):
         """The partition test (plan §5) on the synthetic fixture: osm_valley takes what its keep rule
         keeps, and each other consumer only what the partition gives it, even when its filter asks
-        for every highway way."""
+        for every highway way. Ways that aren't built or that no consumer's classes name (proposed,
+        corridor, a street drawn as an area) have no owner, and unowned_reason says why."""
         features = list(fixture_features())
         taken = {V: {f["osm_id"] for f in features
                      if "highway" in f["tags"] and f["geometry"] == "linestring"
@@ -289,10 +290,13 @@ class ConsumersTest(unittest.TestCase):
         from ingest.tests.test_manifest import Folder, entry, plugin
         folder = Folder(self)
         c = {"source": "osm_x", "tags": ["w/highway"], "geometry": ["linestring"], "tables": ["a.osm_x"]}
-        folder.write(plugin("a", [entry("osm_x", kind="manual")], tables=["a.osm_x"], osm_consumers=[c]))
-        folder.write(plugin("b", [entry("osm_x", kind="manual")], tables=["a.osm_x"], osm_consumers=[c]))
-        with self.assertRaises(manifest.ManifestError):
-            ox.consumers(manifest.find([folder.path]))
+        osm = {"kind": "manual", "license": "ODbL", "credit": ox.CREDIT}
+        folder.write(plugin("a", [entry("osm_x", **osm)], tables=["a.osm_x"], osm_consumers=[c]))
+        folder.write(plugin("b", [entry("osm_x", **osm)], tables=["a.osm_x"], osm_consumers=[c]))
+        plugins = manifest.find([folder.path])                      # each manifest is fine on its own
+        with self.assertRaises(manifest.ManifestError) as cm:
+            ox.consumers(plugins)
+        self.assertIn("both a and b", str(cm.exception))
 
 
 class CutTest(unittest.TestCase):
@@ -349,14 +353,16 @@ class CutTest(unittest.TestCase):
 class FakeConn:
     """Enough of a connection for the loader: ops.source, ops.fetch, ops.osm_consumer."""
 
-    def __init__(self, state_table=True):
+    def __init__(self, state_table=True, bad_sources=()):
         self.sql, self.states, self.fetches, self.state_table = [], {}, 0, state_table
-        self.result = None
+        self.result, self.bad_sources = None, set(bad_sources)
 
     def execute(self, sql, params=None):
         s = " ".join(sql.split())
         self.sql.append((s, params))
         self.result = None
+        if s.startswith("insert into ops.source") and params["name"] in self.bad_sources:
+            raise RuntimeError(f"can't write ops.source {params['name']}")
         if s.startswith("select to_regclass"):
             self.result = (self.state_table,)
         elif s.startswith("select md5, extract_file"):
@@ -406,6 +412,8 @@ class FakeConsumer(ox.Consumer):
     modules = {}
 
     def module(self):
+        if self.modules[self.name] is None:
+            raise ImportError(f"no module named {self.name}")
         return self.modules[self.name]
 
 
@@ -422,10 +430,14 @@ class LoadTest(unittest.TestCase):
         def fake_cut(src, md5, name, cut_dir, data_as_of=None):
             os.makedirs(cut_dir, exist_ok=True)
             path = os.path.join(cut_dir, "valley.osm.pbf")
+            if info := ox.cut_ready(cut_dir, md5):
+                return path, info, False
             with open(path, "w") as f:
                 f.write(md5)
+            info = {"bytes": 32, "extract": name, "md5": md5}
+            ox.write_json(os.path.join(cut_dir, "valley.json"), info)
             self.cuts.append(name)
-            return path, {"bytes": 32, "extract": name, "md5": md5}, True
+            return path, info, True
 
         for name, value in (("make_cut", fake_cut), ("data_timestamp", lambda src: "2026-10-05T20:21:07Z")):
             p = mock.patch.object(ox, name, value)
@@ -442,7 +454,7 @@ class LoadTest(unittest.TestCase):
         FakeConsumer.modules = {}
         out = []
         for name, kw in specs:
-            FakeConsumer.modules[name] = FakeModule(name, **kw)
+            FakeConsumer.modules[name] = None if kw.get("broken") else FakeModule(name, **kw)
             out.append(FakeConsumer("roads", {"name": name, "module": "x", "kind": "manual", "license": "ODbL",
                                               "credit": ox.CREDIT, "republish": "yes"}, ("w/highway",), ("linestring",),
                                     ("roads.x",)))
@@ -496,8 +508,9 @@ class LoadTest(unittest.TestCase):
         held = ox.extracts(self.folder)[0]
         later = self.consumers((V, {"own_gate": True}), (S, {}), (P, {}))
         FakeConsumer.modules[V].state = {self.folder: hashlib.md5(b"pbf bytes").hexdigest()}
-        result, _ = self.load(conn, held, ox.select(later, ["roads.osm_paving"]), keep=False)
+        result, lines = self.load(conn, held, ox.select(later, ["roads.osm_paving"]), every=later, keep=False)
         self.assertEqual(result, {"roads.osm_paving": "loaded"})
+        self.assertIn("(reused,", next(l for l in lines if l.startswith("cut:")))      # light: the cut was there
         self.assertEqual(FakeConsumer.modules[V].runs, [])
         self.assertEqual(ox.extracts(self.folder), [held])                          # not moved or copied
         # Without --only, the others are skipped by their gates and the new one is done already.
@@ -507,22 +520,142 @@ class LoadTest(unittest.TestCase):
         self.assertEqual(set(result.values()), {"loaded"})
 
     def test_a_failed_consumer_is_logged_and_the_others_go_on(self):
-        chosen = self.consumers((V, {"own_gate": True, "fail": True}), (S, {}))
+        chosen = self.consumers((V, {"own_gate": True}), (S, {"fail": True}), (P, {}))
         conn = FakeConn()
         src = self.inbox()
         result, lines = self.load(conn, src, chosen)
-        self.assertEqual(result, {"roads.osm_valley": "failed", "roads.osm_street": "loaded"})
-        self.assertTrue(any(l.startswith("roads.osm_valley: FAILED (RuntimeError: this consumer broke)") for l in lines))
-        self.assertEqual([p[1] for p in conn.fetch_rows()], [False, True])
-        self.assertIn("this consumer broke", conn.fetch_rows()[0][6])
-        self.assertFalse(os.path.exists(src))                                      # archived: osm_street has it
-        self.assertEqual(FakeConsumer.modules[V].marked, [])                      # not marked: it reruns next time
+        self.assertEqual(result, {"roads.osm_valley": "loaded", "roads.osm_street": "failed",
+                                  "roads.osm_paving": "loaded"})
+        self.assertTrue(any(l.startswith("roads.osm_street: FAILED (RuntimeError: this consumer broke)") for l in lines))
+        self.assertEqual([p[1] for p in conn.fetch_rows()], [True, False, True])
+        self.assertIn("this consumer broke", conn.fetch_rows()[1][6])
+        self.assertFalse(os.path.exists(src))                                      # archived: the others have it
+        self.assertEqual(len(FakeConsumer.modules[V].marked), 1)
+        self.assertNotIn("roads.osm_street", conn.states)                          # its gate: it reruns next time
+        result, _ = self.load(conn, ox.extracts(self.folder)[0], chosen, keep=False)
+        self.assertEqual(result["roads.osm_street"], "failed")                     # still broken, and only it ran
+        self.assertEqual(set(result.values()) - {"failed"}, {"skipped"})
+
+    def test_when_osm_valley_fails_the_partition_s_other_owners_wait(self):
+        """osm_valley can't load (as tvt_build, say): osm_street must not move to the new extract alone,
+        or core.osm_way and roads.osm_street would split the ways by two different extracts."""
+        chosen = self.consumers((V, {"own_gate": True, "fail": True}), (S, {}), ("osm_waterways", {}))
+        conn = FakeConn()
+        old = "e" * 32
+        FakeConsumer.modules[V].state = {self.folder: old}
+        conn.states["roads.osm_street"] = {"md5": old, "extract_file": "old", "fetch_id": 1, "objects": 3}
+        src = self.inbox()
+        result, lines = self.load(conn, src, chosen)
+        self.assertEqual(result, {"roads.osm_valley": "failed", "roads.osm_street": "held",
+                                  "roads.osm_waterways": "loaded"})               # not a partition owner: it goes on
+        self.assertEqual(FakeConsumer.modules[S].runs, [])
+        held = next(l for l in lines if l.startswith("roads.osm_street: held back"))
+        self.assertIn(f"holds extract {old[:8]}", held)
+        self.assertIn("--allow-mixed", held)
+        self.assertEqual(conn.states["roads.osm_street"]["md5"], old)
+        self.assertEqual(FakeConsumer.modules[V].marked, [])
+        self.assertIsNone(ox.partition_note(ox.partition_gates(conn, chosen, self.folder)))   # still one extract
+        # --force doesn't change that; only --allow-mixed does.
+        kept = ox.extracts(self.folder)[0]
+        result, _ = self.load(conn, kept, chosen, keep=False, force=True)
+        self.assertEqual(result["roads.osm_street"], "held")
+        result, lines = self.load(conn, kept, chosen, keep=False, allow_mixed=True)
+        self.assertEqual(result["roads.osm_street"], "loaded")
+        self.assertTrue(any(l.startswith("partition: its owners hold different extracts") for l in lines))
+
+    def test_a_follower_alone_loads_only_the_extract_osm_valley_holds(self):
+        every = self.consumers((V, {"own_gate": True}), (S, {}))
+        conn = FakeConn()
+        FakeConsumer.modules[V].state = {self.folder: "e" * 32}
+        src = self.inbox()                                                         # a new extract
+        result, lines = self.load(conn, src, ox.select(every, ["osm_street"]), every=every)
+        self.assertEqual(result, {"roads.osm_street": "held"})
+        self.assertTrue(os.path.exists(src))                                       # nothing loaded: left in place
+        self.assertEqual(self.cuts, [])                                            # and no cut made for it
+        self.assertIn("left in place", lines[-1])
+        result, _ = self.load(conn, src, ox.select(every, ["osm_street"]), every=every, allow_mixed=True,
+                              make_cut_ok=True)
+        self.assertEqual(result, {"roads.osm_street": "loaded"})
+
+    def test_osm_valley_runs_first_whatever_the_plugin_order(self):
+        chosen = self.consumers((T, {}), (S, {}), (V, {"own_gate": True}))
+        order = []
+        for name in (T, S, V):
+            module = FakeConsumer.modules[name]
+            module.consume = (lambda m, n: lambda conn, run: (order.append(n), FakeModule.consume(m, conn, run))[1])(
+                module, name)
+        result, _ = self.load(FakeConn(), self.inbox(), chosen)
+        self.assertEqual(set(result.values()), {"loaded"})
+        self.assertEqual(order, [V, T, S])
+
+    def test_a_light_run_never_makes_the_cut(self):
+        """Making the cut peaks at about 3.9 GB: only a run that loads osm_valley (heavy anyway),
+        --make-cut or --cut-only makes it. A follower alone with no cut stops before loading."""
+        every = self.consumers((V, {"own_gate": True}), (S, {}))
+        conn = FakeConn()
+        data = b"pbf bytes"
+        FakeConsumer.modules[V].state = {self.folder: hashlib.md5(data).hexdigest()}
+        src = self.inbox(data)
+        with self.assertRaises(SystemExit) as cm:
+            self.load(conn, src, ox.select(every, ["osm_street"]), every=every)
+        self.assertIn("--cut-only", str(cm.exception))
+        self.assertIn("5 GB", str(cm.exception))
+        self.assertEqual((self.cuts, FakeConsumer.modules[S].runs), ([], []))
+        self.assertTrue(os.path.exists(src))
+        result, _ = self.load(conn, src, ox.select(every, ["osm_street"]), every=every, make_cut_ok=True)
+        self.assertEqual(result, {"roads.osm_street": "loaded"})
+        self.assertEqual(len(self.cuts), 1)
+
+    def test_a_module_that_won_t_import_or_a_source_that_can_t_be_written_fails_alone(self):
+        chosen = self.consumers((V, {"own_gate": True}), (S, {"broken": True}), (P, {}), (T, {}))
+        conn = FakeConn(bad_sources={P})
+        src = self.inbox()
+        result, lines = self.load(conn, src, chosen)
+        self.assertEqual(result, {"roads.osm_valley": "loaded", "roads.osm_street": "failed",
+                                  "roads.osm_paving": "failed", "roads.osm_paths": "loaded"})
+        self.assertTrue(any("osm_street: FAILED (its module didn't import" in l for l in lines))
+        self.assertTrue(any("osm_paving: FAILED (RuntimeError: can't write ops.source" in l for l in lines))
+        self.assertFalse(os.path.exists(src))                                      # archived
+        self.assertEqual(len(FakeConsumer.modules[V].marked), 1)                   # and osm_valley's gate moved
+
+    def test_the_partition_s_owners_on_different_extracts(self):
+        every = self.consumers((V, {"own_gate": True}), (S, {}), ("osm_waterways", {}))
+        conn = FakeConn()
+        self.load(conn, self.inbox(b"one"), every)
+        one, two = hashlib.md5(b"one").hexdigest(), hashlib.md5(b"two").hexdigest()
+        self.assertEqual(ox.check_partition(conn, all_consumers=every, folder=self.folder), one)
+        # osm_valley alone moves on (--only osm_valley): the load says the owners differ, and the check refuses.
+        result, lines = self.load(conn, self.inbox(b"two"), ox.select(every, ["osm_valley"]), every=every)
+        self.assertEqual(result, {"roads.osm_valley": "loaded"})
+        note = next(l for l in lines if l.startswith("partition:"))
+        self.assertIn(f"roads.osm_valley {two[:8]}", note)
+        self.assertIn(f"roads.osm_street {one[:8]}", note)
+        with self.assertRaises(RuntimeError) as cm:
+            ox.check_partition(conn, all_consumers=every, folder=self.folder)
+        self.assertIn("different extracts", str(cm.exception))
+        self.assertEqual(ox.check_partition(conn, [V], all_consumers=every, folder=self.folder), two)
+        # Then osm_street follows on the extract we hold.
+        result, lines = self.load(conn, ox.extracts(self.folder)[0], ox.select(every, ["osm_street"]), every=every,
+                                  keep=False)
+        self.assertEqual(result, {"roads.osm_street": "loaded"})
+        self.assertFalse(any(l.startswith("partition:") for l in lines))
+        self.assertEqual(ox.check_partition(conn, all_consumers=every, folder=self.folder), two)
+        # What the check refuses besides: an owner not installed, or one that hasn't loaded.
+        with self.assertRaises(RuntimeError) as cm:
+            ox.check_partition(conn, [V, S, P], all_consumers=every, folder=self.folder)
+        self.assertIn("osm_paving isn't installed", str(cm.exception))
+        conn.states.clear()
+        with self.assertRaises(RuntimeError) as cm:
+            ox.check_partition(conn, all_consumers=every, folder=self.folder)
+        self.assertIn("roads.osm_street hasn't loaded", str(cm.exception))
+        with self.assertRaises(ValueError):
+            ox.check_partition(conn, [V, "osm_waterways"], all_consumers=every, folder=self.folder)
 
     def test_when_every_consumer_fails_the_file_stays_in_the_inbox(self):
-        chosen = self.consumers((S, {"fail": True}))
+        chosen = self.consumers((S, {"fail": True}), (P, {"fail": True}))
         src = self.inbox()
-        result, _ = self.load(FakeConn(), src, chosen)
-        self.assertEqual(result, {"roads.osm_street": "failed"})
+        result, _ = self.load(FakeConn(), src, chosen, make_cut_ok=True)
+        self.assertEqual(result, {"roads.osm_street": "failed", "roads.osm_paving": "failed"})
         self.assertTrue(os.path.exists(src))
         self.assertEqual(ox.extracts(self.folder), [])
 
@@ -540,7 +673,7 @@ class LoadTest(unittest.TestCase):
         self.assertEqual(FakeConsumer.modules[S].runs, [])
 
     def test_archive_keeps_the_last_two(self):
-        chosen = self.consumers((S, {}))
+        chosen = self.consumers((V, {"own_gate": True}), (S, {}))
         conn = FakeConn()
         now = time.time()
         for i, data in enumerate([b"first", b"second", b"third"]):
@@ -572,6 +705,25 @@ class MainTest(unittest.TestCase):
         with mock.patch.dict(os.environ, {"TVT_ARCHIVE": ""}):
             code, text = self.run_main("--only", "osm_street")
         self.assertIn("TVT_ARCHIVE", str(code) + text)
+
+    def test_flags_reach_the_load_and_a_held_consumer_exits_1(self):
+        calls = []
+
+        def fake_load(conn, path, chosen, **kw):
+            calls.append((path, [c.id for c in chosen], kw))
+            return {c.id: "held" for c in chosen}
+
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {"TVT_ARCHIVE": tmp}), \
+                mock.patch.object(ox, "load_extract", fake_load), \
+                mock.patch.object(ox.db, "connect", lambda: contextlib.nullcontext("conn")):
+            held = os.path.join(ox.archive_dir(), "idaho-20261007-cd0984ee.osm.pbf")
+            open(held, "wb").close()
+            code, _ = self.run_main("--only", "osm_street", "--allow-mixed", "--make-cut")
+        self.assertEqual(code, 1)
+        (path, chosen, kw), = calls
+        self.assertEqual((path, chosen), (held, ["roads.osm_street"]))
+        self.assertEqual((kw["allow_mixed"], kw["make_cut_ok"], kw["force"], kw["keep"]), (True, True, False, False))
+        self.assertIn("roads.osm_valley", [c.id for c in kw["every"]])            # the leader is found even with --only
 
     def test_list_without_a_database(self):
         with mock.patch.dict(os.environ, {"DATABASE_URL": "", "TVT_ARCHIVE": ""}):
@@ -728,6 +880,21 @@ class StoreTest(unittest.TestCase):
         with self.assertRaises(RuntimeError) as cm:
             self.store([self.row(5), self.row(5)], T0.replace(hour=14))
         self.assertIn("twice", str(cm.exception))
+
+    def test_small_tables_are_guarded_too_and_an_empty_load_never_retires(self):
+        """A route or water-body table holds a hundred-odd objects: the guard isn't only for big ones."""
+        self.store([self.row(i) for i in range(4)], T0)
+        with self.assertRaises(RuntimeError) as cm:
+            self.store([self.row(0)], T0.replace(hour=13))                      # 1 of 4
+        self.assertIn("--allow-shrink", str(cm.exception))
+        for allow in (False, True):
+            with self.subTest(allow_shrink=allow), self.assertRaises(RuntimeError) as cm:
+                self.store([], T0.replace(hour=13), allow_shrink=allow)
+            self.assertIn("no objects in this load against 4 active", str(cm.exception))
+        self.assertEqual(self.conn.execute("select count(*) from roads.osm_street where active").fetchone()[0], 4)
+        self.assertEqual(self.store([self.row(0), self.row(1)], T0.replace(hour=13))["retired"], 2)   # half is fine
+        self.conn.execute("update roads.osm_street set active = false")
+        self.assertEqual(self.store([], T0.replace(hour=14))["objects"], 0)    # nothing active: nothing to lose
 
     def test_state_rows(self):
         street = next(c for c in ox.consumers() if c.name == S)

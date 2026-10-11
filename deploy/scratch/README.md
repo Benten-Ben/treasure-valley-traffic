@@ -198,8 +198,11 @@ database by itself. The OpenStreetMap loader's consumers (S1,
 `ingest/osm_extract.py`) keep theirs in `ops.osm_consumer`, all but
 `osm_valley`, whose gate stays `osm/last-loaded.json`. The loader's valley cut
 (`osm/cut/valley.osm.pbf` and `valley.json`) is derived, so it isn't copied
-either: after a refresh, the next `osm-load` (or `osm-load --cut-only`, a heavy
-job of about 3 GB) makes it again.
+either. After a refresh, a consumer's light load (`ingest osm-load --only
+roads.osm_street`) stops and says so: make the cut first with `ingest osm-load
+--cut-only` as a heavy job (osmium peaks at about 3.9 GB: `--heavy ...
+--memory 5g`), then load. The stable copy for the ground's mask,
+`$TVT_SOURCES/osm/valley.osm.pbf`, survives refreshes.
 
 If you undo a load by hand (drop a plugin's tables, restore one table), its
 state still says it's loaded: pass `--force` to the next load, or delete the

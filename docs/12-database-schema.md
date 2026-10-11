@@ -453,15 +453,22 @@ estimate):
 ([ingest/osm_extract.py](../ingest/osm_extract.py), `python3 -m ingest
 osm-load`): one MD5 check, one archive, and one cut of the valley box with
 osmium's `smart` strategy (multipolygons that cross the edge come whole),
-read by each plugin's consumers (`osm_consumers` in its manifest). Every
-highway way has one owner, decided by its tags alone: osm_valley's keep rule
-above, unchanged, then the other streets and alleys (`roads.osm_street`),
-then sidewalks, crossings and the other service ways (`roads.osm_paving`,
-later), then paths (`trails.osm_paths`, later). On the Oct 5 extract that's
-13,917 / 22,785 / 124,582 / 22,263 of the box's 185,358 highway ways; 1,811
-are nobody's (1,369 proposed, 350 under construction, 65 indoor corridors,
-...). The 12 lane-tagged cycleways, tracks and pedestrian ways osm_valley
-keeps are the named exception.
+read by each plugin's consumers (`osm_consumers` in its manifest). No
+highway way has two owners; the owner is decided by its tags alone:
+osm_valley's keep rule above, unchanged, then the other streets and alleys
+(`roads.osm_street`), then sidewalks, crossings and the other service ways
+(`roads.osm_paving`, later), then paths (`trails.osm_paths`, later). On the
+Oct 5 extract that's 13,917 / 22,785 / 124,582 / 22,263 of the box's 185,358
+highway ways. 1,811 have no owner: 1,369 proposed, 350 under construction,
+65 indoor corridors and 10 other ways that aren't built or aren't roads
+(service areas, rest areas, a platform, an elevator), and 17 built ones that
+no consumer's classes name (12 raceways, 4 `unclassified_link`, 1 runaway-truck
+`escape`), left out until it's decided who takes them. The 12 lane-tagged
+cycleways, tracks and pedestrian ways osm_valley keeps are the named
+exception. The owners load one extract together, osm_valley first and the
+others only the extract it holds, so a way is never in two of their tables
+or in none; a build that reads `core.osm_way` with `roads.osm_street` (the
+roads build) calls `check_partition()` first.
 
 ```sql
 -- Each consumer's gate: the extract it loaded last (osm_valley's stays in its file).

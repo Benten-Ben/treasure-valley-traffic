@@ -347,7 +347,10 @@ The steps (Builder D's first-run notes, Oct 6):
    `tvt_build` can't ([scratch/README.md](scratch/README.md)), so a load
    that includes osm_valley (a new extract) runs as the database owner, as
    its loads always have, until the runbook decides otherwise. The new
-   consumers alone (`--only roads.osm_street`) run as `tvt_build`.
+   consumers alone (`--only roads.osm_street`, on a cut already made) are
+   light and run as `tvt_build`. Run as `tvt_build`, a new extract's load
+   fails osm_valley and holds the streets back (below), so nothing loads and
+   the file stays in the inbox.
 
 What a load does:
 
@@ -361,16 +364,32 @@ What a load does:
 - It cuts the valley box out of the extract once (osmium's `smart` strategy)
   into `$TVT_ARCHIVE/osm/cut/valley.osm.pbf`, with `valley.json` naming the
   extract; every consumer reads the cut, and the ground's mask reads it too.
-- Each consumer runs in its own transaction with its own `ops.fetch` row; one
-  that fails is logged and the others go on (rerun it with `--only`).
+  Only a run that loads osm_valley (heavy anyway), `--make-cut` or
+  `--cut-only` makes the cut. Any other run stops before loading anything
+  when it's missing (on production right after the deploy that brings the
+  loader, and on scratch after every refresh) and says to make it first.
+- osm_valley runs first, then the others. Each runs in its own transaction
+  with its own `ops.fetch` row; one that fails is logged and the others go on
+  (rerun it with `--only`). The command exits 1 if any failed or was held.
+- **One extract for the partition.** `osm_street`, and later `osm_paving` and
+  `osm_paths`, load only the extract osm_valley holds (or loaded in the same
+  run): otherwise a way that gained or lost a lanes tag would be in
+  `core.osm_way` and `roads.osm_street` both, or in neither. One that would
+  load another extract is **held back** (`--force` doesn't change that;
+  `--allow-mixed` does, and shouldn't be needed). If a follower fails after
+  osm_valley loaded, the load and `--list` say the owners differ, and the
+  roads build refuses to run (`check_partition()`) until the follower is
+  loaded with `--only`.
 - Afterwards, if any consumer loaded it, the file moves to
   `$TVT_ARCHIVE/osm/` (renamed with the date and the start of its MD5) and
   the last two extracts are kept. Pruning never removes the file just
   loaded, and reloading an archived file refreshes its time, so it counts as
   the newest.
-- **Shrink guard:** when 1,000 or more ways (or a consumer's objects) are
-  active, a load that brings fewer than half of them refuses to retire the
-  rest. Check the file, or pass `--allow-shrink`.
+- **Shrink guard:** a load that brings fewer than half of the active ways
+  (osm_valley: when 1,000 or more are active, as before) or of a consumer's
+  active objects (at any size) refuses to retire the rest. Check the file, or
+  pass `--allow-shrink`. A consumer's load that brings nothing while anything
+  is active is always refused.
 - Then the refresh cascade (plan §6): the builds that read the new tables
   (`roads-build`, `water-build`, `trails-match`), the exports, the bake.
 
