@@ -3,8 +3,8 @@
 The NWPS API (api.water.noaa.gov/nwps/v1; robots.txt 404, so no rules) lists
 37 gauges in the ring (Oct 7, 2026): the Boise, Payette, Snake, Malheur,
 Owyhee and Weiser rivers, creeks, a canal, and three reservoir pools. Observations
-are USGS's where NWPS names a USGS site (23 of the 37), passed on by NWS; the
-other 14 (the canal's BSEI1 among them, and Reclamation's dams ⚠️) name no USGS
+are USGS's where NWPS names a USGS site (24 of the 37), passed on by NWS; the
+other 13 (the canal's BSEI1 among them, and Reclamation's dams ⚠️) name no USGS
 site and no other source in what we keep (checked Oct 11). Forecasts are the
 Northwest River Forecast Center's. Not the USGS Water Data API: its
 robots.txt disallows its data paths for us (docs/17 Q14).

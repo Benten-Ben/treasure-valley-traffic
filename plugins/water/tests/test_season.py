@@ -267,23 +267,64 @@ class RulesTest(unittest.TestCase):
 
 
 class SelectionTest(unittest.TestCase):
-    CANALS = [S.Canal(1, "Test Canal", "canal", None, None, None),
-              S.Canal(2, "Test Lateral", "lateral", None, 1, None),
-              S.Canal(3, "Small Lateral", "lateral", None, 2, None),
-              S.Canal(4, "Test Drain", "drain", None, 1, None),
-              S.Canal(5, "Test Canal", "canal", None, None, None),       # two canals of one name
-              S.Canal(6, "Other Canal", "canal", None, None, None)]
+    CANALS = [S.Canal(1, "Test Canal", "canal", None, None, None, 9000.0, head_in=("North Test District",)),
+              S.Canal(2, "Test Lateral", "lateral", None, 1, None, 2000.0, head_in=("North Test District",)),
+              S.Canal(3, "Small Lateral", "lateral", None, 2, None, 800.0),
+              S.Canal(4, "Test Drain", "drain", None, 1, None, 1500.0),
+              S.Canal(5, "Test Canal", "canal", None, None, None, 4000.0,      # two canals of one name, far apart
+                      head_in=("South Test District", "Overlapping Test Company")),
+              S.Canal(6, "Other Canal", "canal", None, None, None, 3000.0)]
 
     def test_names_and_branches(self):
         plain = D.entry(spec(canals=["TEST canal"]), 0)
-        chosen, missing = S.selections([plain], self.CANALS)
+        chosen, notes = S.selections([plain], self.CANALS)
         self.assertEqual(sorted(chosen), [1, 5])
-        self.assertEqual(missing, [])
+        self.assertEqual([(n.entry, n.name, n.what, [c.id for c in n.canals]) for n in notes],
+                         [("test-district-2026", "TEST canal", "several", [1, 5])])     # the longest first
         branches = D.entry(spec(id="b", canals=["Test Canal", "Gone Canal"], branches=True), 1)
-        chosen, missing = S.selections([plain, branches], self.CANALS)
+        chosen, notes = S.selections([plain, branches], self.CANALS)
         self.assertEqual(sorted(chosen), [1, 2, 3, 5])                    # not the drain
         self.assertEqual([e.id for e in chosen[1]], ["test-district-2026", "b"])
-        self.assertEqual(missing, [("b", "Gone Canal")])
+        self.assertEqual([(n.entry, n.name, n.what) for n in notes],
+                         [("test-district-2026", "TEST canal", "several"), ("b", "Test Canal", "several"),
+                          ("b", "Gone Canal", "none")])
+
+    def test_several_is_reported_with_ids_lengths_and_service_areas(self):
+        _, notes = S.selections([D.entry(spec(canals=["Test Canal"]), 0)], self.CANALS)
+        self.assertEqual(S.note_text(notes[0]),
+                         "entry test-district-2026: 'Test Canal' selects 2 canals of that name: 1 (9.0 km, head in "
+                         "North Test District); 5 (4.0 km, head in South Test District, Overlapping Test Company). "
+                         "If that isn't meant, narrow it with head_in or canal_ids")
+        _, notes = S.selections([D.entry(spec(canals=["Gone Canal"]), 0)], self.CANALS)
+        self.assertEqual(S.note_text(notes[0]),
+                         "entry test-district-2026: no canal named 'Gone Canal' in the current water build")
+
+    def test_head_in_narrows_a_name_to_one_district(self):
+        south = D.entry(spec(canals=["Test Canal"], head_in=["overlapping test company"], branches=True), 0)
+        chosen, notes = S.selections([south], self.CANALS)
+        self.assertEqual(sorted(chosen), [5])
+        self.assertEqual(notes, [])
+        north = D.entry(spec(canals=["Test Canal"], head_in=["North Test District"], branches=True), 0)
+        self.assertEqual(sorted(S.selections([north], self.CANALS)[0]), [1, 2, 3])    # its branches follow
+        nowhere = D.entry(spec(canals=["Test Canal", "Other Canal"], head_in=["South Test District"]), 0)
+        chosen, notes = S.selections([nowhere], self.CANALS)
+        self.assertEqual(sorted(chosen), [5])
+        self.assertEqual([(n.name, n.what, n.named) for n in notes], [("Other Canal", "none", 1)])
+        self.assertEqual(S.note_text(notes[0]), "entry test-district-2026: 'Other Canal' names 1 canal(s) of the "
+                                                "current water build, none within the entry's head_in and canal_ids")
+        gone = D.entry(spec(canals=["Gone Canal"], head_in=["South Test District"]), 0)
+        self.assertEqual(S.note_text(S.selections([gone], self.CANALS)[1][0]),
+                         "entry test-district-2026: no canal named 'Gone Canal' in the current water build")
+
+    def test_canal_ids_narrow_a_name(self):
+        e = D.entry(spec(canals=["Test Canal"], canal_ids=[5, 6, 404]), 0)
+        chosen, notes = S.selections([e], self.CANALS)
+        self.assertEqual(sorted(chosen), [5])
+        self.assertEqual([(n.name, n.what) for n in notes], [("canal id 6", "unused id"), ("canal id 404", "unused id")])
+        self.assertEqual(S.note_text(notes[0]),
+                         "entry test-district-2026: canal id 6 is 'Other Canal', which none of its names selects")
+        self.assertEqual(S.note_text(notes[1]),
+                         "entry test-district-2026: canal id 404 isn't a canal of the current water build")
 
 
 class RowTest(unittest.TestCase):
@@ -326,6 +367,57 @@ class RowTest(unittest.TestCase):
         self.assertEqual(drain["description"],
                          "Test Drain: water all year (a drain; drains and creeks never switch off)")
 
+    def test_a_span_ending_on_idwrs_date_is_internal_and_credits_idwr(self):
+        """No shut-off announced: the district's 'on' ends with IDWR's legal season, so that row is IDWR's too."""
+        on = self.rows(S.canal_rules(LEGAL, [D.entry(spec(off=None), 0)]))[1]
+        self.assertEqual((on["start"], on["end"], on["severity"]), (boise(2026, 4, 6), boise(2026, 11, 16), "on"))
+        a = on["attributes"]
+        self.assertEqual((a["basis"], a["end_from"], a["season"], a["objectid"], a["republish"], a["off_announced"]),
+                         ("district", "legal", "3/1 - 11/15", 2, "internal", False))
+        self.assertEqual(a["credit"][:2], ["Test Irrigation District (https://example.org/notices)", S.IDWR_CREDIT])
+        self.assertNotIn("until_legal", a)
+        self.assertEqual(on["description"], "Test Canal: water on (Test Irrigation District's dates; no shut-off "
+                                            "announced: until the legal season ends)")
+        self.assertIn("ends with IDWR's legal season (3/1 - 11/15)", a["why"])
+        # The entry's own 'no' stays the strictest.
+        self.assertEqual(self.rows(S.canal_rules(LEGAL, [D.entry(spec(off=None, republish="no"), 0)]))[1]
+                         ["attributes"]["republish"], "no")
+        # Its 'off' before the 'on' is the district's alone; so is an 'on' with its shut-off given.
+        off_before, = [r for r in self.rows(S.canal_rules(LEGAL, [D.entry(spec(off=None), 0)]))
+                       if r["start"] == boise(2026, 1, 1)]
+        self.assertEqual((off_before["attributes"]["republish"], off_before["attributes"].get("end_from")), ("yes", None))
+        announced = self.rows(S.canal_rules(LEGAL, [D.entry(spec(), 0)]))[1]
+        self.assertEqual((announced["attributes"]["republish"], announced["attributes"].get("end_from")), ("yes", None))
+        self.assertNotIn(S.IDWR_CREDIT, announced["attributes"]["credit"])
+
+    def test_a_span_cut_short_by_the_gauge_ends_on_the_gauges_reading(self):
+        rs = shut_off()
+        rows = self.rows(S.canal_rules(LEGAL, [D.entry(spec(off=None), 0)], G, S.gauge_spans(G, rs, rs[-1].t + H)))
+        district_on, = [r for r in rows if r["attributes"]["basis"] == "district" and r["severity"] == "on"]
+        self.assertEqual((district_on["start"], district_on["end"]), (boise(2026, 4, 6), T0))
+        self.assertEqual((district_on["attributes"]["republish"], district_on["attributes"].get("end_from")),
+                         ("yes", None))
+
+    def test_hydroshare_is_credited_where_it_named_the_canal(self):
+        """CC BY 4.0: every row of a canal HydroShare named, typed or matched credits it, with its DOI."""
+        named = S.Canal(78, "Test Wasteway", "drain", None, None, None, 1200.0, ("nhd_hr", "hydroshare_canals"))
+        always = S.always_row(named, SINCE)
+        self.assertEqual(always["attributes"]["credit"], [*S.NETWORK_CREDIT, S.HYDROSHARE_CREDIT])
+        self.assertIn("doi:10.4211/hs.24a5f761bf4f41fb9b872b130d9d1a3f", S.HYDROSHARE_CREDIT)
+        self.assertIn("modified", S.HYDROSHARE_CREDIT)
+        self.assertEqual(always["attributes"]["republish"], "yes")
+        seasonal = named._replace(kind="lateral", name="Test Lateral")
+        rs = shut_off()
+        for s_, e, v, r in S.spans(S.canal_rules(LEGAL, [D.entry(spec(), 0)], G, S.gauge_spans(G, rs, rs[-1].t + H)),
+                                   SINCE, UNTIL):
+            with self.subTest(basis=v["basis"], start=s_):
+                self.assertEqual(S.row(seasonal, s_, e, v, r)["attributes"]["credit"][-1], S.HYDROSHARE_CREDIT)
+        # Not where it had no part.
+        self.assertNotIn(S.HYDROSHARE_CREDIT, S.always_row(named._replace(sources=("osm_waterways",)), SINCE)
+                         ["attributes"]["credit"])
+        self.assertIn("CC BY 4.0", S.SOURCE["license"])
+        self.assertIn(S.HYDROSHARE_CREDIT, S.SOURCE["credit"])
+
     def test_unchanged(self):
         rows = self.rows(S.canal_rules(LEGAL, []))
         stored = {r["source_id"]: (True, events.content_hash(r)) for r in rows}
@@ -351,6 +443,9 @@ class DatesFileTest(unittest.TestCase):
         self.assertEqual(e.on_at, boise(2026, 4, 6))
         self.assertEqual(e.off_at, boise(2026, 10, 15, 8, 30))
         self.assertEqual((e.on_given, e.read_on), ("2026-04-06", date(2026, 3, 20)))
+        self.assertEqual((e.head_in, e.canal_ids), ((), ()))
+        scoped = D.entry(spec(head_in=[" Test District "], canal_ids=[77, 9007199254740991]), 0)
+        self.assertEqual((scoped.head_in, scoped.canal_ids), (("Test District",), (77, 9007199254740991)))
 
     def test_refused(self):
         for bad, msg in (
@@ -371,7 +466,15 @@ class DatesFileTest(unittest.TestCase):
                 (spec(read="Mar 20"), "read is the day"),
                 (spec(read="2026-02-30"), "read is not a date"),
                 (spec(text="x" * 501), "text is the district's words"),
-                (spec(republish="maybe"), "republish is one of")):
+                (spec(republish="maybe"), "republish is one of"),
+                (spec(head_in=[]), "head_in is a list"),
+                (spec(head_in="Test District"), "head_in is a list"),
+                (spec(head_in=["--"]), "head_in is a list"),
+                (spec(canal_ids=[]), "canal_ids is a list"),
+                (spec(canal_ids=["5"]), "canal_ids is a list"),
+                (spec(canal_ids=[True]), "canal_ids is a list"),
+                (spec(canal_ids=[0]), "canal_ids is a list"),
+                (spec(canal_ids=[2 ** 53]), "canal_ids is a list")):
             with self.subTest(msg=msg), self.assertRaisesRegex(ValueError, msg):
                 D.entry(bad, 0)
         with self.assertRaisesRegex(ValueError, "used twice"):
@@ -400,7 +503,8 @@ def _line(*points):
 
 @unittest.skipUnless(DB_URL, "set TVT_TEST_DATABASE_URL to a scratch database (with water 0001 and 0002)")
 class DatabaseTest(unittest.TestCase):
-    """Derive and store on a synthetic build: a gauged main canal, a district's lateral, a drain."""
+    """Derive and store on a synthetic build: a gauged main canal, a district's lateral (HydroShare among its
+    sources), a drain, and a second lateral of that name in another service area."""
 
     @classmethod
     def setUpClass(cls):
@@ -418,24 +522,31 @@ class DatabaseTest(unittest.TestCase):
         build = c.execute("insert into water.build default values returning id").fetchone()[0]
         for rid, kind, name, geom in ((101, "canal", "Test Main Canal", _line((0, 0), (5000, 0))),
                                       (102, "lateral", "Test Lateral", _line((2000, 0), (2000, 1500))),
-                                      (103, "drain", "Test Drain", _line((0, 500), (3000, 500)))):
+                                      (103, "drain", "Test Drain", _line((0, 500), (3000, 500))),
+                                      (104, "lateral", "Test Lateral", _line((30000, 0), (30000, 900)))):
             c.execute("""insert into water.reach (id, kind, name, width_m, width_from, minzoom, geometry_from, length_m,
                                                   geom, build_id)
                          values (%s, %s, %s, 5, 'kind', 11, 'osm', 1000, ST_SetSRID(ST_GeomFromGeoJSON(%s), 4326),
                                  %s)""", (rid, kind, name, geom, build))
-        for cid, name, kind, lid, src in ((101, "Test Main Canal", "main_canal", "BSEI1", None),
-                                          (102, "Test Lateral", "lateral", None, 101),
-                                          (103, "Test Drain", "drain", None, None)):
+        for cid, name, kind, lid, src, sources in (
+                (101, "Test Main Canal", "main_canal", "BSEI1", None, ["osm_waterways"]),
+                (102, "Test Lateral", "lateral", None, 101, ["osm_waterways", "hydroshare_canals"]),
+                (103, "Test Drain", "drain", None, None, ["osm_waterways"]),
+                (104, "Test Lateral", "lateral", None, None, ["osm_waterways"])):
             c.execute("""insert into water.canal (id, name, kind, length_m, reaches, head_reach_id, source_kind,
                                                   source_canal_id, gauge_lid, sources, build_id)
-                         values (%s, %s, %s, 1000, 1, %s, 'canal', %s, %s, '{osm_waterways}', %s)""",
-                      (cid, name, kind, cid, src, lid, build))
+                         values (%s, %s, %s, 1000, 1, %s, 'canal', %s, %s, %s, %s)""",
+                      (cid, name, kind, cid, src, lid, sources, build))
+        for cid, objectid, org in ((101, 1, "North Test District"), (102, 2, "South Test District"),
+                                   (104, 1, "North Test District")):
+            c.execute("""insert into water.canal_org (canal_id, objectid, name, share, at_head, build_id)
+                         values (%s, %s, %s, 1, true, %s)""", (cid, objectid, org, build))
         for cid in (101, 102):
             c.execute("""insert into water.canal_season (canal_id, objectid, season, start_month, start_day,
                                                          end_month, end_day, build_id)
                          values (%s, 2, '3/1 - 11/15', 3, 1, 11, 15, %s)""", (cid, build))
-        entry = D.entry(spec(id="test-lateral-2026", canals=["test lateral"]), 0)
-        cls.counts, cls.missing = D.store(c, [entry], "canal_dates.json", "0" * 64)
+        entry = D.entry(spec(id="test-lateral-2026", canals=["test lateral"], head_in=["South Test District"]), 0)
+        cls.counts, cls.lines = D.store(c, [entry], "canal_dates.json", "0" * 64)
         rs = shut_off()
         cls.last = rs[-1].t
         cls.first_off = next(r.t for r in rs if r.flow_cfs is None)
@@ -460,9 +571,10 @@ class DatabaseTest(unittest.TestCase):
 
     def test_derive_store_and_go_stale(self):
         c = self.conn
-        self.assertEqual((self.counts["entries"], self.missing), (1, []))
+        self.assertEqual((self.counts["entries"], self.counts["names selecting several canals"]), (1, 0))
+        self.assertEqual(self.lines, ["entry test-lateral-2026: selects 1 canal(s) that switch off"])
         rows, stats = S.derive(c, self.last + H)
-        self.assertEqual(stats["canals"], 3)
+        self.assertEqual((stats["canals"], stats["no rule"]), (4, 1))   # 104: another district's, no legal window
         self.assertEqual(stats["gauge BSEI1"], f"off since {S.iso(self.first_off)}")
         self.assertEqual(stats["always"], 1)
         self.assertEqual(S.write(c, rows, self.last + H), {"new": len(rows), "changed": 0, "gone": 0})
@@ -474,6 +586,11 @@ class DatabaseTest(unittest.TestCase):
         self.assertEqual([(r[1], r[4]) for r in lateral][:3], [("off", "district"), ("on", "district"),
                                                                ("off", "district")])
         self.assertEqual([(r[1], r[4], r[3]) for r in got if r[0].startswith("103@")], [("on", "always", None)])
+        self.assertEqual([r for r in got if r[0].startswith("104@")], [])
+        credits = dict(c.execute("""select split_part(source_id, '@', 1), bool_and(attributes->'credit' ? %s)
+                                    from evt.event where source = 'canal_season' group by 1""",
+                                 (S.HYDROSHARE_CREDIT,)).fetchall())
+        self.assertEqual(credits, {"101": False, "102": True, "103": False})
         head = c.execute("""select ST_AsText(geom) from evt.event where source = 'canal_season'
                             and source_id = %s""", (main[-1][0],)).fetchone()[0]
         self.assertEqual(head, c.execute("select ST_AsText(ST_StartPoint(geom)) from water.reach where id = 101"
@@ -494,10 +611,24 @@ class DatabaseTest(unittest.TestCase):
 
     def test_the_dates_table_and_the_load(self):
         c = self.conn
-        row = c.execute("""select d.entry_id, d.district, d.canals, d.season, d.on_at, d.off_at, d.on_given, l.source,
-                                  l.sha256
+        row = c.execute("""select d.entry_id, d.district, d.canals, d.head_in, d.canal_ids, d.season, d.on_at, d.off_at,
+                                  d.on_given, l.source, l.sha256, l.counts->'report'
                            from water.canal_date d join water.load l on l.id = d.load_id""").fetchone()
-        self.assertEqual(row, ("test-lateral-2026", "Test Irrigation District", ["test lateral"], 2026,
-                               boise(2026, 4, 6), boise(2026, 10, 15), "2026-04-06", "canal_dates", "0" * 64))
+        self.assertEqual(row, ("test-lateral-2026", "Test Irrigation District", ["test lateral"],
+                               ["South Test District"], None, 2026, boise(2026, 4, 6), boise(2026, 10, 15),
+                               "2026-04-06", "canal_dates", "0" * 64, self.lines))
         self.assertEqual([e.id for e in D.loaded(c)], ["test-lateral-2026"])
-        self.assertEqual(D.loaded(c)[0], D.entry(spec(id="test-lateral-2026", canals=["test lateral"]), 0))
+        self.assertEqual(D.loaded(c)[0], D.entry(spec(id="test-lateral-2026", canals=["test lateral"],
+                                                      head_in=["South Test District"]), 0))
+
+    def test_the_load_reports_a_name_of_several_canals(self):
+        """Without head_in, 'Test Lateral' selects both laterals: the load lists them, with their service areas."""
+        counts, lines = D.report(self.conn, [D.entry(spec(id="anywhere", canals=["Test Lateral"],
+                                                          canal_ids=[102, 104, 103]), 0),
+                                             D.entry(spec(id="unscoped", canals=["Test Lateral"]), 1)])
+        self.assertEqual((counts["names selecting several canals"], counts["canal_ids unused"]), (2, 1))
+        self.assertEqual(lines[:2], ["entry anywhere: selects 2 canal(s) that switch off",
+                                     "entry unscoped: selects 2 canal(s) that switch off"])
+        self.assertIn("'Test Lateral' selects 2 canals of that name: 102 (1.0 km, head in South Test District); "
+                      "104 (1.0 km, head in North Test District)", lines[2])
+        self.assertEqual(lines[3], "entry anywhere: canal id 103 is 'Test Drain', which none of its names selects")

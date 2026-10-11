@@ -13,13 +13,18 @@
 -- Nothing here is drawn: the app reads the lifecycles and sets feature-state on the baked reaches (wave 2).
 
 -- One row per entry of canal_dates.json, replaced whole by each canal-dates-load. Facts (dates) from each district's
--- own page, cited with the date we read it. Canals are named, not numbered: water.canal's ids follow its builds.
+-- own page, cited with the date we read it. Canals are named, not numbered: water.canal's ids follow its builds. A
+-- name selects every canal of that name in the valley, unless head_in or canal_ids narrow it (the load lists names
+-- that select several).
 create table water.canal_date (
   entry_id   text primary key check (entry_id ~ '^[a-z0-9][a-z0-9._-]*$'),
   position   integer not null unique,                   -- its place in the file: a later entry wins on a canal
   district   text not null check (btrim(district) <> ''),   -- who announced it, as it names itself
   canals     text[] not null check (cardinality(canals) > 0),   -- water.canal names, as the district names them
   branches   boolean not null default false,            -- also the canals fed from them (water.canal.source_canal_id)
+  head_in    text[] check (cardinality(head_in) > 0),   -- only the named canals whose head lies in one of these IDWR
+                                                        -- service areas (water.canal_org.at_head); null: anywhere
+  canal_ids  bigint[] check (cardinality(canal_ids) > 0),   -- only these of the named canals (ids follow the builds)
   season     smallint not null check (season between 1900 and 2200),   -- the calendar year its dates fall in
   on_at      timestamptz,                               -- water on from (a date: that day's start, Boise time)
   off_at     timestamptz,                               -- off from (likewise)

@@ -25,7 +25,7 @@ and the IDWR layers to the map box.
 | `boise_ecoli` | every 12 h, 2 small calls | none stated (City disclaimer only) | City of Boise Parks and Recreation | internal: courtesy note due |
 | `boise_river_hazards` | hourly, 2 small calls | none stated | Boise Fire Department and City of Boise (Float the Boise) | internal: courtesy note due |
 | `usdm_drought` | every 12 h, 1 call | free to reproduce with the required credit | NDMC (UNL), USDA, NOAA and NASA; map courtesy of NDMC | aggregates, with the credit line |
-| `canal_season` | hourly, no request: derived ([below](#the-canal-season)) | derived (NWPS, the water network, the districts' dates, IDWR) | each lifecycle names its own | each lifecycle says; IDWR's are internal |
+| `canal_season` | hourly, no request: derived ([below](#the-canal-season)) | derived (NWPS, the water network, HydroShare's canal names (CC BY 4.0), the districts' dates, IDWR) | each lifecycle names its own | each lifecycle says; IDWR's are internal |
 
 Every request goes through `ingest/http.py` (robots.txt checked, our
 User-Agent) with at least 2 s between requests to one host. Each run is
@@ -44,7 +44,7 @@ logged in `ops.fetch`.
   to Parma, Glenwood Bridge BIGI1 among them), Payette, Snake, Malheur,
   Owyhee and Weiser rivers, creeks, the New York Canal, and pool levels at
   Arrowrock, Lake Lowell and C.J. Strike. Observations are USGS's where
-  NWPS names a USGS site: 23 of the 37 gauges. The other 14, the New York
+  NWPS names a USGS site: 24 of the 37 gauges. The other 13, the New York
   Canal's BSEI1 among them, name no USGS site (`usgsId` is empty) and no
   `dataAttribution` in the metadata we keep (checked Oct 11, 2026);
   Reclamation's at the dams ⚠️. Forecasts are NWRFC's.
@@ -384,10 +384,22 @@ set per canal. Strongest first:
    scraped), with the page and the day it was read. Within its year an
    entry is off before its `on`, on from `on` to `off`, and off from
    `off`; while no shut-off is announced, the water runs to the end of
-   the canal's legal season. Canals are named as the district names them
+   the canal's legal season. That end is IDWR's date, so the span says
+   so (`end_from` `legal`), credits IDWR and is **internal** until the
+   shut-off is entered. Canals are named as the district names them
    (`water.canal` names, matched without case or punctuation), and
-   `"branches": true` adds the canals fed from them. A later entry wins
-   over an earlier one, and the gauge over both, its "unknown" included.
+   `"branches": true` adds the canals fed from them. A name selects every
+   canal of that name in the valley, and in build 10, 58 names (as
+   matched) belong to more than one canal, 126 in all: the heads of
+   three Stevens Laterals lie up to 35 km apart. So `canal-dates-load`
+   and its dry run list every name that selects several canals, with
+   each one's id, length and the IDWR service areas at its head, and two
+   optional keys narrow a name: `head_in` (service-area names: only the
+   canals whose head lies in one, from `water.canal_org`) and
+   `canal_ids` (`water.canal` ids, which follow the builds: prefer
+   `head_in`). The load also says how many canals each entry selects. A
+   later entry wins over an earlier one, and the gauge over both, its
+   "unknown" included.
 3. **IDWR's legal season of use** at the canal's head
    (`water.canal_season`): on within it, off outside it, always labelled
    as the legal window, not delivery dates.
@@ -421,14 +433,19 @@ what was last loaded.
 | `severity` | the state: `on`, `off` or `unknown` |
 | `description` | the card's words: "New York Canal: off (gauge BSEI1, New York Canal Diversion at Boise)", "...: in IDWR's legal irrigation season (3/1 - 11/15), not delivery dates" |
 | `geom` | the canal's head (its head reach's start) |
-| `attributes` | `canal_id`, `canal`, `canal_kind`, `state`, `basis` (`gauge`, `district`, `legal`, `always`), `why`, `credit` (a list), `republish`; for a gauge `gauge`, `gauge_name`; for a district `entry`, `district`, `words`, `source`, `read`, `off_announced`; for the legal window `season`, `objectid` |
+| `attributes` | `canal_id`, `canal`, `canal_kind`, `state`, `basis` (`gauge`, `district`, `legal`, `always`), `why`, `credit` (a list), `republish`; for a gauge `gauge`, `gauge_name`; for a district `entry`, `district`, `words`, `source`, `read`, `off_announced`, and `end_from` (`legal`), `season`, `objectid` when IDWR's window ends the span; for the legal window `season`, `objectid` |
 | `active` | false once a lifecycle leaves the derivation (a build renumbers a canal, late readings fill a silence): read active rows |
 
-**Licences.** A gauge's lifecycles are NWPS's (public domain) on the
-water network's canals (ODbL): republish yes. BSEI1's NWPS record names no
-USGS site and no other source, so its credit is NWPS's alone. A district's
-are facts with their page cited: republish yes unless the entry says
-otherwise. The legal window's are IDWR's: **internal**, like the window
+**Licences.** Every lifecycle names a canal of the water network: it
+credits OpenStreetMap (ODbL) and NHD, and HydroShare's canal network (CC
+BY 4.0, with its creators, DOI and "modified") whenever the canal's
+`sources` include it, since HydroShare named or typed the canal or
+matched it (522 of build 10's 559 canals; 131 have no other name). A
+gauge's lifecycles are NWPS's (public domain): republish yes. BSEI1's NWPS
+record names no USGS site and no other source, so its credit is NWPS's
+alone. A district's are facts with their page cited: republish yes unless
+the entry says otherwise, and internal for an "on" that ends on IDWR's
+date. The legal window's are IDWR's: **internal**, like the window
 itself; the source's own row says internal, the strictest. The canal
 season is never in the base bake (`basemap/landscape/plan.py` refuses
 `water/canal_season`): it's drawn as feature-state.
@@ -441,9 +458,13 @@ the New York Canal reads on from BSEI1's first reading (Sep 7) and **off
 since Sep 28, 07:45 Boise time**, its first reading with no flow (3.79
 ft). The next run wrote nothing. As of Oct 13, 07:15 UTC, 48 hours after
 the copy's last reading, the off span closes and "unknown" begins; a
-minute earlier nothing changes. A trial dates entry for the Ridenbaugh
-Canal with `branches` (a dry run, not loaded) selected 42 canals, 33 of
-them laterals.
+minute earlier nothing changes. 1,885 lifecycles, on the 518 canals
+with rows whose sources include HydroShare, credit it. A trial dates
+file (never committed; loaded, then the empty file again): "Stevens
+Lateral" was reported as three canals, with their lengths and the
+service areas at their heads, and `head_in` narrowed it to one; the
+Ridenbaugh Canal with `branches` and no shut-off selected 41 canals that
+switch off, whose "on" ended on Nov 16 with IDWR's window, internal.
 
 ### Commands
 

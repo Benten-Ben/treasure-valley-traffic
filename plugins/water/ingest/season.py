@@ -21,8 +21,11 @@ first:
    NWPS's alone.
 2. **The district's dates**: plugins/water/ingest/canal_dates.json, loaded by canal-dates-load into
    water.canal_date (sources/canal_dates.py). Within an entry's year: off before its `on`, on from `on` to `off`
-   (to the end of the canal's legal season while no `off` is announced, else the year's), off from `off`. A later
-   entry wins over an earlier one; the gauge wins over both, its "unknown" included.
+   (to the end of the canal's legal season while no `off` is announced, else the year's; a span that ends on IDWR's
+   date says so, credits IDWR and is internal, as the window is), off from `off`. A later entry wins over an earlier
+   one; the gauge wins over both, its "unknown" included. A name selects every canal of that name in the valley,
+   unless the entry's head_in (IDWR service areas at the head) or canal_ids narrow it; canal-dates-load lists the
+   names that select several.
 3. **IDWR's legal season of use** at the canal's head (water.canal_season, built by water-build from IDWR's zones):
    on within it, off outside it, labelled as the legal window, not delivery dates. Internal (IDWR states no
    licence): those lifecycles say republish "internal".
@@ -44,8 +47,10 @@ a new water build, a new dates file, the new year).
 reading changes it or 48 hours pass without one) and for 'always'; severity the state; geom the canal's head;
 description the card's words; attributes {canal_id, canal, canal_kind, state, basis ('gauge', 'district',
 'legal', 'always'), why, credit [...], republish, and by basis: gauge, gauge_name; entry, district, words, source,
-read, off_announced; season, objectid}. A row that leaves the derivation (a new build renumbers a canal, readings
-fill a gap) turns inactive: the app reads active rows.
+read, off_announced (and end_from 'legal', season, objectid when IDWR's window ends it); season, objectid}. Every
+row credits the network (OpenStreetMap, NHD) and HydroShare's canal network (CC BY 4.0, with its DOI) when the
+canal's sources include it (131 canals of build 10 have their names from it alone). A row that leaves the derivation (a new build
+renumbers a canal, readings fill a gap) turns inactive: the app reads active rows.
 """
 
 import argparse
@@ -57,11 +62,11 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from typing import NamedTuple, Optional
 
-from ingest import db, events, seasons
+from ingest import db, events, manifest, seasons
 
 from . import rules
 from .common import iso, parse_time
-from .sources import canal_dates
+from .sources import canal_dates, hydroshare_canals
 
 SOURCE = {
     "name": "canal_season",
@@ -70,10 +75,11 @@ SOURCE = {
     "url": "https://github.com/Benten-Ben/treasure-valley-traffic/blob/main/plugins/water/ingest/season.py",
     "access": "open",
     "schedule": "1 hour",   # fetches nothing: readings and dates to lifecycles (the 48-hour rule needs a clock)
-    "license": "derived: NWPS readings (public domain), the water network (ODbL), the districts' dates (cited), "
-               "IDWR's season of use (none stated)",
+    "license": "derived: NWPS readings (public domain), the water network (ODbL), the HydroShare canal network's "
+               "names (CC BY 4.0), the districts' dates (cited), IDWR's season of use (none stated)",
     "credit": "NOAA National Weather Service (NWPS); the irrigation districts, as cited; Idaho Department of Water "
-              "Resources (Season of Use); © OpenStreetMap contributors; USGS National Hydrography Dataset",
+              "Resources (Season of Use); © OpenStreetMap contributors; USGS National Hydrography Dataset; "
+              + hydroshare_canals.SOURCE["credit"],
     "notes": "Derived, fetches nothing: each canal's water season as evt.event lifecycles (kind canal_season), from "
              "gauge BSEI1's stage and flow (unknown after 48 h without a reading), canal_dates.json, and IDWR's "
              "legal season (internal rows). Writes only when a lifecycle changed.",
@@ -84,6 +90,7 @@ STALE = timedelta(hours=48)       # without a reading this long, the gauge's can
 STATEMENT_TIMEOUT_S = 30          # inside `ingest serve`: no statement may hold up the sources after it
 
 NETWORK_CREDIT = ["© OpenStreetMap contributors", "USGS National Hydrography Dataset"]
+HYDROSHARE_CREDIT = hydroshare_canals.SOURCE["credit"]    # CC BY 4.0, with its DOI: on every canal it named or typed
 IDWR_CREDIT = "Idaho Department of Water Resources (Season of Use)"
 NWPS_CREDIT = "NOAA National Weather Service (NWPS)"
 
@@ -129,6 +136,9 @@ class Canal(NamedTuple):
     gauge_lid: Optional[str]
     source_canal_id: Optional[int]
     head: Optional[dict]          # GeoJSON point: the head reach's start
+    length_m: float = 0.0
+    sources: tuple = ()           # water.canal.sources: 'osm_waterways', 'nhd_hr', 'hydroshare_canals'
+    head_in: tuple = ()           # INTERNAL (IDWR): the service areas its head lies in (water.canal_org.at_head)
 
 
 # ---- the gauge -------------------------------------------------------------------------------------------------
@@ -283,7 +293,8 @@ def legal_rules(legal):
 
 
 def district_rules(entry, legal):
-    """An entry's rules on one canal (its legal window bounds an 'on' with no 'off' yet)."""
+    """An entry's rules on one canal. Its legal window bounds an 'on' with no 'off' yet: that span's value carries
+    'until_legal' (the window's text and objectid), and a row whose end is that bound says so (row())."""
     y0, y1 = _midnight(date(entry.season, 1, 1)), _midnight(date(entry.season + 1, 1, 1))
     base = {"basis": "district", "entry": entry.id, "district": entry.district, "words": entry.words,
             "source": entry.source, "read": entry.read_on.isoformat(), "republish": entry.republish}
@@ -296,11 +307,15 @@ def district_rules(entry, legal):
                                      "dates": {"start": start, "end": end}, **meta}))
 
     if entry.on_at is not None:
-        end = entry.off_at or legal_end(legal, entry.season)
-        if end is None or end <= entry.on_at:
-            end = y1
+        end, extra = entry.off_at, {}
+        if end is None:
+            end = legal_end(legal, entry.season)
+            if end is not None and end > entry.on_at:
+                extra = {"until_legal": {"season": legal[2], "objectid": legal[3]}}
+            else:
+                end = y1
         add("off", y0, entry.on_at)
-        add("on", entry.on_at, end, off_announced=entry.off_at is not None)
+        add("on", entry.on_at, end, off_announced=entry.off_at is not None, **extra)
     if entry.off_at is not None:
         add("off", entry.off_at, y1)
     return out
@@ -352,6 +367,9 @@ def _why(value, rule):
     if value["basis"] == "legal":
         return rule.text
     if value["basis"] == "district":
+        if value.get("end_from") == "legal":
+            return (f"{value['district']}: water on; its shut-off isn't announced yet, so the span ends with IDWR's "
+                    f"legal season ({value['season']})")
         if value["state"] == "on" and not value.get("off_announced", True):
             return f"{value['district']}: water on; its shut-off isn't announced yet"
         return f"{value['district']}'s dates"
@@ -365,6 +383,8 @@ def description(canal, value, rule):
             return f"{name}: unknown (gauge {value['gauge']}: {_silent(STALE)})"
         return f"{name}: {'water on' if state == 'on' else 'off'} (gauge {value['gauge']}, {value['gauge_name']})"
     if basis == "district":
+        if value.get("end_from") == "legal":
+            return f"{name}: water on ({value['district']}'s dates; no shut-off announced: until the legal season ends)"
         return f"{name}: {'water on' if state == 'on' else 'off'} ({value['district']}'s dates)"
     if basis == "legal":
         where = "in" if state == "on" else "outside"
@@ -372,20 +392,41 @@ def description(canal, value, rule):
     return f"{name}: water all year ({value['why']})"
 
 
-def credit_and_republish(value):
-    basis = value["basis"]
+def strictest(*classes):
+    """The strictest of republish classes (manifest.REPUBLISH runs from the loosest to the strictest)."""
+    return max(classes, key=manifest.REPUBLISH.index)
+
+
+def network_credit(canal):
+    """The canal's own credits: the network's, and HydroShare's (CC BY 4.0) when it named, typed or matched the
+    canal (water.canal.sources): its name shows on every row."""
+    return [*NETWORK_CREDIT, *([HYDROSHARE_CREDIT] if "hydroshare_canals" in (canal.sources or ()) else [])]
+
+
+def credit_and_republish(canal, value):
+    basis, network = value["basis"], network_credit(canal)
     if basis == "gauge":
-        return [f"{NWPS_CREDIT}, gauge {value['gauge']}", *NETWORK_CREDIT], "yes"
+        return [f"{NWPS_CREDIT}, gauge {value['gauge']}", *network], "yes"
     if basis == "district":
-        return [f"{value['district']} ({value['source']})", *NETWORK_CREDIT], value.get("republish", "yes")
+        credit, republish = [f"{value['district']} ({value['source']})"], value.get("republish", "yes")
+        if value.get("end_from") == "legal":         # its end is IDWR's date: internal, as IDWR's window is
+            credit.append(IDWR_CREDIT)
+            republish = strictest(republish, "internal")
+        return [*credit, *network], republish
     if basis == "legal":
-        return [IDWR_CREDIT, *NETWORK_CREDIT], "internal"
-    return list(NETWORK_CREDIT), "yes"
+        return [IDWR_CREDIT, *network], "internal"
+    return network, "yes"
 
 
 def row(canal, start, end, value, rule):
-    """One evt.event row (as events.upsert takes it)."""
-    credit, republish = credit_and_republish(value)
+    """One evt.event row (as events.upsert takes it). A district span whose end is its legal window's (no shut-off
+    announced) says so: end_from 'legal', the window's season and objectid, IDWR's credit, republish internal. One cut
+    short by a stronger or later rule ends there instead, and doesn't."""
+    value = dict(value)
+    until = value.pop("until_legal", None)
+    if until is not None and rule is not None and end is not None and end == rule.end:
+        value.update({"end_from": "legal", "season": until["season"], "objectid": until["objectid"]})
+    credit, republish = credit_and_republish(canal, value)
     attributes = {"canal_id": canal.id, "canal": canal.name, "canal_kind": canal.kind,
                   **{k: v for k, v in value.items() if k not in ("why",)},
                   "why": _why(value, rule), "credit": credit, "republish": republish}
@@ -408,11 +449,15 @@ def ready(conn):
 
 
 def canals(conn):
-    return [Canal(i, name, kind, lid, src, json.loads(head) if head else None) for i, name, kind, lid, src, head in
-            conn.execute("""select c.id, c.name, c.kind, c.gauge_lid, c.source_canal_id,
-                                   ST_AsGeoJSON(ST_StartPoint(r.geom), 6)
-                            from water.canal c left join water.reach r on r.id = c.head_reach_id
-                            order by c.id""").fetchall()]
+    return [Canal(i, name, kind, lid, src, json.loads(head) if head else None, length, tuple(sources or ()),
+                  tuple(head_in or ()))
+            for i, name, kind, lid, src, head, length, sources, head_in in conn.execute(
+                """select c.id, c.name, c.kind, c.gauge_lid, c.source_canal_id, ST_AsGeoJSON(ST_StartPoint(r.geom), 6),
+                          c.length_m, c.sources,
+                          array(select o.name from water.canal_org o where o.canal_id = c.id and o.at_head
+                                order by o.name)
+                   from water.canal c left join water.reach r on r.id = c.head_reach_id
+                   order by c.id""").fetchall()]
 
 
 def legal_windows(conn):
@@ -421,21 +466,51 @@ def legal_windows(conn):
     ).fetchall()}
 
 
+class Note(NamedTuple):
+    """What a dates entry's name selects, when it's worth a look: 'none' (no canal of the build, or none within the
+    entry's scope), 'several' (canals far apart can share a name), or 'unused id' (a canal_ids id none of its names
+    selects). canals: the Canals the name selects (for 'several'), or the id's (for 'unused id'); named: how many
+    canals carry the name before the entry's head_in and canal_ids narrow it."""
+    entry: str
+    name: str
+    what: str
+    canals: tuple = ()
+    named: int = 0
+
+
+def _scope(entry, found):
+    """The named canals an entry keeps: those with their head in a head_in service area (water.canal_org), and of
+    those, the canal_ids ones, when the entry gives either."""
+    if entry.head_in:
+        keys = {rules.name_key(n) for n in entry.head_in}
+        found = [c for c in found if keys & {rules.name_key(n) for n in c.head_in}]
+    if entry.canal_ids:
+        found = [c for c in found if c.id in entry.canal_ids]
+    return found
+
+
 def selections(entries, all_canals):
-    """{canal id: [entries selecting it, in the file's order]} over the seasonal canals, and the names that match
-    none: [(entry id, name)]. 'branches' adds the canals fed from a named one, and those fed from them."""
+    """{canal id: [entries selecting it, in the file's order]} over the seasonal canals, and the Notes: names that
+    select no canal or several, and canal_ids none of an entry's names selects. A name selects every canal of that
+    name (matched without case or punctuation) in the valley, narrowed by the entry's head_in and canal_ids;
+    'branches' adds the canals fed from those, and those fed from them."""
     by_key, children = defaultdict(list), defaultdict(list)
     for c in all_canals:
         by_key[rules.name_key(c.name)].append(c)
         if c.source_canal_id is not None:
             children[c.source_canal_id].append(c)
-    out, missing = defaultdict(list), []
+    out, notes, by_id = defaultdict(list), [], {c.id: c for c in all_canals}
     for e in sorted(entries, key=lambda e: e.position):
-        chosen = {}
+        chosen, named = {}, set()
         for name in e.canals:
-            found = by_key.get(rules.name_key(name), [])
+            everywhere = by_key.get(rules.name_key(name), [])
+            found = _scope(e, everywhere)
+            named.update(c.id for c in found)
             if not found:
-                missing.append((e.id, name))
+                notes.append(Note(e.id, name, "none", named=len(everywhere)))
+            elif len(found) > 1:
+                notes.append(Note(e.id, name, "several", tuple(sorted(found, key=lambda c: -c.length_m)),
+                                  len(everywhere)))
             todo = list(found)
             while todo:
                 c = todo.pop()
@@ -444,10 +519,44 @@ def selections(entries, all_canals):
                 chosen[c.id] = c
                 if e.branches:
                     todo += children.get(c.id, [])
+        for i in e.canal_ids or ():
+            if i not in named:
+                notes.append(Note(e.id, f"canal id {i}", "unused id", (by_id[i],) if i in by_id else ()))
         for c in chosen.values():
             if seasonal(c.kind, c.name):
                 out[c.id].append(e)
-    return out, missing
+    return out, notes
+
+
+def _where(c):
+    return f"head in {', '.join(c.head_in)}" if c.head_in else "head in no service area"
+
+
+def note_text(note):
+    """A Note in words, for canal-dates-load and its dry run."""
+    if note.what == "none":
+        if note.named:
+            return (f"entry {note.entry}: {note.name!r} names {note.named} canal(s) of the current water build, none "
+                    f"within the entry's head_in and canal_ids")
+        return f"entry {note.entry}: no canal named {note.name!r} in the current water build"
+    if note.what == "several":
+        listed = "; ".join(f"{c.id} ({c.length_m / 1000:.1f} km, {_where(c)})" for c in note.canals)
+        return (f"entry {note.entry}: {note.name!r} selects {len(note.canals)} canals of that name: {listed}. "
+                f"If that isn't meant, narrow it with head_in or canal_ids")
+    if note.canals:
+        c = note.canals[0]
+        return f"entry {note.entry}: {note.name} is {c.name!r}, which none of its names selects"
+    return f"entry {note.entry}: {note.name} isn't a canal of the current water build"
+
+
+def check(conn, entries):
+    """canal-dates-load's report on entries against the current build: ({entry id: canals it selects}, [Notes])."""
+    chosen, notes = selections(entries, canals(conn))
+    counts = defaultdict(int)
+    for picked in chosen.values():
+        for e in picked:
+            counts[e.id] += 1
+    return dict(counts), notes
 
 
 # ---- deriving and storing --------------------------------------------------------------------------------------
@@ -469,7 +578,7 @@ def derive(conn, now):
     since, until = window(now)
     legal = legal_windows(conn)
     entries = canal_dates.loaded(conn)
-    chosen, missing = selections(entries, cs)
+    chosen, notes = selections(entries, cs)
     gauged = {}
     for c in cs:
         g = GAUGES.get(c.gauge_lid or "")
@@ -503,8 +612,11 @@ def derive(conn, now):
     for lid in GAUGES:
         if lid not in gauged:
             stats[f"gauge {lid}"] = "linked to no canal in this build"
-    if missing:
-        stats["dates naming no canal"] = len(missing)
+    for what, label in (("none", "dates names selecting no canal"), ("several", "dates names selecting several"),
+                        ("unused id", "dates canal_ids unused")):
+        n = sum(1 for x in notes if x.what == what)
+        if n:
+            stats[label] = n
     return rows, stats
 
 

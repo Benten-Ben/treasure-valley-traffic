@@ -9,13 +9,19 @@ repository, each with the page it came from and the day we read it. The file sta
 
 checks the file (unknown keys, malformed dates, an entry without its page are refused), replaces water.canal_date
 with it, records the load in water.load, and then derives the canal season again (season.py), so the map follows
-the file within the minute. Names that match no canal of the current water build are reported, not refused: a
-canal renamed in OpenStreetMap shouldn't stop the load, but the entry then selects nothing until it's fixed.
+the file within the minute. It reports, and doesn't refuse: names that select no canal of the current water build
+(a canal renamed in OpenStreetMap shouldn't stop the load, but the entry selects nothing until it's fixed); names
+that select several canals, with each one's id, length and the IDWR service areas at its head, since one name can
+belong to laterals far apart (the heads of three Stevens Laterals lie up to 35 km apart, Oct 2026); and how many
+canals each entry selects. The dry run reports the same.
 
-An entry (see the file's "about"): id, district, canals (water.canal names; "branches": true adds the canals fed
-from them, through water.canal.source_canal_id), on and/or off (a date, 'YYYY-MM-DD', meaning that day's start in
-Boise, or a date and time), text (the district's words), source (the page's URL), read (YYYY-MM-DD) and optionally
-republish (default yes). Both dates fall in one calendar year, its season. How an entry becomes rules: season.py.
+An entry (see the file's "about"): id, district, canals (water.canal names, matched without case or punctuation,
+anywhere in the valley; "branches": true adds the canals fed from them, through water.canal.source_canal_id), on
+and/or off (a date, 'YYYY-MM-DD', meaning that day's start in Boise, or a date and time), text (the district's
+words), source (the page's URL), read (YYYY-MM-DD) and optionally republish (default yes). Both dates fall in one
+calendar year, its season. A name that selects several canals is narrowed by two optional keys: head_in (IDWR
+service-area names, water.canal_org: only the canals whose head lies in one) and canal_ids (water.canal ids: only
+those; ids follow the builds, so prefer head_in). How an entry becomes rules: season.py.
 
 Licence: the dates are facts, each cited to the district's page; the words are quoted, a sentence at most.
 """
@@ -50,11 +56,13 @@ SOURCE = {
 }
 
 TOP_KEYS = {"about", "seasons"}
-KEYS = {"id", "district", "canals", "branches", "on", "off", "text", "source", "read", "republish"}
+KEYS = {"id", "district", "canals", "branches", "head_in", "canal_ids", "on", "off", "text", "source", "read",
+        "republish"}
 ID = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
 DAY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 URL = re.compile(r"^https?://\S+$")
 TEXT_MAX = 500
+MAX_ID = 9007199254740991         # water.canal ids are reach ids: under 2^53
 
 
 @dataclass(frozen=True)
@@ -74,6 +82,8 @@ class Season:
     source: str
     read_on: date
     republish: str = "yes"
+    head_in: tuple = ()           # IDWR service-area names: only the named canals whose head lies in one
+    canal_ids: tuple = ()         # water.canal ids: only these of the named canals
 
 
 def _local_year(t):
@@ -101,6 +111,14 @@ def entry(spec, position):
     branches = spec.get("branches", False)
     if not isinstance(branches, bool):
         raise ValueError(f"{who}: branches is true or false, not {branches!r}")
+    head_in = spec.get("head_in", [])
+    if (not isinstance(head_in, list) or ("head_in" in spec and not head_in)
+            or any(not isinstance(n, str) or not _key(n) for n in head_in)):
+        raise ValueError(f"{who}: head_in is a list of IDWR service-area names, not {head_in!r}")
+    canal_ids = spec.get("canal_ids", [])
+    if (not isinstance(canal_ids, list) or ("canal_ids" in spec and not canal_ids)
+            or any(not isinstance(i, int) or isinstance(i, bool) or not 0 < i <= MAX_ID for i in canal_ids)):
+        raise ValueError(f"{who}: canal_ids is a list of water.canal ids, not {canal_ids!r}")
     at = {}
     for key in ("on", "off"):
         given = spec.get(key)
@@ -139,7 +157,7 @@ def entry(spec, position):
     return Season(id=sid, position=position, district=district.strip(), canals=tuple(c.strip() for c in canals),
                   branches=branches, season=years.pop(), on_at=at["on"], off_at=at["off"],
                   on_given=spec.get("on"), off_given=spec.get("off"), words=words, source=source, read_on=read_on,
-                  republish=republish)
+                  republish=republish, head_in=tuple(n.strip() for n in head_in), canal_ids=tuple(canal_ids))
 
 
 def parse(data):
@@ -179,15 +197,16 @@ def _key(name):
 def from_row(row):
     """A Season from a water.canal_date row (select COLUMNS)."""
     (sid, position, district, canals, branches, season, on_at, off_at, on_given, off_given, words, source, read_on,
-     republish) = row
+     republish, head_in, canal_ids) = row
     utc = (lambda t: t.astimezone(timezone.utc) if t is not None else None)
     return Season(id=sid, position=position, district=district, canals=tuple(canals), branches=branches,
                   season=season, on_at=utc(on_at), off_at=utc(off_at), on_given=on_given, off_given=off_given,
-                  words=words, source=source, read_on=read_on, republish=republish)
+                  words=words, source=source, read_on=read_on, republish=republish, head_in=tuple(head_in or ()),
+                  canal_ids=tuple(canal_ids or ()))
 
 
 COLUMNS = ("entry_id, position, district, canals, branches, season, on_at, off_at, on_given, off_given, words, source, "
-           "read_on, republish")
+           "read_on, republish, head_in, canal_ids")
 
 
 def loaded(conn):
@@ -201,31 +220,37 @@ def last_load(conn):
                            order by loaded_at desc, id desc limit 1""", (SOURCE["name"],)).fetchone()
 
 
-def unmatched(conn, entries):
-    """The names entries give that match no canal of the current build: [(entry id, name)]."""
-    known = {_key(n) for (n,) in conn.execute("select name from water.canal").fetchall()}
-    return [(s.id, n) for s in entries for n in s.canals if _key(n) not in known]
+def report(conn, entries):
+    """The load's report against the current water build: (counts, lines). The lines name each entry's canals,
+    the names that select none or several, and canal_ids no name selects (season.check)."""
+    from .. import season                    # season imports this module
+    selected, notes = season.check(conn, entries)
+    counts = {"entries": len(entries), "names": sum(len(s.canals) for s in entries),
+              "names selecting no canal": sum(1 for n in notes if n.what == "none"),
+              "names selecting several canals": sum(1 for n in notes if n.what == "several"),
+              "canal_ids unused": sum(1 for n in notes if n.what == "unused id")}
+    lines = [f"entry {s.id}: selects {selected.get(s.id, 0)} canal(s) that switch off" for s in entries]
+    return counts, lines + [season.note_text(n) for n in notes]
 
 
 def store(conn, entries, path, digest):
-    """Replace water.canal_date with entries (in the caller's transaction) and record the load. Returns stats."""
+    """Replace water.canal_date with entries (in the caller's transaction) and record the load. Returns
+    (counts, lines): report()'s."""
     db.ensure_source(conn, SOURCE)
-    missing = unmatched(conn, entries)
-    counts = {"entries": len(entries), "names": sum(len(s.canals) for s in entries),
-              "names matching no canal": len(missing)}
+    counts, lines = report(conn, entries)
     load_id = conn.execute(
         "insert into water.load (source, file, sha256, counts) values (%s, %s, %s, %s::jsonb) returning id",
-        (SOURCE["name"], os.path.basename(path), digest,
-         json.dumps({**counts, "unmatched": [f"{i}: {n}" for i, n in missing]}))).fetchone()[0]
+        (SOURCE["name"], os.path.basename(path), digest, json.dumps({**counts, "report": lines}))).fetchone()[0]
     conn.execute(f"delete from {TABLE}")
     for s in entries:
         conn.execute(
-            f"""insert into {TABLE} (entry_id, position, district, canals, branches, season, on_at, off_at, on_given,
-                                     off_given, words, source, read_on, republish, load_id)
-                values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
-            (s.id, s.position, s.district, list(s.canals), s.branches, s.season, s.on_at, s.off_at, s.on_given,
-             s.off_given, s.words, s.source, s.read_on, s.republish, load_id))
-    return counts, missing
+            f"""insert into {TABLE} (entry_id, position, district, canals, branches, head_in, canal_ids, season, on_at,
+                                     off_at, on_given, off_given, words, source, read_on, republish, load_id)
+                values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+            (s.id, s.position, s.district, list(s.canals), s.branches, list(s.head_in) or None,
+             list(s.canal_ids) or None, s.season, s.on_at, s.off_at, s.on_given, s.off_given, s.words, s.source,
+             s.read_on, s.republish, load_id))
+    return counts, lines
 
 
 def ready(conn):
@@ -246,10 +271,10 @@ def main(argv=None):
     with db.connect() as conn:
         if not ready(conn):
             sys.exit("canal-dates-load: water 0002 isn't applied (python3 db/migrate.py)")
-        counts, missing = store(conn, entries, args.file, digest)
+        counts, lines = store(conn, entries, args.file, digest)
         print("canal-dates-load: " + ", ".join(f"{k} {v}" for k, v in counts.items()), flush=True)
-        for sid, name in missing:
-            print(f"canal-dates-load: entry {sid}: no canal named {name!r} in the current water build", flush=True)
+        for line in lines:
+            print(f"canal-dates-load: {line}", flush=True)
         if args.dry_run:
             conn.rollback()
             print("(dry run: nothing written)", flush=True)
