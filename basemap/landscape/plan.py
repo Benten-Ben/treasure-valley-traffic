@@ -75,6 +75,7 @@ GEOMETRY_FAMILY = {t: (t.removeprefix("Multi"), "Multi" + t.removeprefix("Multi"
 # plugin.json in the repository.
 NEVER = {
     "*/idwr*": "IDWR's data (canal operators, the legal season window)",
+    "water/canal_season": "the canal season (lifecycles drawn as feature-state, some from IDWR's legal window)",
     "*/boise_*": "a City of Boise layer",
     "trails/r2r_*": "Ridge to Rivers' trails",
 }

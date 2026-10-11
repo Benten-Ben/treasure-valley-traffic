@@ -7,7 +7,7 @@
   "sources": [
     {"name": "nwps_gauges", "module": "ingest.sources.nwps_gauges", "kind": "source",
      "license": "US government work (public domain)",
-     "credit": "NOAA National Weather Service (NWPS; Northwest River Forecast Center); observations courtesy of the U.S. Geological Survey",
+     "credit": "NOAA National Weather Service (NWPS; Northwest River Forecast Center); observations courtesy of the U.S. Geological Survey where NWPS names a USGS site",
      "republish": "yes"},
     {"name": "nrcs_snotel", "module": "ingest.sources.nrcs_snotel", "kind": "source",
      "license": "US government work (USDA NRCS); public domain assumed",
@@ -28,6 +28,10 @@
     {"name": "idwr_season_of_use", "module": "ingest.sources.idwr_season_of_use", "kind": "source",
      "license": "none stated (IDWR disclaimer: made available as a public service)",
      "credit": "Idaho Department of Water Resources", "republish": "internal"},
+    {"name": "canal_season", "module": "ingest.season", "kind": "source",
+     "license": "derived: NWPS readings (public domain), the water network (ODbL), the districts' dates (cited), IDWR's season of use (none stated)",
+     "credit": "NOAA National Weather Service (NWPS); the irrigation districts, as cited; Idaho Department of Water Resources (Season of Use); © OpenStreetMap contributors; USGS National Hydrography Dataset",
+     "republish": "internal"},
     {"name": "nhd_hr", "module": "ingest.sources.nhd_hr", "kind": "manual",
      "license": "public domain", "credit": "USGS National Hydrography Dataset", "republish": "yes"},
     {"name": "hydroshare_canals", "module": "ingest.sources.hydroshare_canals", "kind": "manual",
@@ -35,13 +39,16 @@
      "credit": "Tatum, T., Bittmann, B., Stone, H., Kaiser, K. E. (2022), Treasure Valley Irrigation System, HydroShare, doi:10.4211/hs.24a5f761bf4f41fb9b872b130d9d1a3f (CC BY 4.0; modified)",
      "republish": "yes"},
     {"name": "osm_waterways", "module": "ingest.sources.osm_waterways", "kind": "manual",
-     "license": "ODbL", "credit": "© OpenStreetMap contributors", "republish": "yes"}
+     "license": "ODbL", "credit": "© OpenStreetMap contributors", "republish": "yes"},
+    {"name": "canal_dates", "module": "ingest.sources.canal_dates", "kind": "manual",
+     "license": "facts (dates) from each district's own page, cited",
+     "credit": "The irrigation districts, as each entry of canal_dates.json cites", "republish": "yes"}
   ],
   "tables": [
     "water.load", "water.nhd_flowline", "water.nhd_polygon", "water.nhd_line", "water.nhd_point", "water.nhd_flow",
     "water.hydroshare_canal", "water.osm_feature", "water.idwr_org", "water.idwr_season",
     "water.build", "water.reach", "water.reach_link", "water.reach_evidence", "water.body", "water.structure",
-    "water.canal", "water.gauge", "water.canal_org", "water.canal_season"
+    "water.canal", "water.gauge", "water.canal_org", "water.canal_season", "water.canal_date"
   ],
   "commands": [
     {"name": "nhd-load", "module": "ingest.nhd",
@@ -51,7 +58,11 @@
     {"name": "water-build", "module": "ingest.build",
      "help": "build the water network: OSM's geometry with NHD's facts, canals, topology, gauges (by hand)"},
     {"name": "water-export", "module": "ingest.export",
-     "help": "export the water network's base layers and the ground's water mask to $TVT_ARCHIVE/water/export/"}
+     "help": "export the water network's base layers and the ground's water mask to $TVT_ARCHIVE/water/export/"},
+    {"name": "canal-season", "module": "ingest.season",
+     "help": "derive each canal's water season (on, off, unknown) into evt.event now, as the hourly canal_season source does (--dry-run, --as-of, --canal NAME)"},
+    {"name": "canal-dates-load", "module": "ingest.sources.canal_dates",
+     "help": "load the districts' canal dates (plugins/water/ingest/canal_dates.json) into water.canal_date, then derive the canal season (--dry-run, --file)"}
   ],
   "osm_consumers": [
     {"source": "osm_waterways",

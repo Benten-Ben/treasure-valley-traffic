@@ -33,6 +33,7 @@ SOURCES_BEFORE = ["achd_cameras", "idaho511_views_oneoff", "idaho511_rwis_sites_
                   "usgs_quakes", "compass_crashes", "noaa_hms_smoke", "nwps_gauges", "nrcs_snotel", "boise_ecoli",
                   "boise_river_hazards", "usdm_drought",
                   "idwr_irrigation_orgs", "idwr_season_of_use",                # P4-data, landscape sprint (Oct 11)
+                  "canal_season",                                              # P5, landscape sprint (Oct 11)
                   "r2r_trails", "boise_greenbelt_closures", "usfs_r4_orders",
                   "idpr_route_closures", "idpr_area_restrictions", "awc_metar", "idfg_roadkill", "agrimet_et",
                   "swpc_ovation", "swpc_kp_1m", "compass_counts", "compass_growth", "compass_plats", "compass_congestion"]
@@ -42,7 +43,7 @@ WHERE = {  # source: plugin (docs/15 §15.4)
     "idl_fire_restrictions": "hazards", "nifc_wfigs_incidents": "hazards", "nifc_wfigs_perimeters": "hazards",
     "nasa_firms": "hazards", "nws_wwa": "hazards", "usgs_quakes": "hazards", "noaa_hms_smoke": "air",
     "nwps_gauges": "water", "nrcs_snotel": "water", "boise_ecoli": "water", "boise_river_hazards": "water",
-    "usdm_drought": "water", "r2r_trails": "trails", "boise_greenbelt_closures": "trails",
+    "usdm_drought": "water", "canal_season": "water", "r2r_trails": "trails", "boise_greenbelt_closures": "trails",
     "usfs_r4_orders": "lands", "idpr_route_closures": "lands", "idpr_area_restrictions": "lands",
     "awc_metar": "weather", "idfg_roadkill": "wildlife", "agrimet_et": "farm", "swpc_ovation": "sky",
     "swpc_kp_1m": "sky",
@@ -85,7 +86,7 @@ class RegistryTest(unittest.TestCase):
                          ["nifc_wfigs_perimeters_backfill"])
         self.assertEqual([e["name"] for _, e in registry.MANUAL if _.name == "trails"], ["osm_paths", "trails_match"])
         self.assertEqual([e["name"] for _, e in registry.MANUAL if _.name == "water"],
-                         ["nhd_hr", "hydroshare_canals", "osm_waterways"])
+                         ["nhd_hr", "hydroshare_canals", "osm_waterways", "canal_dates"])
 
     def test_the_plugins(self):
         self.assertEqual(sorted(p.name for p in ours()),
@@ -117,7 +118,7 @@ class RegistryTest(unittest.TestCase):
 
     def test_commands_resolve_and_keep_clear_of_the_built_ins(self):
         self.assertEqual(sorted(registry.COMMANDS),
-                         ["burn-scars", "farm-cdl-load", "farm-csb-load", "farm-derive", "farm-export",
+                         ["burn-scars", "canal-dates-load", "canal-season", "farm-cdl-load", "farm-csb-load", "farm-derive", "farm-export",
                           "farm-fields-load", "hydroshare-load", "match-intersections", "match-routes", "nhd-load",
                           "roads-developed-load", "rollup", "route-colors", "segment-match", "shrubs-hedge-check",
                           "shrubs-load", "soils-export", "soils-load", "trails-match", "transit-progress",

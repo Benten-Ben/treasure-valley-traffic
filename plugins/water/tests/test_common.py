@@ -83,11 +83,11 @@ class SourcesTest(unittest.TestCase):
         self.assertTrue(all(t.startswith("water.") for t in manifest["tables"]))
         expected = {"nwps_gauges": "30 minutes", "nrcs_snotel": "1 hour", "boise_ecoli": "12 hours",
                     "boise_river_hazards": "1 hour", "usdm_drought": "12 hours", "idwr_irrigation_orgs": "30 days",
-                    "idwr_season_of_use": "90 days"}
+                    "idwr_season_of_use": "90 days", "canal_season": "1 hour"}
         scheduled = [e for e in manifest["sources"] if e["kind"] == "source"]
         self.assertEqual([e["name"] for e in scheduled], list(expected))
         self.assertEqual([e["name"] for e in manifest["sources"] if e["kind"] == "manual"],
-                         ["nhd_hr", "hydroshare_canals", "osm_waterways"])
+                         ["nhd_hr", "hydroshare_canals", "osm_waterways", "canal_dates"])
         for entry in scheduled:
             with self.subTest(entry["name"]):
                 m = importlib.import_module(f"plugins.water.{entry['module']}")
@@ -102,6 +102,7 @@ class SourcesTest(unittest.TestCase):
         self.assertEqual(republish["boise_river_hazards"], "internal")
         self.assertEqual(republish["idwr_irrigation_orgs"], "internal")   # IDWR: no license stated
         self.assertEqual(republish["idwr_season_of_use"], "internal")
+        self.assertEqual(republish["canal_season"], "internal")          # its legal-window rows are IDWR's
 
 
 if __name__ == "__main__":
