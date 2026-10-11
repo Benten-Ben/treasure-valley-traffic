@@ -22,7 +22,7 @@ ground and says so (tiles.flat_entry). Every other input has a fallback, named i
 import os
 from dataclasses import dataclass, field
 
-from basemap.ground import fgb, grid, manifest as M
+from basemap.ground import fgb, grid, manifest as M, maskrules
 
 GROUND_LICENCE = "ODbL-1.0"
 GROUND_ABOUT = "ODbL produced work"
@@ -50,11 +50,12 @@ RAW = (
         "S1's cut of the held Idaho extract, read through GDAL's OSM driver (mask v0). The extract has no Oregon, "
         "so the box's Malheur slice has no OSM"),
     Raw("overture-buildings", "ODbL-1.0", "yes", "Overture Maps Foundation, © OpenStreetMap contributors",
-        "roof footprints for mask v0 (the release basemap/buildings.py reads)"),
+        "roof footprints for mask v0, as the map's buildings.pmtiles holds them at z15 (built by "
+        "basemap/buildings.py from the release it names)"),
     Raw("nhd", "public-domain", "yes", "U.S. Geological Survey, National Hydrography Dataset",
         "NHD HU4 1705 (GeoPackage), water for mask v0 until water's export lands"),
     Raw("cdl", "public-domain", "yes", "USDA NASS Cropland Data Layer",
-        "CDL 2025 (30 m): crop pixels, and developed land for the masks"),
+        "CDL 2025 (10 m): crop pixels, and developed land (classes 123-124) for mask v0"),
     Raw("csb", "public-domain", "yes", "USDA NASS Crop Sequence Boundaries",
         "CSB 2025 field polygons, the crop fallback until farm's crop_cover lands (C7)"),
     Raw("naip", "public-domain", "yes", "USDA NAIP",
@@ -90,6 +91,7 @@ class Use:
     schema: str = None                   # the JSON shape
     boxes: bool = False                  # one GeoTIFF per class box, named by its id, exactly on the box's window
     raw_only: bool = False               # a product: made only from RAW inputs, under RAW's licences
+    required: tuple = ()                 # a product: the layers it must have
 
     @property
     def ref(self):
@@ -123,8 +125,9 @@ USES = (
         "confident water: bodies, and reaches buffered to their widths (piped and dry intermittent channels left out)",
         "P4-data", fallback="mask v0's NHD and OSM water", geometry=_AREAS),
     Use("ground_mask", None, "FlatGeobuf", "mask v0",
-        "the masks from raw inputs (C6): buffered vectors for sampling and exact ones for painting (roofs, paving, "
-        "roads by OSM class width, water)", "S5a-2", raw_only=True),
+        "the masks from raw inputs (C6): exact areas for painting (roofs, roads at OSM's widths, paving, water) "
+        "and `covered`, grown for sampling (maskrules.py)", "S5a-2", geometry=_AREAS, raw_only=True,
+        required=tuple(maskrules.LAYERS)),
     Use("ground_classes", None, "GeoTIFF", "the box classes",
         "the 0.5 m land-cover classes, one GeoTIFF per box (named by the box's id, on its exact window)",
         "G1a", fallback="no classes: the boxes show the valley paint", res=grid.LEVELS["classes"], boxes=True,
@@ -305,6 +308,9 @@ def resolve(manifests, versions=None):
             raise InputError(f"{m.folder} is {m.plugin}'s export, read as {use.plugin}'s")
         if use.product:
             layers = m.layers
+            missing = [n for n in use.required if not m.has(n)]
+            if missing:
+                raise InputError(f"{use.plugin}@{m.build} lacks the layer(s) {', '.join(missing)} ({use.by})")
         elif m.has(use.layer):
             layers = [m.layer(use.layer)]
         else:

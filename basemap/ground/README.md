@@ -15,10 +15,11 @@ This folder holds the contract every piece of the ground shares:
 | What the ground reads, the republish rule and the flat fallback | [`inputs.py`](inputs.py) | anywhere |
 | The tile writer's spec, the tiles-manifest entry and the first-load budget | [`tiles.py`](tiles.py), [`spec.json`](spec.json) | anywhere |
 | The window-rasterising helper P2 and G1 share | [`rasterize.py`](rasterize.py) | the worker image |
+| Mask v0: what covers the ground, from raw inputs | [`mask.py`](mask.py) (the build, and reading it back), [`maskrules.py`](maskrules.py) (the rules), [`osmconf.ini`](osmconf.ini) | the worker image (the rules anywhere) |
 | The contract on the command line | [`ground.py`](ground.py) | anywhere |
 
-Built Oct 11 (sprint package S5a, first half). Still to come: mask v0 (S5a-2), the painter and its tiles (G1a),
-and texture and photo variation (G1b). The base bake, which reads the same exports, is in
+Built Oct 11 (sprint package S5a: the contract, then mask v0). Still to come: the painter and its tiles (G1a), and
+texture and photo variation (G1b). The base bake, which reads the same exports, is in
 [`../landscape/`](../landscape/README.md) (S5b).
 Package names and C numbers refer to the landscape sprint plan (v3), which is kept with the private files.
 
@@ -225,7 +226,7 @@ reach the ground through it, however it's labelled.
 
 | Product | Format | Needs | Without it | Made by |
 |---|---|---|---|---|
-| `ground_mask` (mask v0) | FlatGeobuf layers, named by S5a-2 | | **the ground stays flat** | S5a-2 |
+| `ground_mask` (mask v0) | FlatGeobuf, polygons: `roofs`, `roads`, `paving`, `water` and `covered` ([below](#mask-v0)) | every one of those layers | **the ground stays flat** | S5a-2 |
 | `ground_classes` | one GeoTIFF per box on the 0.5 m grid, named by the box's id (`a`, …, `downtown`, …), exactly on its window | | the boxes show the valley paint | G1a |
 
 The spike's classes can't go in as they are. Their road reference, and the rule that keeps cells within 2 m of a
@@ -238,9 +239,9 @@ and an unconfirmed version (v7 or v8) ⚠️.
 | Input | Licence | What |
 |---|---|---|
 | `osm` | ODbL-1.0 | S1's cut of the held Idaho extract, through GDAL's OSM driver. The extract has no Oregon, so the box's Malheur slice has no OSM |
-| `overture-buildings` | ODbL-1.0 | roof footprints |
+| `overture-buildings` | ODbL-1.0 | roof footprints, as the map's `buildings.pmtiles` holds them at z15 (built by `basemap/buildings.py` from the Overture release it names) |
 | `nhd` | public domain | NHD HU4 1705, water until water's export lands |
-| `cdl`, `csb` | public domain | CDL 2025 crop pixels and developed land; CSB 2025 fields, the crop fallback |
+| `cdl`, `csb` | public domain | CDL 2025 (10 m) crop pixels and developed land; CSB 2025 fields, the crop fallback |
 | `naip` | public domain | NAIP 2025 (0.3 m) for Ada and Canyon; NAIP 2023 (0.6 m) in boxes h–j |
 | `3dep` | public domain | the 2023–24 QL1 lidar products in the boxes; the DEM for slope and aspect |
 | `sentinel-2` | Copernicus | the July 2025 NDVI median, on the 10 m grid |
@@ -262,6 +263,104 @@ plan = inputs.resolve(inputs.exports(archive), versions={"cdl": "2025", "csb": "
 fallback and why, the credits, and whether it can be painted. It opens only the exports above. A missing archive
 folder is an error (exit 2), never "nothing exported yet".
 
+## Mask v0
+
+Mask v0 (C6) says what covers the ground. It holds exact areas for the painter (roofs, roads, paving and water,
+which the photo's variation mustn't paint twice) and `covered` for the soil sampler (P2): everything that isn't
+uncovered ground, grown so that an edge offset between the map and the photo doesn't leak pavement into a soil's
+colour. It's the ground's own product, built on the server from raw inputs only, so it doesn't wait for any plugin
+and nothing internal reaches the ground through it. Later masks come from plugin exports (water's `mask`, P4-data).
+
+```bash
+python basemap/ground/mask.py build --roofs <a copy of the map's buildings.pmtiles>    # into $TVT_ARCHIVE
+python basemap/ground/mask.py build --roofs ... --box d --archive /tmp/a              # one box, for a quick look
+```
+
+It's a light worker job (1 GB, 1 CPU). Valley-wide on Oct 11 it took **11 minutes at 474 MB at its peak**: reading
+the cut took 3.5 minutes, the roofs 3 and dissolving `covered` 4. It's **354 MB on disk**. Run it through the scratch
+wrapper, with the roofs' folder mounted (`--mount <folder>:/mnt/in`; the map's tiles folder can't be mounted, so copy `buildings.pmtiles` and the
+tiles manifest's `buildings` entry, as `buildings.json`, into a work folder first).
+
+| Input | Read from | What's taken |
+|---|---|---|
+| `osm` | S1's valley cut, `$TVT_ARCHIVE/osm/cut/valley.osm.pbf`, through GDAL's OSM driver with [`osmconf.ini`](osmconf.ini) (every tag, as JSON) | highway ways, waterways, railways, runways and taxiways; parking, highway areas, water, aprons and rail yards. OSM's buildings aren't read: Overture's roofs hold them |
+| `overture-buildings` | a copy of the map's `buildings.pmtiles` at z15, with `buildings.json` beside it | every footprint. One crossing a z15 tile's edge comes in two pieces, and the tiles' coordinates are good to about 0.2 m |
+| `nhd` | `$TVT_SOURCES/nhd/nhd_mapbox.gpkg` (HU4 1705) | Lake/Pond and Reservoir waterbodies; Stream/River and Canal/Ditch areas; stream, river and canal flowlines |
+| `cdl` | `$TVT_SOURCES/cdl/out/cdl_2025_10m.tif` | developed land, classes 123 and 124 (medium and high intensity), polygonised on CDL's own 10 m grid |
+
+Each input is named in the manifest with its version and sha256: the OSM extract's MD5 (from the `valley.json`
+beside the cut, which must describe the file), Overture's release (from `buildings.json`, or `--roofs-release`),
+NHD's `HU4 1705, published 2023-12-09`, and CDL's year (from the file's name). NHD and CDL are NAD83, read with the
+null datum shift. A build that fails or is refused leaves no folder behind.
+
+**The layers** (all MultiPolygon, EPSG:32611, with a spatial index and an integer `id`):
+
+| Layer | For | What | Fields |
+|---|---|---|---|
+| `roofs` | painting | Overture's footprints | `id` |
+| `roads` | painting | the highway ways that cover the ground, each centreline grown to half its width (round ends, mitred bends) | `ref` (`w<OSM id>`), `highway`, `kind` (`major`, `street`, `service`, `walkway`, `path`, `track`), `surface` (`paved`, `unpaved`, `unknown`), `width` (m), `width_from` (`width`, `lanes`, `class`), `bridge` |
+| `paving` | painting | parking lots at ground level, and highways drawn as areas | `ref` (`w…`, `r…`), `kind` (`parking`, `highway_area`), `surface` |
+| `water` | painting | NHD's and OSM's water: bodies, and waterways grown to half their width | `source` (`nhd`, `osm`), `ref` (`nhd:<permanent_identifier>`, `w…`, `r…`), `kind`, `intermittent`, `width` (lines; null for areas) |
+| `covered` | sampling | everything that isn't uncovered ground, each grown by its buffer, then dissolved by `what` in 1 km blocks of the grid (one piece per block and what) | `what`, `buffer` (m) |
+
+| `covered`'s `what` | From | Grown by (C6) |
+|---|---|---|
+| `roof` | `roofs` | 1 m |
+| `road` | `roads` | 2 m beyond half the width |
+| `paving` | `paving` | 2 m |
+| `water` | `water` that isn't intermittent (a dry wash is ground) | 5 m (beyond half a line's width) |
+| `aeroway` | OSM's aprons, runways, taxiways and helipads | 2 m |
+| `rail` | OSM's railway beds (5 m a track ⚠️) and yards | 2 m |
+| `developed` | CDL 2025 classes 123 and 124 | none |
+
+Sampling buffers have square ends and mitred corners, a little more than round ones would cover. Aeroway and rail are
+for sampling only: the map doesn't draw them as surfaces, so the painter leaves them to the photo.
+
+**The rules** ([`maskrules.py`](maskrules.py), standard library, tested case by case):
+- **Which highway ways count.** Every road, street, service way, sidewalk and crossing counts, whatever its surface:
+  these are the ways the roads plugin draws (S1's `osm_valley`, `osm_street` and `osm_paving`; a test checks the
+  rules against S1's partition). Pedestrian streets, cycleways and steps count unless tagged unpaved. Footways,
+  paths, bridleways and tracks count only when tagged paved: an unpaved path is trodden soil, so it stays ground.
+  Ways under the ground or indoors (tunnels, culverts) don't count, and neither do ways drawn as areas, which are
+  `paving`.
+- **Widths** are OpenStreetMap's own ⚠️. They come from the `width` tag (1–80 m), else `lanes` x 3.6 m + 2 m on a road,
+  else the class's default (`maskrules.CLASS_WIDTH`, two-way and one-way). For example, residential is 10.4 m and
+  unclassified 7.3 m, decision 10's local defaults. The roads build's ACHD and ITD widths are internal and never
+  read (C6, C17). The ten windows calibrate them later.
+- **Water.** From OSM: natural=water, riverbanks, reservoirs and basins (a detention, infiltration or evaporation
+  basin is intermittent), and outdoor swimming pools; also waterways (river 15 m, canal 6 m, drain 3 m, stream
+  2.5 m, ditch 2 m ⚠️, or their width tag), except in culverts. From NHD: Lake/Pond and Reservoir; Stream/River and
+  Canal/Ditch areas; streams by stream order (2, 4 or 8 m ⚠️) and canals (4 m ⚠️). These aren't water: wetlands
+  (vegetation; P14 reviews them), NHD's swamps, playas, inundation areas and washes, and pipelines.
+- **Paving.** amenity=parking at ground level (not underground, multi-storey, rooftop or carports, which roofs or
+  the ground hide), and highways drawn as areas unless they're unpaved.
+
+**Reading it** goes through the shared rasterising helper:
+
+```python
+from basemap.ground import grid, mask
+m = mask.latest(archive)                                   # the newest mask v0, every file checked; None if none
+for core, padded in grid.windows(grid.LEVELS["painter"], 2048, halo_m=20):
+    sample = ~mask.covered(padded, m)                      # uncovered ground (or what=("roof", "water"), ...)
+    roofs = mask.exact(padded, m, "roofs")                 # one exact layer, as a bool array
+    wet = mask.exact(padded, m, "water", where="intermittent = 0")
+```
+
+P2 reads it at NAIP's own 0.6 m windows, `mask.covered(R.target_of(naip_path, window), m)`. Vectors are carried to
+any grid, so the 1–5 m buffers hold at any cell size.
+
+**What the valley's mask holds** (Oct 11, from the Oct 5 extract):
+
+| Layer | Features | MB | Of which |
+|---|---|---|---|
+| `roofs` | 364,480 | 100 | |
+| `roads` | 167,071 | 109 | 71,957 walkways, 53,738 service ways, 26,955 streets, 8,607 major roads, 5,771 paved paths, 43 paved tracks |
+| `paving` | 2,457 | 1 | 2,163 parking lots, 294 highway areas |
+| `water` | 21,633 | 26 | 7,328 streams, 5,384 canals, 4,795 pools, 2,766 lakes, 645 ditches, 390 reservoirs, 165 rivers, 160 basins |
+| `covered` | 17,038 | 118 | 648,473 buffers dissolved in 6,005 blocks |
+
+Kept as separate buffers with round corners, `covered` alone was 342 MB, and the whole mask 614 MB.
+
 ## The rasterising helper
 
 `rasterize.py` (worker image) burns vectors into one window at a time, so no step holds a valley-wide raster:
@@ -269,8 +368,8 @@ folder is an error (exit 2), never "nothing exported yet".
 ```python
 from basemap.ground import grid, rasterize as R
 for core, padded in grid.windows(grid.LEVELS["painter"], 2048, halo_m=20):
-    roofs = R.rasterize(padded, mask_roofs)                                # mask v0's roofs (a manifest.Layer)
-    sample = ~R.grow(roofs, 1.0, padded.res)                                # leave roofs plus 1 m out of sampling
+    roofs = R.rasterize(padded, mask.layer("roofs"))                        # mask v0's roofs (a manifest.Layer)
+    band = R.grow(roofs, 3.0, padded.res)                                   # a 3 m band around them
     types = R.rasterize(padded, soils_ground, attribute="ground_type", dtype="uint16")   # a manifest.Layer
     weight = R.feather(types == 7, 20.0, padded.res)[core.inner(padded)]   # 20 m soft edge, cut to the core
 ```
@@ -280,8 +379,9 @@ for core, padded in grid.windows(grid.LEVELS["painter"], 2048, halo_m=20):
   P2. The source is a path any OGR driver reads (with a layer name), or a `manifest.Layer`. A cell is burned when its
   centre is inside, unless `all_touched`. Only features near the window are read, through the FlatGeobuf index.
   Later features win where they overlap.
-- `grow(mask, metres, res)`: the mask's buffers, measured between cell centres. Paving and roads get their class width
-  plus 2 m, roofs plus 1 m, water plus 5 m (C6).
+- `grow(mask, metres, res)`: a mask grown by a distance, measured between cell centres (the painter's 3 m band
+  around vector surfaces, C8). Mask v0's sampling buffers are vectors already ([`covered`](#mask-v0)), so they
+  don't depend on the cell size.
 - `feather(mask, width, res)`: a 0 to 1 weight, 0.5 on the edge, linear across `width` metres. It's for the soil
   types' 20 m edges and the class boxes' 50–100 m. Two regions sharing an edge sum to 1.
 - `distance(mask, res)`, `signed_distance(mask, res)`: metres to the mask, or to its edge.
@@ -355,6 +455,7 @@ python3 basemap/ground/ground.py spec                               # the grid, 
 python3 basemap/ground/ground.py check-export DIR                   # one export folder
 python3 basemap/ground/ground.py status --archive $TVT_ARCHIVE      # what the ground would read; exit 3 = flat
 python3 basemap/ground/ground.py flat --tiles DIR --archive $TVT_ARCHIVE
+python basemap/ground/mask.py build --roofs DIR/buildings.pmtiles   # mask v0 (worker image), into $TVT_ARCHIVE
 python3 -m unittest discover -s basemap/ground -t .                 # the worker tests skip here
 docker run --rm --memory 1g --cpus 1 --network none -v "$PWD":/repo -w /repo tvt-worker \
   python -m unittest discover -s basemap/ground -t .                # all of them; a skip here is a failure
@@ -363,4 +464,8 @@ docker run --rm --memory 1g --cpus 1 --network none -v "$PWD":/repo -w /repo tvt
 The fixtures are synthetic. `tests/fixtures/squares.fgb` and `lines-no-index.fgb` were written by PostGIS's
 `ST_AsFlatGeobuf`, the exports' real writer. `tests/tiffs.py` writes small GeoTIFFs with the standard library, and
 the worker tests check that `tif.py` reads GDAL's own (plain, COG, BigTIFF, big-endian, PixelIsPoint) the same way.
-The worker tests make their own vectors with GDAL. The source checks read the repository's real plugin.json files.
+The worker tests make their own vectors with GDAL. Mask v0's (`test_mask.py`) make an OpenStreetMap file, an NHD
+GeoPackage in NAD83, roofs in Web Mercator (also as a PMTiles file, with a roof across a z15 tile's edge) and a CDL
+raster in Albers, build the mask and burn it through the rasterising helper. `test_maskrules.py` checks the rules
+case by case, and against S1's partition (`ingest/osm_extract.py`) over a grid of tag sets and S1's own fixture. The
+source checks read the repository's real plugin.json files.

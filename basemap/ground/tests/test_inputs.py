@@ -10,7 +10,7 @@ import shutil
 import tempfile
 import unittest
 
-from basemap.ground import grid as G, inputs as I, manifest as M
+from basemap.ground import grid as G, inputs as I, manifest as M, maskrules as MR
 from basemap.ground.tests.test_manifest import ACHD, FIXTURES, OSM, SSURGO, export
 from basemap.ground.tests.tiffs import grid_tiff
 
@@ -19,6 +19,9 @@ NHD = {"name": "nhd", "licence": "public-domain", "republish": "yes",
        "credit": "U.S. Geological Survey, National Hydrography Dataset"}
 R2R = {"name": "r2r", "licence": "none-stated", "republish": "aggregates", "credit": "Ridge to Rivers",
        "source": "trails/r2r_trails"}
+
+
+MASK_LAYERS = tuple(MR.LAYERS)
 
 
 def fgb_layer(name, inputs, **kw):
@@ -56,10 +59,11 @@ def write_export(archive, plugin, layers, inputs, build="20261012T031500Z", extr
     return M.write(folder, plugin, inputs, layers)
 
 
-def write_mask(archive, inputs=None, build="20261011T040000Z"):
-    """Mask v0 (S5a-2's product) with one roof layer, from raw inputs."""
+def write_mask(archive, inputs=None, build="20261011T040000Z", layers=MASK_LAYERS):
+    """Mask v0 (S5a-2's product) with its layers (copies of squares.fgb), from raw inputs."""
     inputs = inputs or [I.RAW_BY_NAME["osm"].entry("md5:0123"), I.RAW_BY_NAME["overture-buildings"].entry("2025-09")]
-    return write_export(archive, "ground_mask", [fgb_layer("roofs", [e["name"] for e in inputs])], inputs, build)
+    return write_export(archive, "ground_mask", [fgb_layer(n, [e["name"] for e in inputs]) for n in layers], inputs,
+                        build)
 
 
 def box_grid(box_id):
@@ -153,7 +157,8 @@ class ResolveTest(unittest.TestCase):
         self.assertIn(SSURGO["credit"], plan.credits)
         self.assertIn("© OpenStreetMap contributors", plan.credits)  # through mask v0
         self.assertIn("USDA NASS Cropland Data Layer", plan.credits)
-        self.assertEqual(plan.refs, ["soils/ground@20261012T031500Z", f"ground_mask/roofs@{mask.build}"])
+        self.assertEqual(plan.refs, ["soils/ground@20261012T031500Z"] +
+                         [f"ground_mask/{n}@{mask.build}" for n in MASK_LAYERS])
         plan = self.plan({"cdl": "2025", "csb": "2025", "naip": "2025 county mosaics"})
         self.assertEqual(plan.missing_versions, [])
         self.assertEqual(plan.raw_names, ["cdl", "csb", "naip"])
@@ -191,6 +196,29 @@ class ResolveTest(unittest.TestCase):
         write_export(self.archive, "soils", [fgb_layer("ground", ["ssurgo"], republish="internal")], [SSURGO])
         with self.assertRaises(I.InputError):
             self.plan()
+
+    def test_mask_v0_needs_its_layers(self):
+        write_export(self.archive, "soils", [fgb_layer("ground", ["ssurgo"])], [SSURGO])
+        write_mask(self.archive, layers=("roofs", "roads", "covered"))
+        with self.assertRaises(I.InputError) as ctx:
+            self.plan()
+        self.assertIn("ground_mask@20261011T040000Z lacks the layer(s) paving, water (S5a-2)", str(ctx.exception))
+        self.assertEqual(I.USES[[u.ref for u in I.USES].index("ground_mask")].required,
+                         ("roofs", "roads", "paving", "water", "covered"))
+
+    def test_mask_v0_layers_are_areas(self):
+        write_export(self.archive, "soils", [fgb_layer("ground", ["ssurgo"])], [SSURGO])
+        inputs = [I.RAW_BY_NAME["osm"].entry("md5:0123")]
+        folder = export(self.archive, "ground_mask", "20261011T040000Z", files=())
+        layers = []
+        for n in MASK_LAYERS:
+            src = "lines-no-index.fgb" if n == "roads" else "squares.fgb"
+            shutil.copy(os.path.join(FIXTURES, src), os.path.join(folder, f"{n}.fgb"))
+            layers.append(fgb_layer(n, ["osm"], **({"features": 2} if n == "roads" else {})))
+        M.write(folder, "ground_mask", inputs, layers)
+        with self.assertRaises(I.InputError) as ctx:
+            self.plan()
+        self.assertIn("ground_mask/roads@20261011T040000Z holds LineString", str(ctx.exception))
 
     def test_shapes_are_checked(self):
         # squares.fgb has no 'bearing' field, so it can't be farm's fields layer

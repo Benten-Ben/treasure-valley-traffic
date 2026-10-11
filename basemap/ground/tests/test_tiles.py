@@ -8,7 +8,7 @@ import tempfile
 import unittest
 
 from basemap.ground import grid as G, inputs as I, tiles as T
-from basemap.ground.tests.test_inputs import fgb_layer, write_classes, write_export, write_mask
+from basemap.ground.tests.test_inputs import MASK_LAYERS, fgb_layer, write_classes, write_export, write_mask
 from basemap.ground.tests.test_manifest import SSURGO
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -117,8 +117,8 @@ class EntryTest(unittest.TestCase):
         self.assertEqual((e["licence"], e["republish"]), ("ODbL-1.0", "yes"))
         self.assertIn("© OpenStreetMap contributors", e["attribution"])
         self.assertIn(SSURGO["credit"], e["attribution"])
-        self.assertEqual(e["inputs"], ["soils/ground@20261012T031500Z", f"ground_mask/roofs@{mask.build}",
-                                       "raw/cdl@2025", "raw/csb@2025"])
+        self.assertEqual(e["inputs"], ["soils/ground@20261012T031500Z"] +
+                         [f"ground_mask/{n}@{mask.build}" for n in MASK_LAYERS] + ["raw/cdl@2025", "raw/csb@2025"])
         self.assertEqual(len(e["fallbacks"]), 5)
         bad = dict(e, republish="internal")
         with self.assertRaises(ValueError):

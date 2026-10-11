@@ -4,8 +4,8 @@ Burns vectors into one window of a grid at a time, so no step ever holds a valle
 
     from basemap.ground import grid, rasterize as R
     for core, padded in grid.windows(grid.LEVELS["painter"], 2048, halo_m=20):
-        roofs = R.rasterize(padded, "mask_v0.fgb", "roofs")                 # 1 inside, 0 outside
-        sample = R.grow(roofs, 1.0, padded.res)                              # roofs plus 1 m, for sampling
+        roofs = R.rasterize(padded, mask.layer("roofs"))                     # mask v0's roofs: 1 inside, 0 outside
+        band = R.grow(roofs, 3.0, padded.res)                                # a 3 m band around them
         types = R.rasterize(padded, soils.path, attribute="ground_type", dtype="uint16")
         weight = R.feather(types == 7, 20.0, padded.res)                    # 20 m soft type edge
         weight[core.inner(padded)]                                           # cut back to the core window
@@ -15,8 +15,9 @@ Burns vectors into one window of a grid at a time, so no step ever holds a valle
   layer name, or a manifest.Layer). Only features near the window are read (FlatGeobuf exports carry a spatial
   index). Vectors in another CRS are transformed to the target's, under the grid's datum policy: NAD83 is taken with
   the null shift (grid.py), and PROJ never downloads anything.
-- grow(): a mask grown by a distance (the mask's buffers: paving and roads by class width plus 2 m, roofs plus 1 m,
-  water plus 5 m), measured between cell centres, so it matches across windows.
+- grow(): a mask grown by a distance, measured between cell centres, so it matches across windows (e.g. the painter's
+  3 m band around vector surfaces, C8). Mask v0's sampling buffers are vectors already (mask.py's `covered`), so they
+  don't depend on the cell size.
 - feather(): a 0..1 weight from a mask's signed distance to its edge, 0.5 on the edge, linear across `width` metres
   (soil types' 20 m edges, the class boxes' 50-100 m).
 - distance(): metres from each cell to the nearest masked cell.
