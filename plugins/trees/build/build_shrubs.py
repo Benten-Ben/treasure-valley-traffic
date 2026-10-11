@@ -274,28 +274,34 @@ def ndvi_of(red, nir):
 SHIFT_REACH = 12          # cells (6 m) each way
 SHIFT_MIN_TREE_CELLS = 4000
 SHIFT_MIN_IOU = 0.1
-# A shift must earn its distance: the IoU it gains over no shift, less this much for each metre it moves the photo.
-# On the ten boxes (Oct 11) the shifts that agree with the spike's gained 0.003 (0.5 m, downtown) to 0.023 (2 m,
-# Barber Pool); South Meridian's 2 m gained 0.005 at an IoU of 0.1, noise, and didn't agree.
-SHIFT_COST_PER_M = 0.004
+# A shift must earn its distance: the IoU it gains over no shift must be at least this much for each metre it moves the
+# photo, or there is no shift. On the ten boxes (Oct 11) the shifts that agree with the spike's gained 0.003 (0.5 m,
+# downtown) to 0.023 (2 m, Barber Pool); South Meridian's 2 m gained 0.005 at an IoU of 0.1, noise, and didn't agree.
+SHIFT_GAIN_PER_M = 0.004
 
 
-def shift_cost(k):
-    """What moving the photo by k (dx, dy cells) costs, in IoU."""
-    return SHIFT_COST_PER_M * math.hypot(*k) * S.PX
+def shift_needs(k):
+    """The IoU a shift of k (dx, dy cells) must gain over no shift."""
+    return SHIFT_GAIN_PER_M * math.hypot(*k) * S.PX
+
+
+def best_shift(scores):
+    """The shift of scores ({(dx, dy) cells: IoU}) with the best IoU; ties go to the shorter."""
+    return max(scores, key=lambda k: (scores[k], -math.hypot(*k)))
 
 
 def choose_shift(scores):
-    """The shift (dx, dy in cells) of scores ({shift: IoU}, (0, 0) among them) whose IoU less its cost is highest:
-    (0, 0) unless another gains more over it than its distance costs; ties go to the shorter shift."""
-    return max(scores, key=lambda k: (scores[k] - shift_cost(k), -math.hypot(*k)))
+    """The best shift of scores ((0, 0) among them) when it gains over no shift what its distance needs (shift_needs);
+    otherwise none, (0, 0). A shift that is taken is taken whole, not shortened."""
+    best = best_shift(scores)
+    return best if scores[best] - scores[(0, 0)] >= shift_needs(best) else (0, 0)
 
 
 def measure_shift(ndvi_pad, h, bld, bad):
     """The photo's shift onto the lidar, in whole cells, as the spike measured it: the offset (up to 6 m each way)
-    where the photo's green best overlaps the lidar's trees (2.4 m and up, not buildings), by IoU, less a cost for each
-    metre moved (choose_shift). None of it where there are too few trees or the overlap is weak (deserts), or where no
-    shift gains enough: no shift. Returns ((dx, dy), detail)."""
+    where the photo's green best overlaps the lidar's trees (2.4 m and up, not buildings), by IoU. None of it where there
+    are too few trees or the overlap is weak (deserts), or where the best shift doesn't gain enough over none for its
+    distance (choose_shift): no shift. Returns ((dx, dy), detail)."""
     P = SHIFT_REACH
     rows, cols = h.shape
     trees = (h >= S.BAND_M[1]) & ~bld & ~bad
@@ -313,24 +319,22 @@ def measure_shift(ndvi_pad, h, bld, bad):
         detail["why"] = "too few trees to measure it: no shift"
         return (0, 0), detail
     scores = {(dx, dy): iou(dx, dy) for dx in range(-P, P + 1, 2) for dy in range(-P, P + 1, 2)}
-    for pick in (lambda: max(scores, key=lambda k: (scores[k], -math.hypot(*k))), lambda: choose_shift(scores)):
-        bx, by = pick()                    # refine around the raw best and the chosen one, by single cells
-        for dx in range(max(-P, bx - 1), min(P, bx + 1) + 1):
-            for dy in range(max(-P, by - 1), min(P, by + 1) + 1):
-                if (dx, dy) not in scores:
-                    scores[(dx, dy)] = iou(dx, dy)
-    top = max(scores, key=lambda k: (scores[k], -math.hypot(*k)))
-    detail.update(iou_max=round(scores[top], 4), max_at_m=[top[0] * S.PX, -top[1] * S.PX])
+    bx, by = best_shift(scores)
+    for dx in range(max(-P, bx - 1), min(P, bx + 1) + 1):       # refine around it by single cells
+        for dy in range(max(-P, by - 1), min(P, by + 1) + 1):
+            if (dx, dy) not in scores:
+                scores[(dx, dy)] = iou(dx, dy)
+    top = best_shift(scores)
+    detail.update(iou_best=round(scores[top], 4), best_at_m=[top[0] * S.PX, -top[1] * S.PX],
+                  gain=round(scores[top] - i0, 4), needed=round(shift_needs(top), 4))
     if scores[top] < SHIFT_MIN_IOU:
         detail["why"] = "the photo's green barely meets the trees anywhere: no shift"
         return (0, 0), detail
-    best = choose_shift(scores)
-    detail.update(iou_best=round(scores[best], 4), gain=round(scores[best] - i0, 4), cost=round(shift_cost(best), 4))
-    if best == (0, 0):
-        detail["why"] = "no shift gains more overlap than its distance costs: no shift"
-    else:
-        detail["why"] = "the best overlap of the photo's green and the lidar's trees, less the shift's cost"
-    return best, detail
+    if choose_shift(scores) == (0, 0) and top != (0, 0):
+        detail["why"] = "the best shift doesn't gain enough over none for its distance: no shift"
+        return (0, 0), detail
+    detail["why"] = "the best overlap of the photo's green and the lidar's trees"
+    return top, detail
 
 
 def photo_ndvi(path, tf, crs, shape, shift, h, bld, bad):
@@ -627,7 +631,7 @@ def main(argv=None):
               "model": spec["source"][:200], "width": spec["width"],
               "rule": {"band_m": list(S.BAND_M), "plant_returns": S.PLANT_RETURNS, "plant_scatter": S.PLANT_SCATTER,
                        "ground_h_m": S.GROUND_H, "knn": cloud.KNN, "edge_m": S.EDGE_CELLS * S.PX,
-                       "crop_piece_share": S.CROP_PIECE_SHARE, "shift_cost_per_m": SHIFT_COST_PER_M,
+                       "crop_piece_share": S.CROP_PIECE_SHARE, "shift_gain_per_m": SHIFT_GAIN_PER_M,
                        "photo_min_cover": PHOTO_MIN_COVER}}
     build = {"build_id": os.path.basename(os.path.normpath(a.out)), "area": a.area, "started_at": started.isoformat(),
              "finished_at": dt.datetime.now(dt.timezone.utc).isoformat(), "geom": geom,

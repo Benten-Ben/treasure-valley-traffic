@@ -46,27 +46,46 @@ from the land-cover spike's experiments on the ten test areas (Oct 8).
   summer photo (NAIP) and crop fields, and writes `shrubs.geojson`, `build.json` and `why.tif` (why each shrub-height
   cell is or isn't a shrub) to a build folder. Its `--help` lists the inputs.
   - **The photo** is moved onto the lidar by a shift measured on the area (where its green best meets the lidar's
-    trees), and read in the lidar's frame: NAIP's NAD83 and the lidar's NAD83(2011) differ by well under a metre
-    here, which the shift takes up, and doing it properly needs grids PROJ would fetch.
-  - **Crops** come from farm's crop cover (decision 15, Oct 8: its export's `crop_cover.tif`, band 1 the crop group;
-    `--crop` also takes a vector of crop fields). A clump with half its cells or more in it is a crop. The credits in
-    the export's manifest join the build's. The spike's own crop-field rule runs as a check: `crop_check` in
-    `build.json` says how its fields and farm's agree, and `rule_shrubs` how many shrubs stand in its fields.
+    trees, kept only when it gains 0.004 of overlap over none for each metre moved: a shift has to earn its
+    distance), and read in the lidar's frame: NAIP's NAD83 and the lidar's NAD83(2011) differ by well under a metre
+    here, which the shift takes up, and doing it properly needs grids PROJ would fetch. Only NAD83's realisations and WGS 84 are read that way; a source
+    on another datum (NAD27, say) stops the build. So does a photo that gives an NDVI on less than 95% of the lidar's
+    cells (`params.photo_cover`).
+  - **Crops** come from farm's crop cover (decision 15, Oct 8: its export's `crop_cover.tif`, band 1 the crop group,
+    which must cover the whole area; `--crop` also takes a vector of crop fields). A watershed piece with half its
+    cells or more in it is a crop, so the cut follows the field's edge. The spike's own crop-field rule runs as a
+    check: `crop_check` in `build.json` says how its fields and farm's agree, and `rule_shrubs` how many shrubs stand
+    in its fields.
+  - **Licence** (plan C3): the build takes each input's licence class, republish and credit (the lidar and NAIP from
+    this plugin's sources, the crop cover from its export manifest, which it reads and checks: sizes, sha256,
+    licences), and records the strictest in `build.json` (`license`, `republish`, `credit`) with every input's files,
+    sizes and sha256 (`inputs`; the crop cover's export build too). An input that may not be republished stops the
+    build before any work; a crop file without a manifest needs `--crop-licence`, `--crop-republish` and
+    `--crop-credit`.
   - **Overlapping areas**: `--skip-rect` leaves another area's part out (downtown's box overlaps the North End's).
-  - A stopped build picks up where it was: the point cloud's finished chunks are kept in the build folder's `work/`.
+  - A stopped build picks up where it was: the point cloud's finished chunks are kept in the build folder's `work/`,
+    tied to the point files, the grid, the settings and the bare earth's values (a rebuilt DTM isn't met with them).
 - `python3 -m ingest shrubs-load --build DIR` loads a build: the area's shrubs are replaced, the build recorded.
 - `python3 -m ingest shrubs-hedge-check [--hedges FILE | --extract PBF] [--json OUT]`: are OpenStreetMap's hedges
   rows of bushes? A report only (plan C14): hedges are a check, never a source of shrubs, and nothing is written.
-  Hedges come from `fences.fence` once the fences plugin is built; until then from a GeoJSON file or the held extract
-  (filtered with osmium). The report is OSM-derived: keep it in the archive.
+  Hedges come from `fences.fence` once the fences plugin is built (rows of type `hedge`, by the approved osm-landscape
+  design's `fence_id`, `type`, `geom` and `active`; a table without the first three stops the check and says so);
+  until then from a GeoJSON file or the held extract (filtered with osmium). The report is OSM-derived: keep it in the
+  archive.
 - Tables (migrations/0002_shrubs.sql): `trees.shrub` (one row per shrub: `shrub_id`, `area`, `look`, `geom` (the
   centre, WGS84), `ground_m`, `height_m`, `width_m` (crown diameter), `lidar`, `fit`, `build_id`), `trees.shrub_build`
-  (each build: its outline `geom`, `params` and `counts`) and the view `trees.shrub_area` (each area's current build,
-  outline and shrub count: where shrubs are built).
+  (each build: its outline `geom`, `inputs`, `license`, `republish`, `credit`, `params` and `counts`) and the view
+  `trees.shrub_area` (each area's current build, outline, shrub count, licence, republish and credit: where shrubs are
+  built, and the credit to show with them).
+- **Rolling back migration 0002** (it adds to the trees schema, so dropping the schema isn't the way): in one
+  transaction, `drop view trees.shrub_area; drop table trees.shrub; drop table trees.shrub_build; delete from
+  ops.schema_migration where name = 'trees/0002_shrubs.sql';`. The trees (`trees.build`, `trees.tree`,
+  `trees.tree_log`) stay as they were.
 
 Licence: our own data, from public inputs only (USGS 3DEP lidar, USDA NAIP, and farm's crop cover: USDA NASS CSB and
-CDL, and Sentinel-2): republishable, credited to the U.S. Geological Survey's 3D Elevation Program and USDA NAIP, plus
-the crop cover's credits (each build's `params.credit`). Nothing here reads a tree catalogue.
+CDL, public domain, and Sentinel-2, Copernicus): licence Copernicus, republish yes, credited to the U.S. Geological
+Survey's 3D Elevation Program and USDA NAIP plus the crop cover's credits (each build's `credit`, in
+`trees.shrub_build` and `trees.shrub_area`). Nothing here reads a tree catalogue.
 
 ## Tests
 

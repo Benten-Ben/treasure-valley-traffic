@@ -263,6 +263,8 @@ class ShiftTest(unittest.TestCase):
         self.assertEqual(choose({(0, 0): 0.485, (1, 0): 0.488}), (1, 0))                    # 0.5 m for 0.003
         self.assertEqual(choose({(0, 0): 0.136, (0, -1): 0.1362}), (0, 0))                  # 0.5 m for 0.0002
         self.assertEqual(choose({(0, 0): 0.5, (2, 0): 0.6, (-2, 0): 0.6}), (2, 0))          # ties: either, shortest
+        self.assertEqual(choose({(0, 0): 0.3, (8, 0): 0.31, (1, 0): 0.305}), (0, 0))       # 4 m for 0.01: none
+        self.assertEqual(choose({(0, 0): 0.39, (-4, 0): 0.411, (-3, 0): 0.41}), (-4, 0))   # taken whole
 
     def test_a_crs_in_the_same_utm_zone_is_the_same_frame(self):
         import build_shrubs as B

@@ -461,28 +461,44 @@ colour nudge.
 **As built (Oct 11, the landscape sprint's P11-data).** The trees plugin
 holds the shrubs: `trees.shrub` (one row per shrub: its centre, look,
 height, width and ground height), `trees.shrub_build` (each build's
-outline, settings and counts) and the view `trees.shrub_area` (where
-shrubs are built), in its migration 0002. The build
+outline, inputs, licence, settings and counts) and the view
+`trees.shrub_area` (where shrubs are built, and their credit), in its
+migration 0002. The build
 (`plugins/trees/build/build_shrubs.py`) runs in the worker image, one area
 at a time, as a heavy job: it reads the area's lidar products (the trees'
 height rasters and building mask), its point cloud for the lidar cue (the
 returns above the ground in each cell and their scatter, worked chunk by
 chunk so any area fits in memory) and the summer photo, and
-`shrubs-load` loads what it writes. Three things the experiments left
-open:
+`shrubs-load` loads what it writes. Each build records its licence
+(plan C3): the strictest of its inputs' by the export contract's rules,
+the lidar and NAIP from the plugin's sources and the crop cover from its
+export manifest, which the build reads and checks. Today that is
+Copernicus (the crop cover's Sentinel-2), republish yes, with every
+input's credit; an input that may not be republished stops the build
+before any work. `build.json` and `trees.shrub_build` also keep each
+input's files with their sizes and sha256, and the crop cover's export
+build. Three things the experiments left open:
 
 - **Crops** come from farm's crop cover, as the landscape's crop class
   does (decision 15, Oct 8: crops in any state; pasture isn't crop): a
-  clump with half its cells or more in it is a crop, not shrubs. The
-  spike's own crop rule (the even, all-green, low 25 m blocks) runs beside
-  it as a check, and each build says how the two agree.
+  watershed piece with half its cells or more in it is a crop, not
+  shrubs. Pieces rather than whole clumps, so the cut follows the field's
+  edge: a hedgerow touching a crop stays, and a small field touching
+  shrubland goes. The spike's own crop rule (the even, all-green, low
+  25 m blocks) runs beside it as a check, and each build says how the two
+  agree.
 - **The photo** sits a little off the lidar, by a shift each build
   measures where the photo's green best meets the lidar's trees (up to 6 m
   each way, in whole 0.5 m cells; none where trees are too few to tell).
-  The photo's NAD83 and the lidar's NAD83(2011) differ by well under a
-  metre here, so the photo is read in the lidar's frame and the measured
-  shift takes that up too: doing it properly needs NOAA grids that PROJ
-  would download, and a build fetches nothing.
+  A shift has to earn its distance: it is kept only when it gains at least
+  0.004 of overlap over none for each metre it moves the photo. The
+  photo's NAD83 and the lidar's NAD83(2011) differ by well under a metre
+  here, so the photo is read in the lidar's frame and the measured shift
+  takes that up too: doing it properly needs NOAA grids that PROJ would
+  download, and a build fetches nothing. Only NAD83's
+  realisations and WGS 84 are read that way (a source on NAD27 would be
+  about 100 m off, so it stops the build), and a photo that gives an NDVI
+  on less than 95% of the area's lidar cells stops it too.
 - **Downtown's box overlaps the North End's** (by about 0.7 km²): the
   overlap's shrubs are the North End's, and downtown's build leaves that
   part out of its shrubs and its outline.
