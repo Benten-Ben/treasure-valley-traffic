@@ -437,8 +437,10 @@ class FakeRun:
 
 @unittest.skipUnless(DB_URL, "set TVT_TEST_DATABASE_URL to a scratch database (with roads 0002)")
 class DatabaseTest(unittest.TestCase):
-    """Everything here runs in one transaction that is rolled back."""
-    BASE = 9_400_000_000
+    """Everything here runs in one transaction that is rolled back. Every active row is retired
+    first (rolled back too), so a load's rows are the active ones; synthetic ids start far above
+    OpenStreetMap's (Idaho's node ids run past 13 billion)."""
+    BASE = 900_000_000_000
 
     @classmethod
     def setUpClass(cls):
@@ -486,7 +488,7 @@ class DatabaseTest(unittest.TestCase):
                           stats["osm_walk_node new"]), (7, 7, 3, 2, 2))
         self.assertIn("USDA NASS Cropland Data Layer 2025", stats["developed land"])
         rows = self.conn.execute("""select osm_id - %s, kind, material, material_source, developed, marked, marked_from
-                                    from roads.osm_paving where osm_id > %s order by 1""", (b, b)).fetchall()
+                                    from roads.osm_paving where active order by 1""", (b,)).fetchall()
         self.assertEqual(rows, [(1, "crossing", "asphalt", "default", None, True, "node"),
                                 (2, "service", "unknown", None, 0.0, None, None),
                                 (3, "driveway", "concrete", "default", 1.0, None, None)])
@@ -494,8 +496,8 @@ class DatabaseTest(unittest.TestCase):
                                     from roads.osm_parking where osm_id = %s order by 1""", (b + 4,)).fetchall()
         self.assertEqual(lots, [("r", "gravel", "surface", "ST_MultiPolygon", True),
                                 ("w", "asphalt", "default", "ST_MultiPolygon", True)])
-        nodes = self.conn.execute("select osm_id - %s, kind, marked, ways from roads.osm_walk_node where osm_id > %s "
-                                  "order by 1", (b, b)).fetchall()
+        nodes = self.conn.execute("select osm_id - %s, kind, marked, ways from roads.osm_walk_node where active "
+                                  "order by 1", (b,)).fetchall()
         self.assertEqual(nodes, [(11, "crossing", True, [b + 1]), (12, "kerb", None, [b + 1])])
         if self.conn.execute("select to_regclass('ops.build_pending') is not null").fetchone()[0]:
             after = self.conn.execute("select sum(marks) from ops.build_pending "
@@ -531,7 +533,7 @@ class DatabaseTest(unittest.TestCase):
                 stats = pv.consume(self.conn, run)
         ways = {r[0]: r[1:] for r in self.conn.execute(
             """select osm_id, kind, material, material_source, marked, marked_from, area, width_est_m
-               from roads.osm_paving where active and osm_id < 1000""").fetchall()}
+               from roads.osm_paving where active""").fetchall()}
         self.assertEqual(sorted(ways), [601, 602, 603, 604, 605, 608, 609, 611, 612, 613, 614, 615, 616, 617, 618])
         self.assertEqual(ways[601][:3], ("driveway", "concrete", "default"))
         self.assertEqual(ways[602][:3] + ways[602][-1:], ("parking_aisle", "asphalt", "surface", 4.5))
@@ -545,7 +547,7 @@ class DatabaseTest(unittest.TestCase):
         self.assertEqual(ways[616][3:5], (False, "node"))
         lots = {(r[0], r[1]): r[2:] for r in self.conn.execute(
             """select osm_type, osm_id, kind, material, material_source, ST_YMin(geom) < 43.0, ST_NumInteriorRings(
-                 ST_GeometryN(geom, 1)) from roads.osm_parking where active and osm_id < 1000""").fetchall()}
+                 ST_GeometryN(geom, 1)) from roads.osm_parking where active""").fetchall()}
         self.assertEqual(sorted(lots), [("r", 761), ("w", 701), ("w", 702), ("w", 703), ("w", 704), ("w", 705),
                                         ("w", 706)])
         self.assertEqual(lots[("r", 761)], ("lot", "asphalt", "default", True, 1))     # whole across the edge, with its hole
@@ -556,7 +558,7 @@ class DatabaseTest(unittest.TestCase):
         self.assertEqual(lots[("w", 705)][:3], ("lot", "unknown", None))
         self.assertEqual(lots[("w", 706)][:3], ("lot", "unknown", None))
         nodes = {r[0]: r[1:] for r in self.conn.execute(
-            "select osm_id, kind, marked, signals, kerb, railway, ways from roads.osm_walk_node where active and osm_id < 10000"
+            "select osm_id, kind, marked, signals, kerb, railway, ways from roads.osm_walk_node where active"
         ).fetchall()}
         self.assertEqual(sorted(nodes), [6119, 6122, 6132, 6142, 6162, 6902, 6903, 6904, 6906])
         self.assertEqual(nodes[6119], ("kerb", None, False, "lowered", None, [611]))
