@@ -18,7 +18,8 @@ This folder holds the contract every piece of the ground shares:
 | The contract on the command line | [`ground.py`](ground.py) | anywhere |
 
 Built Oct 11 (sprint package S5a, first half). Still to come: mask v0 (S5a-2), the painter and its tiles (G1a),
-texture and photo variation (G1b), and the base bake that reads the same exports (S5b, `basemap/landscape/`).
+and texture and photo variation (G1b). The base bake, which reads the same exports, is in
+[`../landscape/`](../landscape/README.md) (S5b).
 Package names and C numbers refer to the landscape sprint plan (v3), which is kept with the private files.
 
 ## The grid
@@ -97,7 +98,8 @@ an optional `-suffix`. The ground and the base bake read exports only through `m
 
 The manifest's `plugin` must be its folder's (`<archive>/<plugin>/export/<build>`). The ground reads only the
 plugins and products it uses (`inputs.exports()`), so a broken export of another plugin can't hold it up. The bake
-reads every export with `find()`.
+reads every plugin's newest manifest and checks the files of the base layers only; a broken newest manifest anywhere
+refuses it, rather than dropping a layer from the map ([`../landscape/`](../landscape/README.md#switching-in)).
 
 Exports are **vectors** (FlatGeobuf, in EPSG:32611). Everything that rasterises lives here, in `basemap/ground/`.
 The two non-vector exports are soils' `palette.json` (a JSON table) and farm's `crop_cover.tif` (a GeoTIFF on the
@@ -167,7 +169,9 @@ Field types are FlatGeobuf's, in lower case: `byte`, `ubyte`, `bool`, `short`, `
 - A new licence class is added to `LICENCES` in review, before any export names it.
 
 **`base: true`** marks a layer for the base bake (S5b). It must be a FlatGeobuf with an integer `id` field (the bake's
-`promoteId`, for feature-state such as the canal season).
+`promoteId`, for feature-state such as the canal season). The bake's own rules (unique ids, an optional per-feature
+`minzoom`, republish yes or internal, public plugins only) are in
+[`../landscape/`](../landscape/README.md#for-a-plugin-exporting-a-base-layer).
 
 **Writing one** from a plugin's export command (the ingest image includes `basemap/ground` for this):
 

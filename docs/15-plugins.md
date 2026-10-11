@@ -171,6 +171,15 @@ How the pieces plug in:
   report both. One exception predates the rule: the intersections
   plugin's scheduled `intersections` source rebuilds `core.intersection`
   inside `ingest serve` once a day (about 10 s).
+- **Base layers, baked** (landscape sprint, Oct 2026): what draws for
+  every viewer (water, paving, road surfaces and markings, paved paths)
+  isn't cut live. A plugin marks those layers `base: true` in its export
+  (`$TVT_ARCHIVE/<plugin>/export/<build>/`), and core's bake
+  ([basemap/landscape](../basemap/landscape/README.md)) puts every one
+  into one versioned PMTiles file served from `/tiles/`, a source-layer
+  `<plugin>.<layer>` each. The file's `republish` is its strictest
+  layer's, so it's tailnet-only while any layer is internal. Private
+  plugins and aggregates-only sources never go in.
 
 ## 15.3 Private plugins
 
