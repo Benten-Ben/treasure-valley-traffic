@@ -26,7 +26,7 @@ names didn't change, so `ops.source` and `ops.fetch` carry on:
 |---|---|---|
 | [cameras](../plugins/cameras) | `achd_cameras`, `idaho511_views_oneoff`; stream `idaho511_frames` | `rollup` |
 | [transit](../plugins/transit) | `vrt_gtfs`; stream `vrt_realtime` | `match-routes`, `transit-progress`, `transit-ribbons`, `route-colors` |
-| [roads](../plugins/roads) | `achd_roads`, `itd_hpms`, `achd_msm`, `compass_centerline`, `achd_bike_network`; by hand (OpenStreetMap consumers) `osm_valley`, `osm_street`, `osm_paving`; by hand `cdl_developed` | `segment-match`, `roads-developed-load` |
+| [roads](../plugins/roads) | `achd_roads`, `itd_hpms`, `achd_msm`, `compass_centerline`, `achd_bike_network`; by hand (OpenStreetMap consumers) `osm_valley`, `osm_street`, `osm_paving`; by hand `cdl_developed` | `segment-match`, `roads-developed-load`, `roads-build`, `roads-export` |
 | [conditions](../plugins/conditions) | streams `itd_wzdx`, `idaho511_api` | |
 | [intersections](../plugins/intersections) | `fra_crossings`, `achd_signal_points`, `compass_signals`, `compass_regional_signals`, `intersections` | `match-intersections` |
 | [safety](../plugins/safety) | `compass_crashes` | |

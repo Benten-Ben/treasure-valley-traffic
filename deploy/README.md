@@ -425,8 +425,8 @@ What a load does:
 - Then the refresh cascade (plan §6): the builds that read the new tables
   (`roads-build`, `water-build`, `trails-match`), the exports, the bake.
   `roads-build` (the real-width roads, roads 0003) is a production load:
-  under `heavy` as `tvt_build`, about 8-9 minutes and 0.6 GB in its own
-  container (it measured 456-528 s on scratch, Oct 11), then `roads-export`
+  under `heavy` as `tvt_build`, about 10 minutes and 0.6 GB in its own
+  container (it measured 579 s on scratch, Oct 11), then `roads-export`
   (about 15 s), whose base layers the bake reads:
 
   ```bash
@@ -435,6 +435,10 @@ What a load does:
       -e TVT_ARCHIVE=/srv/archive -v /srv/tvt/archive:/srv/archive \
       tvt-ingest:latest sh -c 'python3 -m ingest roads-build && python3 -m ingest roads-export'
   ```
+
+  The build holds its tables until it commits (it truncates them), so
+  nothing should read them live meanwhile; `roads-export` waits for it, and
+  keeps the newest two exports in `$TVT_ARCHIVE/roads/export/`.
 
 Timing at server scale, estimated Oct 6:
 

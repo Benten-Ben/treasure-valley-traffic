@@ -592,9 +592,11 @@ cross-section from OpenStreetMap's tags, ACHD's lanes rule
 (`core.segment_lanes`), ACHD's bike network's measured widths, HPMS and
 class defaults; then surfaces, junctions with their curb returns, islands,
 edges, crosswalks on marked crossings, markings and the review list. It
-replaces the tables whole in one transaction; their ids are the build's own,
-so anything kept across builds keys on the way and ACHD's segment. Geometry
-in EPSG:32611. Licence ODbL with ACHD's and ITD's values: internal.
+replaces the tables whole in one transaction (TRUNCATE, so no dead copy of
+the last build stays behind; a reader waits for the build to commit); their
+ids are the build's own, so anything kept across builds keys on the way and
+ACHD's segment. The tables reference each other without foreign keys.
+Geometry in EPSG:32611. Licence ODbL with ACHD's and ITD's values: internal.
 
 ```sql
 create table roads.build (id text primary key, started_at timestamptz, finished_at timestamptz,
@@ -609,7 +611,7 @@ create table roads.piece (id int primary key, osm_id bigint, seq smallint,
   from_node int, to_node int, from_junction int, to_junction int,
   county text, road_segment_id bigint, seg_same_way boolean, seg_confidence real,
   length_m real, geom geometry(LineString, 32611));
-create table roads.xsection (piece_id int primary key references roads.piece,
+create table roads.xsection (piece_id int primary key,         -- roads.piece
   lanes_fwd smallint, lanes_bwd smallint, centre_turn boolean, turn_fwd text[], turn_bwd text[],
   lanes_source text,                              -- osm, itd_hpms, achd_msm, osm_valley, compass_centerline, default
   lanes_conf real, lane_w_m real, bike_l_m real, bike_r_m real, park_l_m real, park_r_m real,
@@ -618,7 +620,8 @@ create table roads.xsection (piece_id int primary key references roads.piece,
   width_tier text,                                -- inventoried, measured, counted, estimated
   width_source text, material text, material_source text, markings boolean,
   sources jsonb,                                  -- every part's source
-  republish text,                                 -- yes, or internal (an ACHD or ITD input)
+  republish text,                                 -- yes; aggregates (a class width calibrated on ACHD's
+                                                  -- measurements); internal (an ACHD or ITD input)
   flags text[]);
 create table roads.junction (id int primary key, kind text,   -- signal, roundabout, interchange, plain
   nodes smallint, pieces int[], radius_m real, intersection_id bigint, geom geometry(Point, 32611));
@@ -636,8 +639,9 @@ create table roads.review (id int primary key, kind text, piece_id int, junction
 ```
 
 On scratch, Oct 11, the Oct 5 extract gave 69,893 pieces and 31,087
-junctions; the tables came to 192 MB with their indexes, freshly built, and
-the build took 8-9 minutes as a light job. The rules, the calibration of the
+junctions; the tables came to 199 MB with their indexes (truncated by each
+build, so that's their size after any number of rebuilds), and the build
+took about 10 minutes as a light job. The rules, the calibration of the
 local streets' default widths, the review list's kinds and the export
 (`roads-export`) are in the roads plugin's README.
 

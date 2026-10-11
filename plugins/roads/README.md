@@ -326,8 +326,17 @@ counts and widths from the sources below, and how each is known shown by
 form (the app half is P9). It's a light job: standard-library Python running
 PostGIS SQL, as `tvt_build`, rebuilt whole each time in one transaction.
 Never inside `ingest serve`: a source that changes its inputs marks
-`roads-build` (M1; [`ingest/marks.py`](ingest/marks.py)), and it runs by
-hand. When it succeeds it marks `roads-export`.
+`roads-build` (M1; [`ingest/marks.py`](ingest/marks.py)): the OpenStreetMap
+consumers, ACHD's segments, the lane sources, the bike network, developed
+land, a `segment-match` by hand, and the intersections' daily rebuild when
+the active signals change. It runs by hand. When it succeeds it marks
+`roads-export`.
+
+It empties its tables with `TRUNCATE`, so a rebuild leaves no dead copy of
+the last build behind, and holds them until it commits: anything reading
+them waits for it (`roads-export` locks them first, so it reads one whole
+build either way), and the build gives up after 2 minutes if a reader holds
+them.
 
 **Inputs.** The carriageways are `core.osm_way`'s road classes and
 `roads.osm_street`: motorway to tertiary and their links, residential,
@@ -338,8 +347,11 @@ ways, which are trails'). The build first calls
 "osm_paving"))`, so they and the paving it reads (sidewalks, crossings) hold
 one extract. Then ACHD's segments and their lanes rule (`core.segment_lanes`),
 ACHD's bike network (`roads.segment_bike_xsection`), ITD's HPMS sections,
-signals (`core.intersection`), COMPASS's traffic zones (`core.taz`: which
-county a piece is in) and developed land (the CDL, `roads.developed_land`).
+COMPASS's centerline lanes (through the lanes rule), signals
+(`core.intersection`, the intersections plugin's), COMPASS's traffic zones
+(`core.taz`: which county a piece is in) and developed land (the CDL,
+`roads.developed_land`). `roads.build.inputs` lists each with its version,
+licence and republish.
 
 **Steps** (the module's docstring has each rule):
 
@@ -350,7 +362,13 @@ county a piece is in) and developed land (the CDL, `roads.developed_land`).
 2. **Matching:** the ACHD segment each Ada piece lies along (core's line
    matcher, roads' rule: 15 m, bearings within 20°), HPMS's sections along
    each piece, the parallel sidewalks either side (two of three samples,
-   within 15 m and 25°), and the piece's share of developed land.
+   within 15 m and 25°), and developed land: the share of the piece's line
+   on it (its material) and of a band 20-100 m out on each side (its curbs).
+   A segment or section two classes or more above the piece (ACHD's
+   functional class; HPMS's interstate, US and state routes, and any other
+   route as a collector) is taken only where the names agree, so an alley
+   10 m from an interstate or a street beside a state route doesn't take
+   its lanes and widths; the rest are listed (`class_mismatch`).
 3. **Cross-sections** ([`ingest/xsection.py`](ingest/xsection.py)), below.
 4. **Junctions:** nodes where three or more piece ends meet, joined into one
    junction along pieces shorter than 30 m (a major road at either node),
@@ -389,7 +407,9 @@ county a piece is in) and developed land (the CDL, `roads.developed_land`).
 8. **Edges:** every surface's outline less the surfaces it meets (so no seam
    where two meet is an edge): `curb`, `shoulder` (no curb) or `deck`, each
    with its width's tier, so a crisp curb is drawn only where the width is
-   known and a soft edge where it's estimated (decision 10).
+   known and a soft edge where it's estimated (decision 10). A junction's
+   fill takes the edge of the side of the nearest piece it lies on, so
+   rural corners are shoulders.
 9. **Crosswalks** at marked crossing nodes only (`roads.osm_walk_node` where
    `kind = 'crossing' and marked`; rail crossings are never marked, P8): 3 m
    deep ⚠️, across the road along the crossing way where it crosses (if
@@ -405,20 +425,22 @@ county a piece is in) and developed land (the CDL, `roads.developed_land`).
 11. **Generalised** surfaces for z15 (0.5 m; under 4 m² left out), and the
     **review list** (`roads.review`).
 
-**On scratch** (Oct 11, 2026, the Oct 5 extract; build `20261011T175252Z`):
+**On scratch** (Oct 11, 2026, the Oct 5 extract; build `20261011T191133Z`,
+after the review fixes; export `20261011T192320Z`):
 
 | | |
 |---|---|
-| Ways, pieces | 36,689 ways (13,904 in `core.osm_way`: its 13,917 less the 7 cycleways, 4 tracks, 1 pedestrian way and 1 raceway; 22,785 in `roads.osm_street`), 69,893 pieces: Ada 44,884, Canyon 22,310, elsewhere 2,699; 38,097 of Ada's on an ACHD segment |
-| Lanes | from OpenStreetMap 22,111 pieces, the Master Street Map 1,043, HPMS 326, COMPASS (in Ada, by the lanes rule) 143, OpenStreetMap through ACHD's segment 101, the default 46,169; lines on 13,303 |
-| Widths | inventoried 8,916, counted 4,767, estimated 56,210 |
-| Junctions | 31,087 (signal 588, roundabout 139, interchange 126); 79,950 corner pairs closed, 30,324 fills; 1,852 islands; 928 tapers |
-| Edges, markings | 204,351 edges (curb, shoulder, deck); 30,150 lines and stop bars (1,651 stop bars); 4,295 crosswalks; 1,738 arrows |
-| Review list | lanes_conflict 801, sidewalk_close 1,444, components_exceed 724, unmatched 196, direction 42, other_direction_assumed 16, deck_mismatch 12, turn_slots 10, bike_other_carriageway 8 |
-| Time | 456-528 s, as a light job (2 GB, 2 CPUs, `tvt_build`): matching 90 s, cross-sections 35-90 s, closings 140 s, edges 85 s; a rebuild over the last build takes no longer. The build's container peaked at 0.56 GB; the database's at 1 GB (its cap is 2) |
-| Size | 192 MB with indexes, freshly built: `roads.surface` 74 MB, `roads.edge` 53, `roads.xsection` 25, `roads.piece` 25, `roads.marking` 9, `roads.junction` 6, the rest under 2. A rebuild deletes and writes every row, so up to about twice that until vacuumed |
-| Export | 164 MB of FlatGeobuf, about 15 s |
-| Bake | the export alone baked to 31.4 MB (21,475 tiles, z14-16; 513,722 features) in 365 s at one CPU and under 1 GB (a light worker job); the largest z16 tile downtown is 20 KB (20,059 bytes), a third of the 60 KB budget |
+| Ways, pieces | 36,689 ways (13,904 in `core.osm_way`: its 13,917 less the 7 cycleways, 4 tracks, 1 pedestrian way and 1 raceway; 22,785 in `roads.osm_street`), 69,893 pieces: Ada 44,884, Canyon 22,310, elsewhere 2,699; 38,091 of Ada's on an ACHD segment; `class_mismatch` lists 7 kept off a segment two classes or more above them and 11 off HPMS sections |
+| Lanes | from OpenStreetMap 22,111 pieces, the Master Street Map 1,042, HPMS 321, COMPASS (in Ada, by the lanes rule) 143, OpenStreetMap through ACHD's segment 101, the default 46,175; lines on 13,301 |
+| Widths | inventoried 8,892, counted 6,002, estimated 54,999; republish `yes` 14,357, `aggregates` 44,737 (a calibrated class width), `internal` 10,799 |
+| Edges by the land | curbed both sides: Ada 3,917 km, Canyon 1,737, elsewhere 53; one side: 376, 429, 60; shoulders: 1,303, 1,910, 1,856. Of the 345 Canyon pieces over 400 m (tertiary to residential) with crop fields (`farm.field`) on more than 80% of the land 20-150 m either side, 9 read curbed on a side (98 of 591 sampled before the fix); none of the 105 elsewhere |
+| Junctions | 31,087 (signal 588, roundabout 139, interchange 126); 79,950 corner pairs closed, 30,317 fills; 1,869 islands; 945 tapers |
+| Edges, markings | 204,283 edges (curb 171,036, shoulder 31,792, deck 1,455; at junctions where every piece is shoulder-edged, none is a curb); 33,990 lines and stop bars (1,651 stop bars); 4,295 crosswalks; 1,738 arrows |
+| Review list | lanes_conflict 801, sidewalk_close 1,449, components_exceed 726, unmatched 197, direction 42, class_mismatch 18, other_direction_assumed 15, deck_mismatch 11, turn_slots 10, bike_other_carriageway 8 |
+| Time | 579 s, as a light job (2 GB, 2 CPUs, `tvt_build`): matching 90 s, developed land 105 s (the bands either side 85), cross-sections 85 s, closings 125 s, edges 80 s. The build's container peaked at 0.57 GB; the database's at 1 GB (its cap is 2) |
+| Size | 199 MB with indexes: `roads.surface` 75 MB, `roads.edge` 53, `roads.xsection` 30, `roads.piece` 25, `roads.marking` 10, `roads.junction` 6, the rest under 2. The build truncates its tables, so that's the size after any number of rebuilds |
+| Export | 166 MB of FlatGeobuf, 13 s; `roads-export` keeps the newest two |
+| Bake | the export before the review fixes (its surfaces much the same) baked alone to 31.4 MB (21,475 tiles, z14-16; 513,722 features) in 365 s at one CPU and under 1 GB (a light worker job); the largest z16 tile downtown is 20 KB (20,059 bytes), a third of the 60 KB budget |
 
 ### Cross-sections
 
@@ -431,10 +453,10 @@ pavement is centred on it, except where a sidewalk cuts one side.
 | Lanes (`lanes_source`) | The way's own `lanes`, `lanes:forward/backward/both_ways`, `turn:lanes*` (`osm`; an odd two-way count without a split reads as the Master Street Map's, a centre turn lane from 3). In Ada, the ACHD segment's lanes rule (`core.segment_lanes`: HPMS on state routes, the Master Street Map on arterials, OpenStreetMap or COMPASS elsewhere, else 1+1), turned onto the piece by bearing: a one-way piece (a divided road's carriageway) takes its own direction's count. Elsewhere HPMS's through lanes on interstate, US and state routes (`itd_hpms`; off them HPMS's counts are defaults). Else 1+1, or 1 one-way (`default`). COMPASS for Canyon is left out (cut first) |
 | Lane width | HPMS's on its sections; else ACHD's lane beside the bike facility; else 3.66 m on major roads, 3.35 m collectors, 3.05 m local streets (§14.7 ⚠️), 5.0 m round a roundabout ⚠️ |
 | Bike lanes, parking | ACHD's bike network where it covers the side (in the roadway: bike lanes, buffered and protected ones, with a painted, delineator, curb or barrier buffer); else OpenStreetMap's `cycleway*=lane` (1.5 m ⚠️) and parking tags (parallel 2.4 m, diagonal 4.8, perpendicular 5.4 ⚠️) |
-| Edges | Curbed where ACHD's bike network says so, where a sidewalk is mapped beside it (tagged on the way, or a parallel sidewalk way), or on developed land (the CDL's 122-124, half the piece or more); never on motorways and their links; else a shoulder (no curb) |
+| Edges | Curbed where ACHD's bike network says so, where a sidewalk is mapped beside it (tagged on the way, or a parallel sidewalk way), or where the land on that side is developed (the CDL's 122-124 over half of a band 20-100 m out; the road's own cells, which the CDL counts as developed even among fields, are left out); never on motorways and their links; else a shoulder (no curb) |
 | Shoulders, gutters | HPMS's; else motorways 3.0 m outside and 1.2 m inside, other rural roads 1.2 m ⚠️; a curbed side's 0.6 m gutter ⚠️, inside a parking or bike lane where there is one |
 | Median | HPMS's on a single two-way way (curbed, barrier or unprotected) |
-| Total (`width_tier`) | **inventoried:** ACHD's measured curb to curb (`total_pavement_m`) on a two-way piece along a two-way segment, or a one-way carriageway's own side (`roadway_m` plus gutters); the way's `width`; HPMS's lane width with HPMS's shoulders or curbs. **counted:** lanes from a source, widths from the defaults. **estimated:** default lanes, or a class pavement wider than the lanes: local streets 9.75 m curbed and 7.3 m rural ⚠️ (calibrated, below), curbed two-way collectors 11.3 m ⚠️. **measured** is the photo check's (later) |
+| Total (`width_tier`) | **inventoried:** ACHD's measured curb to curb (`total_pavement_m`) on a two-way piece along a two-way segment, or a one-way carriageway's own side (`roadway_m` plus gutters); the way's `width`; HPMS's lane width with HPMS's shoulders or curbs. **counted:** lanes from a source, widths from the defaults. **estimated:** default lanes, or a class pavement wider than the lanes: local streets 9.75 m curbed and 7.3 m rural ⚠️ (calibrated, below), curbed two-way collectors 11.3 m ⚠️; a service way (a parking aisle, a driveway, a drive-through) its lanes, at least 5.5 m ⚠️, never a street's width. **measured** is the photo check's (later) |
 | Fitting | An inventoried total fits its lanes to it (2.6-4.6 m a lane; an unmarked local street's down to 2 m, shared between parked cars). Wider pavement goes to the edges; components that don't fit are scaled down, flagged `components_exceed` and listed |
 | Sidewalks | A surface edge stays 1 m inside a parallel sidewalk: an estimated or counted side is cut to it from its gutter, parking and unassigned pavement, never into lanes with lines (an estimated street's notional lanes may go, down to 2.75 m a side); otherwise `sidewalk_close`, listed. An inventoried width isn't cut, but listed when a sidewalk is more than a metre inside it |
 | Markings | Only where a source gives the lane count: never on `default` lanes or `lane_markings=no`; on local streets only from 3 lanes, with a centre turn lane or bike lanes, or with `lane_markings=yes`; alleys never. A two-way road's directions part at a double line (`centre_double`), or either side of a centre turn lane (`twltl`); lanes going the same way at dashed lines; a shoulder at an edge line; a bike lane at solid lines; freeways and ramps always carry both edge lines |
@@ -442,7 +464,10 @@ pavement is centred on it, except where a sidewalk cuts one side.
 
 Each piece's `sources` names every part's source, and `republish` is
 `internal` where any is ACHD's or ITD's (or the lane count came through
-ACHD's segment). A public variant (decision 4) is a rebuild without them.
+ACHD's segment). A width from the curbed local street's or the curbed
+collector's class pavement, which were calibrated on ACHD's measurements
+(below), is `aggregates`, and `sources.calibration` says so. A public
+variant (decision 4) is a rebuild without them.
 
 **Calibration** (`roads-build --calibrate`, read only;
 [`ingest/calibrate.py`](ingest/calibrate.py)). The design's 10.4 m curbed and
@@ -461,11 +486,20 @@ So curbed local streets default to **9.75 m** (32 ft: the valley's median,
 which the windows' medians bracket), rural ones stay at 7.3 m (no measured
 rural street lies in the windows; ACHD's rural local streets are wider, but
 they're its bike routes), and curbed two-way collectors get 11.3 m. ACHD's
-widths are internal, and these defaults are aggregates of them: a public
-variant may want them recalibrated from public data (the photo check). A
-second, public measure, the spacing of the sidewalks either side of
-residential pieces less 2 × 0.9 m, runs 10.35 / 10.81 / 14.16 valley-wide
-(14,539 pieces): an upper bound, since planter strips widen it.
+widths are internal, and these defaults are aggregates of them (the rows
+that take them are `aggregates`): a public variant may want them
+recalibrated from public data (the photo check). A second, public measure,
+the spacing of the sidewalks either side of residential pieces less
+2 × 0.9 m, runs 10.35 / 10.81 / 14.16 valley-wide (14,539 pieces): an upper
+bound, since planter strips widen it. Rerun on the build after the review
+fixes, the medians are the same (curbed local streets 9.75 m over 1,892
+segments, rural 8.75 m over 244, curbed collectors 11.28 m over 891).
+
+"Rural" is what the build reads: no mapped sidewalk, and no developed land
+beside the street (the CDL over half of a band 20-100 m out on that side).
+Until the review fix it read the CDL along the street's own line, which the
+CDL counts as developed even among fields, so most of Canyon's farm roads
+were drawn curbed at 9.75 m; they're shoulders at 7.3 m now (above).
 
 ### The review list
 
@@ -483,6 +517,7 @@ disagree or a rule couldn't be applied cleanly, never silently.
 | `deck_mismatch` | A piece along an elevated ACHD segment (an overpass) that OpenStreetMap doesn't draw as a bridge |
 | `turn_slots` | `turn:lanes` with more or fewer slots than lanes |
 | `bike_other_carriageway` | ACHD's bike network row conflicts with its one-way segment's direction |
+| `class_mismatch` | An ACHD segment or HPMS sections the line rule puts the piece on, but two classes or more above it, with names that don't agree or can't be compared (an alley beside an interstate): left out |
 | `junction_large` | A junction of more than 12 nodes or spreading over 100 m |
 | `geometry` | A surface the geometry steps left invalid |
 
@@ -495,7 +530,7 @@ source-layers `roads.<layer>`:
 
 | Layer | Zooms | Geometry | Fields |
 |---|---|---|---|
-| `lines` | 14-16 (alleys and service ways from 15) | LineString | `class`, `w` (the pavement's width, m), `material`, `tier`, `lanes`, `marked`, `conflict` (▲), `deck`, `tunnel`, `layer` |
+| `lines` | 14-16 (alleys and service ways from 15) | LineString | `class`, `w` (the width the surface is drawn at, m: a sidewalk's cut included), `off` (where that width's middle lies, m right of the line as drawn: 0 unless a sidewalk cut one side), `material`, `tier`, `lanes`, `marked`, `conflict` (▲), `deck`, `tunnel`, `layer` |
 | `surfaces_z15` | 15 | MultiPolygon | `kind` (carriageway, junction, deck, median, island), `material`, `tier`, `layer`: generalised |
 | `surfaces` | 16 | MultiPolygon | the same, full detail |
 | `edges` | 16 | MultiLineString | `kind` (curb, shoulder, deck), `tier`, `layer` |
@@ -507,8 +542,11 @@ Every layer has an integer `id` (the build's own) and is **internal**
 (republish `internal`, licence ODbL-1.0 with ACHD's and ITD's inputs): the
 bake that holds it is tailnet-only until a public variant exists (C17,
 decision 4). The ground never reads it. The inputs and their versions come
-from `roads.build.inputs`. Paving's base layers (P8-app) join this export:
-add them to `LAYERS`, since the bake reads each plugin's newest export whole.
+from `roads.build.inputs`. The export reads one build (a read-only snapshot,
+the tables locked first), and keeps the newest two exports, removing older
+ones once its own is written. Paving's base layers (P8-app) join this
+export: add them to `LAYERS`, since the bake reads each plugin's newest
+export whole.
 
 ```bash
 python3 -m ingest roads-build                 # the build (as tvt_build; a light job)
