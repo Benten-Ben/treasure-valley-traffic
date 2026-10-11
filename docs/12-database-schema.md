@@ -585,6 +585,60 @@ over the City's rows run with their reader's privileges, so the tile login
 can't read them ([plugins/trails](../plugins/trails/README.md)). The links
 carry the City's ids, so they're internal, like their sources.
 
+**Real-width roads (landscape sprint, Oct 2026; roads 0003).** `roads-build`
+(`plugins/roads/ingest/build.py`) splits the carriageways of `core.osm_way`
+and `roads.osm_street` into pieces where they meet and gives each a
+cross-section from OpenStreetMap's tags, ACHD's lanes rule
+(`core.segment_lanes`), ACHD's bike network's measured widths, HPMS and
+class defaults; then surfaces, junctions with their curb returns, islands,
+edges, crosswalks on marked crossings, markings and the review list. It
+replaces the tables whole in one transaction; their ids are the build's own,
+so anything kept across builds keys on the way and ACHD's segment. Geometry
+in EPSG:32611. Licence ODbL with ACHD's and ITD's values: internal.
+
+```sql
+create table roads.build (id text primary key, started_at timestamptz, finished_at timestamptz,
+  current boolean,                                -- one current
+  extract_md5 text, inputs jsonb, params jsonb, counts jsonb, seconds real,
+  license text, republish text, credit text);
+create table roads.piece (id int primary key, osm_id bigint, seq smallint,
+  source text,                                    -- osm_valley or osm_street
+  highway text, service text, name text, ref text,
+  oneway smallint,                                -- 1 along the line, -1 against, 0 both
+  roundabout boolean, bridge boolean, tunnel boolean, layer smallint,
+  from_node int, to_node int, from_junction int, to_junction int,
+  county text, road_segment_id bigint, seg_same_way boolean, seg_confidence real,
+  length_m real, geom geometry(LineString, 32611));
+create table roads.xsection (piece_id int primary key references roads.piece,
+  lanes_fwd smallint, lanes_bwd smallint, centre_turn boolean, turn_fwd text[], turn_bwd text[],
+  lanes_source text,                              -- osm, itd_hpms, achd_msm, osm_valley, compass_centerline, default
+  lanes_conf real, lane_w_m real, bike_l_m real, bike_r_m real, park_l_m real, park_r_m real,
+  shoulder_l_m real, shoulder_r_m real, edge_l text, edge_r text,   -- curb or shoulder
+  median_kind text, median_w_m real, width_left_m real, width_right_m real, total_w_m real,
+  width_tier text,                                -- inventoried, measured, counted, estimated
+  width_source text, material text, material_source text, markings boolean,
+  sources jsonb,                                  -- every part's source
+  republish text,                                 -- yes, or internal (an ACHD or ITD input)
+  flags text[]);
+create table roads.junction (id int primary key, kind text,   -- signal, roundabout, interchange, plain
+  nodes smallint, pieces int[], radius_m real, intersection_id bigint, geom geometry(Point, 32611));
+create table roads.surface (id int primary key, kind text,    -- carriageway, junction, deck, median, island
+  piece_id int, junction_id int, material text, tier text, layer smallint,
+  geom geometry(MultiPolygon, 32611), geom_z15 geometry(MultiPolygon, 32611));
+create table roads.edge (id int primary key, kind text,       -- curb, shoulder, deck
+  tier text, layer smallint, piece_id int, junction_id int, geom geometry(MultiLineString, 32611));
+create table roads.marking (id int primary key, kind text,    -- edge, lane, centre_double, twltl, bike, stop_bar, crosswalk
+  dash text, piece_id int, junction_id int, node_osm_id bigint, geom geometry(Geometry, 32611));
+create table roads.arrow (id int primary key, piece_id int, direction text, lane smallint, turns text[],
+  bearing real, geom geometry(Point, 32611));
+create table roads.review (id int primary key, kind text, piece_id int, junction_id int, osm_id bigint,
+  road_segment_id bigint, detail jsonb, geom geometry(Point, 32611));
+```
+
+The rules, the calibration of the local streets' default widths, the review
+list's kinds and the export (`roads-export`) are in the roads plugin's
+README.
+
 **COMPASS (built Oct 6, 2026, migration 0012).** Crashes are `obs.crash`,
 one row per ITD serial number. `crashed_at` is the reported local time, so
 the key is serial number plus time; with TimescaleDB it's a hypertable in

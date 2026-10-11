@@ -16,9 +16,9 @@
 -- anything kept across builds (cards, links) keys on the OpenStreetMap way (osm_id) and ACHD's segment, never
 -- on a piece's id.
 --
--- The tables reference each other by the build's ids (piece_id, junction_id) without foreign keys, but
--- roads.xsection's: they're replaced together, and a delete checking six tables for each of 70,000 pieces made
--- a rebuild's clearing take minutes.
+-- The tables reference each other by the build's ids (piece_id, junction_id) without foreign keys: they're
+-- replaced together, and a delete checking six tables for each of 70,000 pieces made a rebuild's clearing take
+-- minutes.
 --
 -- Geometry is in EPSG:32611 (UTM 11N on WGS 84: the ground's grid and the export contract's CRS), in metres.
 --
@@ -84,7 +84,7 @@ comment on table roads.piece is
 -- The cross-section of a piece, by the rules in plugins/roads/ingest/xsection.py. Left and right are as the
 -- line is drawn (OpenStreetMap's way direction); forward lanes run along it. Widths in metres.
 create table roads.xsection (
-  piece_id        int primary key references roads.piece on delete cascade,
+  piece_id        int primary key,                 -- roads.piece
   lanes_fwd       smallint not null check (lanes_fwd >= 0),
   lanes_bwd       smallint not null check (lanes_bwd >= 0),
   centre_turn     boolean not null,                -- a two-way centre turn lane

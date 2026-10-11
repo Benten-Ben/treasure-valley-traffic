@@ -170,14 +170,19 @@ own schema `roads` ([migrations/](migrations/)): `roads.osm_street` (0001),
 `roads.developed_build` and `roads.developed_land` (0002),
 `roads.bike_facility`, `roads.bike_facility_note` (internal),
 `roads.bike_facility_match` and the views `roads.bike_facility_side` and
-`roads.segment_bike_xsection` (0004).
+`roads.segment_bike_xsection` (0004); the real-width build's `roads.build`,
+`roads.piece`, `roads.xsection`, `roads.junction`, `roads.surface`,
+`roads.edge`, `roads.marking`, `roads.arrow` and `roads.review` (0003,
+[below](#real-width-roads-the-build)).
 
 **Code:** `ingest/sources/` (the sources and consumers), `ingest/developed.py`
 (developed land: loading a build, and measuring shares of it in PostGIS),
 `build/developed.py` (the worker step that traces it from the CDL),
 `ingest/segment_match.py` (matching to ACHD's segments with core's line
 matcher, and `core.segment_match`), `ingest/streets.py` (street names made
-comparable; the intersections plugin uses it too).
+comparable; the intersections plugin uses it too), `ingest/build.py`,
+`ingest/xsection.py`, `ingest/calibrate.py` and `ingest/export.py` (the
+real-width roads), `ingest/marks.py` (the sources' marks on `roads-build`).
 
 **Commands:**
 
@@ -189,6 +194,7 @@ python -m plugins.roads.build.developed --cdl $TVT_ARCHIVE/farm/cdl --out $TVT_A
 python3 -m ingest roads-developed-load --build $TVT_ARCHIVE/roads/developed/<UTC stamp>          # then measures the paving again
 python3 -m ingest run achd_bike_network                                # ACHD's bike network (monthly when scheduled)
 python3 -m ingest segment-match [itd_hpms achd_msm compass_centerline osm_valley achd_bike_network]
+python3 -m ingest roads-build                                          # the real-width roads (below), then roads-export
 python3 -m unittest discover -s plugins/roads -t .
 data/dev/worker-test-remote.sh <worktree> <name> plugins.roads.tests.test_developed_build    # the worker step, worker image
 ```

@@ -156,7 +156,7 @@ select osm_id, c - 1, i, x, y, node from c where split and i > 1
 """
 
 _PIECES = """
-insert into roads.piece (id, osm_id, seq, source, highway, service, name, ref, oneway, roundabout, bridge, tunnel,
+insert into rb_piece (id, osm_id, seq, source, highway, service, name, ref, oneway, roundabout, bridge, tunnel,
                          layer, from_node, to_node, length_m, geom)
 select row_number() over (order by g.osm_id, g.seq), g.osm_id, g.seq, w.source, w.highway, w.service, w.name, w.ref,
        case w.oneway when 'yes' then 1 when '-1' then -1 else 0 end,
@@ -179,7 +179,7 @@ create temp table rb_node on commit drop as
 select k.node as id, ST_Transform(ST_SetSRID(ST_MakePoint(k.x, k.y), 4326), %(srid)s) as geom, e.degree::int
 from rb_key k
 join (select node, count(*) as degree
-      from (select from_node as node from roads.piece union all select to_node from roads.piece) z
+      from (select from_node as node from rb_piece union all select to_node from rb_piece) z
       group by 1) e on e.node = k.node;
 create index on rb_node (id);
 create index on rb_node using gist (geom);
@@ -188,6 +188,11 @@ analyze rb_node;
 
 
 def pieces(conn):
+    # The pieces are staged in rb_piece while the matching steps fill their columns in, then written to
+    # roads.piece once (junctions()): updating roads.piece in place would leave a dead copy of every row.
+    conn.execute("create temp table rb_piece (like roads.piece including defaults) on commit drop")
+    conn.execute("alter table rb_piece add primary key (id)")
+    conn.execute("create index on rb_piece using gist (geom)")
     conn.execute(_WAYS, {"classes": CLASSES})
     dup = conn.execute("select count(*) from (select osm_id from rb_way group by 1 having count(*) > 1) d").fetchone()[0]
     if dup:
@@ -195,9 +200,9 @@ def pieces(conn):
     run_sql(conn, _VERTICES)
     conn.execute(_PIECE_VERTICES)
     conn.execute(_PIECES, {"srid": SRID})
-    conn.execute("analyze roads.piece")
+    conn.execute("analyze rb_piece")
     run_sql(conn, _NODES, {"srid": SRID})
-    ways, n = conn.execute("select count(*), (select count(*) from roads.piece) from rb_way").fetchone()
+    ways, n = conn.execute("select count(*), (select count(*) from rb_piece) from rb_way").fetchone()
     return {"ways": ways, "pieces": n}
 
 
@@ -208,14 +213,14 @@ create temp table rb_county on commit drop as
 select county, ST_Subdivide(ST_CollectionExtract(ST_MakeValid(ST_Transform(geom, %(srid)s)), 3), 256) as g
 from core.taz where active and county in ('Ada', 'Canyon');
 create index on rb_county using gist (g);
-update roads.piece p set county = c.county
+update rb_piece p set county = c.county
 from rb_county c where ST_Intersects(c.g, ST_LineInterpolatePoint(p.geom, 0.5));
 """
 
 
 def counties(conn):
     run_sql(conn, _COUNTY, {"srid": SRID})
-    return dict(conn.execute("select coalesce(county, 'other'), count(*) from roads.piece group by 1").fetchall())
+    return dict(conn.execute("select coalesce(county, 'other'), count(*) from rb_piece group by 1").fetchall())
 
 
 def match_achd(conn):
@@ -224,7 +229,7 @@ def match_achd(conn):
     found = linematch.match(
         conn,
         "select 'piece' as source, id::text as source_id, name, ST_Transform(geom, 4326) as geom "
-        "from roads.piece where county = 'Ada'",
+        "from rb_piece where county = 'Ada'",
         "select id, name, geom from core.road_segment where active",
         rule=ACHD_RULE)
     best = {}
@@ -240,7 +245,7 @@ def match_achd(conn):
             for pid, (_, sid, conf) in best.items():
                 cp.write_row((pid, sid, conf))
     conn.execute(
-        """update roads.piece p set road_segment_id = m.road_segment_id, seg_confidence = m.confidence,
+        """update rb_piece p set road_segment_id = m.road_segment_id, seg_confidence = m.confidence,
              seg_same_way = core.drawn_same_way(s.geom, ST_Transform(p.geom, 4326))
            from rb_seg m join core.road_segment s on s.id = m.road_segment_id
            where p.id = m.piece_id""")
@@ -259,7 +264,7 @@ def match_hpms(conn):
             conn,
             "select h.kind as source, h.source_id, h.road_name as name, h.geom from core.hpms_section h "
             "where h.active and h.kind = any(%(kinds)s) and h.geom is not null",
-            f"select id, name, ST_Transform(geom, 4326) as geom from roads.piece where not tunnel and {where}",
+            f"select id, name, ST_Transform(geom, 4326) as geom from rb_piece where not tunnel and {where}",
             rule=ACHD_RULE, params={"kinds": list(kinds)})
         rows += [(int(m["target_id"]), m["source"], m["source_id"], m["confidence"], m["overlap_m"]) for m in found]
     with conn.cursor() as cur:
@@ -268,7 +273,7 @@ def match_hpms(conn):
                 cp.write_row(r)
     conn.execute(
         """update rb_hpms m set same_way = core.drawn_same_way(h.geom, ST_Transform(p.geom, 4326))
-           from core.hpms_section h, roads.piece p
+           from core.hpms_section h, rb_piece p
            where h.kind = m.kind and h.source_id = m.source_id and p.id = m.piece_id""")
     conn.execute("create index on rb_hpms (piece_id)")
     return {"hpms matches": len(rows)}
@@ -287,7 +292,7 @@ with s as (
   select p.id, k, ST_LineInterpolatePoint(p.geom, k / 4.0) as pt,
          ST_Azimuth(ST_LineInterpolatePoint(p.geom, greatest(0, k / 4.0 - 2 / p.length_m)),
                     ST_LineInterpolatePoint(p.geom, least(1, k / 4.0 + 2 / p.length_m))) as az
-  from roads.piece p cross join generate_series(1, 3) k
+  from rb_piece p cross join generate_series(1, 3) k
   where p.length_m >= 10 and not p.bridge and not p.tunnel
 ), n as (
   select s.id, s.k, s.pt, s.az, w.g, ST_ClosestPoint(w.g, s.pt) as c
@@ -330,7 +335,7 @@ def developed(conn):
     if current is None:
         return {"developed land": "none loaded: local streets off sidewalks count as rural"}, None
     shares = land.measure(conn, query="select 'p'::char(1) as t, id::bigint as id, ST_Transform(geom, 4326) as geom "
-                                      "from roads.piece")
+                                      "from rb_piece")
     with conn.cursor() as cur:
         with cur.copy("copy rb_dev from stdin") as cp:
             for (_, pid), share in shares.items():
@@ -343,11 +348,11 @@ def developed(conn):
 _INPUT_TABLES = """
 create temp table rb_lanes on commit drop as
 select l.* from core.segment_lanes l
-where l.road_segment_id in (select road_segment_id from roads.piece where road_segment_id is not null);
+where l.road_segment_id in (select road_segment_id from rb_piece where road_segment_id is not null);
 create index on rb_lanes (road_segment_id);
 create temp table rb_bike on commit drop as
 select b.* from roads.segment_bike_xsection b
-where b.road_segment_id in (select road_segment_id from roads.piece where road_segment_id is not null);
+where b.road_segment_id in (select road_segment_id from rb_piece where road_segment_id is not null);
 create index on rb_bike (road_segment_id);
 create temp table rb_hpms_piece on commit drop as
 select h.piece_id,
@@ -371,7 +376,7 @@ _INPUTS = """
 select p.id, p.highway, p.service, w.oneway, p.roundabout, p.county, w.tags,
        p.road_segment_id, s.functional_class, s.one_way, p.seg_same_way, p.seg_confidence,
        to_jsonb(l) as lanes, to_jsonb(b) as bike, k.left_m, k.right_m, d.share, h.hpms
-from roads.piece p
+from rb_piece p
 join rb_way w using (osm_id)
 left join core.road_segment s on s.id = p.road_segment_id
 left join rb_lanes l on l.road_segment_id = p.road_segment_id
@@ -512,7 +517,7 @@ def junctions(conn, xsections):
     nodes = {n: (x, y) for n, x, y in conn.execute(
         "select id, ST_X(geom), ST_Y(geom) from rb_node where degree >= 3").fetchall()}
     plist = conn.execute("select id, from_node, to_node, length_m, highway, roundabout, bridge or tunnel "
-                         "from roads.piece").fetchall()
+                         "from rb_piece").fetchall()
     groups = cluster(nodes, plist)
     at = {}
     for pid, a, b, *_ in plist:
@@ -567,14 +572,15 @@ def junctions(conn, xsections):
         with cur.copy("copy rb_nj from stdin") as cp:
             for n, j in node_junction.items():
                 cp.write_row((n, j))
-    conn.execute("""update roads.piece p set from_junction = a.junction from rb_nj a where a.node = p.from_node""")
-    conn.execute("""update roads.piece p set to_junction = b.junction from rb_nj b where b.node = p.to_node""")
+    conn.execute("""update rb_piece p set from_junction = a.junction from rb_nj a where a.node = p.from_node""")
+    conn.execute("""update rb_piece p set to_junction = b.junction from rb_nj b where b.node = p.to_node""")
     conn.execute("create temp table rb_junc (id int primary key, r real, disc_r real, geom geometry) on commit drop")
     with conn.cursor() as cur:
         with cur.copy("copy rb_junc (id, r, disc_r) from stdin") as cp:
             for d in discs:
                 cp.write_row(d)
     conn.execute("analyze roads.junction")
+    conn.execute("insert into roads.piece select * from rb_piece")      # the pieces, final, written once
     conn.execute("analyze roads.piece")
     conn.execute("update rb_junc r set geom = ST_Buffer(j.geom, r.disc_r, 'quad_segs=8') from roads.junction j "
                  "where j.id = r.id")
@@ -589,33 +595,16 @@ def junctions(conn, xsections):
 
 # ---- 5. surfaces -----------------------------------------------------------------------------------
 
-_CARRIAGEWAYS = """
-insert into roads.surface (id, kind, piece_id, material, tier, layer, geom)
-select row_number() over (order by p.id), case when p.bridge then 'deck' else 'carriageway' end, p.id,
-       x.material, x.width_tier, p.layer,
-       ST_Multi(ST_CollectionExtract(ST_MakeValid(
-         ST_Difference(
-           ST_Union(ST_Buffer(p.geom, x.width_left_m, 'side=left join=mitre mitre_limit=2'),
-                    ST_Buffer(p.geom, x.width_right_m, 'side=right join=mitre mitre_limit=2')),
-           case when x.median_w_m > 0 then ST_Buffer(p.geom, x.median_w_m / 2, 'endcap=flat join=mitre mitre_limit=2')
-                else ST_GeomFromText('GEOMETRYCOLLECTION EMPTY', 32611) end)), 3))
-from roads.piece p join roads.xsection x on x.piece_id = p.id
-where not p.tunnel
-"""
+def z15(g):
+    """SQL: geometry g generalised for z15 (Z15_TOLERANCE_M), or null when it's under Z15_MIN_M2."""
+    return (f"(case when ST_Area({g}) >= {Z15_MIN_M2} then ST_Multi(ST_CollectionExtract(ST_MakeValid("
+            f"ST_SimplifyPreserveTopology({g}, {Z15_TOLERANCE_M})), 3)) end)")
 
-_MEDIANS = """
-insert into roads.surface (id, kind, piece_id, material, tier, layer, geom)
-select (select coalesce(max(id), 0) from roads.surface) + row_number() over (order by p.id), 'median', p.id,
-       'concrete', x.width_tier, p.layer,
-       ST_Multi(ST_CollectionExtract(ST_MakeValid(
-         ST_Buffer(p.geom, x.median_w_m / 2, 'endcap=flat join=mitre mitre_limit=2')), 3))
-from roads.piece p join roads.xsection x on x.piece_id = p.id
-where not p.tunnel and x.median_w_m > 0 and x.median_kind in ('curbed', 'barrier')
-"""
 
 # Where two pieces meet end to end at an angle, their flat ends leave a wedge open on the outside of the bend: a
-# disc of the narrower half-width closes it (joined to the lower-numbered piece).
+# disc of the narrower half-width closes it (joined to the lower-numbered piece's surface).
 _JOINTS = """
+create temp table rb_joint on commit drop as
 with ends as (
   select id as piece, from_node as node from roads.piece where not tunnel
   union all select id, to_node from roads.piece where not tunnel
@@ -625,22 +614,54 @@ with ends as (
   from ends e join roads.xsection x on x.piece_id = e.piece join roads.piece p on p.id = e.piece
   join rb_node n on n.id = e.node and n.degree = 2
   group by e.node having count(*) = 2
-), d as (
-  select j.piece, ST_Union(ST_Buffer(n.geom, j.r, 'quad_segs=8')) as g
-  from j join rb_node n on n.id = j.node where j.same_deck and j.r > 0
-  group by j.piece
 )
-update roads.surface s set geom = ST_Multi(ST_CollectionExtract(ST_MakeValid(ST_Union(s.geom, d.g)), 3))
-from d where s.piece_id = d.piece and s.kind in ('carriageway', 'deck')
+select j.piece, ST_Union(ST_Buffer(n.geom, j.r, 'quad_segs=8')) as g
+from j join rb_node n on n.id = j.node where j.same_deck and j.r > 0
+group by j.piece;
+create index on rb_joint (piece);
+analyze rb_joint
 """
+
+_CARRIAGEWAYS = """
+insert into roads.surface (id, kind, piece_id, material, tier, layer, geom, geom_z15)
+select c.id, c.kind, c.piece_id, c.material, c.tier, c.layer, c.g, {z15}
+from (
+  select row_number() over (order by p.id) as id, case when p.bridge then 'deck' else 'carriageway' end as kind,
+         p.id as piece_id, x.material, x.width_tier as tier, p.layer,
+         ST_Multi(ST_CollectionExtract(ST_MakeValid(ST_Union(
+           ST_Difference(
+             ST_Union(ST_Buffer(p.geom, x.width_left_m, 'side=left join=mitre mitre_limit=2'),
+                      ST_Buffer(p.geom, x.width_right_m, 'side=right join=mitre mitre_limit=2')),
+             case when x.median_w_m > 0
+                  then ST_Buffer(p.geom, x.median_w_m / 2, 'endcap=flat join=mitre mitre_limit=2')
+                  else ST_GeomFromText('GEOMETRYCOLLECTION EMPTY', 32611) end),
+           coalesce(jt.g, ST_GeomFromText('GEOMETRYCOLLECTION EMPTY', 32611)))), 3)) as g
+  from roads.piece p join roads.xsection x on x.piece_id = p.id
+  left join rb_joint jt on jt.piece = p.id
+  where not p.tunnel
+) c
+where not ST_IsEmpty(c.g)
+""".format(z15=z15("c.g"))
+
+_MEDIANS = """
+insert into roads.surface (id, kind, piece_id, material, tier, layer, geom, geom_z15)
+select m.id, 'median', m.piece_id, 'concrete', m.tier, m.layer, m.g, {z15}
+from (
+  select (select coalesce(max(id), 0) from roads.surface) + row_number() over (order by p.id) as id, p.id as piece_id,
+         x.width_tier as tier, p.layer,
+         ST_Multi(ST_CollectionExtract(ST_MakeValid(
+           ST_Buffer(p.geom, x.median_w_m / 2, 'endcap=flat join=mitre mitre_limit=2')), 3)) as g
+  from roads.piece p join roads.xsection x on x.piece_id = p.id
+  where not p.tunnel and x.median_w_m > 0 and x.median_kind in ('curbed', 'barrier')
+) m
+where not ST_IsEmpty(m.g)
+""".format(z15=z15("m.g"))
 
 
 def surfaces(conn):
+    run_sql(conn, _JOINTS)
     conn.execute(_CARRIAGEWAYS)
-    conn.execute("analyze roads.surface")
     conn.execute(_MEDIANS)
-    conn.execute(_JOINTS)
-    conn.execute("delete from roads.surface where ST_IsEmpty(geom)")
     conn.execute("analyze roads.surface")
     return dict(conn.execute("select kind, count(*) from roads.surface group by 1").fetchall())
 
@@ -755,29 +776,32 @@ select k.id as junction_id, (ST_Dump(ST_CollectionExtract(ST_MakeValid(k.g), 3))
 
 _FILL_SURFACES = """
 delete from rb_fill where ST_Area(g) < %(min)s or 2 * ST_Area(g) / nullif(ST_Perimeter(g), 0) < 0.15;
-insert into roads.surface (id, kind, junction_id, material, tier, layer, geom)
-select (select coalesce(max(id), 0) from roads.surface) + row_number() over (order by f.junction_id),
-       'junction', f.junction_id, m.material, m.tier, 0, ST_Multi(ST_Union(f.g))
-from rb_fill f
-cross join lateral (
-  select mode() within group (order by x.material) as material,
-         (array['estimated', 'counted', 'measured', 'inventoried'])[min(array_position(
-           array['estimated', 'counted', 'measured', 'inventoried'], x.width_tier))] as tier
-  from roads.junction j join roads.xsection x on x.piece_id = any(j.pieces)
-  join roads.piece p on p.id = x.piece_id and not p.bridge and not p.tunnel
-  where j.id = f.junction_id) m
-group by f.junction_id, m.material, m.tier
-"""
+insert into roads.surface (id, kind, junction_id, material, tier, layer, geom, geom_z15)
+select q.id, 'junction', q.junction_id, q.material, q.tier, 0, q.g, {z15}
+from (
+  select (select coalesce(max(id), 0) from roads.surface) + row_number() over (order by f.junction_id) as id,
+         f.junction_id, m.material, m.tier, ST_Multi(ST_Union(f.g)) as g
+  from rb_fill f
+  cross join lateral (
+    select mode() within group (order by x.material) as material,
+           (array['estimated', 'counted', 'measured', 'inventoried'])[min(array_position(
+             array['estimated', 'counted', 'measured', 'inventoried'], x.width_tier))] as tier
+    from roads.junction j join roads.xsection x on x.piece_id = any(j.pieces)
+    join roads.piece p on p.id = x.piece_id and not p.bridge and not p.tunnel
+    where j.id = f.junction_id) m
+  group by f.junction_id, m.material, m.tier
+) q
+""".format(z15=z15("q.g"))
 
 _ISLAND_SURFACES = """
-insert into roads.surface (id, kind, junction_id, material, tier, layer, geom)
+insert into roads.surface (id, kind, junction_id, material, tier, layer, geom, geom_z15)
 select (select coalesce(max(id), 0) from roads.surface) + row_number() over (order by i.id),
-       'island', j.id, 'concrete', 'estimated', 0, ST_Multi(i.g)
+       'island', j.id, 'concrete', 'estimated', 0, ST_Multi(i.g), {z15}
 from rb_island i
 cross join lateral (select rj.id from rb_junc rj where rj.geom && i.g and ST_Intersects(rj.geom, i.g)
                     order by ST_Distance(rj.geom, ST_PointOnSurface(i.g)) limit 1) j
 where i.roundabout or i.a <= %(island_max)s
-"""
+""".format(z15=z15("i.g"))
 
 
 PARALLEL_DEG = 25.0         # arms leaving within this of each other are parallel: no curb return between them
@@ -1106,13 +1130,10 @@ def markings(conn, xsections):
 # ---- 11. generalising and the review list ----------------------------------------------------------
 
 def generalise(conn):
-    conn.execute(
-        """update roads.surface set geom_z15 = case when ST_Area(geom) >= %(min)s then
-             ST_Multi(ST_CollectionExtract(ST_MakeValid(ST_SimplifyPreserveTopology(geom, %(tol)s)), 3)) end""",
-        {"min": Z15_MIN_M2, "tol": Z15_TOLERANCE_M})
-    conn.execute("update roads.surface set geom_z15 = null where geom_z15 is not null and ST_IsEmpty(geom_z15)")
-    a, b = conn.execute("select sum(ST_NPoints(geom)), sum(ST_NPoints(geom_z15)) from roads.surface").fetchone()
-    return {"surface vertices": a, "z15 vertices": b}
+    """The surfaces' z15 copies are made as they're stored (z15()): here, what they come to."""
+    a, b, n = conn.execute("select sum(ST_NPoints(geom)), sum(ST_NPoints(geom_z15)), count(*) filter (where geom_z15 "
+                           "is null) from roads.surface").fetchone()
+    return {"surface vertices": a, "z15 vertices": b, "surfaces left out at z15": n}
 
 
 _REVIEW_SQL = {
