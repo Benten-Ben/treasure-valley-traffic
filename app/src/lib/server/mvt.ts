@@ -356,8 +356,8 @@ export function acceptsGzip(h: string | null): boolean {
 		h.split(',').some((part) => {
 			const [name, ...params] = part.trim().toLowerCase().split(';');
 			if (name !== 'gzip' && name !== '*') return false;
-			const q = params.map((p) => p.trim()).find((p) => p.startsWith('q='));
-			return !q || Number(q.slice(2)) > 0;
+			const weight = params.map((p) => p.trim()).find((p) => p.startsWith('q='));
+			return !weight || Number(weight.slice(2)) > 0;
 		})
 	);
 }
