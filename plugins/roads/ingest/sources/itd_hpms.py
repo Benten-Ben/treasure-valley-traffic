@@ -46,7 +46,7 @@ from collections import Counter, defaultdict
 from datetime import datetime, timezone
 
 from ingest import arcgis, db
-from .. import segment_match
+from .. import marks, segment_match
 
 BASE = "https://gisp.itd.idaho.gov/server/rest/services/GDWarehouse"
 HPMS = f"{BASE}/HPMS/FeatureServer"
@@ -405,6 +405,7 @@ def run(conn):
         layers, names, by_id = fetch_all(f)
         stats, changed = store(conn, f.id, f.started_at, layers, names)
         stats["rows just outside the box (fetched by ID)"] = by_id
+        marks.mark(conn, SOURCE["name"], changed, "sections")
         f.records = stats["sections"]
         # Inside the fetch: if matching fails, the store rolls back with it and the run is retried.
         if changed or segment_match.stale(conn, MATCH_SOURCES, MATCH_SOURCES + [NAMES_SOURCE]):

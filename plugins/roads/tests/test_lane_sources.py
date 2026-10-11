@@ -432,8 +432,11 @@ class MatchInsideFetchTest(unittest.TestCase):
                 stack.enter_context(mock.patch.object(db, "ensure_source"))
                 stack.enter_context(mock.patch.object(db, "Fetch", Fetch))
                 stack.enter_context(mock.patch.object(module, "match", side_effect=RuntimeError("boom")))
+                marked = stack.enter_context(mock.patch.object(module.marks, "mark"))
                 with self.assertRaises(RuntimeError):
                     module.run(object())
+                # The store changed something: roads-build was marked, in the fetch's transaction.
+                self.assertEqual(marked.call_args.args[1:3], (module.SOURCE["name"], 1))
         self.assertEqual(exits, [RuntimeError] * 3)
 
 
@@ -442,6 +445,7 @@ class AchdRoadsRematchTest(unittest.TestCase):
         with mock.patch.object(achd_roads, "fetch_all", return_value=([], 0, "no_rules")), \
                 mock.patch.object(achd_roads, "store", return_value=dict(stats)), \
                 mock.patch.object(achd_roads.db, "ensure_source"), mock.patch.object(achd_roads.db, "Fetch", FakeFetch), \
+                mock.patch.object(achd_roads.marks, "mark") as self.marked, \
                 mock.patch.object(achd_roads.segment_match, "rematch_all",
                                   return_value={"itd_hpms": {"matched lines": 3}, "osm_valley": {"ways matched": 2}}) as rm:
             return achd_roads.run(object()), rm

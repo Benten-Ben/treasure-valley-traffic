@@ -93,7 +93,7 @@ from ingest import db
 from ingest.osm_extract import (BOX, LANE_KEYS, MAJOR, NOT_ROADS, OSM_SUFFIXES, PAGE, ROADS,  # noqa: F401
                                 _suffix, archive_dir, archive_file, archive_name, extracts, file_md5, inbox_file,
                                 keep_way, parse_md5, prune)
-from .. import segment_match
+from .. import marks, segment_match
 
 SOURCE = {
     "name": "osm_valley",
@@ -552,6 +552,8 @@ def consume(conn, run):
     """This source as a consumer of core's loader (ingest/osm_extract.py): its own unchanged
     pipeline over the loader's smart cut (run.cut), store, match, inside the loader's db.Fetch."""
     stats = load(conn, run.fetch, run.cut, run.allow_shrink, work_parent=run.work_parent)
+    marks.mark(conn, SOURCE["name"], sum(stats.get(k) or 0 for k in ("record versions new", "removed", "ways retired",
+                                                                    "nodes retired")), "ways and nodes")
     if run.data_as_of:
         stats["data as of"] = run.data_as_of       # the extract's own header, which the cut may not carry
     return stats

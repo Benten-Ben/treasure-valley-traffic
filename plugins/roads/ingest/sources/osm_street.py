@@ -32,6 +32,7 @@ import json
 
 from ingest import osm_extract
 from .osm_valley import _text, effective_oneway, parse_bridge, parse_layer, parse_width
+from .. import marks
 
 SOURCE = {
     "name": "osm_street",
@@ -74,4 +75,6 @@ def consume(conn, run):
     rows = [street_row(f) for f in run.features() if f["type"] == "w" and f["geometry"] == "linestring"]
     stats = osm_extract.store_objects(conn, TABLE, COLUMNS, rows, run.seen_at, allow_shrink=run.allow_shrink)
     stats["alleys"] = sum(1 for r in rows if r[2] == "alley")
+    marks.mark(conn, SOURCE["name"], sum(stats.get(k) or 0 for k in ("new", "changed", "retired", "reactivated")),
+               "ways")
     return stats

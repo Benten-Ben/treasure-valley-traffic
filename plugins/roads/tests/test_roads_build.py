@@ -307,6 +307,13 @@ class BuildTest(unittest.TestCase):
         self.assertGreater(self.one("select count(*) from roads.surface where geom_z15 is not null")[0], 0)
 
 
+    def test_a_changed_source_marks_the_build(self):
+        from plugins.roads.ingest import marks
+        self.assertFalse(marks.mark(self.conn, "osm_street", 0))
+        self.assertTrue(marks.mark(self.conn, "osm_street", 3, "ways"))
+        self.assertEqual(self.one("select reason from ops.build_pending where build = 'roads-build' "
+                                  "and marked_by = 'osm_street'")[0], "osm_street: 3 ways changed")
+
     def test_the_export_is_a_bakeable_internal_base(self):
         import tempfile
         from basemap.landscape import plan as LP

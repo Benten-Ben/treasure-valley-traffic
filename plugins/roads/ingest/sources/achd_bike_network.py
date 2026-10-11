@@ -56,7 +56,7 @@ import time
 from collections import Counter
 
 from ingest import arcgis, db, linematch
-from .. import segment_match
+from .. import marks, segment_match
 
 LAYER = "https://gis.achdidaho.org/server/rest/services/ArcGIS_Hub/Official_Bicycle_Facility_Network/FeatureServer/1"
 HUB = "https://public-open-data-achd.hub.arcgis.com/"
@@ -460,6 +460,7 @@ def run(conn, get=None, sleep=time.sleep):
         else:
             stats, changed = store(conn, f.id, f.started_at, features, parsed)
             save_signature(conn, sig, read=True)
+            marks.mark(conn, name, changed, "records")
         # Inside the fetch: if matching fails, the store rolls back with it and the run is retried.
         if changed or stale(conn):
             stats.update({f"match {k}": v for k, v in match(conn).items()})

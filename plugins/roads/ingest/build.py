@@ -705,30 +705,41 @@ cross join lateral (values ('from', p.from_junction = j.id, p.geom), ('to', p.to
 where e.here and p.from_junction is distinct from p.to_junction and not p.bridge and not p.tunnel
 """
 
+# Each junction's carriageways, cut to its disc's box once: the closings, the lines' trims and the fills' cut read
+# these small parts, never the pieces' whole surfaces (a rural piece can run for kilometres).
+_JCLIP = """
+create temp table rb_jclip on commit drop as
+select j.id as junction_id, p.id as piece_id, p.from_junction = p.to_junction as inner_, rj.r,
+       ST_CollectionExtract(ST_MakeValid(ST_ClipByBox2D(s.geom, ST_Envelope(rj.geom))), 3) as g
+from roads.junction j join rb_junc rj on rj.id = j.id
+join roads.piece p on p.id = any(j.pieces)
+join roads.surface s on s.piece_id = p.id and s.kind = 'carriageway';
+delete from rb_jclip where g is null or ST_IsEmpty(g);
+create index on rb_jclip (junction_id);
+analyze rb_jclip
+"""
+
 # The curb returns: for each pair of arms side by side around a junction (not parallel: a divided road's two
 # carriageways leave the same way, and the median between them stays open), their carriageways and the junction's
-# inner pieces', inside its disc, closed by its radius. What the closings add, less the islands, is its fill.
+# inner pieces', cut to its disc, closed by its radius. What the closings add, less the junction's carriageways and
+# the islands, is its fill.
 _FILLS = """
 create temp table rb_fill on commit drop as
 with u as (
   select pr.junction_id as id, pr.a, pr.b, rj.r, rj.geom as disc,
-         ST_Union(ST_Intersection(s.geom, rj.geom)) as g
-  from rb_pair pr join roads.junction j on j.id = pr.junction_id join rb_junc rj on rj.id = j.id
-  join roads.piece p on p.id = any(j.pieces)
-  join roads.surface s on s.piece_id = p.id and s.kind = 'carriageway'
-  where p.id in (pr.a, pr.b) or p.from_junction = p.to_junction
+         ST_Union(ST_Intersection(c.g, rj.geom)) as g
+  from rb_pair pr join rb_junc rj on rj.id = pr.junction_id
+  join rb_jclip c on c.junction_id = pr.junction_id and (c.piece_id in (pr.a, pr.b) or c.inner_)
   group by pr.junction_id, pr.a, pr.b, rj.r, rj.geom
 ), c as (
-  select u.id, ST_Difference(ST_Intersection(ST_Buffer(ST_Buffer(u.g, u.r, 'quad_segs=4'), -u.r, 'quad_segs=4'),
-                                            u.disc), u.g) as added
+  select u.id, ST_Difference(ST_Buffer(ST_Buffer(u.g, u.r, 'quad_segs=4'), -u.r, 'quad_segs=4'), u.g) as added
   from u
 ), j as (
-  select c.id, ST_Union(c.added) as added from c group by c.id
+  select c.id, ST_Union(c.added) as added from c where not ST_IsEmpty(c.added) group by c.id
 ), k as (
   select j.id,
          ST_Difference(j.added, ST_Union(
-           coalesce((select ST_Union(s.geom) from roads.surface s join roads.junction jj on jj.id = j.id
-                     where s.piece_id = any(jj.pieces) and s.kind = 'carriageway'),
+           coalesce((select ST_Union(c.g) from rb_jclip c where c.junction_id = j.id),
                     ST_GeomFromText('GEOMETRYCOLLECTION EMPTY', 32611)),
            coalesce((select ST_Union(i.g) from rb_island i join rb_junc rj on rj.id = j.id
                      where i.g && rj.geom and ST_Intersects(i.g, rj.geom)),
@@ -791,6 +802,7 @@ def arm_pairs(arms):
 
 
 def closings(conn):
+    run_sql(conn, _JCLIP)
     run_sql(conn, _ARMS)
     arms = {}
     for jid, pid, at_end, d, pos in conn.execute(
@@ -827,7 +839,7 @@ with s as (
 )
 select s.id, s.kind, s.piece_id, s.junction_id, s.tier, s.layer,
        ST_CollectionExtract(ST_MakeValid(ST_Difference(ST_Boundary(s.geom), coalesce(
-         (select ST_Union(ST_Buffer(o.geom, 0.02, 'quad_segs=2'))
+         (select ST_Union(ST_Buffer(ST_ClipByBox2D(o.geom, ST_Expand(ST_Envelope(s.geom), 1)), 0.02, 'quad_segs=2'))
           from s o
           where o.id <> s.id and o.geom && s.geom and ST_Intersects(o.geom, s.geom)
             and ((not s.deck and not o.deck)
@@ -945,8 +957,7 @@ with e as (
   from roads.piece p
 ), k as (
   select e.*, rj.r,
-         (select ST_Union(s.geom) from roads.surface s join roads.junction jj on jj.id = e.j
-          where s.piece_id = any(jj.pieces) and s.piece_id <> e.id and s.kind = 'carriageway') as other
+         (select ST_Union(c.g) from rb_jclip c where c.junction_id = e.j and c.piece_id <> e.id) as other
   from e left join rb_junc rj on rj.id = e.j
 )
 select k.id, k.at_end,
@@ -1265,11 +1276,29 @@ def run(conn, out=say, check=True):
     return stats
 
 
+def show_review(conn, kind="", out=say, limit=500):
+    """The review list: counts by kind, or one kind's rows (way, ACHD segment, where, what disagreed)."""
+    if not kind:
+        for k, n in conn.execute("select kind, count(*) from roads.review group by 1 order by 1").fetchall():
+            out(f"{k:28} {n:7,}")
+        return
+    rows = conn.execute(
+        """select r.osm_id, r.road_segment_id, r.junction_id,
+                  round(ST_X(ST_Transform(r.geom, 4326))::numeric, 6), round(ST_Y(ST_Transform(r.geom, 4326))::numeric, 6),
+                  r.detail
+           from roads.review r where r.kind = %s order by r.id limit %s""", (kind, limit)).fetchall()
+    for osm_id, seg, jid, lon, lat, detail in rows:
+        where = f"w{osm_id}" if osm_id else f"junction {jid}"
+        out(f"{where:14} seg {seg or '-':>8}  {lat},{lon}  {json.dumps(detail, default=str)}")
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog=COMMAND, description=__doc__.split("\n")[0])
     ap.add_argument("--dry-run", action="store_true", help="build in a transaction that's rolled back")
     ap.add_argument("--calibrate", action="store_true",
                     help="report the local streets' widths in the ten test windows and valley-wide (read only)")
+    ap.add_argument("--review", nargs="?", const="", metavar="KIND",
+                    help="list the current build's review list: counts by kind, or one kind's rows (read only)")
     args = ap.parse_args(argv)
     from ingest import db
     with db.connect() as conn:
@@ -1277,6 +1306,9 @@ def main(argv=None):
             if args.calibrate:
                 from . import calibrate
                 calibrate.report(conn)
+                return 0
+            if args.review is not None:
+                show_review(conn, args.review)
                 return 0
             if args.dry_run:
                 md5 = osm_extract.check_partition(conn, OWNERS)

@@ -271,6 +271,7 @@ class RunTest(unittest.TestCase):
             stack.enter_context(mock.patch.object(bn, "store", side_effect=lambda c, i, t, f, p: (
                 stored.append(len(f)) or ({"records": len(f)}, len(f)))))
             match = stack.enter_context(mock.patch.object(bn, "match", return_value={"matched lines": 2}))
+            self.marked = stack.enter_context(mock.patch.object(bn.marks, "mark"))
             stats = bn.run(object(), get=server.get, sleep=lambda s: None)
         return stats, stored, match
 
@@ -311,10 +312,12 @@ class RunTest(unittest.TestCase):
         with mock.patch.object(db, "ensure_source"), mock.patch.object(db, "Fetch", Fetch), \
                 mock.patch.object(bn, "unchanged", return_value=False), mock.patch.object(bn, "save_signature"), \
                 mock.patch.object(bn, "store", return_value=({"records": 5}, 5)), \
+                mock.patch.object(bn.marks, "mark") as marked, \
                 mock.patch.object(bn, "match", side_effect=RuntimeError("boom")):
             with self.assertRaises(RuntimeError):
                 bn.run(object(), get=Server(page()).get, sleep=lambda s: None)
         self.assertEqual(exits, [RuntimeError])
+        self.assertEqual(marked.call_args.args[1:3], ("achd_bike_network", 5))   # roads-build, with the store
 
     def test_rematched_with_the_other_sources_when_achds_segments_change(self):
         self.assertIs(segment_match.matchers()["achd_bike_network"][3], bn.stale)
@@ -335,6 +338,7 @@ class RunTest(unittest.TestCase):
         with mock.patch.object(achd_roads, "fetch_all", return_value=([], 0, "no_rules")), \
                 mock.patch.object(achd_roads, "store", return_value={"segments": 5, "record versions new": 1}), \
                 mock.patch.object(achd_roads.db, "ensure_source"), mock.patch.object(achd_roads.db, "Fetch", FakeFetch), \
+                mock.patch.object(achd_roads.marks, "mark"), \
                 mock.patch.object(achd_roads.segment_match, "rematch_all", return_value={"achd_bike_network": stats}):
             self.assertEqual(achd_roads.run(object())["achd_bike_network rematched"], 1)
 
