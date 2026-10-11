@@ -402,7 +402,8 @@ LINES_SQL = r"""select 'achd_bike_network' as source, object_id::text as source_
 
 
 def match(conn):
-    """Rewrite roads.bike_facility_match from the street records (the caller commits)."""
+    """Rewrite roads.bike_facility_match from the street records (the caller commits). Returns
+    the stats: "lines" are the street records."""
     found = linematch.match(conn, LINES_SQL, segment_match.SEGMENTS_SQL, RULE)
     kept = [m for m in found if linematch.names_agree(m["line_name"], m["target_name"]) is not False]
     conn.execute("delete from roads.bike_facility_match")
@@ -413,9 +414,11 @@ def match(conn):
                values (%s, %s, %s, %s, %s, %s, %s, now())""",
             [(m["target_id"], int(m["source_id"]), round(m["overlap_m"], 1), round(min(m["share"], 1.0), 3),
               m["bearing_diff"], m["method"], m["confidence"]) for m in kept])
+    # The other matchers' keys ("lines", "matched lines": segment_match.rematch), so achd_roads'
+    # rematch summary and segment_match.summary read this one's too.
     s = linematch.coverage(conn, kept, segment_match.NEAR_NETWORK_M).get(SOURCE["name"], {})
     lines = s.get("lines", 0)
-    return {"street records": lines, "matched": s.get("matched lines", 0), "matches": s.get("matches", 0),
+    return {"lines": lines, "matched lines": s.get("matched lines", 0), "matches": s.get("matches", 0),
             "ACHD segments": s.get("targets", 0), "matches on the line's share": s.get("matches on the line's share", 0),
             "dropped: street names disagree": len(found) - len(kept),
             "unmatched near ACHD": s.get("unmatched near", 0), "unmatched away from ACHD": s.get("unmatched away", 0),

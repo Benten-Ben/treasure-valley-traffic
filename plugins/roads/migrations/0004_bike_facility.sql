@@ -98,7 +98,9 @@ comment on table roads.bike_facility is
   'not for planning determinations); credit Ada County Highway District; republish: internal';
 
 -- INTERNAL. ACHD's free-text Comments and FieldNotes (its field crews' remarks, mostly on widths),
--- for reading by hand while checking widths. No view, export, tile set or card reads this table.
+-- for reading by hand while checking widths. No view, export, tile set or card reads this table,
+-- and the tile login can't: deploy/tvt_tiles.sql takes back the grant roads' default privileges
+-- give it, and checks (its never_tables list).
 create table roads.bike_facility_note (
   object_id    bigint primary key references roads.bike_facility on update cascade on delete cascade,
   comments     text,
@@ -142,7 +144,8 @@ comment on table roads.bike_facility_match is
 -- cycle tracks and multi-use paths don't (they add up without them) ⚠️ protected bike lanes are
 -- few and mixed. roadway_m is this side's share of the pavement: lanes times the lane width, plus
 -- parking, plus the bike facility and its buffer when they're in the roadway; null when a part is
--- unknown. A one-way street's other side has no direction and 0 lanes, but keeps its edge and any
+-- unknown (on most mixed-traffic sides: ACHD records the lane width almost only beside a bike
+-- facility). A one-way street's other side has no direction and 0 lanes, but keeps its edge and any
 -- parking (ACHD writes 'N/A' for its direction). present: the side has a direction, lanes or a
 -- facility (records ACHD hasn't checked in the field have neither side).
 create view roads.bike_facility_side as
@@ -198,7 +201,18 @@ comment on view roads.bike_facility_side is
 -- carriageways (flag one_way_segment). centre_lanes: total_lanes minus both directions' lanes (a
 -- centre turn lane on most rows that have one), null when they disagree (flag lanes_disagree).
 -- unassigned_m: the pavement left after both sides' roadway_m: the centre turn lane, a median, gutters;
--- under -0.5 m flags components_exceed_pavement.
+-- under -0.5 m flags components_exceed_pavement. centre_lanes and unassigned_m are the record's
+-- too, from both its sides, whichever of them the row shows.
+--
+-- On a one-way ACHD segment the record's two sides don't always both belong to it:
+-- - a one-way record (the side against the traffic has 0 lanes, ACHD's 'N/A'): both sides are this
+--   carriageway's, the other one holding only its edge and any parking or bike lane. Both shown;
+-- - lanes on both sides (a two-way record over one carriageway of a divided road, or over a couplet
+--   or slip piece): the side against the segment's traffic is another carriageway's, so it's left
+--   out (its bwd_* or fwd_* null) and flagged other_carriageway;
+-- - no lanes on the side the segment's traffic runs (0, or unknown with lanes on the other): the
+--   match or ACHD's directions are wrong there, so neither side is shown; flag
+--   direction_conflicts_one_way (9 segments on Oct 11, 2026).
 create view roads.segment_bike_xsection as
 with best as (
   select distinct on (m.road_segment_id) m.road_segment_id, m.object_id, m.share, m.confidence, m.method
@@ -231,8 +245,19 @@ with best as (
 ), c as (
   select t.*,
          case when e_present and w_present then total_lanes - e_lanes - w_lanes end as lanes_left,
-         case when e_present and w_present then total_pavement_m - e_roadway - w_roadway end as unassigned
+         case when e_present and w_present then total_pavement_m - e_roadway - w_roadway end as unassigned,
+         -- On a one-way segment: the lanes on the side its traffic runs, and on the other side.
+         case seg_one_way when 'forward' then fl when 'backward' then bl end as with_lanes,
+         case seg_one_way when 'forward' then bl when 'backward' then fl end as against_lanes
   from t
+  cross join lateral (
+    select case forward_side when 'ebnb' then e_lanes when 'wbsb' then w_lanes end as fl,
+           case forward_side when 'ebnb' then w_lanes when 'wbsb' then e_lanes end as bl) l
+), o as (
+  select c.*,
+         coalesce(with_lanes = 0 or (with_lanes is null and against_lanes > 0), false) as conflicts,
+         coalesce(with_lanes > 0 and against_lanes > 0, false) as other_carriageway
+  from c
 )
 select c.road_segment_id, c.object_id, c.location_id, c.street, c.existing_type, c.lts, c.field_verified,
        c.year_updated, c.share, c.confidence, c.method, c.seg_one_way,
@@ -250,14 +275,18 @@ select c.road_segment_id, c.object_id, c.location_id, c.street, c.existing_type,
        r.edge as bwd_edge, r.right_turn as bwd_right_turn, r.roadway_m as bwd_roadway_m,
        array_remove(array[
          case when c.forward_side is null and (c.e_present or c.w_present) then 'direction_unclear' end,
+         case when c.conflicts then 'direction_conflicts_one_way' end,
+         case when c.other_carriageway then 'other_carriageway' end,
          case when c.lanes_left < 0 then 'lanes_disagree' end,
          case when c.unassigned < -0.5 then 'components_exceed_pavement' end,
          case when c.total_pavement_ft > c.total_row_ft then 'pavement_exceeds_row' end,
          case when c.seg_one_way <> 'both' then 'one_way_segment' end], null) as flags
-from c
+from o c
 left join roads.bike_facility_side f on f.object_id = c.object_id and f.side = c.forward_side and f.present
+  and not c.conflicts and not (c.other_carriageway and c.seg_one_way = 'backward')
 left join roads.bike_facility_side r on r.object_id = c.object_id and r.present
-  and r.side = case c.forward_side when 'ebnb' then 'wbsb' when 'wbsb' then 'ebnb' end;
+  and r.side = case c.forward_side when 'ebnb' then 'wbsb' when 'wbsb' then 'ebnb' end
+  and not c.conflicts and not (c.other_carriageway and c.seg_one_way = 'forward');
 
 comment on view roads.segment_bike_xsection is
   'ACHD''s bike-network cross-section per ACHD road segment, forward and backward as drawn (P7''s input). '

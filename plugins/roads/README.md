@@ -131,16 +131,57 @@ then confidence). Metres, rounded to the centimetre; ACHD records feet.
 | `seg_one_way` | The ACHD segment's one-way (`both`, `forward`, `backward`) |
 | `total_pavement_m`, `total_row_m` | Curb to curb, and the right of way: the whole road's (both carriageways where ACHD draws a divided road as two one-way segments) |
 | `total_lanes`, `centre_lanes` | Every lane; and what's left after both directions' lanes (a centre turn lane on most rows that have one); null when they disagree |
-| `unassigned_m` | Pavement left after both sides' `roadway_m`: the centre turn lane, a median, gutters. On Oct 11 its median was 3.8 m with a centre lane and 0.3 m without |
+| `unassigned_m` | Pavement left after both of the record's sides' `roadway_m` (both, even where the row shows one): the centre turn lane, a median, gutters. Null where either side's `roadway_m` is: on most streets without a bike facility ([coverage](#coverage)). On Oct 11 its median was 3.8 m with a centre lane and 0.3 m without |
 | `forward_side` | `ebnb` or `wbsb`: which of ACHD's sides runs the way the segment is drawn. The record names its sides on one axis (north/south or east/west) and the segment's end-to-end bearing decides, within 75° of that axis; null otherwise |
-| `fwd_lanes`, `fwd_lane_w_m` | Travel lanes the forward way, and the width of the one next to the bike facility (ACHD's adjacent lane width) |
+| `fwd_lanes`, `fwd_lane_w_m` | Travel lanes the forward way, and the width of the one next to the bike facility (ACHD's adjacent lane width, recorded almost only beside a facility) |
 | `fwd_bike`, `fwd_bike_w_m`, `fwd_bike_in_roadway` | The bike facility (`mixed_traffic`, `no_facility`, `bike_lane`, `buffered_bike_lane`, `protected_bike_lane`, `raised_bike_lane`, `cycle_track`, `multi_use_path`, `other`), its width (0 for mixed traffic or none), and whether it lies between the curbs (bike lanes, buffered and protected ones ⚠️; not raised lanes, cycle tracks or paths) |
 | `fwd_buffer`, `fwd_buffer_w_m`, `fwd_buffer_varies` | The buffer (`none`, `painted`, `landscaping`, `extruded_curb`, `jersey_barrier`, `delineator`, `parking`, `other`), its width (0 for none; null where it varies) |
 | `fwd_parking`, `fwd_parking_w_m` | Parking (`none`, `parallel`, `angled`) and its width (0 for none) |
 | `fwd_edge`, `fwd_right_turn` | The pavement edge (`curb_gutter`, `curb`, `shoulder`); right-turn lanes (`turn_lane`, `through_right_outside`, `through_right_shared`) |
-| `fwd_roadway_m` | This side's share of the pavement: lanes × lane width + parking + the facility and buffer when they're in the roadway; null when a part is unknown |
-| `bwd_*` | The same for the backward way. On a one-way street the side against the traffic has 0 lanes but keeps its edge and parking |
-| `flags` | `direction_unclear`, `lanes_disagree`, `components_exceed_pavement` (`unassigned_m` under −0.5 m), `pavement_exceeds_row`, `one_way_segment` |
+| `fwd_roadway_m` | This side's share of the pavement: lanes × lane width + parking + the facility and buffer when they're in the roadway; null when a part is unknown, which is most sides in mixed traffic ([coverage](#coverage)) |
+| `bwd_*` | The same for the backward way. On a one-way street the side against the traffic has 0 lanes but keeps its edge and parking. On a one-way ACHD segment, a side that isn't the segment's carriageway is null ([below](#one-way-segments)) |
+| `flags` | `direction_unclear`; `direction_conflicts_one_way` and `other_carriageway` ([below](#one-way-segments)); `lanes_disagree`; `components_exceed_pavement` (`unassigned_m` under −0.5 m); `pavement_exceeds_row`; `one_way_segment` (`seg_one_way` isn't `both`) |
+
+### One-way segments
+
+Where ACHD's segment is one-way (`seg_one_way` `forward` or `backward`; 312
+rows on Oct 11, 2026, flag `one_way_segment`), the row shows only the sides
+that belong to that carriageway. Don't draw lanes from a null side.
+
+- **A one-way record** (ACHD's side against the traffic has 0 lanes): both
+  sides are shown. The other side holds only its edge and any parking or
+  bike lane.
+- **Lanes on both sides** (89 rows): a two-way record over one carriageway
+  of a divided road, or over a couplet or slip piece. The side against the
+  segment's traffic belongs to another carriageway, so its `bwd_*` (or
+  `fwd_*`) are null; flag `other_carriageway`.
+- **No lanes where the segment's traffic runs** (9 rows): 0 lanes there, or
+  none known while the other side has some. The match or ACHD's directions
+  are wrong, so neither side is shown; flag `direction_conflicts_one_way`.
+
+The totals, `centre_lanes` and `unassigned_m` are always the record's, for
+the whole road. `roads.bike_facility_side` keeps every side.
+
+### Coverage
+
+ACHD records the adjacent lane width almost only beside a bike facility. Of
+its field-checked street sides on Oct 11, 2026, 2,514 of 2,760 in mixed
+traffic and 154 of 301 with no facility have lanes but no lane width. So
+`roadway_m`, and `unassigned_m` with it, are mostly null on streets without
+a bike facility.
+
+| Of 8,105 rows (Oct 11, 2026) | Rows |
+|---|---|
+| Both sides' `roadway_m` | 1,973 in all: 1,913 of the 2,292 rows with a facility on a side, but only 60 of the 3,170 without |
+| `unassigned_m` | 1,961 |
+| `total_pavement_m` | 5,375 |
+| `total_lanes` | 7,721 |
+| The lane counts (`fwd_lanes` or `bwd_lanes`) | 5,268 |
+| Sides known (`forward_side`) | 5,462 |
+
+On mixed-traffic streets, only `total_pavement_m`, `total_lanes` and the
+lane counts are reliable. Splitting the pavement between the lanes there is
+P7's own estimate.
 
 Width tier for the card: "inventoried (ACHD bike network, field-checked)"
 where `field_verified`; credit "Ada County Highway District". Records ACHD

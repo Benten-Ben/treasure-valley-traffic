@@ -125,7 +125,9 @@ The app's tiles for toggled layers (soils, crop fields, trails, ...:
 who can open the map, so their cuts log in as **`tvt_tiles`**: a plain login
 (no superuser, a member of no other role) that can't write and is granted
 only core and the tile plugins' own schemas, never `restricted` or a private
-plugin's schema (`private_<name>`, `city_trees`). The app's tile pool
+plugin's schema (`private_<name>`, `city_trees`), and never the internal
+tables on the file's `never_tables` list, inside those schemas
+(`roads.bike_facility_note`, ACHD's free-text field notes). The app's tile pool
 connects with `TILES_DATABASE_URL`, which `docker-compose.yml` and
 `compose.preview.yml` build from `TILES_DB_PASSWORD` in `.env`. It's a login
 of its own rather than a role the app's connections switch to, because
@@ -134,8 +136,10 @@ those are `tvt`'s, a superuser, which can always switch back.
 [`tvt_tiles.sql`](tvt_tiles.sql) makes the login and its grants, and ends
 by checking what it can reach (PUBLIC's grants included). It's idempotent;
 run it as `tvt` before the first toggled layer goes live, and again after
-migrations that add a plugin schema (a deploy step, beside
-`tvt_build.sql`'s). The first time, also generate a password on the server
+migrations that add a plugin schema or a table on `never_tables` (a deploy
+step, beside `tvt_build.sql`'s). Until it runs again, a new table in a
+granted schema is readable by the default privileges, a `never_tables` one
+included. The first time, also generate a password on the server
 (`openssl rand -hex 24`), put it in `.env` as `TILES_DB_PASSWORD`, set it
 in the database, and recreate the app:
 

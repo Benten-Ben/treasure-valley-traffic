@@ -153,7 +153,9 @@ How the pieces plug in:
   `/api/<plugin>/tiles/<layer>/{z}/{x}/{y}?v=`. They read only the
   plugin's own schema and core, never `restricted` or a private plugin's
   schema: the definitions are checked for it, and on the server the cuts
-  log in as `tvt_tiles`, a plain login granted nothing else
+  log in as `tvt_tiles`, a plain login granted nothing else, and not
+  the internal tables a plugin keeps in its schema beside its tile data
+  (its `never_tables` list: ACHD's field notes, `roads.bike_facility_note`)
   ([deploy/tvt_tiles.sql](../deploy/tvt_tiles.sql)). Each build that
   changes a layer adds a row to `core.layer_version`
   (`ingest/layer_version.py`), in the same transaction as its data, with

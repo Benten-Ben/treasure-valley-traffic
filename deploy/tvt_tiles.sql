@@ -6,6 +6,8 @@
 -- or a private plugin's schema (`private_<name>`, and `city_trees`: the City of Boise's trees,
 -- which nothing in the landscape work may read). mvt.ts refuses a definition whose tables break
 -- that rule; this login makes the database refuse it too, for a layer's own `cut` as well.
+-- Inside the schemas it reads, a few tables stay out too (never_tables below): internal free
+-- text a plugin keeps beside its tile data, such as ACHD's field notes in roads.bike_facility_note.
 --
 -- It's a login of its own, not a role the app's connections switch to: the app's role (tvt) is a
 -- superuser, and a superuser's session can always SET ROLE back. tvt_tiles is no superuser and a
@@ -21,9 +23,10 @@
 -- and set the password separately (never here), the same as TILES_DB_PASSWORD in deploy/.env:
 --   ALTER ROLE tvt_tiles PASSWORD '...';
 --
--- It's idempotent: run it again after migrations that add a schema (the deploy runbook does,
--- beside deploy/tvt_build.sql). A table made later by the database owner in a schema that was
--- granted at the last run gets its grant on its own (default privileges); a new schema waits for
+-- It's idempotent: run it again after migrations that add a schema or a table on never_tables
+-- (a deploy step after the migrations, beside deploy/tvt_build.sql). A table made later by the
+-- database owner in a schema that was granted at the last run gets its grant on its own (default
+-- privileges), and so does a table on never_tables, until this runs again; a new schema waits for
 -- the next run, and until then its tiles answer empty with `x-tile-status: denied` (logged).
 -- It ends by checking what tvt_tiles can reach, PUBLIC's grants included, and fails if that's
 -- more than it should be.
@@ -58,6 +61,12 @@ DO $tiles$
 DECLARE
   -- Schemas tiles read: core, and the plugins' own schemas (plan C3).
   tile_schemas text[] := ARRAY['core', 'roads', 'soils', 'farm', 'water', 'trails', 'fences', 'hazards', 'trees'];
+  -- Tables in those schemas that tiles never read: internal free text, republish no. A plugin
+  -- that keeps such a table beside its tile data adds it here on its branch.
+  never_tables text[] := ARRAY[
+    'roads.bike_facility_note'   -- ACHD's free-text Comments and FieldNotes (roads 0004)
+  ];
+  t text;
   db_owner text := (SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname = current_database());
   s text;
   r record;
@@ -83,6 +92,11 @@ BEGIN
     EXECUTE format('REVOKE ALL ON SCHEMA %I FROM tvt_tiles', s);
     EXECUTE format('ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA %I REVOKE ALL ON TABLES FROM tvt_tiles', db_owner, s);
   END LOOP;
+  -- And the tables tiles never read in the schemas they do (the grants above gave them back).
+  FOREACH t IN ARRAY never_tables LOOP
+    CONTINUE WHEN to_regclass(t) IS NULL;
+    EXECUTE format('REVOKE ALL ON TABLE %s FROM tvt_tiles', to_regclass(t));
+  END LOOP;
 
   -- The check: what the login can reach now, through PUBLIC too (which the revokes above can't
   -- take back). Any of these stops the run, and the deploy, until it's fixed by hand.
@@ -96,6 +110,11 @@ BEGIN
             WHERE (nspname IN ('restricted', 'city_trees') OR nspname LIKE 'private\_%')
               AND has_schema_privilege('tvt_tiles', oid, 'USAGE') LOOP
     RAISE EXCEPTION 'tvt_tiles can still use schema % (granted to PUBLIC?): revoke it there', s;
+  END LOOP;
+  FOREACH t IN ARRAY never_tables LOOP
+    IF to_regclass(t) IS NOT NULL AND has_any_column_privilege('tvt_tiles', to_regclass(t), 'SELECT') THEN
+      RAISE EXCEPTION 'tvt_tiles can still read % (granted to PUBLIC?): revoke it there', t;
+    END IF;
   END LOOP;
 END
 $tiles$;

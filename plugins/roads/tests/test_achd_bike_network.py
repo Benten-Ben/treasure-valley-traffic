@@ -24,6 +24,7 @@ from ingest import arcgis, db, utm
 from ingest.db import version_hash
 from plugins.roads.ingest import segment_match
 from plugins.roads.ingest.sources import achd_bike_network as bn
+from plugins.roads.ingest.sources import achd_roads
 
 X0, Y0 = 300000, 4800000
 T1 = datetime(2026, 10, 6, 1, tzinfo=timezone.utc)
@@ -224,6 +225,18 @@ class Server:
         return 200, json.dumps(body).encode(), "no_rules"
 
 
+class InternalTextTest(unittest.TestCase):
+    def test_the_tile_login_never_reads_the_notes(self):
+        # Tiles may read schema roads, so deploy/tvt_tiles.sql takes the notes table back by name.
+        root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+        with open(os.path.join(root, "deploy", "tvt_tiles.sql"), encoding="utf-8") as f:
+            sql = f.read()
+        listed = re.search(r"never_tables text\[\] := ARRAY\[(.*?)\];", sql, re.S)
+        self.assertIsNotNone(listed)
+        self.assertIn("'roads.bike_facility_note'", listed.group(1))
+        self.assertIn("'roads'", re.search(r"tile_schemas text\[\] := ARRAY\[([^\]]*)\]", sql).group(1))
+
+
 class FakeFetch:
     def __init__(self, conn, source):
         self.id, self.started_at = 1, T1
@@ -257,7 +270,7 @@ class RunTest(unittest.TestCase):
             stack.enter_context(mock.patch.object(bn, "stale", return_value=stale))
             stack.enter_context(mock.patch.object(bn, "store", side_effect=lambda c, i, t, f, p: (
                 stored.append(len(f)) or ({"records": len(f)}, len(f)))))
-            match = stack.enter_context(mock.patch.object(bn, "match", return_value={"matched": 2}))
+            match = stack.enter_context(mock.patch.object(bn, "match", return_value={"matched lines": 2}))
             stats = bn.run(object(), get=server.get, sleep=lambda s: None)
         return stats, stored, match
 
@@ -271,7 +284,7 @@ class RunTest(unittest.TestCase):
         for u in server.asked:
             self.assertTrue(u.startswith(bn.LAYER + "/query?"), u)
             self.assertNotIn("more.achdidaho.org", u)
-        self.assertEqual(stats["match matched"], 2)                           # stored something: rematched
+        self.assertEqual(stats["match matched lines"], 2)                     # stored something: rematched
 
     def test_an_unchanged_layer_only_confirms_its_versions(self):
         stats, stored, match = self.run_with(Server(page()), unchanged=True)
@@ -307,6 +320,23 @@ class RunTest(unittest.TestCase):
         self.assertIs(segment_match.matchers()["achd_bike_network"][3], bn.stale)
         self.assertEqual(bn.RULE.method, "buffer15_bearing20")
         self.assertFalse(bn.RULE.loops)
+
+    def test_achd_roads_reports_how_many_records_its_rematch_matched(self):
+        # match()'s stats use the other matchers' keys, so achd_roads' run logs the count, not None.
+        found = [{"source": "achd_bike_network", "source_id": "1", "target_id": 7, "overlap_m": 120.0, "share": 0.9,
+                  "bearing_diff": 1.0, "method": "buffer15_bearing20", "confidence": 0.9,
+                  "line_name": "Sample 1 Rd", "target_name": "N Sample 1 Rd"}]
+        coverage = {"achd_bike_network": {"lines": 3, "matched lines": 1, "matches": 1, "targets": 1}}
+        with mock.patch.object(bn.linematch, "match", return_value=found), \
+                mock.patch.object(bn.linematch, "coverage", return_value=coverage):
+            stats = bn.match(mock.MagicMock())
+        self.assertEqual((stats["lines"], stats["matched lines"], stats["match rate"]), (3, 1, "33.3%"))
+        self.assertEqual(segment_match.summary({"achd_bike_network": stats})["matched lines"], 1)
+        with mock.patch.object(achd_roads, "fetch_all", return_value=([], 0, "no_rules")), \
+                mock.patch.object(achd_roads, "store", return_value={"segments": 5, "record versions new": 1}), \
+                mock.patch.object(achd_roads.db, "ensure_source"), mock.patch.object(achd_roads.db, "Fetch", FakeFetch), \
+                mock.patch.object(achd_roads.segment_match, "rematch_all", return_value={"achd_bike_network": stats}):
+            self.assertEqual(achd_roads.run(object())["achd_bike_network rematched"], 1)
 
 
 # --- storing, matching and the views (database) -------------------------------------------
@@ -398,6 +428,12 @@ class StoreTest(unittest.TestCase):
                 "north": ("N Sample 1 Rd", "both", [(0, 0), (0, 150)]),      # along record 1, drawn northward
                 "south": ("S Sample 1 Rd", "both", [(0, 300), (0, 150)]),    # along record 1, drawn southward
                 "east1": ("E 2nd St", "forward", [(1000, 0), (1300, 0)]),    # record 2 ('02nd St'), one-way
+                # One-way segments under records with lanes both ways: the northbound and southbound
+                # carriageways of a divided record 1 (drawn northward), and record 2 drawn eastward
+                # but marked one-way the other way.
+                "nb_carriageway": ("N Sample 1 Rd", "forward", [(6, 0), (6, 150)]),
+                "sb_carriageway": ("N Sample 1 Rd", "backward", [(-6, 0), (-6, 150)]),
+                "east_against": ("E 2nd St", "backward", [(1000, 6), (1300, 6)]),
                 "frontage": ("W Frontage St", "both", [(3008, 0), (3008, 300)]),   # 8 m beside record 5
                 "path": ("N Sample 3 Rd", "both", [(4005, 50), (4005, 250)]),    # a road beside the pathway
                 "far": ("N Far Rd", "both", [(9000, 0), (9000, 300)])}.items():
@@ -417,10 +453,11 @@ class StoreTest(unittest.TestCase):
                                "select id, name, geom from core.road_segment where achd_perm_id between -990399 and -990300"):
             stats = bn.match(c)
         # 5 lies along another street only: its names disagree, so it isn't matched.
-        self.assertEqual((stats["street records"], stats["matched"], stats["dropped: street names disagree"]),
+        self.assertEqual((stats["lines"], stats["matched lines"], stats["dropped: street names disagree"]),
                          (3, 2, 1))
         rows = dict(c.execute("select road_segment_id, object_id from roads.bike_facility_match").fetchall())
-        self.assertEqual(rows, {ids["north"]: 1, ids["south"]: 1, ids["east1"]: 2})   # never the pathway
+        self.assertEqual(rows, {ids["north"]: 1, ids["south"]: 1, ids["east1"]: 2,      # never the pathway
+                                ids["nb_carriageway"]: 1, ids["sb_carriageway"]: 1, ids["east_against"]: 2})
         x = {r[0]: r for r in c.execute(
             """select road_segment_id, forward_side, fwd_lanes, fwd_lane_w_m::float8, fwd_bike, fwd_bike_w_m::float8,
                       fwd_parking_w_m::float8, bwd_bike, bwd_parking_w_m::float8, total_pavement_m::float8,
@@ -446,6 +483,36 @@ class StoreTest(unittest.TestCase):
             cols = [r[0] for r in c.execute("""select column_name from information_schema.columns
                                                where table_schema = 'roads' and table_name = %s""", (view,))]
             self.assertFalse([col for col in cols if "comment" in col or "note" in col], view)
+
+    def test_one_way_segments_show_only_their_own_carriageways_sides(self):
+        c = self.conn
+        bn.store(c, self.fresh(), T1, features())
+        ids = self.segments()
+        with mock.patch.object(segment_match, "SEGMENTS_SQL",
+                               "select id, name, geom from core.road_segment where achd_perm_id between -990399 and -990300"):
+            bn.match(c)
+        x = {r[0]: r[1:] for r in c.execute(
+            """select road_segment_id, forward_side, fwd_lanes, fwd_bike, fwd_parking_w_m::float8, fwd_roadway_m::float8,
+                      bwd_lanes, bwd_bike, bwd_parking_w_m::float8, bwd_roadway_m::float8, centre_lanes, flags
+               from roads.segment_bike_xsection""").fetchall()}
+        # A two-way record over the northbound carriageway: the southbound side is the other one's.
+        self.assertEqual(x[ids["nb_carriageway"]],
+                         ("ebnb", 1, "bike_lane", 2.44, 7.31, None, None, None, None, 1,
+                          ["other_carriageway", "one_way_segment"]))
+        # Over the southbound one (drawn northward, its traffic backward): only the backward side.
+        self.assertEqual(x[ids["sb_carriageway"]],
+                         ("ebnb", None, None, None, None, 1, "bike_lane", 0, 4.87, 1,
+                          ["other_carriageway", "one_way_segment"]))
+        # A one-way record on a one-way segment the same way: both sides are this carriageway's.
+        self.assertEqual(x[ids["east1"]][:9], ("ebnb", 2, "buffered_bike_lane", 0, 8.68, 0, "no_facility", 2.44, 2.44))
+        self.assertEqual(x[ids["east1"]][10], ["one_way_segment"])
+        # The same record on a segment whose traffic runs the other way: neither side is shown.
+        self.assertEqual(x[ids["east_against"]],
+                         ("ebnb", None, None, None, None, None, None, None, None, 0,
+                          ["direction_conflicts_one_way", "one_way_segment"]))
+        # Two-way segments are untouched.
+        self.assertEqual(x[ids["north"]][:2], ("ebnb", 1))
+        self.assertEqual(x[ids["north"]][5:7], (1, "bike_lane"))
 
     def test_stale(self):
         c = self.conn
