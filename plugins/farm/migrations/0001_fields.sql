@@ -119,18 +119,30 @@ create table farm.field_lo (
 create index field_lo_geom on farm.field_lo using gist (geom);
 create index field_lo_z on farm.field_lo (z, now);
 
+-- The crop year the map shows: the newest year of the newest edition loaded, "2025 (USDA's newest)" (decision 14).
+-- It moves on by itself when the next edition is loaded; a crop is never guessed for a year USDA hasn't published.
+create view farm.crop_year as
+select e.last_year as year, e.last_year || ' (USDA''s newest)' as label, e.edition, e.first_year
+from farm.edition e
+order by e.last_year desc, e.loaded_at desc
+limit 1;
+
 -- What the crop-fields tiles read (/api/farm/tiles/crop_fields, package P3-app; app/src/lib/server/mvt.ts).
--- z11 on: one feature per current field. a acres, g the crop group now, y one letter per year (first_year on),
--- s growth, st the July state, p true when it's still farmed (a crop, fallow or pasture in the newest year) and at
--- least half under an approved or recorded plat.
+-- z11 on: one feature per current field. a acres, g the crop group now, n the crop's name now (NASS's, for labels),
+-- y one letter per year (first_year on), s growth, st the July state, p true when it's still farmed (a crop, fallow
+-- or pasture in the newest year) and at least half under an approved or recorded plat.
 create view farm.crop_fields as
-select f.id, round(f.acres)::int as a, f.group_now as g, f.letters as y, f.growth as s, f.july ->> 'state' as st,
+select f.id, round(f.acres)::int as a, f.group_now as g, c.name as n, f.letters as y, f.growth as s,
+       f.july ->> 'state' as st,
        coalesce(f.group_now in ('corn', 'hay', 'grain', 'roots', 'specialty', 'pasture', 'fallow')
                 and (f.plat ->> 'approved')::real >= 0.5, false) as p, f.geom
 from farm.field f
+left join farm.crop_class c on c.code = f.crops[cardinality(f.crops)]
 where f.valid_to is null;
 
--- z8-10: the dissolves of the current crop year (g) and the growth states (s); *_years_* carry every year (yr).
+-- z8-10: the dissolves of the current crop year (g) and the growth states (s). farm.field_lo also holds every
+-- other year's dissolves (yr), for a year switcher's own cut per year: one year is about the size of these (75 KB at
+-- the densest z10 tile on Oct 11), all eight together about 630 KB, too much for one tile.
 create view farm.crop_fields_lo8 as
 select case when yr is null then null else key end as g, case when yr is null then key end as s, geom
 from farm.field_lo where z = 8 and now;
@@ -140,15 +152,6 @@ from farm.field_lo where z = 9 and now;
 create view farm.crop_fields_lo10 as
 select case when yr is null then null else key end as g, case when yr is null then key end as s, geom
 from farm.field_lo where z = 10 and now;
-create view farm.crop_fields_years_lo8 as
-select yr, case when yr is null then null else key end as g, case when yr is null then key end as s, geom
-from farm.field_lo where z = 8;
-create view farm.crop_fields_years_lo9 as
-select yr, case when yr is null then null else key end as g, case when yr is null then key end as s, geom
-from farm.field_lo where z = 9;
-create view farm.crop_fields_years_lo10 as
-select yr, case when yr is null then null else key end as g, case when yr is null then key end as s, geom
-from farm.field_lo where z = 10;
 
 comment on table farm.field is
   'Crop fields (USDA NASS Crop Sequence Boundaries): estimated outlines with eight years of crops, CDL agreement, July state and growth';

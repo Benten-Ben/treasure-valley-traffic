@@ -14,8 +14,7 @@
      "license": "public domain", "credit": "USDA NASS Cropland Data Layer", "republish": "yes"}
   ],
   "tables": ["farm.edition", "farm.crop_class", "farm.cdl_year", "farm.build", "farm.field", "farm.field_lo",
-             "farm.crop_fields", "farm.crop_fields_lo8", "farm.crop_fields_lo9", "farm.crop_fields_lo10",
-             "farm.crop_fields_years_lo8", "farm.crop_fields_years_lo9", "farm.crop_fields_years_lo10"],
+             "farm.crop_year", "farm.crop_fields", "farm.crop_fields_lo8", "farm.crop_fields_lo9", "farm.crop_fields_lo10"],
   "commands": [
     {"name": "farm-csb-load", "module": "ingest.csb_load",
      "help": "load a Crop Sequence Boundaries edition from its GeoPackage (--gpkg FILE --edition NAME)"},

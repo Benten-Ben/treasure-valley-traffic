@@ -167,11 +167,15 @@ class CsbLoadTest(DbTest):
         self.assertEqual(self.one("select count(*) from farm.crop_fields_lo10 where g = 'corn'")[0] > 0, True)
         self.assertEqual(self.one("select count(*) from farm.crop_fields_lo10 where s = 'built_over'")[0] > 0, True)
         self.assertEqual(self.one("select count(*) from farm.crop_fields_lo10 where g = 'hay'")[0], 0)   # not 2025's
-        self.assertGreater(self.one("select count(*) from farm.crop_fields_years_lo10 where yr = 2018")[0], 0)
+        self.assertGreater(self.one("select count(*) from farm.field_lo where z = 10 and yr = 2018")[0], 0)
         # z11 on: one feature per current field, with the tile properties
-        f1 = self.one("""select c.a, c.g, c.y, c.s, c.st, c.p from farm.crop_fields c join farm.field f using (id)
+        f1 = self.one("""select c.a, c.g, c.n, c.y, c.s, c.st, c.p from farm.crop_fields c join farm.field f using (id)
                          where f.field_id = %s""", (S.F1,))
-        self.assertEqual(f1, (10, "corn", "cchhcggc", "farmed", None, False))
+        self.assertEqual(f1, (10, "corn", "Corn", "cchhcggc", "farmed", None, False))
+        self.assertEqual(self.one("select n from farm.crop_fields c join farm.field f using (id) where f.field_id = %s",
+                                  (S.F2,))[0], "Developed/Med Intensity")
+        self.assertEqual(self.one("select year, label, edition from farm.crop_year"),
+                         (2025, "2025 (USDA's newest)", EDITION))
         # every crop-fields load gives the tiles a new version, with its licence
         v = self.one("select version, republish, license, credit, features from core.layer_version_current "
                      "where layer = 'farm.crop_fields'")
@@ -205,6 +209,7 @@ class CsbLoadTest(DbTest):
         self.assertEqual(rows[S.F3], (date(2026, 3, 27), ["161926000000003"]))
         self.assertIsNone(rows["161926000000001"][0])
         self.assertEqual(self.one("select count(*) from farm.crop_fields")[0], 2)
+        self.assertEqual(self.one("select label from farm.crop_year")[0], "2026 (USDA's newest)")
         with self.assertRaises(csb_load.CsbError):
             self.load()                                    # the older edition, now refused
 
