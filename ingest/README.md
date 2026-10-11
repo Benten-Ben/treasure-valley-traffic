@@ -111,15 +111,37 @@ with builds.Run(conn, "roads-build", then=["landscape-bake"]) as run:   # one ru
     ...                                    # the build; run.note = "41,203 pieces"
 ```
 
+One exception predates the rule: the scheduled `intersections` source
+(the intersections plugin) rebuilds `core.intersection` from the signal
+sources inside `ingest serve` once a day, in about 10 s. It stays a
+source, logged in `ops.fetch`, until the owner decides otherwise.
+
 A build is named by the command that runs it (or, for a worker step, its
 job), in lower-case letters, digits, `.`, `_` and `-`. A run that fails
-clears nothing and logs its error; one stopped by SIGTERM (heavy's
-deadline) is logged as stopped.
+clears nothing and logs its error, and the build reads `failed` until a
+run succeeds, even while it's marked. One stopped by SIGTERM (heavy's
+deadline) is logged as stopped. One killed outright (SIGKILL, the OOM
+killer) can't log anything, but it no longer holds the build's lock, so
+`ops.build_status` reads it as failed, and the build's next run closes
+its row.
+
+A command logs its run one way, never both. A command that uses
+`builds.Run` (its plugin's README says so) is run plainly,
+`python3 -m ingest <command>`. `python3 -m ingest.builds run` is for a
+command that doesn't log itself; a `builds.Run` of the same build inside
+it refuses. When it's stopped, it stops its command (SIGINT, so a Python
+command's psycopg cancels its query; then SIGTERM; then SIGKILL; 35 s at
+most, inside heavy's 60 s grace), and when the command fails or is
+stopped it ends the database sessions the command left (they carry
+`application_name` `tvt-build-<run id>`). Its note is the command's
+first words, stopping at anything that could carry a secret; `--note`
+says more. A shell command can't be stopped this way: wrap the program
+itself, or use `exec`.
 
 ```bash
 python3 -m ingest.builds                                   # each build: state, marks, age
 python3 -m ingest.builds mark roads-build --by 'by hand: lead' --reason 'ACHD widths fixed'
-python3 -m ingest.builds run trails-match --then landscape-bake -- python3 -m ingest trails-match
+python3 -m ingest.builds run segment-match -- python3 -m ingest segment-match   # a command that doesn't log itself
 python3 -m ingest.builds start landscape-bake              # a worker step can't reach the database:
 python3 -m ingest.builds finish <id> --ok --note 'landscape-3fa9c1.pmtiles'   # log its run around it
 python3 -m ingest.builds done roads-build --note 'built by hand'   # clears what's marked now

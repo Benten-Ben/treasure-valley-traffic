@@ -161,10 +161,16 @@ How the pieces plug in:
   build runs by hand, under the VM's `heavy` when it's heavy, inside
   `builds.Run` (`ingest/builds.py`): it logs its run in `ops.build_run`,
   clears the marks it saw when it started once it succeeds, and may mark
-  the builds that follow it (`then=["landscape-bake"]`). `ops.build_status`
-  shows each build's age and marks, and `ops.source_status` each scheduled
-  source's last good fetch against its schedule (migration 0021);
-  `/api/meta` and the VM's `bin/status` report both.
+  the builds that follow it (`then=["landscape-bake"]`). A build command
+  logs its own run that way and is run plainly; say so in the plugin's
+  README. (`python3 -m ingest.builds run` logs a run for a command that
+  doesn't log itself, and a `builds.Run` of the same build inside it
+  refuses.) `ops.build_status` shows each build's age, marks and failures,
+  and `ops.source_status` each scheduled source's last good fetch against
+  its schedule (migration 0021); `/api/meta` and the VM's `bin/status`
+  report both. One exception predates the rule: the intersections
+  plugin's scheduled `intersections` source rebuilds `core.intersection`
+  inside `ingest serve` once a day (about 10 s).
 
 ## 15.3 Private plugins
 

@@ -14,20 +14,31 @@ data, and may mark the builds that follow it:
         ...                              # the build; run.note = "41,203 pieces"
 
 A mark made while the build ran stays for the next run (a run clears marks by id and count, as
-it saw them when it started). A run that fails clears nothing; its error is logged. Only one Run
-of a build goes at a time in a database (an advisory lock; `start` and `finish`, split across
-processes, can't hold it), and a run stopped by SIGTERM (heavy's deadline) is logged as stopped,
-its query in flight cancelled, and the process exits 143.
+it saw them when it started). A run that fails clears nothing; its error is logged, and the
+build reads 'failed' in ops.build_status until a run succeeds, marked or not. Only one Run of a
+build goes at a time in a database (an advisory lock; `start` and `finish`, split across
+processes, can't hold it). A run stopped by SIGTERM (heavy's deadline) is logged as stopped, the
+query in flight on its own connection is cancelled (psycopg does that on SystemExit), and the
+process exits 143. A run killed outright (SIGKILL, the OOM killer) can't log anything, but it
+no longer holds the lock, so ops.build_status reads it as failed, and the build's next Run
+closes its row.
 
 A build's name is the command that runs it (`roads-build`), or for a worker step its job
 (`landscape-bake`): lower-case letters, digits, '.', '_' and '-'. `marked_by` names the source
 or command that marked it, or 'by hand: <who>'.
 
-From the command line (a worker step can't reach the database, so its run is logged around it):
+A command logs its run one way or the other, never both. A command that uses Run (the plugin's
+README says so) is run plainly. `run` is for one that doesn't log itself: it runs the command as
+a run of the build, and a Run of the same build inside it refuses (TVT_BUILD_RUN says why). When
+`run` is stopped, it stops its command (SIGINT first, so a Python command's psycopg cancels its
+query; then SIGTERM; then SIGKILL; 35 s at most, inside heavy's 60 s grace), and when the command
+fails or is stopped it ends any database session the command left: the command's sessions carry
+the run's tag (PGAPPNAME=tvt-build-<run id>), and a query goes on on the server after its client
+dies. A worker step can't reach the database, so its run is logged around it (`start`, `finish`).
 
   python3 -m ingest.builds                       # each build: state, pending marks, age
   python3 -m ingest.builds mark roads-build --by 'by hand: lead' --reason 'ACHD widths fixed'
-  python3 -m ingest.builds run trails-match -- python3 -m ingest trails-match
+  python3 -m ingest.builds run segment-match -- python3 -m ingest segment-match
   python3 -m ingest.builds start landscape-bake   # prints the run's id
   python3 -m ingest.builds finish 42 --ok --note 'landscape-3fa9c1.pmtiles' [--then ...]
   python3 -m ingest.builds done roads-build --note 'built by hand'   # covers what's marked now
@@ -46,7 +57,31 @@ NAME = re.compile(r"[a-z][a-z0-9_.-]{0,63}")        # as ops.build_run's and ops
 MARKED_BY_MAX = 120
 REASON_MAX = 500
 SERVE_ENV = "TVT_INGEST_SERVE"                      # set by `ingest serve` (ingest/__main__.py)
-LOCK_KEY = "select hashtextextended('tvt build ' || %s, 0)"
+RUN_ENV = "TVT_BUILD_RUN"                           # set by run_command for its command: "<build> <run id>"
+LOCK_KEY = "select hashtextextended('tvt build ' || %s, 0)"   # ops.build_status reads the same key in pg_locks
+# What ops.build_status says of a run that ended without logging its end, and what the build's
+# next Run writes in its row.
+KILLED = "ended without logging its end (killed, or its connection was lost)"
+# How run_command stops its command: each signal, then how long to wait for it (s). 35 s in all,
+# so the run is logged as stopped well inside heavy's grace (GRACE_S, 60 s: then SIGKILL, and
+# `docker stop -t 60` for a container).
+STOP_STEPS = ((signal.SIGINT, 20.0), (signal.SIGTERM, 10.0), (signal.SIGKILL, 5.0))
+# A run's default note and a failed command's message show at most the command's first words,
+# stopping at one that could carry a secret (a URL, key=value, user@host, a password option).
+_PLAIN = re.compile(r"[A-Za-z0-9_./:,+-]+")
+_SECRETISH = re.compile(r"(?i)pass|pwd|key|token|secret|auth|cred|sig|://")
+# The text a run or a mark stores (its note, error or reason) loses the passwords in URLs and the
+# values of key=, token=, password= and the like, as deploy/bin/status shows them: the tables go
+# into dumps and every scratch copy.
+_URL_PASSWORD = re.compile(r"(://[^:/@\s]+:)[^@\s]+@")
+_KEY_VALUE = re.compile(r"(?i)\b(\w*(?:key|token|secret|passw(?:or)?d|pwd|sig))=([^&;,\s\"']+)")
+
+
+def redact(text):
+    """text without passwords in URLs or the values of key=..., token=..., password=... (None stays None)."""
+    if text is None:
+        return None
+    return _KEY_VALUE.sub(r"\1=***", _URL_PASSWORD.sub(r"\1***@", str(text)))
 
 
 class Busy(RuntimeError):
@@ -103,7 +138,7 @@ def mark(conn, build, *, by, reason):
     commit: call it in the transaction that writes the data the build should take in."""
     check_name(build)
     _marked_by(by)
-    reason = _reason(reason)
+    reason = redact(_reason(reason))
     conn.execute(
         """insert into ops.build_pending (build, marked_by, reason) values (%s, %s, %s)
            on conflict (build, marked_by) do update
@@ -118,20 +153,39 @@ def in_serve():
     return bool(os.environ.get(SERVE_ENV))
 
 
-def start(conn, build):
-    """Log the start of a run of build, noting the marks pending now (the ones it covers), and
-    commit. Returns the run's id. Refuses inside `ingest serve`."""
-    check_name(build)
+def _may_start(build):
+    """Refuse a run inside `ingest serve`, or inside `python3 -m ingest.builds run` of the same build."""
     if in_serve():
         raise RuntimeError(f"{build}: builds never run inside `ingest serve` (plan §0 item 27): mark it "
                            "with builds.mark() and run it by hand")
+    outer = os.environ.get(RUN_ENV, "").split()
+    if outer and outer[0] == build:
+        raise RuntimeError(
+            f"{build} is already running as run {' '.join(outer[1:2]) or '?'} under `python3 -m ingest.builds "
+            f"run {build}`, which logs it. A command that logs its own run (builds.Run) is run plainly, "
+            "without the wrapper")
+
+
+def start(conn, build, *, locked=False):
+    """Log the start of a run of build, noting the marks pending now (the ones it covers), and
+    commit. Returns the run's id. Refuses inside `ingest serve`, or inside `run` of the same
+    build. locked: the caller holds the build's advisory lock (Run does), so the run's row says
+    so, and any older unfinished run that held it is dead: its row is closed as KILLED."""
+    check_name(build)
+    _may_start(build)
+    if locked:
+        conn.execute(
+            """update ops.build_run set finished_at = greatest(clock_timestamp(), started_at), ok = false,
+                 error = %s
+               where build = %s and finished_at is null and locked""",
+            (KILLED, build))
     run_id = conn.execute(
-        """insert into ops.build_run (build, started_at, covers)
+        """insert into ops.build_run (build, started_at, covers, locked)
            select %s, clock_timestamp(),
-                  coalesce(jsonb_agg(jsonb_build_object('id', p.id, 'marks', p.marks) order by p.id), '[]')
+                  coalesce(jsonb_agg(jsonb_build_object('id', p.id, 'marks', p.marks) order by p.id), '[]'), %s
            from ops.build_pending p where p.build = %s
            returning id""",
-        (build, build)).fetchone()[0]
+        (build, bool(locked), build)).fetchone()[0]
     conn.commit()
     return run_id
 
@@ -167,7 +221,7 @@ def finish(conn, run_id, *, ok, note=None, error=None, then=()):
         """update ops.build_run set finished_at = greatest(clock_timestamp(), started_at), ok = %s, note = %s,
              error = %s
            where id = %s""",
-        (bool(ok), note, None if error is None else str(error)[:1000], run_id))
+        (bool(ok), redact(note), None if error is None else redact(error)[:1000], run_id))
     conn.commit()
     return cleared
 
@@ -176,7 +230,8 @@ class Run:
     """A build run, as a context manager (like db.Fetch for a fetch). Set run.note as the build
     goes. On success its marks clear with its data, in one commit; on an exception (or SIGTERM)
     the build's uncommitted work is rolled back and the error logged. Only one run of a build
-    goes at a time in a database (a session advisory lock, held until the run ends)."""
+    goes at a time in a database (a session advisory lock, held until the run ends; while its
+    row is unfinished and nothing holds the lock, ops.build_status reads the run as killed)."""
 
     def __init__(self, conn, build, then=(), note=None):
         check_name(build)
@@ -188,9 +243,7 @@ class Run:
         self._old_term = None
 
     def __enter__(self):
-        if in_serve():
-            raise RuntimeError(f"{self.build}: builds never run inside `ingest serve` (plan §0 item 27): "
-                               "mark it with builds.mark() and run it by hand")
+        _may_start(self.build)
         key = self.conn.execute(LOCK_KEY, (self.build,)).fetchone()[0]
         locked = self.conn.execute("select pg_try_advisory_lock(%s)", (key,)).fetchone()[0]
         self.conn.commit()
@@ -198,32 +251,35 @@ class Run:
             raise Busy(f"{self.build} is already running in this database")
         self._key = key
         try:
-            self.id = start(self.conn, self.build)
+            self.id = start(self.conn, self.build, locked=True)
         except BaseException:
             self._unlock()
             raise
         if threading.current_thread() is threading.main_thread() \
                 and signal.getsignal(signal.SIGTERM) == signal.SIG_DFL:
             def stop(signum, _frame):
+                # Once is enough: a second SIGTERM (docker stop and the docker CLI's own, say)
+                # mustn't cut the run's logging short. __exit__ puts the old handler back.
+                signal.signal(signal.SIGTERM, signal.SIG_IGN)
                 raise Stopped(signum)
             self._old_term = signal.signal(signal.SIGTERM, stop)
         return self
 
     def __exit__(self, exc_type, exc, tb):
         try:
-            if self._old_term is not None:
-                signal.signal(signal.SIGTERM, self._old_term)
-                self._old_term = None
             if exc_type is None:
                 try:
                     self.cleared = finish(self.conn, self.id, ok=True, note=self.note, then=self.then)
-                except Exception as err:          # the build's own commit failed: log that, then raise it
+                except BaseException as err:      # the build's own commit failed (or it was stopped then)
                     self._failed(type(err), err)
                     raise
             else:
                 self._failed(exc_type, exc)
         finally:
             self._unlock()
+            if self._old_term is not None:
+                signal.signal(signal.SIGTERM, self._old_term)
+                self._old_term = None
         return False
 
     def _failed(self, exc_type, exc):
@@ -253,10 +309,10 @@ def done(conn, build, note, then=()):
 
 
 def status(conn):
-    """The rows of ops.build_status, as dicts, pending and running first."""
+    """The rows of ops.build_status, as dicts: failed, running, pending (oldest mark first), built."""
     cur = conn.execute(
         """select * from ops.build_status
-           order by case state when 'running' then 0 when 'pending' then 1 when 'failed' then 2 else 3 end,
+           order by case state when 'failed' then 0 when 'running' then 1 when 'pending' then 2 else 3 end,
                     pending_since nulls last, build""")
     cols = [c.name for c in cur.description]
     return [dict(zip(cols, r)) for r in cur.fetchall()]
@@ -290,25 +346,85 @@ def describe(row, now=None):
     return "  ".join(parts[:1] + ["; ".join(parts[1:])])
 
 
+def shown(command, words=4):
+    """The command's first words (at most `words`), up to the first that could carry a secret."""
+    out = []
+    for w in command[:words]:
+        if not _PLAIN.fullmatch(w) or _SECRETISH.search(w):
+            break
+        out.append(w)
+    return " ".join(out) + (" ..." if len(out) < len(command) else "") if out else "the command"
+
+
+def _stop(proc):
+    """Stop the command (STOP_STEPS): SIGINT first, as a Python command with psycopg cancels its
+    query in flight on KeyboardInterrupt, then SIGTERM, then SIGKILL. Another Ctrl-C meanwhile
+    is ignored, so the stop and the run's log go through."""
+    old_int = None
+    if threading.current_thread() is threading.main_thread() and signal.getsignal(signal.SIGINT) is not None:
+        old_int = signal.signal(signal.SIGINT, signal.SIG_IGN)
+    try:
+        for sig, wait in STOP_STEPS:
+            if proc.poll() is not None:
+                return
+            try:
+                proc.send_signal(sig)
+            except OSError:
+                pass
+            try:
+                proc.wait(timeout=wait)
+                return
+            except subprocess.TimeoutExpired:
+                continue
+    finally:
+        if old_int is not None:
+            signal.signal(signal.SIGINT, old_int)
+
+
+def _end_sessions(conn, build, tag):
+    """End the database sessions a failed or stopped command left (application_name `tag`, this
+    role's): a query goes on on the server after its client is gone, until it finishes or runs
+    into statement_timeout. Returns how many were ended."""
+    try:
+        ended = conn.execute(
+            """select count(*) filter (where pg_terminate_backend(pid, 5000))::int from pg_stat_activity
+               where application_name = %s and usename = current_user and pid <> pg_backend_pid()""",
+            (tag,)).fetchone()[0]
+    except Exception as err:
+        print(f"{build}: couldn't look for database sessions the command left ({err})", file=sys.stderr)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return 0
+    if ended:
+        print(f"{build}: ended {ended} database session(s) the command left", file=sys.stderr)
+    return ended
+
+
 def run_command(conn, build, command, then=(), note=None):
     """Run command (a list) as a run of build; its exit status decides ok. Returns that status.
-    SIGTERM and SIGINT are passed on to the command, and the run is logged as stopped."""
+
+    The command gets TVT_BUILD_RUN, so a Run of the same build inside it refuses (a command that
+    logs its own run is run plainly), and PGAPPNAME=tvt-build-<run id>, so its database sessions
+    carry the run's tag. If the run is stopped (SIGTERM, Ctrl-C), the command is stopped too
+    (_stop), and the run is logged as stopped. If the command fails or is stopped, the sessions
+    it left are ended. The note defaults to the command's first words (shown)."""
     with Run(conn, build, then=then, note=note) as run:
-        proc = subprocess.Popen(command)
+        tag = f"tvt-build-{run.id}"
+        env = {**os.environ, RUN_ENV: f"{build} {run.id}", "PGAPPNAME": tag}
+        proc = subprocess.Popen(command, env=env)
         try:
             code = proc.wait()
         except BaseException:
-            proc.send_signal(signal.SIGTERM)
-            try:
-                proc.wait(timeout=60)
-            except subprocess.TimeoutExpired:
-                proc.kill()
+            _stop(proc)
+            _end_sessions(conn, build, tag)
             raise
         if code != 0:
-            shown = " ".join(command[:3]) + (" ..." if len(command) > 3 else "")
-            raise CommandFailed(f"{shown} exited {code}", code)
+            _end_sessions(conn, build, tag)
+            raise CommandFailed(f"{shown(command)} exited {code}", code)
         if run.note is None:
-            run.note = " ".join(command)[:300]
+            run.note = shown(command)
     return code
 
 
@@ -325,7 +441,8 @@ def main(argv=None):
     m.add_argument("build")
     m.add_argument("--by", required=True, help="the source or command that marks it, or 'by hand: <who>'")
     m.add_argument("--reason", required=True, help="what changed")
-    r = sub.add_parser("run", help="run a command as a build: BUILD [--then B ...] -- COMMAND ...")
+    r = sub.add_parser("run", help="run a command that doesn't log its own run as a build: "
+                                   "BUILD [--then B ...] -- COMMAND ...")
     r.add_argument("build")
     r.add_argument("--then", nargs="+", default=[], help="builds to mark once it succeeds")
     r.add_argument("--note")
