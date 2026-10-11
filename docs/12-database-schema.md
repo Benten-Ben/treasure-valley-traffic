@@ -115,7 +115,9 @@ create table ops.fetch (
   schedule: fresh until a schedule plus a grace of a quarter of it, at
   least 15 min; late for two more schedules; then stale; never without a
   good fetch; with the failed attempts since) and `ops.build_status` (each
-  build: running, pending, failed or built, its age and its marks).
+  build: running, pending, failed or built, its age and its marks). A
+  source taken out of every manifest keeps its row and schedule, and would
+  read stale for good: set its `schedule` to null by hand when it's retired.
 
 ## 12.4 `raw`: every version of every record
 

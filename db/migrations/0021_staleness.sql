@@ -51,8 +51,8 @@ create table ops.build_pending (
   check (first_at <= last_at)
 );
 
--- Each scheduled source against its schedule, in the UI's words (docs/14 §14.4: ● fresh,
--- ▲ late, ■ stale, ◌ none yet):
+-- Each scheduled source against its schedule, in the UI's words (docs/14 §14.3, and §14.6's
+-- freshness table: ● fresh, ▲ late, ■ stale, ◌ none yet):
 --   fresh  its last good fetch is less than a schedule plus a grace old (a quarter of the
 --          schedule, at least 15 minutes: `ingest serve` checks every 5 minutes, runs one source
 --          after another, and retries a failure after min(schedule, 1 hour));
@@ -61,7 +61,9 @@ create table ops.build_pending (
 --   never  no good fetch yet.
 -- failures counts finished attempts that failed since the last good one; a fetch still going
 -- (finished_at null) counts as neither. last_error is the newest failure's, while it's newer
--- than the last good fetch. Unscheduled sources (streams, one-off, by hand) aren't listed.
+-- than the last good fetch. Unscheduled sources (streams, one-off, by hand) aren't listed. A
+-- source taken out of every manifest keeps its row and schedule, so it would read late, then
+-- stale, for good: set its schedule to null by hand when it's retired.
 create view ops.source_status as
 select s.name                                   as source,
        s.title,
