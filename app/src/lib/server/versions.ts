@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path';
 import type postgres from 'postgres';
 import { DATABASE_URL } from '$app/env/private';
 import { db } from './db.js';
-import { META_CONTRACT, type DataMeta } from '#lib/contracts/meta.js';
+import { META_CONTRACT, type DataMeta, type LayerBuild } from '#lib/contracts/meta.js';
 
 /**
  * Data versions for GET /api/meta (docs/14 §14.8, "Boot"). Each layer's data
@@ -25,8 +25,8 @@ export function shortHash(...parts: unknown[]): string {
 /** What the database contributes: the public fields, plus the inputs each version is hashed from. */
 export type DbPart = Pick<DataMeta, 'gtfs' | 'ribbons' | 'progress' | 'roads' | 'cameras' | 'calibrations'> & {
 	inputs: { roads: unknown[] | null; cameras: string | null; calibrations: unknown[] | null };
-	/** Toggled layers' versions from core.layer_version (migration 0020), as written by their builds. */
-	layers?: Record<string, string>;
+	/** Toggled layers' current builds from core.layer_version (migration 0020), as written by their builds. */
+	layers?: Record<string, LayerBuild & { version: string }>;
 };
 
 const num = (v: unknown) => (v === null || v === undefined ? null : Number(v));
@@ -78,7 +78,9 @@ export async function readDatabase(sql: postgres.Sql): Promise<DbPart> {
 			: none,
 		// Each layer's newest row, as in the view core.layer_version_current.
 		has.layer_versions
-			? sql`select distinct on (layer) layer, version from core.layer_version order by layer, id desc`
+			? sql`select distinct on (layer) layer, version, extract(epoch from built_at)::float8 as built_at,
+			             license, republish, credit
+			      from core.layer_version order by layer, id desc`
 			: none
 	]);
 	const g = gtfs[0];
@@ -94,7 +96,12 @@ export async function readDatabase(sql: postgres.Sql): Promise<DbPart> {
 		roads: rd && rd.total > 0 ? { segments: rd.segments, lastSeen: num(rd.last_seen) } : null,
 		cameras: c && v ? { cameras: c.cameras, views: v.views, withImage: v.with_image } : null,
 		calibrations: cal ? { current: cal.current, latestId: num(cal.latest_id), latestAt: num(cal.latest_at) } : null,
-		layers: Object.fromEntries(layers.map((l) => [String(l.layer), String(l.version)])),
+		layers: Object.fromEntries(
+			layers.map((l) => [
+				String(l.layer),
+				{ version: String(l.version), builtAt: Number(l.built_at), license: String(l.license), republish: l.republish, credit: String(l.credit) }
+			])
+		),
 		inputs: {
 			roads: rd && rd.total > 0 ? [rd.segments, rd.total, rd.max_id, num(rd.last_seen)] : null,
 			cameras: c && v ? `${c.content}/${v.content}` : null,
@@ -158,7 +165,7 @@ export function assembleMeta(
 			calibrations: calVersion,
 			tiles: tiles ? shortHash('tiles', tiles) : null,
 			// As the builds wrote them (URL-safe by the table's check), so a tile URL's ?v= names the build.
-			layers: { ...part?.layers }
+			layers: Object.fromEntries(Object.entries(part?.layers ?? {}).map(([id, b]) => [id, b.version]))
 		},
 		gtfs: part?.gtfs ?? null,
 		ribbons: part?.ribbons ?? null,
@@ -166,7 +173,8 @@ export function assembleMeta(
 		roads: part?.roads ?? null,
 		cameras: part?.cameras ?? null,
 		calibrations: part?.calibrations ?? null,
-		tiles
+		tiles,
+		layers: Object.fromEntries(Object.entries(part?.layers ?? {}).map(([id, { version: _, ...build }]) => [id, build]))
 	};
 }
 

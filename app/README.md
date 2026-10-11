@@ -48,6 +48,7 @@ layer that isn't available says why on its button.
 | `TVT_FRAME_SOURCE` | `511` (default) or `fixture`: seeded frames under `FRAMES_DIR/_fixture`, nothing fetched. Tests and build agents use `fixture`. |
 | `CAMERA_IMAGES_ENABLED` | Live camera images (docs/14 §14.6): the capture archive and the on-demand 511 fetcher. Off unless `true`; `deploy/compose.live-images.yml` turns it on. |
 | `TVT_ARCHIVE` | The capture archive; the app reads only `cameras/jpeg` and `cameras/status`, read-only. |
+| `TILES_DB_ROLE` | The role toggled layers' tile cuts read as (`#lib/server/mvt`). The server sets `tvt_tiles`, which [`deploy/tvt_tiles.sql`](../deploy/tvt_tiles.sql) grants only core and the tile plugins' schemas. Unset (dev and tests), they read as `DATABASE_URL`'s role. |
 | `TVT_E2E_REQUIRE_DATA` | `1`: a spec fails, rather than skips, when the seeded data is missing (set in the workflow). |
 | `TVT_E2E_URL` | Run browser specs against a deployed server instead of a local preview (deploy runbook, step 6). |
 

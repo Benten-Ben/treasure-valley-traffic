@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { gunzipSync } from 'node:zlib';
 import type postgres from 'postgres';
 
@@ -11,15 +12,20 @@ const {
 	EMPTY_CACHE,
 	emptyReason,
 	layerTileServer,
+	LOG_EVERY_MS,
+	neverTiled,
 	parseLayerTile,
+	SHARED_TILE_SCHEMAS,
 	TILE_LAYERS,
 	TileCache,
 	tileKey,
 	tileLayerProblems,
 	tilePoolOptions,
-	tileQuery
+	tileQuery,
+	tileSchemas
 } = mvt;
 type TileLayerDef = import('./mvt.js').TileLayerDef;
+type TileModules = import('./mvt.js').TileModules;
 type TileId = import('./road-tiles.js').TileId;
 const { IMMUTABLE } = await import('./cache-headers.js');
 const { SHORT_CACHE } = await import('./road-tiles.js');
@@ -28,8 +34,9 @@ const { SHORT_CACHE } = await import('./road-tiles.js');
  * The toggled layers' tile server (#lib/server/mvt; plan C4, package S2),
  * with made-up layers and a fake cut: cache keys, versions and caching, the
  * shared LRU's per-layer caps, timeouts, empty tiles before a plugin's
- * migration, the definitions' checks and the SQL they make. The cuts against
- * a real PostGIS are in mvt.db.test.ts.
+ * migration or a layer's first build (and their log), the definitions'
+ * checks (the schemas tiles may read among them) and the SQL they make. The
+ * cuts against a real PostGIS are in mvt.db.test.ts.
  */
 
 /** A made-up layer: polygons in 4326 at z8–11 (generalised) and z12–16, labels from z14. */
@@ -49,17 +56,34 @@ const SOILS: TileLayerDef = {
 		{ name: 'labels', buffer: 256, sources: [{ minzoom: 14, maxzoom: 16, table: 'soils.unit_label', geom: 'pt', srid: 3857, columns: ['musym'] }] }
 	]
 };
-const TRAILS: TileLayerDef = { ...SOILS, plugin: 'trails', layer: 'paths' };
+const TRAILS: TileLayerDef = {
+	plugin: 'trails',
+	layer: 'paths',
+	minzoom: 8,
+	maxzoom: 16,
+	parts: [{ name: 'paths', sources: [{ minzoom: 10, maxzoom: 16, table: 'trails.path', srid: 3857, id: 'id', columns: ['kind'] }] }]
+};
 const T: TileId = { z: 12, x: 760, y: 1490 };
 
 /** A fake MVT: deterministic bytes per layer and tile, repetitive enough to compress. */
 const fakeMvt = (def: TileLayerDef, t: TileId, n = 200) => new TextEncoder().encode(`${def.plugin}.${def.layer} ${t.z}/${t.x}/${t.y} `.repeat(n));
 const pgError = (code: string) => Object.assign(new Error(`postgres ${code}`), { code });
 
+/**
+ * A server over a fake cut. `versions` is what /api/meta reports; the cut
+ * reads `cutAt` (the database's newest row), which is the same unless a test
+ * makes a build land in between.
+ */
 function server(versions: Record<string, string | null> = { 'soils.units': 's1', 'trails.paths': 't1' }, o: { maxBytes?: number; deadlineMs?: number } = {}) {
-	const cut = vi.fn(async (def: TileLayerDef, t: TileId, _signal: AbortSignal) => fakeMvt(def, t));
-	const s = layerTileServer({ version: async (id) => versions[id] ?? null, cut, ...o });
-	return { s, cut, versions };
+	const cutAt: Record<string, string | null> = versions;
+	const cut = vi.fn(async (def: TileLayerDef, t: TileId, _signal: AbortSignal): Promise<import('./mvt.js').LayerCut> => ({
+		mvt: fakeMvt(def, t),
+		version: cutAt[`${def.plugin}.${def.layer}`] ?? null
+	}));
+	const log = vi.fn();
+	const clock = { now: 1_000_000 };
+	const s = layerTileServer({ version: async (id) => versions[id] ?? null, cut, log, now: () => clock.now, ...o });
+	return { s, cut, versions, log, clock };
 }
 
 describe('the shared LRU (plan C4: about 120 MB, per-layer caps)', () => {
@@ -114,7 +138,7 @@ describe('the shared LRU (plan C4: about 120 MB, per-layer caps)', () => {
 describe('the tile server', () => {
 	it('keys tiles by layer, version and tile', () => {
 		expect(tileKey('soils.units', 's1', T)).toBe('soils.units/s1/12/760/1490');
-		expect(tileKey('soils.units', null, T)).toBe('soils.units/-/12/760/1490');
+		expect(tileKey('soils.units', 's2', T)).not.toBe(tileKey('soils.units', 's1', T));
 		expect(tileKey('soils.units', 's1', { ...T, x: 761 })).not.toBe(tileKey('soils.units', 's1', T));
 	});
 
@@ -161,20 +185,44 @@ describe('the tile server', () => {
 		expect(s.cuts).toBe(3);
 	});
 
-	it('cuts a layer with no version afresh each time, with a short cache and no ETag', async () => {
-		const { s, cut } = server({});
-		const [a] = await Promise.all([s.respond(SOILS, T, null, 'gzip'), s.respond(SOILS, T, null, 'gzip')]);
-		expect(cut).toHaveBeenCalledTimes(1); // shared while in flight
-		await s.respond(SOILS, T, null, 'gzip');
-		expect(cut).toHaveBeenCalledTimes(2);
+	it("serves nothing for a layer with no version (no licence on record yet): empty, short cache, never cut", async () => {
+		const { s, cut, log } = server({});
+		const res = await s.respond(SOILS, T, null, 'gzip');
+		expect(res.status).toBe(200);
+		expect(res.headers.get('x-tile-status')).toBe('unversioned');
+		expect(res.headers.get('cache-control')).toBe(EMPTY_CACHE);
+		expect(res.headers.get('etag')).toBeNull();
+		expect((await res.arrayBuffer()).byteLength).toBe(0);
+		expect((await s.respond(SOILS, T, null, 'gzip', '"soils.units--gz"')).status).toBe(200);
+		expect(cut).not.toHaveBeenCalled();
 		expect(s.cache.size).toBe(0);
-		expect(a.headers.get('cache-control')).toBe(SHORT_CACHE);
-		expect(a.headers.get('etag')).toBeNull();
+		expect(log).toHaveBeenCalledTimes(1);
+		expect(log.mock.calls[0][0]).toMatch(/^tile layer soils\.units: answered empty \(unversioned\) at 12\/760\/1490: no row in core\.layer_version/);
+	});
+
+	it('sends a tile cut at a newer version than /api/meta reports with a short cache, and keeps it for neither', async () => {
+		const { s, cut, versions } = server();
+		// A build committed s2 inside /api/meta's 15 s memo, which still reports s1.
+		cut.mockImplementation(async (def, t) => ({ mvt: fakeMvt(def, t), version: 's2' }));
+		const res = await s.respond(SOILS, T, 's1', 'gzip');
+		expect(res.status).toBe(200);
+		expect(res.headers.get('cache-control')).toBe(SHORT_CACHE);
+		expect(res.headers.get('etag')).toBeNull();
+		expect(gunzipSync(new Uint8Array(await res.arrayBuffer()))).toEqual(Buffer.from(fakeMvt(SOILS, T)));
+		expect(s.cache.size).toBe(0);
+		await s.respond(SOILS, T, 's1', 'gzip');
+		expect(cut).toHaveBeenCalledTimes(2);
+		// Once /api/meta sees s2, s2's tiles are kept and immutable again.
+		versions['soils.units'] = 's2';
+		expect((await s.respond(SOILS, T, 's2', 'gzip')).headers.get('cache-control')).toBe(IMMUTABLE);
+		await s.respond(SOILS, T, 's2', 'gzip');
+		expect(cut).toHaveBeenCalledTimes(3);
+		expect(s.cache.size).toBe(1);
 	});
 
 	it('sends a tile with no features empty and keeps it', async () => {
 		const { s, cut } = server();
-		cut.mockImplementation(async () => new Uint8Array());
+		cut.mockImplementation(async () => ({ mvt: new Uint8Array(), version: 's1' }));
 		const res = await s.respond(SOILS, T, 's1', 'gzip');
 		expect(res.status).toBe(200);
 		expect(res.headers.get('content-encoding')).toBeNull();
@@ -226,15 +274,52 @@ describe('the tile server', () => {
 
 	it("answers an empty tile before the plugin's migration (no table, schema or column), and keeps nothing", async () => {
 		for (const code of ['42P01', '3F000', '42703']) {
-			const { s, cut } = server({});
+			const { s, cut } = server();
 			cut.mockRejectedValueOnce(pgError(code));
-			const res = await s.respond(SOILS, T, null, 'gzip');
+			const res = await s.respond(SOILS, T, 's1', 'gzip');
 			expect(res.status).toBe(200);
 			expect(res.headers.get('x-tile-status')).toBe('missing');
 			expect(res.headers.get('cache-control')).toBe(EMPTY_CACHE);
 			expect((await res.arrayBuffer()).byteLength).toBe(0);
 			expect(s.cache.size).toBe(0);
 		}
+	});
+
+	it('answers an empty tile when the tile role may not read a table (deploy/tvt_tiles.sql)', async () => {
+		const { s, cut } = server();
+		cut.mockRejectedValueOnce(pgError('42501'));
+		const res = await s.respond(SOILS, T, 's1', 'gzip');
+		expect(res.headers.get('x-tile-status')).toBe('denied');
+		expect(res.headers.get('cache-control')).toBe(EMPTY_CACHE);
+		expect(s.cache.size).toBe(0);
+	});
+
+	it('logs empty answers: the first per layer and reason, then at most once a minute, with the code and message', async () => {
+		const { s, cut, log, clock } = server();
+		cut.mockRejectedValue(Object.assign(new Error('relation "soils.unit" does not exist'), { code: '42P01' }));
+		await s.respond(SOILS, T, 's1', 'gzip');
+		expect(log).toHaveBeenCalledTimes(1);
+		expect(log.mock.calls[0][0]).toBe('tile layer soils.units: answered empty (missing) at 12/760/1490: 42P01 relation "soils.unit" does not exist');
+		for (const x of [1, 2, 3]) await s.respond(SOILS, { ...T, x }, 's1', 'gzip');
+		expect(log).toHaveBeenCalledTimes(1);
+		// Another layer, or another reason, is noted at once.
+		await s.respond(TRAILS, T, 't1', 'gzip');
+		cut.mockRejectedValueOnce(pgError('57014'));
+		await s.respond(SOILS, { ...T, x: 9 }, 's1', 'gzip');
+		expect(log).toHaveBeenCalledTimes(3);
+		expect(log.mock.calls[1][0]).toMatch(/^tile layer trails\.paths: answered empty \(missing\)/);
+		expect(log.mock.calls[2][0]).toMatch(/^tile layer soils\.units: answered empty \(timeout\) .*: 57014 postgres 57014$/);
+		clock.now += LOG_EVERY_MS;
+		await s.respond(SOILS, { ...T, x: 4 }, 's1', 'gzip');
+		expect(log).toHaveBeenCalledTimes(4);
+		expect(log.mock.calls[3][0]).toMatch(/at 12\/4\/1490: 42P01 .* \(and 3 more since the last note\)$/);
+	});
+
+	it('logs a cut abandoned at the deadline', async () => {
+		const { s, cut, log } = server(undefined, { deadlineMs: 20 });
+		cut.mockImplementationOnce(() => new Promise(() => {}));
+		await s.respond(SOILS, T, 's1', 'gzip');
+		expect(log.mock.calls[0][0]).toBe('tile layer soils.units: answered empty (timeout) at 12/760/1490: no answer within 20 ms');
 	});
 
 	it("fails on any other error, and doesn't keep it", async () => {
@@ -252,7 +337,7 @@ describe('the tile server', () => {
 		const small: TileLayerDef = { ...SOILS, cacheBytes: 600 };
 		const { s, cut } = server();
 		// Random bytes don't compress: each tile is about 300 bytes gzipped, so the layer keeps one.
-		cut.mockImplementation(async (def, t) => (def === small ? crypto.getRandomValues(new Uint8Array(300)) : fakeMvt(def, t)));
+		cut.mockImplementation(async (def, t) => ({ mvt: def === small ? crypto.getRandomValues(new Uint8Array(300)) : fakeMvt(def, t) }));
 		await s.respond(TRAILS, T, 't1', 'gzip');
 		for (const x of [1, 2, 3]) await s.respond(small, { ...T, x }, 's1', 'gzip');
 		expect(s.cache.layerBytes('soils.units')).toBeLessThanOrEqual(600);
@@ -267,6 +352,28 @@ describe('definitions', () => {
 	it('accepts a good one', () => {
 		expect(tileLayerProblems(SOILS)).toEqual([]);
 		expect(tileLayerProblems({ plugin: 'hazards', layer: 'burn_scars', minzoom: 8, maxzoom: 14, cut: async () => new Uint8Array() })).toEqual([]);
+		const fromCore: TileLayerDef = { ...SOILS, parts: [{ name: 'roads', sources: [{ minzoom: 8, maxzoom: 16, table: 'core.road_segment' }] }] };
+		expect(tileLayerProblems(fromCore)).toEqual([]);
+	});
+
+	it("reads only the plugin's own schema and core: never restricted or a private plugin's (plan C3)", () => {
+		const from = (table: string, plugin = 'soils'): TileLayerDef => ({ ...SOILS, plugin, parts: [{ name: 'u', sources: [{ minzoom: 8, maxzoom: 16, table }] }] });
+		expect(tileLayerProblems(from('restricted.crash_unit')).join('; ')).toContain('schema restricted is never tiled');
+		expect(tileLayerProblems(from('city_trees.tree')).join('; ')).toContain('schema city_trees is never tiled');
+		expect(tileLayerProblems(from('private_parcels.parcel')).join('; ')).toContain('schema private_parcels is never tiled');
+		expect(tileLayerProblems(from('trails.path')).join('; ')).toContain("schema trails isn't the plugin's own or core");
+		expect(tileLayerProblems(from('raw.record')).join('; ')).toContain("schema raw isn't the plugin's own or core");
+		expect(tileLayerProblems(from('obs.reading')).join('; ')).toContain("schema obs isn't the plugin's own or core");
+		// A plugin whose own schema is never tiled serves no tiles at all, from parts or a cut.
+		expect(tileLayerProblems(from('city_trees.tree', 'city_trees')).join('; ')).toContain('plugin city_trees: its data is never tiled');
+		expect(tileLayerProblems(from('city_trees.tree', 'city_trees')).join('; ')).toContain('schema city_trees is never tiled');
+		const ownCut = { plugin: 'private_x', layer: 'y', minzoom: 8, maxzoom: 9, cut: async () => new Uint8Array() };
+		expect(tileLayerProblems(ownCut).join('; ')).toContain('plugin private_x: its data is never tiled');
+		expect(tileLayerProblems({ ...ownCut, plugin: 'restricted' }).join('; ')).toContain('never tiled');
+		expect(tileSchemas('soils')).toEqual(['soils', 'core']);
+		expect(tileSchemas('private_x')).toEqual(['core']);
+		for (const s of ['restricted', 'city_trees', 'private_', 'private_parcels']) expect(neverTiled(s), s).toBe(true);
+		for (const s of ['core', 'soils', 'trees', 'privateer']) expect(neverTiled(s), s).toBe(false);
 	});
 
 	it('refuses names, zooms and identifiers that would go wrong in a URL or SQL', () => {
@@ -318,10 +425,35 @@ describe('definitions', () => {
 		expect(logged).toMatch(/soils\.water .*it's in water\/, not soils\//);
 	});
 
-	it("registers only valid layers from #lib/server/<plugin>/tiles.ts", () => {
-		for (const def of TILE_LAYERS.values()) expect(tileLayerProblems(def), `${def.plugin}.${def.layer}`).toEqual([]);
+	it('registers every layer defined in #lib/server/<plugin>/tiles.ts: none is bad, misplaced or repeated', () => {
+		// The same files the registry reads, run through it again: anything it would leave out fails here.
+		const found = import.meta.glob('./*/tiles.ts', { eager: true }) as TileModules;
+		const log = vi.fn();
+		const again = buildRegistry(found, log);
+		expect(log.mock.calls.flat()).toEqual([]);
+		const defined = Object.values(found).flatMap((m) => ([] as TileLayerDef[]).concat(m.default ?? []));
+		expect(again.size).toBe(defined.length);
+		expect(TILE_LAYERS.size).toBe(defined.length);
+		expect([...TILE_LAYERS.keys()].sort()).toEqual([...again.keys()].sort());
 		expect(mvt.tileLayer(undefined, 'x')).toBeUndefined();
 		expect(mvt.tileLayer('nope', 'nothing')).toBeUndefined();
+	});
+
+	it("serves only schemas deploy/tvt_tiles.sql grants the tile role, and it grants none tiles never read", () => {
+		const text = readFileSync(new URL('../../../../deploy/tvt_tiles.sql', import.meta.url), 'utf8');
+		const list = text.match(/tile_schemas text\[\] := ARRAY\[([^\]]*)\]/)?.[1];
+		expect(list, 'tile_schemas in deploy/tvt_tiles.sql').toBeTruthy();
+		const granted = [...list!.matchAll(/'([a-z_][a-z0-9_]*)'/g)].map((m) => m[1]);
+		expect(granted.length).toBeGreaterThan(1);
+		for (const s of granted) expect(neverTiled(s), s).toBe(false);
+		for (const s of SHARED_TILE_SCHEMAS) expect(granted).toContain(s);
+		// Every registered layer reads only granted schemas (a `cut` reads its plugin's own).
+		for (const def of TILE_LAYERS.values()) {
+			const read = def.parts ? def.parts.flatMap((p) => p.sources.map((src) => src.table.split('.')[0])) : [def.plugin];
+			for (const s of read) expect(granted, `${def.plugin}.${def.layer} reads ${s}`).toContain(s);
+		}
+		// And it takes back what tiles never read, with neverTiled's names.
+		expect(text).toContain("nspname IN ('restricted', 'city_trees') OR nspname LIKE 'private\\_%'");
 	});
 
 	it("parses tiles within the layer's zooms and the grid", () => {
@@ -346,7 +478,9 @@ describe('the SQL a definition makes', () => {
 		const hi = flat(tileQuery(SOILS, 15))!;
 		expect(hi).toContain('from "soils"."unit" s');
 		expect(hi).toContain('s."name"');
-		expect(hi).toMatch(/^select \(select coalesce\(ST_AsMVT\(t, 'units'.*\) \|\| \(select coalesce\(ST_AsMVT\(t, 'labels', 4096, 'mvt_geom'\), ''::bytea\).*\) as mvt$/);
+		expect(hi).toMatch(/^select \(select coalesce\(ST_AsMVT\(t, 'units'.*\) \|\| \(select coalesce\(ST_AsMVT\(t, 'labels', 4096, 'mvt_geom'\), ''::bytea\).*\) as mvt, /);
+		// The layer's version, in the same statement and so the same snapshot as the data.
+		expect(hi).toMatch(/ as mvt, \(select version from core\.layer_version where layer = \$4 order by id desc limit 1\) as version$/);
 		// Already in web mercator: no transforms, and its own buffer.
 		expect(hi).toContain('ST_AsMVTGeom(s."pt", ST_TileEnvelope($1::int, $2::int, $3::int), 4096, 256, true)');
 		expect(hi).toContain('where s."pt" && ST_TileEnvelope($1::int, $2::int, $3::int, margin => 0.0625)');
@@ -358,22 +492,30 @@ describe('the SQL a definition makes', () => {
 		expect(tileQuery(sparse, 12)).toContain(`ST_AsMVT(t, 'units', 4096, 'mvt_geom')`);
 	});
 
-	it('runs it on the pool with the tile as parameters, and returns its bytes', async () => {
+	it('runs it on the pool with the tile and layer as parameters, and returns its bytes and version', async () => {
 		const calls: [string, unknown[]][] = [];
+		const begun: string[] = [];
+		const unsafe = (text: string, params: unknown[]) => {
+			calls.push([text, params]);
+			return Promise.resolve([{ mvt: Buffer.from('tile'), version: 's1' }]) as unknown as postgres.PendingQuery<postgres.Row[]>;
+		};
+		const tx = { unsafe } as unknown as postgres.TransactionSql;
 		const sql = {
-			unsafe: (text: string, params: unknown[]) => {
-				calls.push([text, params]);
-				return Promise.resolve([{ mvt: Buffer.from('tile') }]) as unknown as postgres.PendingQuery<postgres.Row[]>;
-			}
+			unsafe,
+			begin: async (options: string, fn: (tx: postgres.TransactionSql) => unknown) => (begun.push(options), fn(tx))
 		} as unknown as postgres.Sql;
 		const signal = new AbortController().signal;
-		expect(await cutLayerTile(sql, SOILS, T, signal)).toEqual(new Uint8Array(Buffer.from('tile')));
-		expect(calls).toEqual([[tileQuery(SOILS, 12), [12, 760, 1490]]]);
-		expect(await cutLayerTile(sql, { ...SOILS, parts: [{ name: 'u', sources: [{ minzoom: 14, maxzoom: 16, table: 'a.b' }] }] }, T, signal)).toEqual(new Uint8Array());
+		expect(await cutLayerTile(sql, SOILS, T, signal)).toEqual({ mvt: new Uint8Array(Buffer.from('tile')), version: 's1' });
+		expect(calls).toEqual([[tileQuery(SOILS, 12), [12, 760, 1490, 'soils.units']]]);
+		// No source at this zoom: an empty tile, whatever the version, and no query.
+		expect(await cutLayerTile(sql, { ...SOILS, parts: [{ name: 'u', sources: [{ minzoom: 14, maxzoom: 16, table: 'soils.b' }] }] }, T, signal)).toEqual({ mvt: new Uint8Array() });
 		expect(calls).toHaveLength(1);
+		// Its own cut: in a read-only, repeatable-read transaction that reads the version first.
 		const own = vi.fn(async () => new Uint8Array([1]));
-		expect(await cutLayerTile(sql, { plugin: 'x', layer: 'y', minzoom: 8, maxzoom: 9, cut: own }, T, signal)).toEqual(new Uint8Array([1]));
-		expect(own).toHaveBeenCalledWith(sql, T, signal);
+		expect(await cutLayerTile(sql, { plugin: 'x', layer: 'y', minzoom: 8, maxzoom: 9, cut: own }, T, signal)).toEqual({ mvt: new Uint8Array([1]), version: 's1' });
+		expect(begun).toEqual(['isolation level repeatable read read only']);
+		expect(calls[1]).toEqual(['select (select version from core.layer_version where layer = $1 order by id desc limit 1) as version', ['x.y']]);
+		expect(own).toHaveBeenCalledWith(tx, T, signal);
 	});
 
 	it('cancels the query when the deadline aborts, and never starts one after it', async () => {
@@ -390,11 +532,13 @@ describe('the SQL a definition makes', () => {
 		expect(query).not.toHaveBeenCalled();
 	});
 
-	it('uses a pool of its own: 3 connections, statement_timeout 3 s, read-only', () => {
+	it('uses a pool of its own: 3 connections, statement_timeout 3 s, read-only, as the tile role when given', () => {
 		const o = tilePoolOptions();
 		expect(o.max).toBe(3);
 		expect(o.connection.statement_timeout).toBe(3000);
 		expect(o.connection.default_transaction_read_only).toBe(true);
+		expect(o.connection).not.toHaveProperty('role');
 		expect(mvt.DEADLINE_MS).toBeGreaterThan(o.connection.statement_timeout);
+		expect(tilePoolOptions('tvt_tiles').connection).toMatchObject({ role: 'tvt_tiles', default_transaction_read_only: true, statement_timeout: 3000 });
 	});
 });

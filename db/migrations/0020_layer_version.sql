@@ -8,13 +8,17 @@
 -- changes what a layer's tiles show adds a row here, in the same transaction as its data
 -- (ingest/layer_version.py). The newest row of a layer (the highest id) is its current
 -- version: /api/meta reports it as versions.layers['<plugin>.<layer>'], and the tile route
--- caches tiles per version, immutable while the client asks with it. A version names content,
--- so it's never reused for different data; going back to an earlier build's data adds a row
--- with that build's version again. Older rows stay as the layer's build history (a few a year
--- per layer), and their built_at gives each build's age (M1).
+-- caches tiles per version, immutable while the client asks with it. A layer with no row
+-- serves nothing (its tiles answer empty) until its first build writes one.
 --
--- Every tile set records its licence class and whether it may be republished (plan C3): the
--- strictest of its inputs, in the plugin manifests' terms (docs/15 §15.2).
+-- A version names one build's data and is never used twice for a layer (unique): going back
+-- to an earlier build's data is a new build, with a fresh version. So tiles kept or cached
+-- under an old version never come back as current. Older rows stay as the layer's build
+-- history (a few a year per layer), and their built_at gives each build's age (M1).
+--
+-- Every tile set records its licence class, whether it may be republished, and its credit
+-- (plan C3 and §6): the strictest of its inputs, in the plugin manifests' terms (docs/15
+-- §15.2). The columns are spelled as ops.source's and the manifests' (license, credit).
 
 create table core.layer_version (
   id         bigint generated always as identity primary key,
@@ -23,15 +27,17 @@ create table core.layer_version (
   built_at   timestamptz not null default now(),
   build      text,             -- what wrote it: a build id or a command, for the record
   features   bigint check (features >= 0),
-  licence    text not null,    -- 'public domain', 'ODbL', 'ODbL + ACHD/ITD widths', ...
+  license    text not null check (btrim(license) <> ''),    -- 'public domain', 'ODbL', 'ODbL + ACHD/ITD widths', ...
   republish  text not null check (republish in ('yes', 'aggregates', 'internal', 'no')),
-  note       text
+  credit     text not null check (btrim(credit) <> ''),     -- the map's attribution while the layer is on
+  note       text,
+  unique (layer, version)
 );
 create index layer_version_newest on core.layer_version (layer, id desc);
 
 -- Each layer's current version: its newest row.
 create view core.layer_version_current as
-select distinct on (layer) layer, version, built_at, build, features, licence, republish, note
+select distinct on (layer) layer, version, built_at, build, features, license, republish, credit, note
 from core.layer_version
 order by layer, id desc;
 

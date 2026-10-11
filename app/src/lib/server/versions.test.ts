@@ -7,7 +7,10 @@ import type { DbPart } from './versions.js';
 vi.mock('$app/env/private', () => ({ DATABASE_URL: undefined, FRAMES_DIR: '/nonexistent', TVT_FRAME_SOURCE: 'fixture' }));
 const { assembleMeta, dataMeta, readDatabase, readTiles, resetMetaCache, shortHash } = await import('./versions.js');
 const { META_CONTRACT } = await import('#lib/contracts/meta.js');
-const { layerTilesUrl, layerVersion } = await import('#lib/contracts/layer-tiles.js');
+const { layerCredit, layerTilesUrl, layerVersion } = await import('#lib/contracts/layer-tiles.js');
+
+/** A toggled layer's build as readDatabase gives it. */
+const build = (version: string, credit = 'USDA NRCS SSURGO') => ({ version, builtAt: 1_760_000_000, license: 'public domain', republish: 'yes' as const, credit });
 
 const part = (over: Partial<DbPart> = {}): DbPart => ({
 	gtfs: { feedVersion: '457', routes: 20, updatedAt: 1_759_700_000 },
@@ -83,19 +86,30 @@ describe('/api/meta', () => {
 		expect(m.contract).toBe(1);
 		expect(Object.keys(m.versions).sort()).toEqual(['calibrations', 'cameras', 'gtfs', 'layers', 'ribbons', 'roads', 'tiles']);
 		expect(Object.keys(m).sort()).toEqual(
-			['calibrations', 'cameras', 'contract', 'database', 'generatedAt', 'gtfs', 'progress', 'ribbons', 'roads', 'tiles', 'versions']
+			['calibrations', 'cameras', 'contract', 'database', 'generatedAt', 'gtfs', 'layers', 'progress', 'ribbons', 'roads', 'tiles', 'versions']
 		);
-		// Layer versions change nothing a client written before them reads.
+		// Layer versions and builds change nothing a client written before them reads.
 		const { layers, ...before } = m.versions;
-		const { layers: withLayers, ...after } = assembleMeta(1, 'ok', part({ layers: { 'soils.units': 's1' } }), null).versions;
+		const withSoils = assembleMeta(1, 'ok', part({ layers: { 'soils.units': build('s1') } }), null);
+		const { layers: withLayers, ...after } = withSoils.versions;
 		expect(layers).toEqual({});
 		expect(withLayers).toEqual({ 'soils.units': 's1' });
 		expect(after).toEqual(before);
+		const { layers: builds, versions: _v, ...rest } = withSoils;
+		const { layers: noBuilds, versions: _w, ...restBefore } = m;
+		expect(noBuilds).toEqual({});
+		expect(builds).toEqual({ 'soils.units': { builtAt: 1_760_000_000, license: 'public domain', republish: 'yes', credit: 'USDA NRCS SSURGO' } });
+		expect(rest).toEqual(restBefore);
 	});
 
-	it("reports toggled layers' versions as their builds wrote them", () => {
-		const m = assembleMeta(1, 'ok', part({ layers: { 'soils.units': '20261011T0412Z-3fa9c1', 'farm.crop_fields': 'b7' } }), null);
+	it("reports toggled layers' versions and credits as their builds wrote them", () => {
+		const m = assembleMeta(1, 'ok', part({ layers: { 'soils.units': build('20261011T0412Z-3fa9c1'), 'farm.crop_fields': build('b7', '© OpenStreetMap contributors; USDA NASS') } }), null);
 		expect(m.versions.layers).toEqual({ 'soils.units': '20261011T0412Z-3fa9c1', 'farm.crop_fields': 'b7' });
+		expect(layerCredit(m, 'soils', 'units')).toBe('USDA NRCS SSURGO');
+		expect(layerCredit(m, 'farm', 'crop_fields')).toBe('© OpenStreetMap contributors; USDA NASS');
+		expect(layerCredit(m, 'trails', 'paths')).toBeNull();
+		expect(layerCredit(null, 'soils', 'units')).toBeNull();
+		expect(m.layers?.['farm.crop_fields']).not.toHaveProperty('version');
 		expect(m.versions.roads).toBe(assembleMeta(1, 'ok', part(), null).versions.roads);
 		expect(layerVersion(m, 'soils', 'units')).toBe('20261011T0412Z-3fa9c1');
 		expect(layerVersion(m, 'trails', 'paths')).toBeNull();
@@ -115,19 +129,25 @@ describe('/api/meta', () => {
 				if (text.includes('to_regclass')) return [{ layer_versions: layerTable }];
 				if (text.includes('core.layer_version'))
 					return [
-						{ layer: 'soils.units', version: 's2' },
-						{ layer: 'trails.paths', version: 't1' }
+						{ layer: 'soils.units', version: 's2', built_at: 1_760_000_000, license: 'public domain', republish: 'yes', credit: 'USDA NRCS SSURGO' },
+						{ layer: 'trails.paths', version: 't1', built_at: 1_760_000_100, license: 'ODbL', republish: 'yes', credit: '© OpenStreetMap contributors' }
 					];
 				return [];
 			}) as unknown as Parameters<typeof readDatabase>[0];
 		const after = await readDatabase(fake(true));
-		expect(after.layers).toEqual({ 'soils.units': 's2', 'trails.paths': 't1' });
+		expect(after.layers).toEqual({
+			'soils.units': build('s2'),
+			'trails.paths': { version: 't1', builtAt: 1_760_000_100, license: 'ODbL', republish: 'yes', credit: '© OpenStreetMap contributors' }
+		});
 		expect(seen.some((t) => t.includes('to_regclass(\'core.layer_version\')'))).toBe(true);
-		expect(seen.find((t) => t.includes('from core.layer_version'))).toContain('distinct on (layer) layer, version from core.layer_version order by layer, id desc');
+		const read = seen.find((t) => t.includes('from core.layer_version'));
+		expect(read).toContain('select distinct on (layer) layer, version,');
+		expect(read).toContain('license, republish, credit from core.layer_version order by layer, id desc');
 		seen.length = 0;
 		const before = await readDatabase(fake(false));
 		expect(before.layers).toEqual({});
 		expect(seen.some((t) => t.includes('from core.layer_version'))).toBe(false);
 		expect(assembleMeta(1, 'ok', before, null).versions.layers).toEqual({});
+		expect(assembleMeta(1, 'ok', before, null).layers).toEqual({});
 	});
 });

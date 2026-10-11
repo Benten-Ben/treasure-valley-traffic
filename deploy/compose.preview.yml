@@ -38,6 +38,7 @@ services:
       HOST_HEADER: x-forwarded-host
       CAMERA_IMAGES_ENABLED: "true"
       TVT_ARCHIVE: /srv/archive
+      TILES_DB_ROLE: tvt_tiles
     volumes:
       - ${FRAMES_DIR:?set FRAMES_DIR in deploy/.env}:/srv/frames
       - ${ARCHIVE_DIR:-/srv/tvt/archive}/cameras/jpeg:/srv/archive/cameras/jpeg:ro

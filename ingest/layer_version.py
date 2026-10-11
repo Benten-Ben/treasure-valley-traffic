@@ -6,13 +6,19 @@ layer's newest version in /api/meta as versions.layers['<plugin>.<layer>'] and c
 per version, so a new row here is what makes viewers fetch new tiles.
 
 A build that changes what a layer's tiles show calls record() **in the same transaction as its
-data**, so the version and the data appear together. record() doesn't commit. A version names
-content: never reuse one for different data (the default is a fresh one per call).
+data**, so the version and the data appear together. record() doesn't commit. A layer with no
+row serves no tiles. Each row records the layer's licence, whether it may be republished and its
+credit (plan C3): the strictest of the inputs this build used, in the manifests' terms (docs/15
+§15.2), spelled as ops.source spells them (license, credit).
+
+A version names one build's data and is never used twice for a layer (the table refuses it): to
+go back to an earlier build's data, rebuild or reload it and take a fresh version (the default).
 
 By hand, after a change made outside a build, and to list the current versions:
 
   python3 -m ingest.layer_version --list
-  python3 -m ingest.layer_version soils.units --licence 'public domain' --republish yes
+  python3 -m ingest.layer_version soils.units --license 'public domain' --republish yes \
+      --credit 'USDA NRCS SSURGO'
 """
 
 import argparse
@@ -32,28 +38,34 @@ def new_version(now=None):
     return f"{now.astimezone(timezone.utc):%Y%m%dT%H%MZ}-{secrets.token_hex(3)}"
 
 
-def check(layer, version, licence, republish, features=None):
-    """Raise ValueError for anything core.layer_version would refuse."""
+def check(layer, version, license, republish, credit, features=None):
+    """Raise ValueError for anything core.layer_version would refuse (a reused version aside)."""
     if not isinstance(layer, str) or not LAYER.fullmatch(layer):
         raise ValueError(f"layer must be '<plugin>.<layer>' in lower-case letters, digits and _: {layer!r}")
     if not isinstance(version, str) or not VERSION.fullmatch(version):
         raise ValueError(f"version must be 1-64 letters, digits, '.', '_' or '-': {version!r}")
-    if not isinstance(licence, str) or not licence.strip():
-        raise ValueError("licence is required (the strictest of the layer's inputs)")
+    if not isinstance(license, str) or not license.strip():
+        raise ValueError("license is required (the strictest of the layer's inputs)")
+    if not isinstance(credit, str) or not credit.strip():
+        raise ValueError("credit is required (every input's credit, as the map shows it)")
     if republish not in REPUBLISH:
         raise ValueError(f"republish must be one of {', '.join(REPUBLISH)}: {republish!r}")
     if features is not None and (not isinstance(features, int) or features < 0):
         raise ValueError(f"features must be a count: {features!r}")
 
 
-def record(conn, layer, *, licence, republish, version=None, build=None, features=None, note=None):
-    """Add a version row for layer ('<plugin>.<layer>') and return the version. Doesn't commit."""
+def record(conn, layer, *, license, republish, credit, version=None, build=None, features=None, note=None):
+    """Add a version row for layer ('<plugin>.<layer>') and return the version. Doesn't commit.
+
+    A version already used for the layer fails (psycopg's UniqueViolation): leave version out
+    for a fresh one.
+    """
     version = version or new_version()
-    check(layer, version, licence, republish, features)
+    check(layer, version, license, republish, credit, features)
     conn.execute(
-        """insert into core.layer_version (layer, version, build, features, licence, republish, note)
-           values (%s, %s, %s, %s, %s, %s, %s)""",
-        (layer, version, build, features, licence, republish, note))
+        """insert into core.layer_version (layer, version, build, features, license, republish, credit, note)
+           values (%s, %s, %s, %s, %s, %s, %s, %s)""",
+        (layer, version, build, features, license, republish, credit, note))
     return version
 
 
@@ -67,21 +79,22 @@ def main(argv=None):
     ap = argparse.ArgumentParser(prog="python3 -m ingest.layer_version", description=__doc__.split("\n")[0])
     ap.add_argument("layer", nargs="?", help="'<plugin>.<layer>' to give a new version")
     ap.add_argument("--list", action="store_true", help="list each layer's current version")
-    ap.add_argument("--licence", help="licence class, the strictest of the layer's inputs")
+    ap.add_argument("--license", help="licence class, the strictest of the layer's inputs")
     ap.add_argument("--republish", choices=REPUBLISH)
-    ap.add_argument("--version", help="the version (default: a fresh one)")
+    ap.add_argument("--credit", help="the credit the map shows while the layer is on")
+    ap.add_argument("--version", help="the version (default: a fresh one; never one the layer has had)")
     ap.add_argument("--note", help="why, for the record")
     args = ap.parse_args(argv)
     if not args.list and not args.layer:
         ap.error("give a layer, or --list")
-    if args.layer and (not args.licence or not args.republish):
-        ap.error("a new version needs --licence and --republish")
+    if args.layer and (not args.license or not args.republish or not args.credit):
+        ap.error("a new version needs --license, --republish and --credit")
 
     from . import db
     with db.connect() as conn:
         if args.layer:
-            v = record(conn, args.layer, licence=args.licence, republish=args.republish, version=args.version,
-                       build="by hand (python3 -m ingest.layer_version)", note=args.note)
+            v = record(conn, args.layer, license=args.license, republish=args.republish, credit=args.credit,
+                       version=args.version, build="by hand (python3 -m ingest.layer_version)", note=args.note)
             conn.commit()
             print(f"{args.layer}: {v}")
         if args.list:

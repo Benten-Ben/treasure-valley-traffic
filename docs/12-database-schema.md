@@ -660,7 +660,10 @@ order); blank periods have no row. Road-weather stations are in
   COMPASS's crash records (`restricted.crash_unit`, coded and coarsened,
   since migration 0012) and, if we ever load it, Ada County Assessor data
   ("do not re-distribute"). It's policy, not a permission boundary yet: the
-  app and ingestors connect as the same role.
+  app and ingestors connect as the same role. The toggled layers' tiles
+  are the exception (landscape sprint, Oct 2026): their cuts read as
+  `tvt_tiles`, which has no access to `restricted` or private plugins'
+  schemas ([deploy/tvt_tiles.sql](../deploy/tvt_tiles.sql)).
 - **No basemap tiles:** those are static PMTiles files built by
   `basemap/`.
 

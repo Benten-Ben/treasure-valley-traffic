@@ -40,11 +40,23 @@ export interface DataVersions {
 	 * Toggled layers' tile versions, `'<plugin>.<layer>'` → version: each
 	 * layer's newest row in `core.layer_version` (migration 0020), for
 	 * `/api/<plugin>/tiles/<layer>/{z}/{x}/{y}?v=` (#lib/contracts/layer-tiles).
-	 * A layer with no build yet isn't listed. Optional (added in the
-	 * landscape sprint, so the contract stays 1): absent from older servers,
-	 * empty before migration 0020 or without the database.
+	 * A layer with no build yet isn't listed (and serves no tiles). Optional
+	 * (added in the landscape sprint, so the contract stays 1): absent from
+	 * older servers, empty before migration 0020 or without the database.
 	 */
 	layers?: Record<string, string>;
+}
+
+/** What a toggled layer's current build recorded beside its version (core.layer_version; plan C3). */
+export interface LayerBuild {
+	/** When the build wrote its row (epoch s). */
+	builtAt: number;
+	/** Licence class: the strictest of the build's inputs ('ODbL', 'public domain', ...). */
+	license: string;
+	/** Whether its tiles may be republished, in the plugin manifests' terms (docs/15 §15.2). */
+	republish: 'yes' | 'aggregates' | 'internal' | 'no';
+	/** The credit to show while the layer is on: its source's MapLibre `attribution`. */
+	credit: string;
 }
 
 export interface DataMeta {
@@ -64,4 +76,11 @@ export interface DataMeta {
 	calibrations: { current: number; latestId: number | null; latestAt: number | null } | null;
 	/** Build dates (YYYY-MM-DD) from /tiles/manifest.json; null when the server can't read it. */
 	tiles: { basemap: string | null; terrain: string | null; imagery: string | null; buildings: string | null } | null;
+	/**
+	 * Toggled layers' current builds, by `'<plugin>.<layer>'` as in
+	 * `versions.layers`: their credit, licence and `republish`, so the credit
+	 * a layer shows is the one its build recorded. Optional, like
+	 * `versions.layers` (the contract stays 1).
+	 */
+	layers?: Record<string, LayerBuild>;
 }

@@ -28,7 +28,7 @@ vi.mock('#lib/server/mvt.js', async (original) => {
 	return {
 		...real,
 		tileLayer: (p?: string, l?: string) => (p && l ? layers.get(`${p}.${l}`) : undefined),
-		tilesDb: () => ({ unsafe: () => (rows.calls++, Promise.resolve([{ mvt: rows.mvt }])) })
+		tilesDb: () => ({ unsafe: () => (rows.calls++, Promise.resolve([{ mvt: rows.mvt, version: versions.layers['soils.units'] }])) })
 	};
 });
 
@@ -56,6 +56,19 @@ describe('GET /api/[plugin]/tiles/[layer]/[z]/[x]/[y]', () => {
 		const old = (await get(tile, '?v=s0')) as Response;
 		expect(old.headers.get('cache-control')).toBe(SHORT_CACHE);
 		expect(rows.calls).toBe(1); // one cut served both
+	});
+
+	it('serves nothing before the layer has a version', async () => {
+		const v = versions.layers['soils.units'];
+		delete versions.layers['soils.units'];
+		try {
+			const res = (await get({ plugin: 'soils', layer: 'units', z: '12', x: '760', y: '1490' })) as Response;
+			expect(res.status).toBe(200);
+			expect(res.headers.get('x-tile-status')).toBe('unversioned');
+			expect(rows.calls).toBe(0);
+		} finally {
+			versions.layers['soils.units'] = v;
+		}
 	});
 
 	it('404s an unknown layer, and a tile outside its zooms or the grid', async () => {

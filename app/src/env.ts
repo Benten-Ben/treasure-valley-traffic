@@ -5,6 +5,17 @@ export const variables = defineEnvVars({
 		description: 'PostgreSQL + PostGIS connection string. Camera features answer 503 without it.',
 		schema: (value) => value || undefined
 	},
+	TILES_DB_ROLE: {
+		description:
+			"The database role toggled layers' tile cuts read as (#lib/server/mvt): the server sets tvt_tiles, which " +
+			'deploy/tvt_tiles.sql grants only core and the tile plugins\' schemas, never restricted or private ones. ' +
+			"Unset: they read as DATABASE_URL's own role (dev and tests), and the app says so once.",
+		schema: (value) => {
+			if (!value) return undefined;
+			if (!/^[a-z_][a-z0-9_]{0,62}$/.test(value)) throw new Error(`TILES_DB_ROLE must be a role name, not '${value}'`);
+			return value;
+		}
+	},
 	FRAMES_DIR: {
 		description: 'Folder where captured camera frames (calibration reference images) are kept.',
 		schema: (value) => value || '../data/frames'

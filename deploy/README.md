@@ -118,6 +118,31 @@ curl -X POST http://localhost:8080/api/views/<id>/frame \
 That call writes: it keeps the view's newest frame as its calibration
 reference in `FRAMES_DIR`, so try it on a view nobody has calibrated.
 
+## Toggled layers' tiles: the tvt_tiles role
+
+The app's tiles for toggled layers (soils, crop fields, trails, ...:
+`/api/<plugin>/tiles/<layer>/…`, `app/src/lib/server/mvt.ts`) go to anyone
+who can open the map, so their cuts read as **`tvt_tiles`**: a role that
+can't log in or write, granted only core and the tile plugins' own schemas,
+never `restricted` or a private plugin's schema (`private_<name>`,
+`city_trees`). The app's tile connections switch to it (`TILES_DB_ROLE` in
+`docker-compose.yml` and `compose.preview.yml`).
+
+[`tvt_tiles.sql`](tvt_tiles.sql) makes the role and its grants. It's
+idempotent; run it as `tvt` once before the first toggled layer goes live,
+and again after migrations that add a plugin schema (a deploy step, beside
+`tvt_build.sql`'s):
+
+```bash
+docker compose exec -T db psql -X -v ON_ERROR_STOP=1 -U tvt -d tvt -f - < tvt_tiles.sql
+```
+
+Until it has run, those tiles answer 500 (the role doesn't exist); a schema
+added since the last run answers empty tiles with `x-tile-status: denied`,
+logged in `docker compose logs app`. To serve tiles from a new plugin's
+schema, add it to the file's `tile_schemas` list; the app's unit tests check
+the list against the registered layers.
+
 ## Loading an OpenStreetMap extract (by hand)
 
 Geofabrik's robots.txt disallows scripted downloads, so OpenStreetMap comes

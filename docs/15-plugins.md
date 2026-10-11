@@ -144,9 +144,15 @@ How the pieces plug in:
   exports its layers' tile definitions from
   `app/src/lib/server/<plugin>/tiles.ts` (the MVT layers, each read from
   one table or view per zoom band), and core's one route serves them at
-  `/api/<plugin>/tiles/<layer>/{z}/{x}/{y}?v=`. Each build that changes a
-  layer adds a row to `core.layer_version` (`ingest/layer_version.py`), in
-  the same transaction as its data; that row's version is the layer's `?v=`.
+  `/api/<plugin>/tiles/<layer>/{z}/{x}/{y}?v=`. They read only the
+  plugin's own schema and core, never `restricted` or a private plugin's
+  schema: the definitions are checked for it, and on the server the cuts
+  read as a role granted nothing else
+  ([deploy/tvt_tiles.sql](../deploy/tvt_tiles.sql)). Each build that
+  changes a layer adds a row to `core.layer_version`
+  (`ingest/layer_version.py`), in the same transaction as its data, with
+  the layer's license, `republish` and credit; that row's version is the
+  layer's `?v=`, and a layer with no row serves no tiles.
 
 ## 15.3 Private plugins
 

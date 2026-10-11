@@ -7,9 +7,10 @@ import { dataMeta } from '#lib/server/versions.js';
  * layer a plugin defines in `#lib/server/<plugin>/tiles.ts`. Cut by PostGIS on
  * the tile pool, gzipped once and kept per version in the shared LRU.
  * Immutable for the current `?v=` (/api/meta's `versions.layers`), else
- * `max-age=60`; an empty tile with a short cache on a timeout or before the
- * plugin's migration. Static routes (`/api/tiles/roads`, `/api/trees/...`)
- * take precedence over this one.
+ * `max-age=60`; an empty tile with a short cache on a timeout, before the
+ * plugin's migration, when the tile role may not read a table, or before
+ * the layer's first build (no version, so no licence on record). Static
+ * routes (`/api/tiles/roads`, `/api/trees/...`) take precedence over this one.
  */
 const tiles = layerTileServer({
 	version: async (id) => (await dataMeta()).versions.layers?.[id] ?? null,
