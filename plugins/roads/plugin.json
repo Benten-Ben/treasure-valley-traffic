@@ -33,13 +33,17 @@
     "roads.osm_street", "roads.osm_paving", "roads.osm_parking", "roads.osm_walk_node", "roads.developed_build",
     "roads.developed_land",
     "roads.bike_facility", "roads.bike_facility_note", "roads.bike_facility_match", "roads.bike_facility_side",
-    "roads.segment_bike_xsection"
+    "roads.segment_bike_xsection",
+    "roads.build", "roads.piece", "roads.xsection", "roads.junction", "roads.surface", "roads.edge", "roads.marking",
+    "roads.arrow", "roads.review"
   ],
   "commands": [
     {"name": "segment-match", "module": "ingest.segment_match",
      "help": "rematch the lane sources, OpenStreetMap and the bike network to ACHD's segments by hand [names...]"},
     {"name": "roads-developed-load", "module": "ingest.developed",
-     "help": "load developed land made in the worker image from the CDL (--build DIR) and measure the paving again"}
+     "help": "load developed land made in the worker image from the CDL (--build DIR) and measure the paving again"},
+    {"name": "roads-build", "module": "ingest.build",
+     "help": "build the real-width roads (pieces, cross-sections, surfaces, junctions, markings) from OpenStreetMap and the lane and width sources [--dry-run] [--calibrate]"}
   ],
   "osm_consumers": [
     {"source": "osm_valley",
