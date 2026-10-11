@@ -153,6 +153,18 @@ How the pieces plug in:
   (`ingest/layer_version.py`), in the same transaction as its data, with
   the layer's license, `republish` and credit; that row's version is the
   layer's `?v=`, and a layer with no row serves no tiles.
+- **Builds and their marks** (landscape sprint, Oct 2026): a plugin's
+  builds (`roads-build`, `water-build`, `trails-match`, its exports) never
+  run inside `ingest serve`, which only collects. A source whose new data
+  a build should take in marks the build, in the same transaction as its
+  data (`builds.mark(conn, "roads-build", by=..., reason=...)`), and the
+  build runs by hand, under the VM's `heavy` when it's heavy, inside
+  `builds.Run` (`ingest/builds.py`): it logs its run in `ops.build_run`,
+  clears the marks it saw when it started once it succeeds, and may mark
+  the builds that follow it (`then=["landscape-bake"]`). `ops.build_status`
+  shows each build's age and marks, and `ops.source_status` each scheduled
+  source's last good fetch against its schedule (migration 0021);
+  `/api/meta` and the VM's `bin/status` report both.
 
 ## 15.3 Private plugins
 

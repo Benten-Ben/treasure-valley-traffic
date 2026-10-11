@@ -102,6 +102,20 @@ create table ops.fetch (
   `schedule`. A check constraint enforces the project rule in the
   database itself.
 - `ops.schema_migration` records which migration files have run.
+- **Builds and staleness** (migration 0021, landscape sprint M1). Builds
+  (`roads-build`, `water-build`, the base bake, ...) never run inside the
+  scheduled collector loop. `ops.build_run` logs each build run as
+  `ops.fetch` logs fetches (started, finished, ok, a note, the error, and
+  `covers`: the marks pending when it started). `ops.build_pending` holds
+  one row per build and marker (a source, a command, or `by hand: <who>`)
+  saying a build is out of date; marking again counts up, and a run that
+  succeeds deletes the rows it covered, so a mark made while it ran stays
+  for the next one (`ingest/builds.py`). Two views judge them:
+  `ops.source_status` (each scheduled source's last good fetch against its
+  schedule: fresh until a schedule plus a grace of a quarter of it, at
+  least 15 min; late for two more schedules; then stale; never without a
+  good fetch; with the failed attempts since) and `ops.build_status` (each
+  build: running, pending, failed or built, its age and its marks).
 
 ## 12.4 `raw`: every version of every record
 

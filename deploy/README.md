@@ -157,12 +157,12 @@ registered layers.
 
 ## Heavy jobs and worker tests on the VM
 
-Two small tools from [`bin/`](bin), installed in `/srv/tvt/work/bin` on the
+Three small tools from [`bin/`](bin), installed in `/srv/tvt/work/bin` on the
 VM (Python 3, standard library; tests in [`tests/`](tests), run on the VM
 with `python3 -m unittest discover -s deploy/tests`). After a change, copy
 them in by rename, so a job already running keeps its copy:
 `install -m 755 deploy/bin/heavy /srv/tvt/work/bin/.heavy.new && mv -f /srv/tvt/work/bin/.heavy.new /srv/tvt/work/bin/heavy`
-(the same for `worker-test`).
+(the same for `worker-test` and `status`).
 
 **`heavy`** runs a heavy job: a worker container over 1 GB or 1 CPU, any
 production load, an image build, a `pg_dump`, a tile, imagery or lidar
@@ -237,6 +237,24 @@ hour, but at most two at once: a third waits for a slot.
 
 ```bash
 /srv/tvt/work/bin/worker-test -C <checkout on the VM> discover -s basemap/ground -t .
+```
+
+**`status`** is the VM at a glance, which the lead runs at the start of each
+session: free disk against `heavy`'s start and floor, the cold drive,
+`heavy.lock`'s holder and how long it has held it, last night's camera
+roll-up (going or finished, and the day's videos made, failed or missing),
+a planned restart, and from the database the scheduled sources by state
+(`ops.source_status`) and the builds that are marked, running or failed
+(`ops.build_status`, migration 0021). It reads `heavy`'s rules from the
+`heavy` beside it, and the database read-only (psql in its container, as
+its owner, with a 10 s statement timeout); keys and passwords in errors are
+hidden. A line that needs a look starts with `!`, and it exits 1 if any
+does.
+
+```bash
+/srv/tvt/work/bin/status                                   # production (tvt-db-1, database tvt)
+/srv/tvt/work/bin/status --db-container tvt-scratch-db --db tvt_s1   # a scratch copy
+/srv/tvt/work/bin/status --no-db
 ```
 
 The job table (each job's caps and window this sprint) and the work area's

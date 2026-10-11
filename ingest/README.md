@@ -12,9 +12,10 @@ layers (`arcgis.py`) and COMPASS's layers (`compass_layer.py`), the UTM
 projection (`utm.py`), the line matcher that places one network's lines on
 another (`linematch.py`; roads uses it, trails will), the rules-by-date
 evaluator for seasons, closures and other recurring rules (`seasons.py`),
-and the plugin loader (`manifest.py` reads and orders
-the manifests; `sources/__init__.py` builds `SOURCES`, `STREAMS` and the
-plugin commands from them). Each subject's sources live in its plugin,
+build marks and build runs (`builds.py`, [below](#builds-marked-by-sources-run-by-hand)),
+and the plugin loader (`manifest.py` reads and orders the manifests;
+`sources/__init__.py` builds `SOURCES`, `STREAMS` and the plugin commands
+from them). Each subject's sources live in its plugin,
 `plugins/<name>/`, with a `plugin.json` (sources, licenses, whether we may
 republish, tables, commands), a README, its migrations and its tests. Source
 names didn't change, so `ops.source` and `ops.fetch` carry on:
@@ -93,6 +94,40 @@ python3 -m unittest discover -s plugins -t .                            # the pl
 
 Each run logs to `ops.fetch`. Records are versioned in `raw.record`, so a
 re-run that finds nothing new adds nothing.
+
+### Builds: marked by sources, run by hand
+
+Builds (`roads-build`, `water-build`, `trails-match`, the exports, the
+base bake) never run inside `ingest serve` (plan §0 item 27): `builds.Run`
+refuses there. A source whose new data a build should take in marks the
+build in the same transaction as its data, and the build, run by hand
+(under the VM's `heavy` when it's heavy), clears the marks it saw when it
+started once it succeeds (migration 0021, `builds.py`):
+
+```python
+from ingest import builds
+builds.mark(conn, "roads-build", by="osm_street", reason="new extract 2026-10-12")   # doesn't commit
+with builds.Run(conn, "roads-build", then=["landscape-bake"]) as run:   # one run at a time per database
+    ...                                    # the build; run.note = "41,203 pieces"
+```
+
+A build is named by the command that runs it (or, for a worker step, its
+job), in lower-case letters, digits, `.`, `_` and `-`. A run that fails
+clears nothing and logs its error; one stopped by SIGTERM (heavy's
+deadline) is logged as stopped.
+
+```bash
+python3 -m ingest.builds                                   # each build: state, marks, age
+python3 -m ingest.builds mark roads-build --by 'by hand: lead' --reason 'ACHD widths fixed'
+python3 -m ingest.builds run trails-match --then landscape-bake -- python3 -m ingest trails-match
+python3 -m ingest.builds start landscape-bake              # a worker step can't reach the database:
+python3 -m ingest.builds finish <id> --ok --note 'landscape-3fa9c1.pmtiles'   # log its run around it
+python3 -m ingest.builds done roads-build --note 'built by hand'   # clears what's marked now
+```
+
+`ops.build_status` shows each build's state and age, and
+`ops.source_status` each scheduled source's last good fetch against its
+schedule. `/api/meta`'s `status` and the VM's `bin/status` report both.
 
 Rules carried over from the prototype, which all ingestors must follow:
 
