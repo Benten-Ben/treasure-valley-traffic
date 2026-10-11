@@ -276,10 +276,11 @@ python basemap/ground/mask.py build --roofs <a copy of the map's buildings.pmtil
 python basemap/ground/mask.py build --roofs ... --box d --archive /tmp/a              # one box, for a quick look
 ```
 
-It's a light worker job (1 GB, 1 CPU). Valley-wide on Oct 11 it took **11 minutes at 474 MB at its peak**: reading
-the cut took 3.5 minutes, the roofs 3 and dissolving `covered` 4. It's **354 MB on disk**. Run it through the scratch
-wrapper, with the roofs' folder mounted (`--mount <folder>:/mnt/in`; the map's tiles folder can't be mounted, so copy `buildings.pmtiles` and the
-tiles manifest's `buildings` entry, as `buildings.json`, into a work folder first).
+It's a light worker job (1 GB, 1 CPU). Valley-wide on Oct 11 it took **about 11 minutes, peaking at 474 MB**:
+reading the cut took about 3.5 minutes, the roofs 3 and dissolving `covered` 4. It's **354 MB on disk**. Run it
+through the scratch wrapper with the roofs' folder mounted (`--mount <folder>:/mnt/in:ro`). The map's tiles folder
+can't be mounted, so first copy `buildings.pmtiles`, and the tiles manifest's `buildings` entry as `buildings.json`,
+into a work folder.
 
 | Input | Read from | What's taken |
 |---|---|---|
