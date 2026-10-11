@@ -35,7 +35,10 @@ TRUNK_H_CELLS, TRUNK_REACH_CELLS = 3, 5   # crown top within 1.5 m of the trunk 
 # The narrow rule (docs/19 §19.3), from the owner's 100 labelled trees (Oct 8): a narrow crown falls 45% of its height
 # within 3 m of its top, but not all the way to the ground (a crown that ends within 3 m is too small for the cue to
 # tell), from an even top (where the heights within 1 m of the top vary by a fifth of its height, the top is a broken
-# crown edge or sits between crowns, and the fall measured from it isn't the crown's shape).
+# crown edge or sits between crowns, and the fall measured from it isn't the crown's shape). Only where a typical
+# broadleaf crown as tall reaches 3 m out (about 8.3 m tall): below that, what lies 3 m out is the neighbourhood, not
+# the crown, and the tree stays broadleaf.
+NARROW_REACH_M = 3.0
 NARROW_DROP_3M = (0.45, 0.95)
 NARROW_ROUGH_MAX = 0.2
 
@@ -88,13 +91,20 @@ def crown_profile(h, y, x, reach):
     return out
 
 
-def narrow_rule(p):
-    """True when a crown's profile (crown_profile) says narrow: it falls 45% of its height within 3 m of its top, still
-    stands above the ground there, and its top is even. Scored on the owner's 100 labelled trees (docs/19 §19.3)."""
+def narrow_min_top(model):
+    """The height (m) from which a typical broadleaf crown reaches NARROW_REACH_M out, where the 3 m fall can tell."""
+    a, b = model.widths["broadleaf"]
+    return (2 * NARROW_REACH_M / a) ** (1 / b)
+
+
+def narrow_rule(p, model):
+    """True when a crown's profile (crown_profile) says narrow: its top is tall enough for the cue (narrow_min_top), it
+    falls 45% of its height within 3 m of the top but still stands above the ground there, and the top is even. Scored
+    on the owner's 100 labelled trees (docs/19 §19.3)."""
     if p is None:
         return False
     lo, hi = NARROW_DROP_3M
-    return lo <= p["drop_3m"] < hi and p["rough"] < NARROW_ROUGH_MAX
+    return p["top_m"] >= narrow_min_top(model) and lo <= p["drop_3m"] < hi and p["rough"] < NARROW_ROUGH_MAX
 
 
 def type_placed(h, t, model):
@@ -103,7 +113,7 @@ def type_placed(h, t, model):
     narrow and conifer crowns on broadleaf trees). Conifers come from a catalogue's genus for now (spring Sentinel-2
     next, docs/19 §19.3). The fit keeps the curve and the profile; its width is compared with the type's typical one."""
     prof = crown_profile(h, t["y"], t["x"], 0.6 * t["R"])
-    typ = "narrow" if narrow_rule(prof) else "broadleaf"
+    typ = "narrow" if narrow_rule(prof, model) else "broadleaf"
     z = math.log(t["R"] / model.radius_cells(t["H"], typ)) / model.sd
     crowded = t["a"] < 0.6 if t["type"] == "broadleaf" else t["a"] < 0.8      # the curve's crowded top shape
     return typ, {"width_vs_typical_sd": round(z, 2), "crowded": crowded, "width_curve": t["type"], "profile": prof}
@@ -275,7 +285,8 @@ def main(argv=None):
              "finished_at": dt.datetime.now(dt.timezone.utc).isoformat(),
              "params": {"theta": a.theta, "lam": a.lam, "sweeps": a.sweeps, "lidar": a.lidar, "lidar_date": a.lidar_date,
                         "window": a.window, "model": cm["source"][:200],
-                        "narrow_rule": {"drop_3m": list(NARROW_DROP_3M), "rough_max": NARROW_ROUGH_MAX}},
+                        "narrow_rule": {"drop_3m": list(NARROW_DROP_3M), "rough_max": NARROW_ROUGH_MAX,
+                                        "min_top_m": round(narrow_min_top(model), 2)}},
              "counts": {"trees": len(out_trees), "catalogued": n_cat, "estimated": n_est, "placed": n_placed,
                         "types": {k: sum(1 for tr in out_trees if tr["type"] == k) for k in ("broadleaf", "conifer", "narrow")},
                         "surface_mae_m": round(float(err.mean()), 3) if err.size else None,

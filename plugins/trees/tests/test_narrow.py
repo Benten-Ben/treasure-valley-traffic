@@ -31,6 +31,12 @@ def dome(shape, cy, cx, H, R_m, a=0.774, n=1.643):
     return np.where(d <= 1, H * (1 - a * np.minimum(d, 1) ** n), 0.0)
 
 
+def model():
+    import build
+    with open(os.path.join(os.path.dirname(HERE), "model", "crown_model.json")) as f:
+        return build.model_for(json.load(f))
+
+
 @unittest.skipIf(np is None, "NumPy/SciPy/rasterio not installed (run in the worker image)")
 class ProfileTest(unittest.TestCase):
     def test_a_cone_falls_by_distance_over_radius(self):
@@ -53,31 +59,38 @@ class ProfileTest(unittest.TestCase):
         h = cone((80, 80), 3, 40, 12.0, 5.0)
         self.assertIsNone(build.crown_profile(h, 3, 40, 2))            # the 3 m ring runs off the top edge
         self.assertIsNone(build.crown_profile(h, -5, 40, 2))
-        self.assertFalse(build.narrow_rule(None))
+        self.assertFalse(build.narrow_rule(None, model()))
 
 
 @unittest.skipIf(np is None, "NumPy/SciPy/rasterio not installed (run in the worker image)")
 class NarrowRuleTest(unittest.TestCase):
+    def setUp(self):
+        self.model = model()
+
     def p(self, h, y=40, x=40):
         import build
         return build.crown_profile(h, y, x, 2)
 
+    def narrow(self, p):
+        import build
+        return build.narrow_rule(p, self.model)
+
     def test_a_crown_that_falls_fast_is_narrow(self):
         import build
         p = self.p(cone((80, 80), 40, 40, 14.0, 5.0))              # falls 60% within 3 m
-        self.assertTrue(build.narrow_rule(p), p)
+        self.assertTrue(self.narrow(p), p)
 
     def test_a_broad_dome_is_not(self):
         import build
         p = self.p(dome((80, 80), 40, 40, 15.0, 6.0))              # a lone broadleaf crown: falls about 25% within 3 m
         self.assertLess(p["drop_3m"], 0.45)
-        self.assertFalse(build.narrow_rule(p))
+        self.assertFalse(self.narrow(p))
 
     def test_a_crown_that_ends_within_3_m_is_too_small_to_tell(self):
         import build
         p = self.p(dome((80, 80), 40, 40, 9.0, 2.5))               # the ground 3 m out in every direction
         self.assertGreaterEqual(p["drop_3m"], 0.95)
-        self.assertFalse(build.narrow_rule(p))
+        self.assertFalse(self.narrow(p))
 
     def test_an_uneven_top_is_not(self):
         import build
@@ -86,24 +99,35 @@ class NarrowRuleTest(unittest.TestCase):
         h[(xx > 40) & (np.abs(yy - 40) <= 2)] *= 0.4               # one side of the top broken away
         p = self.p(h)
         self.assertGreaterEqual(p["rough"], 0.2)
-        self.assertFalse(build.narrow_rule(p))
+        self.assertFalse(self.narrow(p))
+
+    def test_a_short_crown_is_too_small_to_tell(self):
+        # 6 m tall: a typical broadleaf crown that tall ends before 3 m, so what lies 3 m out isn't the crown
+        p = self.p(cone((80, 80), 40, 40, 6.0, 5.0))
+        self.assertTrue(0.45 <= p["drop_3m"] < 0.95 and p["rough"] < 0.2, p)
+        self.assertFalse(self.narrow(p))
+
+    def test_the_cue_starts_where_a_broadleaf_crown_reaches_3_m(self):
+        import build
+        top = build.narrow_min_top(self.model)
+        self.assertAlmostEqual(top, 8.3, delta=0.1)                 # valley broadleaf width 0.75 x H^0.981 = 6 m
+        self.assertAlmostEqual(self.model.radius_cells(top, "broadleaf") * 0.5, build.NARROW_REACH_M, places=6)
 
     def test_the_rule_matches_its_constants(self):
         import build
         lo, hi = build.NARROW_DROP_3M
-        ok = {"drop_3m": lo, "rough": 0.0}
-        self.assertTrue(build.narrow_rule(ok))
-        self.assertFalse(build.narrow_rule(dict(ok, drop_3m=lo - 0.01)))
-        self.assertFalse(build.narrow_rule(dict(ok, drop_3m=hi)))
-        self.assertFalse(build.narrow_rule(dict(ok, rough=build.NARROW_ROUGH_MAX)))
+        ok = {"top_m": build.narrow_min_top(self.model), "drop_3m": lo, "rough": 0.0}
+        self.assertTrue(self.narrow(ok))
+        self.assertFalse(self.narrow(dict(ok, top_m=ok["top_m"] - 0.01)))
+        self.assertFalse(self.narrow(dict(ok, drop_3m=lo - 0.01)))
+        self.assertFalse(self.narrow(dict(ok, drop_3m=hi)))
+        self.assertFalse(self.narrow(dict(ok, rough=build.NARROW_ROUGH_MAX)))
 
 
 @unittest.skipIf(np is None, "NumPy/SciPy/rasterio not installed (run in the worker image)")
 class TypePlacedTest(unittest.TestCase):
     def setUp(self):
-        import build
-        with open(os.path.join(os.path.dirname(HERE), "model", "crown_model.json")) as f:
-            self.model = build.model_for(json.load(f))
+        self.model = model()
 
     def tree(self, H, R_m, width_curve, a=0.952, n=2.089):
         return {"y": 40.0, "x": 40.0, "H": H, "R": R_m / 0.5, "type": width_curve, "a": a, "n": n}
@@ -168,7 +192,8 @@ class BuildTest(unittest.TestCase):
         self.assertNotIn("conifer", {t["type"] for t in trees})
         for t in trees:
             self.assertIn(t["fit"]["width_curve"], ("broadleaf", "conifer", "narrow"))
-        self.assertEqual(bj["params"]["narrow_rule"], {"drop_3m": list(build.NARROW_DROP_3M), "rough_max": build.NARROW_ROUGH_MAX})
+        self.assertEqual(bj["params"]["narrow_rule"], {"drop_3m": list(build.NARROW_DROP_3M), "rough_max": build.NARROW_ROUGH_MAX,
+                                                       "min_top_m": round(build.narrow_min_top(model()), 2)})
         self.assertEqual(sum(bj["counts"]["types"].values()), len(trees))
         self.assertEqual(bj["counts"]["types"]["conifer"], 0)
 

@@ -44,8 +44,12 @@ How wide a crown can be for its height and type, and the shape of its top.
   also has a crowded shape whose edge stays at about 55% (broadleaf) or 30%
   (narrow) of the height. The shape doesn't change with height (checked by
   height class).
-- **Type:** width for height is the one cue that separates narrow from wide
-  crowns here; the photo's near-infrared and the top's shape didn't (Oct 8).
+- **Type:** on lone trees, width for height separates narrow from wide
+  crowns; the photo's near-infrared and the fitted dome's shape didn't
+  (Oct 8). Among other trees it doesn't: neighbours squeeze crowns, and the
+  width fit's narrow and conifer calls fell mostly on broadleaf trees. So a
+  placed tree's type comes from how fast its crown falls away from its top
+  (the narrow rule, §19.3), and the width curve only sizes and shapes it.
   In the mountains, narrow means conifer. In the valley it is its own type
   ("narrow": spruce, young street trees, poplars) unless a catalogue says
   otherwise. Only about 1% of the North End's street trees are conifers.
@@ -88,8 +92,8 @@ rebuilt by hand when the owner picks more trees.
 trees (§19.7).
 
 **One rule everywhere, checked by the owner (Oct 8).** Every tree tries the
-three types (broadleaf, conifer, narrow), each with its own width curve,
-and keeps the best fit; there is no switch by area. The owner typed 100
+three width curves (broadleaf, conifer, narrow) and keeps the best fit;
+there is no switch by area. The owner typed 100
 larger trees from eight test areas (from 50 m views of the photo, the lidar
 heights and a height profile): 46 broadleaf, 20 conifer, 8 narrow, 20 part
 of a bigger tree and 6 not a tree. What that showed:
@@ -99,10 +103,27 @@ of a bigger tree and 6 not a tree. What that showed:
   city street trees (78% within 3 m); 80 removes more fakes but a third of
   all trees, mostly small ones no test covers yet.
 - **Narrow trees** fall away fast: a crown that drops 45% of its height
-  within 3 m of its top caught all 8 (and 12 of 66 others; to tighten).
-- **Conifers have no cue yet.** The crown-width fit calls them broadleaf,
-  and the photo's darkness only looked like a cue because the forest
-  area's photo is darker. A spring Sentinel-2 image (evergreens green while
+  within 3 m of its top caught all 8 (and 12 of 66 others).
+- **The narrow rule, tightened (Oct 11).** A placed tree is narrow when
+  its crown falls 45% of its height within 3 m of its top but stops short
+  of the ground there (under 95%: a crown that ends within 3 m is too
+  small for the cue), from an even top (the heights within 1 m of it vary
+  by under a fifth of its height; a broken crown edge or a top between
+  crowns overstates the fall), and only where a typical broadleaf crown
+  as tall reaches 3 m out (about 8.3 m; below that, what lies 3 m out is
+  the neighbourhood, not the crown). Every other placed tree is broadleaf:
+  the width curve still sizes and shapes the crown, but it isn't a cue to
+  the type. Rebuilt on the eight labelled areas' central 500 m (the
+  placement itself unchanged: the same 10,992 trees), the rule calls 7 of
+  the 8 narrow trees narrow and 2 of the 65 others (one broadleaf, one
+  conifer), where the width fit called 2 and 21. It types 51 of the 73
+  real trees the build finds rightly (the width fit: 35), and 6% of all
+  the trees come out narrow. Trees under 8.3 m have no labels yet.
+- **Conifers have no cue yet.** The crown-width fit calls them broadleaf
+  (of the 14 labelled trees it called conifer, one was), and the
+  photo's darkness only looked like a cue because the forest area's photo
+  is darker. So placed trees aren't called conifer; only a catalogue's
+  genus says so. A spring Sentinel-2 image (evergreens green while
   broadleaf trees are bare) is the next thing to try.
 
 ## 19.4 Data
@@ -113,7 +134,8 @@ lidar-derived data:
 - `trees.tree`: one row per tree: area, kind, type, point (the crown
   centre), ground elevation, height, crown radius, crown shape, the lidar
   it came from, the catalogue and catalogue id if any, the fit (how well it
-  explains the surface, or how far it sits from its trunk point), and the
+  explains the surface, the width curve that sized it and how its crown
+  falls from its top, or how far it sits from its trunk point), and the
   build it came from.
 - `trees.tree_log`: what we know about each tree over time, one entry per
   event: measured by the 2023 lidar, matched to the catalogue, placed with
