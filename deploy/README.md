@@ -399,10 +399,11 @@ reads through the links again.
 1. Make the camera folder on the drive, owned by uid 1000 and writable by the
    lead's group (setgid): `sudo install -d -o 1000 -g <group> -m 2775
    <COLD_CAMERAS>`. Add `COLD_CAMERAS=<that folder>` to `heavy.conf`.
-2. Add `COLD_MOUNT=<mount point>` to `deploy/.env`, add `compose.cold.yml` to
-   `COMPOSE_FILE`, and once neither capture service is rolling up:
-   `docker compose up -d --build cameras regional web` from `deploy/` (the new
-   index code, and the mount). Check that each sees the drive:
+2. Add `COLD_MOUNT=<mount point>` to `deploy/.env` and `compose.cold.yml` to
+   `COMPOSE_FILE`. Once neither capture service is rolling up, from `deploy/`:
+   build the capture image (the new index code) under `heavy`, as image builds
+   are, with `docker compose build cameras regional`, then `docker compose up
+   -d cameras regional web` (the mount). Check that each sees the drive:
    `docker compose exec web ls <COLD_CAMERAS>` (and `cameras`, `regional`).
 3. Install the tool beside `heavy`, by rename (as for `heavy`, above):
    `install -m 755 deploy/bin/cold-videos /srv/tvt/work/bin/.cold-videos.new && mv -f /srv/tvt/work/bin/.cold-videos.new /srv/tvt/work/bin/cold-videos`.
