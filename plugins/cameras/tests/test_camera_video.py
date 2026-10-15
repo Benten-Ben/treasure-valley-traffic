@@ -163,6 +163,58 @@ class FrameStoreTest(unittest.TestCase):
         with open(os.path.join(self.root, "cameras", "video", "index-key_cameras.json")) as f:
             self.assertEqual(json.load(f)["cameras"][0]["days"][0]["frames"], 3)
 
+    def _move_to_cold(self, cold, cam, day):
+        """What deploy/bin/cold-videos does to a day: its files to the cold folder, links in their place."""
+        for path in (cv.video_path(self.root, cam, day), cv.video_path(self.root, cam, day)[:-4] + ".csv"):
+            rel = os.path.relpath(path, os.path.join(self.root, "cameras"))
+            os.makedirs(os.path.dirname(os.path.join(cold, rel)), exist_ok=True)
+            shutil.move(path, os.path.join(cold, rel))
+            os.symlink(os.path.join(cold, rel), path)
+
+    def test_days_on_the_cold_drive_stay_in_the_library_and_count_as_done(self):
+        cold = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, cold, True)
+        days = (date(2026, 10, 1), date(2026, 10, 9))
+        for d in days:
+            video = cv.video_path(self.root, "656", d)
+            os.makedirs(os.path.dirname(video), exist_ok=True)
+            with open(video, "wb") as f:
+                f.write(b"x" * 100)
+            with open(video[:-4] + ".csv", "w") as f:
+                f.write("video_s,kind,fetched_at,local_time,file,bytes,sha256\n"
+                        f"60.000,frame,2026-10-0{d.day}T07:00:00Z,{d}T01:00:00-06:00,a.jpg,1,x\n")
+        cams = [(656, "Eagle & Fairview")]
+        index = os.path.join(self.root, "cameras", "video", "index-key_cameras.json")
+        cv.write_index(self.root, cams, "key_cameras", "Key cameras")
+        self._move_to_cold(cold, "656", days[0])
+        cv.write_index(self.root, cams, "key_cameras", "Key cameras")
+        with open(index) as f:
+            moved, kept = json.load(f)["cameras"][0]["days"]
+        self.assertEqual((moved["day"], moved["bytes"], moved["frames"], moved.get("cold")), ("2026-10-01", 100, 1, True))
+        self.assertNotIn("cold", kept)
+
+        # A JPEG folder left for a moved day: the roll-up counts the link as its video.
+        frames.save(self.root, 656, fake_jpeg(), datetime(2026, 10, 1, 18, tzinfo=UTC), "x")
+        self.assertEqual(cv.pending(self.root, date(2026, 10, 12)), [])
+        self.assertEqual(cv.encode(self.root, "656", days[0]), {"skipped": "video exists"})
+
+        # The drive goes away: the index is still written, the moved day kept with its summary.
+        shutil.rmtree(cold)
+        self.assertEqual(cv.write_index(self.root, cams, "key_cameras", "Key cameras"), 2)
+        with open(index) as f:
+            moved = json.load(f)["cameras"][0]["days"][0]
+        self.assertEqual((moved["frames"], moved.get("cold")), (1, True))
+        self.assertEqual(cv.pending(self.root, date(2026, 10, 12)), [])
+        self.assertEqual(cv.prune(self.root, date(2026, 10, 12), 2), [("656", date(2026, 10, 1))])
+
+        # And with no summary to keep (the index lost meanwhile), a bare entry still lists the day.
+        os.remove(index)
+        cv.write_index(self.root, cams, "key_cameras", "Key cameras")
+        with open(index) as f:
+            moved = json.load(f)["cameras"][0]["days"][0]
+        self.assertEqual(moved, {"day": "2026-10-01", "video": "656/2026/656-2026-10-01.mp4",
+                                 "csv": "656/2026/656-2026-10-01.csv", "cold": True})
+
     def test_rollup_due_after_five_past_midnight(self):
         at = lambda h, m: datetime(2026, 10, 6, h, m, tzinfo=cv.TZ)
         self.assertFalse(frames.rollup_due(at(0, 4)))

@@ -22,6 +22,10 @@ Layout under TVT_ARCHIVE:
     cameras/jpeg/<image_id>/<YYYY-MM-DD>/<UTC time>.jpg and index.csv
     cameras/video/<image_id>/<YYYY>/<image_id>-<YYYY-MM-DD>.mp4 and .csv
     cameras/video/index-<list>.json
+
+Days older than a week move to the cold drive (deploy/bin/cold-videos, on the VM): each file is
+then a symlink to its copy there, so a video "exists" if its path does, link or file
+(os.path.lexists), even while the drive can't be reached.
 """
 
 import argparse
@@ -192,14 +196,14 @@ def encode(root, cam, day, force=False):
     src = jpeg_dir(root, cam, day)
     out = video_path(root, cam, day)
     legacy = legacy_path(root, cam, day)
-    if os.path.exists(legacy) and not os.path.exists(out) and not force:
+    if os.path.exists(legacy) and not os.path.lexists(out) and not force:
         frames = remux(legacy, out)
         os.remove(legacy)
         return {"remuxed": frames, "video_bytes": os.path.getsize(out)}
     index = os.path.join(src, INDEX)
     if not os.path.exists(index):
         return None
-    if os.path.exists(out) and not force:
+    if os.path.lexists(out) and not force:             # a file, or a link to its copy on the cold drive
         return {"skipped": "video exists"}
     rows = [r for r in read_index(index) if os.path.exists(os.path.join(src, r["file"]))]
     if not rows:
@@ -284,10 +288,10 @@ def _legacy_days(root, cams=None):
 
 def pending(root, today, cams=None):
     """(camera, day) pairs before today with JPEGs or an old MKV but no MP4 yet
-    (and no recorded failure)."""
+    (and no recorded failure). An MP4 moved to the cold drive is a link, and counts."""
     days = sorted(set(_days(root, cams)) | set(_legacy_days(root, cams)))
     return [(cam, day) for cam, day in days
-            if day < today and not os.path.exists(video_path(root, cam, day))
+            if day < today and not os.path.lexists(video_path(root, cam, day))
             and not os.path.exists(failed_path(root, cam, day))]
 
 
@@ -391,7 +395,7 @@ def prune(root, today, keep_days, cams=None):
     """Delete JPEG day folders older than keep_days whose video is done."""
     removed = []
     for cam, day in list(_days(root, cams)):
-        if day <= today - timedelta(days=keep_days) and os.path.exists(video_path(root, cam, day)):
+        if day <= today - timedelta(days=keep_days) and os.path.lexists(video_path(root, cam, day)):
             shutil.rmtree(jpeg_dir(root, cam, day))
             removed.append((cam, day))
     return removed
@@ -412,6 +416,9 @@ def write_index(root, cams, name, title):
     """Write cameras/video/index-<name>.json for the video library: this list's cameras
     and, for each, every finished day (video and CSV paths relative to cameras/video,
     sizes, frame counts, first and last frame). Days already summarized are reused.
+    A day moved to the cold drive (its video is a symlink) is marked "cold": true; while the
+    drive can't be reached, its last summary is kept, or a bare entry if it has none, so the
+    library can say it isn't available right now.
     cams: [(image_id, camera name)]. Returns the number of days listed."""
     base = os.path.join(root, "cameras", "video")
     path = os.path.join(base, f"index-{name}.json")
@@ -432,17 +439,29 @@ def write_index(root, cams, name, title):
                 if not fname.endswith(".mp4"):
                     continue
                 rel = f"{cam}/{year}/{fname}"
-                size = os.path.getsize(os.path.join(base, rel))
-                old = known.get(rel)
-                if old and old.get("bytes") == size:
-                    days.append(old)
-                    continue
                 csv_rel = rel[:-4] + ".csv"
+                cold = os.path.islink(os.path.join(base, rel))
                 try:
-                    summary = _day_summary(os.path.join(base, csv_rel))
-                except (OSError, KeyError, ValueError):
-                    summary = {}
-                days.append({"day": fname[len(str(cam)) + 1:-4], "video": rel, "csv": csv_rel, "bytes": size, **summary})
+                    size = os.path.getsize(os.path.join(base, rel))
+                except OSError:                              # a moved day while the cold drive is away
+                    size = None
+                old = known.get(rel)
+                if old and (size is None or old.get("bytes") == size):
+                    entry = dict(old)
+                elif size is not None:
+                    try:
+                        summary = _day_summary(os.path.join(base, csv_rel))
+                    except (OSError, KeyError, ValueError):
+                        summary = {}
+                    entry = {"day": fname[len(str(cam)) + 1:-4], "video": rel, "csv": csv_rel, "bytes": size, **summary}
+                elif cold:
+                    entry = {"day": fname[len(str(cam)) + 1:-4], "video": rel, "csv": csv_rel}
+                else:
+                    continue                                 # gone since it was listed
+                entry.pop("cold", None)
+                if cold:
+                    entry["cold"] = True
+                days.append(entry)
         total += len(days)
         cameras.append({"id": str(cam), "name": label, "days": days})
     os.makedirs(base, exist_ok=True)

@@ -1,0 +1,633 @@
+#!/usr/bin/env python3
+"""cold-videos: move finished camera videos older than a week to the cold drive (decision A1).
+
+  cold-videos [--keep-days N] [--wait MIN] [--max-mb-s MB] [--dry-run] [--archive DIR]
+
+Each finished camera day older than --keep-days (cameras/video/<id>/<year>/<id>-<day>.mp4 and the
+.csv beside it, plugins/cameras/ingest/camera_video.py's layout) is copied to the same place under
+the cold drive's camera folder (COLD_CAMERAS), checked there (its size, and its sha256 read back
+from the drive), and then replaced, in one rename, by a symlink to the copy. Readers keep the same
+path: the video library (Caddy in the web container), the roll-up's library index and anything run
+by hand follow the link, and every container that reads videos mounts the cold drive read-only at
+the same absolute path (deploy/compose.cold.yml). Without the drive a link leads nowhere, and the
+library says that day isn't available right now.
+
+  --keep-days N  finished days kept on the VM's disk (default 7, or COLD_VIDEO_KEEP_DAYS): a day
+                 moves once it's more than N days old. At least 2, so today's and yesterday's
+                 files are never touched.
+  --wait MIN     wait at most MIN minutes for the roll-up to finish (default 0: refuse at once)
+  --max-mb-s MB  read at most this fast, from the VM's disk and the cold drive (default 50)
+  --dry-run      say what would move and what stays; change nothing
+  --archive DIR  the camera archive (default /srv/tvt/archive/cameras)
+
+When it moves:
+- only while the cold drive is mounted (COLD_MARKER exists) and keeps COLD_KEEP_GB free (default
+  200) after each copy;
+- once tonight's camera roll-up has finished: at night both capture status files say rolling_up
+  false after 00:05, in the day neither says it's rolling up. It holds the roll-up's own lock
+  (cameras/rollup.lock) while it works, so no roll-up starts meanwhile;
+- not from 23:55 until tonight's roll-up has finished, nor within 15 minutes of a planned VM
+  restart (MAINTENANCE): a run under way stops between files;
+- never a day whose JPEGs are still in the buffer (cameras/jpeg/<id>/<day>), whose encode is
+  going (a .part beside it), a file written in the last 10 minutes, or a CSV without its video.
+
+Idempotent and resumable: a moved file is a symlink and is skipped. A copy cut short is made again
+(its hidden .cold-part file is overwritten). A finished copy whose original wasn't replaced yet is
+checked and used. A different copy already on the drive (a day encoded again since) is replaced
+by the one on the VM's disk, which is what readers saw.
+
+Settings, in /srv/tvt/work/heavy.conf (KEY=value; the VM's own paths, kept out of the repo):
+heavy's COLD_MOUNT, COLD_MARKER and COLD_KEEP_GB, plus COLD_CAMERAS, the camera folder on the cold
+drive (under COLD_MOUNT), and optionally COLD_VIDEO_KEEP_DAYS.
+
+Log: each move (path, bytes, sha256) and each run's start and end, on stdout (the journal, under
+systemd) and appended to cameras/cold-videos.log; the last run's outcome in
+cameras/cold-videos.json, which bin/status reads.
+
+Exit: 0 done (or nothing to move); 1 a file failed its check (its original is kept); 2 usage or
+settings; 69 the cold drive isn't mounted; 73 the cold drive would fall under COLD_KEEP_GB free;
+75 not now (the roll-up is going or hasn't finished, a restart is planned, another run is going,
+or 23:55 came); 130 interrupted.
+
+Runs daily from deploy/systemd/tvt-cold-videos.timer, as the archive's owner. Source:
+deploy/bin/cold-videos in the repo; installed in /srv/tvt/work/bin beside heavy, whose rules and
+settings it reads, so the two always agree.
+"""
+import argparse
+import datetime as dt
+import fcntl
+import hashlib
+import importlib.machinery
+import importlib.util
+import json
+import os
+import re
+import signal
+import stat
+import sys
+import time
+from collections import Counter
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+
+
+def load_heavy(path=None):
+    """heavy, from beside this file (or path), as a module: its rules, paths and settings."""
+    path = path or os.path.join(HERE, "heavy")
+    loader = importlib.machinery.SourceFileLoader("heavy_for_cold_videos", path)
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+    return module
+
+
+heavy = load_heavy()
+
+KEEP_DAYS = 7                   # finished days kept on the VM's disk (decision A1: "older than about 7 days")
+MIN_KEEP_DAYS = 2               # so today's and yesterday's files are never touched
+MAX_MB_S = 50.0                 # the VM's disk is capped at 120 MB/s, shared with the capture and the database
+CHUNK = 4 * 2**20
+STOP_AT = dt.time(23, 55)       # tonight's roll-up starts at 00:05
+RESTART_MARGIN = dt.timedelta(minutes=15)
+RECENT_S = 600                  # a file written this recently is left alone
+WAIT_POLL_S = 60
+NAME = re.compile(r"^(?P<cam>.+)-(?P<day>\d{4}-\d\d-\d\d)\.(?P<ext>mp4|csv)$")
+ROLLUP_LOCK = "rollup.lock"     # camera_video.LOCK: held by a roll-up while it runs
+LOCK = "cold-videos.lock"
+LOG = "cold-videos.log"
+STATE = "cold-videos.json"
+PART = ".cold-part"             # a copy being made on the cold drive (hidden, beside its place)
+LINK = ".cold-link"             # a symlink about to replace an original (hidden, beside it)
+
+EX_FAILED, EX_USAGE, EX_NOCOLD, EX_FULL, EX_LATER, EX_INT = 1, 2, 69, 73, 75, 130
+RESULTS = {0: "done", EX_FAILED: "failed", EX_USAGE: "settings", EX_NOCOLD: "no cold drive",
+           EX_FULL: "cold drive full", EX_LATER: "not now", EX_INT: "interrupted"}
+
+
+class Stop(Exception):
+    """The run can't start, or can't go on: why, and the exit code. record: whether the state
+    file takes it (not when another run is going: that run records its own)."""
+
+    def __init__(self, message, code, record=True):
+        super().__init__(message)
+        self.code = code
+        self.record = record
+
+
+class Terminated(Exception):
+    """SIGTERM (systemd stopping the run): stop between reads, leaving the original in place."""
+
+
+class CheckFailed(Exception):
+    """One file couldn't be moved safely; its original is kept."""
+
+
+def stamp(t=None):
+    return (t or dt.datetime.now(dt.timezone.utc)).astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def gb(n):
+    return n / heavy.GB
+
+
+# --- settings -----------------------------------------------------------------
+
+class Cold:
+    """The cold drive's mount, marker, the GB kept free there, and the camera folder on it."""
+
+    def __init__(self, mount, marker, keep, folder):
+        self.mount, self.marker, self.keep, self.folder = mount, marker, keep, folder
+
+    def present(self):
+        return heavy.cold_mounted((self.mount, self.marker, self.keep))
+
+
+def inside(path, folder):
+    path, folder = os.path.normpath(path), os.path.normpath(folder)
+    return path.startswith(folder.rstrip(os.sep) + os.sep)
+
+
+def overlaps(folder, archive):
+    """Why the camera folder on the drive can't be used beside the archive, or None. It mustn't be
+    the archive, nor hold it or sit inside it, however it reaches it (through symlinks, or a bind
+    mount of the same folder): a file would then be its own copy, and the link put in its place
+    would point at itself."""
+    a, b = os.path.realpath(folder), os.path.realpath(archive)
+    if a == b:
+        return "is"
+    if inside(a, b):
+        return "is inside"
+    if inside(b, a):
+        return "holds"
+    for x, y in ((folder, archive), (os.path.join(folder, "video"), os.path.join(archive, "video"))):
+        try:
+            if os.path.samefile(x, y):
+                return "is"
+        except OSError:
+            pass
+    return None
+
+
+def cold_settings():
+    """The cold drive and its camera folder, from heavy.conf. Raises Stop when they're not set
+    up. The folder is checked as written, not resolved: the symlinks point at it by that path,
+    and the containers mount the drive at the same one."""
+    cold = heavy.cold_drive()
+    if cold is None:
+        raise Stop(f"{heavy.path('heavy.conf')} names no cold drive (COLD_MOUNT)", EX_USAGE)
+    mount, marker, keep = cold
+    folder = heavy.settings().get("COLD_CAMERAS", "")
+    if not folder:
+        raise Stop(f"{heavy.path('heavy.conf')} names no camera folder on the cold drive (COLD_CAMERAS)", EX_USAGE)
+    if not os.path.isabs(mount) or not os.path.isabs(folder) or not inside(folder, mount):
+        raise Stop(f"COLD_CAMERAS ({folder}) must be an absolute path inside COLD_MOUNT ({mount})", EX_USAGE)
+    return Cold(mount, marker, keep, os.path.normpath(folder))
+
+
+def keep_days_setting(given):
+    if given is not None:
+        return given
+    try:
+        return int(heavy.settings().get("COLD_VIDEO_KEEP_DAYS") or KEEP_DAYS)
+    except ValueError:
+        raise Stop("COLD_VIDEO_KEEP_DAYS in heavy.conf must be a whole number of days", EX_USAGE)
+
+
+# --- when it may move -----------------------------------------------------------
+
+def restart_problem(t):
+    """Why a planned VM restart holds moves back, or None."""
+    m = heavy.maintenance(t)
+    if m is None:
+        return None
+    text, restart = m
+    if restart is None:
+        return f"MAINTENANCE gives no one restart time heavy can read ({text!r}), so nothing starts"
+    if restart - t <= RESTART_MARGIN:
+        return f"a VM restart is planned at {restart:%H:%M} Boise"
+    return None
+
+
+def gate(t, statuses):
+    """None when moving may start at t (Boise), else why not. The roll-up rule is heavy's: at
+    night, once both capture services report tonight's roll-up finished; in the day, while
+    neither says it's rolling up."""
+    clock = t.time()
+    if clock >= STOP_AT or clock < heavy.NIGHT[0]:
+        return (f"it's {heavy.hm(t)} in Boise: from {STOP_AT:%H:%M}, moves wait for tonight's camera "
+                f"roll-up (from 00:05) to finish")
+    going = heavy.rolling_now(t, statuses)
+    if going:
+        return f"the camera roll-up is still going ({', '.join(going)})"
+    if clock < heavy.DAY[0]:
+        done, why = heavy.rollup_finished(t, statuses)
+        if not done:
+            return why
+    return restart_problem(t)
+
+
+def take_lock(path):
+    """An fd holding path's exclusive flock, or None when someone else holds it."""
+    fd = os.open(path, os.O_RDONLY | os.O_CREAT, 0o644)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        os.close(fd)
+        return None
+    return fd
+
+
+def wait_to_start(cameras, wait_min, say):
+    """Waits (at most wait_min minutes) until moving may start, and returns an fd holding the
+    roll-up's lock. Raises Stop when the wait runs out."""
+    give_up = time.monotonic() + wait_min * 60
+    said = None
+    while True:
+        why = gate(heavy.now(), heavy.read_statuses(os.path.join(cameras, "status")))
+        if why is None:
+            fd = take_lock(os.path.join(cameras, ROLLUP_LOCK))
+            if fd is not None:
+                return fd
+            why = f"a camera roll-up holds {ROLLUP_LOCK}"
+        left = give_up - time.monotonic()
+        if left <= 0:
+            raise Stop(why, EX_LATER)
+        if why != said:
+            say(f"waiting (at most {left / 60:.0f} min more): {why}")
+            said = why
+        time.sleep(min(WAIT_POLL_S, max(1.0, left)))
+
+
+# --- what moves ---------------------------------------------------------------
+
+def plan(cameras, cutoff, now_s=None):
+    """(files to move, Counter of reasons files stay). Files are (path relative to the archive,
+    bytes): video/<id>/<year>/<id>-<day>.ext, each camera-day's CSV before its video, oldest day
+    first. Only regular files: a moved one is a symlink."""
+    now_s = heavy.now().timestamp() if now_s is None else now_s
+    base = os.path.join(cameras, "video")
+    todo, kept = [], Counter()
+    try:
+        with os.scandir(base) as it:
+            cams = sorted(e.name for e in it if e.is_dir(follow_symlinks=False))
+    except FileNotFoundError:
+        return [], kept
+    for cam in cams:
+        with os.scandir(os.path.join(base, cam)) as it:
+            years = sorted(e.name for e in it if e.is_dir(follow_symlinks=False) and e.name.isdigit())
+        for year in years:
+            if int(year) > cutoff.year:
+                continue
+            with os.scandir(os.path.join(base, cam, year)) as it:
+                entries = {e.name: e for e in it}
+            for name, entry in entries.items():
+                m = NAME.match(name)
+                if not m or m["cam"] != cam:
+                    continue
+                try:
+                    day = dt.date.fromisoformat(m["day"])
+                except ValueError:
+                    continue
+                if day > cutoff or entry.is_symlink():
+                    continue
+                try:
+                    st = entry.stat(follow_symlinks=False)
+                except OSError:
+                    continue
+                if not stat.S_ISREG(st.st_mode):
+                    continue
+                video = f"{cam}-{day.isoformat()}.mp4"
+                if video + ".part" in entries:
+                    kept["its encode is going"] += 1
+                elif m["ext"] == "csv" and video not in entries:
+                    kept["a CSV without its video"] += 1
+                elif os.path.lexists(os.path.join(cameras, "jpeg", cam, day.isoformat())):
+                    kept["its JPEGs are still in the buffer"] += 1
+                elif now_s - st.st_mtime < RECENT_S:
+                    kept["written in the last 10 minutes"] += 1
+                else:
+                    todo.append((day, cam, m["ext"] == "mp4", f"video/{cam}/{year}/{name}", st.st_size))
+    todo.sort()
+    return [(rel, size) for _, _, _, rel, size in todo], kept
+
+
+# --- moving one file ----------------------------------------------------------
+
+class Pace:
+    """Keeps reads under a rate (bytes a second), counted over the whole run."""
+
+    def __init__(self, mb_s):
+        self.rate = mb_s * 1e6
+        self.start = time.monotonic()
+        self.done = 0
+
+    def __call__(self, n):
+        if self.rate <= 0:
+            return
+        self.done += n
+        ahead = self.done / self.rate - (time.monotonic() - self.start)
+        if ahead > 0:
+            time.sleep(ahead)
+
+
+def drop_cache(fd):
+    """Asks the kernel to forget fd's cached pages, so the read-back comes from the drive
+    rather than from the VM's cached copy of what was just written."""
+    if hasattr(os, "posix_fadvise"):
+        try:
+            os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
+        except OSError:
+            pass
+
+
+def sha256_of(path, pace, from_drive=False):
+    h = hashlib.sha256()
+    with open(path, "rb", buffering=0) as f:
+        if from_drive:
+            drop_cache(f.fileno())
+        while chunk := f.read(CHUNK):
+            h.update(chunk)
+            pace(len(chunk))
+    return h.hexdigest()
+
+
+def copy_to(src, tmp, st, pace):
+    """Copies src to tmp (made anew) with src's mode and times, synced to the drive. Returns
+    src's sha256, computed as it's read."""
+    h = hashlib.sha256()
+    with open(src, "rb", buffering=0) as fi, open(tmp, "wb") as fo:
+        while chunk := fi.read(CHUNK):
+            h.update(chunk)
+            fo.write(chunk)
+            pace(len(chunk))
+        fo.flush()
+        os.fchmod(fo.fileno(), stat.S_IMODE(st.st_mode))
+        os.utime(fo.fileno(), ns=(st.st_atime_ns, st.st_mtime_ns))
+        os.fsync(fo.fileno())
+    return h.hexdigest()
+
+
+def fsync_dir(path):
+    try:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
+
+
+def hidden(path, suffix):
+    folder, name = os.path.split(path)
+    return os.path.join(folder, "." + name + suffix)
+
+
+def room(cold, size):
+    """Free GB on the cold drive. Raises Stop when it isn't mounted, or when a copy of size
+    bytes would leave less than it keeps free."""
+    if not cold.present():
+        raise Stop(f"the cold drive isn't mounted ({cold.marker or cold.mount} is missing)", EX_NOCOLD)
+    free = heavy.free_gb(cold.mount)
+    if free - gb(size) < cold.keep:
+        raise Stop(f"{free:.0f} GB free on the cold drive, which keeps {cold.keep:g} GB free; the next file "
+                   f"is {gb(size):.2f} GB", EX_FULL)
+    return free
+
+
+def same_file(dst, src):
+    return (f"{dst} on the cold drive is the file itself ({src}): the drive's camera folder reaches the "
+            f"archive (a bind mount or a hard link?), so nothing moves; the original stays")
+
+
+def move(rel, cameras, cold, pace):
+    """Moves one file to the cold drive and leaves a symlink to the copy in its place.
+    Returns (bytes, sha256, note), or None when it's no longer a regular file."""
+    src = os.path.join(cameras, rel)
+    dst = os.path.join(cold.folder, rel)
+    st = os.lstat(src)
+    if not stat.S_ISREG(st.st_mode):
+        return None
+    room(cold, st.st_size)
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    try:
+        there = os.lstat(dst)
+    except FileNotFoundError:
+        there = None
+    if there is not None and not stat.S_ISREG(there.st_mode):
+        raise CheckFailed(f"{dst} is there but isn't a plain file")
+    if there is not None and os.path.samestat(there, st):
+        raise Stop(same_file(dst, src), EX_USAGE)
+    sha, note = None, ""
+    if there is not None and there.st_size == st.st_size:
+        sha = sha256_of(src, pace)
+        if sha256_of(dst, pace, from_drive=True) == sha:
+            note = "its copy was already on the cold drive"
+    if not note:
+        tmp = hidden(dst, PART)
+        try:
+            sha = copy_to(src, tmp, st, pace)
+            size = os.stat(tmp).st_size
+            if size != st.st_size:
+                raise CheckFailed(f"the copy has {size} bytes, the original {st.st_size}")
+            if sha256_of(tmp, pace, from_drive=True) != sha:
+                raise CheckFailed("the copy, read back from the cold drive, doesn't match the original's sha256")
+            os.replace(tmp, dst)
+        except BaseException:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+            raise
+        fsync_dir(os.path.dirname(dst))
+        if there is not None:
+            note = "it replaced a different copy on the cold drive (the day was encoded again)"
+    now = os.lstat(src)
+    if (now.st_ino, now.st_size, now.st_mtime_ns) != (st.st_ino, st.st_size, st.st_mtime_ns):
+        raise CheckFailed("the original changed while it was copied; it stays, and the next run copies it again")
+    if os.path.samestat(os.stat(dst), now):  # never a link to the file itself, the only copy
+        raise Stop(same_file(dst, src), EX_USAGE)
+    link = hidden(src, LINK)
+    if os.path.lexists(link):
+        os.remove(link)
+    os.symlink(dst, link)
+    os.replace(link, src)                    # one rename: readers see the file or the link, never neither
+    fsync_dir(os.path.dirname(src))
+    return st.st_size, sha, note
+
+
+# --- a run --------------------------------------------------------------------
+
+class Run:
+    def __init__(self, cameras, dry_run):
+        self.cameras = cameras
+        self.dry_run = dry_run
+        self.started = dt.datetime.now(dt.timezone.utc)
+        self.moved = self.bytes = self.failed = self.left = 0
+        self.kept = Counter()
+        self.cutoff = None
+        self.cold_free = None
+
+    def say(self, message):
+        line = f"{stamp()} {message}"
+        print(line, flush=True)
+        if not self.dry_run:
+            try:
+                with open(os.path.join(self.cameras, LOG), "a") as f:
+                    f.write(line + "\n")
+            except OSError as err:
+                print(f"{stamp()} (the log can't be written: {err})", file=sys.stderr, flush=True)
+
+    def finish(self, code, why="", record=True):
+        """Logs the end and records it in the state file (unless record is false). Returns code."""
+        result = RESULTS.get(code, "failed")
+        moved = f"moved {self.moved} files ({gb(self.bytes):.2f} GB)"
+        tail = (f"; {self.left} still to move" if self.left else "") + \
+               (f"; {self.failed} failed their check" if self.failed else "")
+        self.say(f"{'dry run ' if self.dry_run else ''}{result}: {why + '; ' if why else ''}{moved}{tail}")
+        if self.dry_run or not record:
+            return code
+        previous = {}
+        try:
+            with open(os.path.join(self.cameras, STATE)) as f:
+                previous = json.load(f)
+        except (OSError, ValueError):
+            pass
+        finished = stamp()
+        state = {
+            "version": 1, "started": stamp(self.started), "finished": finished, "code": code,
+            "result": result, "why": why, "moved": self.moved, "bytes": self.bytes, "failed": self.failed,
+            "left": self.left, "kept": dict(self.kept),
+            "cutoff": self.cutoff.isoformat() if self.cutoff else None,
+            "cold_free_gb": None if self.cold_free is None else round(self.cold_free, 1),
+            "last_done": finished if code == 0 else previous.get("last_done"),
+        }
+        path = os.path.join(self.cameras, STATE)
+        try:
+            with open(path + ".part", "w") as f:
+                json.dump(state, f, indent=1)
+            os.replace(path + ".part", path)
+        except OSError as err:
+            self.say(f"(the state file can't be written: {err})")
+        return code
+
+
+def parse(argv):
+    p = argparse.ArgumentParser(prog="cold-videos", description="Move finished camera videos older than a "
+                                "week to the cold drive, leaving symlinks (deploy/README.md).")
+    p.add_argument("--keep-days", type=int, help=f"finished days kept on the VM's disk (default {KEEP_DAYS})")
+    p.add_argument("--wait", type=float, default=0, metavar="MIN", help="wait at most MIN minutes for the roll-up")
+    p.add_argument("--max-mb-s", type=float, default=MAX_MB_S, metavar="MB", help="read at most this fast")
+    p.add_argument("--dry-run", action="store_true", help="say what would move; change nothing")
+    p.add_argument("--archive", help="the camera archive (default: beside heavy's status files)")
+    return p.parse_args(argv)
+
+
+def run(args, run_):
+    cameras = run_.cameras
+    cold = cold_settings()
+    keep = keep_days_setting(args.keep_days)
+    if keep < MIN_KEEP_DAYS:
+        raise Stop(f"--keep-days must be at least {MIN_KEEP_DAYS}: today's and yesterday's videos stay", EX_USAGE)
+    if args.wait < 0 or args.max_mb_s < 0:
+        raise Stop("--wait and --max-mb-s take numbers of 0 or more", EX_USAGE)
+    if not os.path.isdir(os.path.join(cameras, "video")):
+        raise Stop(f"no camera videos in {cameras} (video/ is missing)", EX_USAGE)
+    if not cold.present():
+        raise Stop(f"the cold drive isn't mounted ({cold.marker or cold.mount} is missing)", EX_NOCOLD)
+    if not os.path.isdir(cold.folder):
+        raise Stop(f"the camera folder on the cold drive ({cold.folder}) isn't there: make it first "
+                   f"(deploy/README.md)", EX_USAGE)
+    how = overlaps(cold.folder, cameras)
+    if how:
+        raise Stop(f"the camera folder on the cold drive ({cold.folder}) {how} the camera archive ({cameras}): "
+                   f"COLD_CAMERAS must be a folder of its own on the drive", EX_USAGE)
+
+    held = []
+    try:
+        if run_.dry_run:
+            why = gate(heavy.now(), heavy.read_statuses(os.path.join(cameras, "status")))
+            if why:
+                run_.say(f"a real run would wait: {why}")
+        else:
+            fd = take_lock(os.path.join(cameras, LOCK))
+            if fd is None:
+                raise Stop("another cold-videos run is going", EX_LATER, record=False)
+            held.append(fd)
+            held.append(wait_to_start(cameras, args.wait, run_.say))
+
+        today = heavy.now().date()
+        run_.cutoff = today - dt.timedelta(days=keep + 1)
+        files, run_.kept = plan(cameras, run_.cutoff)
+        total = sum(size for _, size in files)
+        run_.cold_free = heavy.free_gb(cold.mount)
+        run_.say(f"{len(files)} files ({gb(total):.2f} GB) of days up to {run_.cutoff.isoformat()} to move "
+                 f"(keeping {keep} finished days); {run_.cold_free:.0f} GB free on the cold drive, "
+                 f"{cold.keep:g} GB kept free")
+        for why, n in sorted(run_.kept.items()):
+            run_.say(f"staying: {n} files: {why}")
+        if run_.dry_run:
+            for rel, size in files:
+                run_.say(f"would move {rel} ({size} bytes)")
+            run_.left = len(files)
+            room(cold, files[0][1] if files else 0)
+            return 0
+
+        pace = Pace(args.max_mb_s)
+        for i, (rel, _) in enumerate(files):
+            run_.left = len(files) - i + run_.failed      # if it stops here
+            t = heavy.now()
+            if t.time() >= STOP_AT:
+                raise Stop(f"stopped at {heavy.hm(t)} Boise: tonight's roll-up comes next", EX_LATER)
+            why = restart_problem(t)
+            if why:
+                raise Stop(f"stopped: {why}", EX_LATER)
+            try:
+                done = move(rel, cameras, cold, pace)
+            except (CheckFailed, OSError) as err:
+                run_.failed += 1
+                run_.say(f"FAILED {rel}: {err} (the original stays)")
+                continue
+            if done is None:
+                continue
+            size, sha, note = done
+            run_.moved += 1
+            run_.bytes += size
+            run_.say(f"moved {rel} ({size} bytes, sha256 {sha})" + (f": {note}" if note else ""))
+        run_.left = run_.failed
+        run_.cold_free = heavy.free_gb(cold.mount)
+        return EX_FAILED if run_.failed else 0
+    finally:
+        for fd in reversed(held):
+            os.close(fd)
+
+
+def main(argv=None):
+    try:
+        args = parse(argv if argv is not None else sys.argv[1:])
+    except SystemExit as err:
+        return EX_USAGE if err.code else 0
+    cameras = os.path.abspath(args.archive or os.path.dirname(heavy.STATUS_DIR))
+    run_ = Run(cameras, args.dry_run)
+
+    def terminated(_signum, _frame):
+        raise Terminated()
+
+    previous = signal.signal(signal.SIGTERM, terminated)
+    try:
+        code = run(args, run_)
+        return run_.finish(code)
+    except Stop as stop:
+        return run_.finish(stop.code, str(stop), stop.record)
+    except (KeyboardInterrupt, Terminated):
+        return run_.finish(EX_INT, "interrupted; the file being copied stays where it was")
+    except Exception as err:                 # anything unforeseen still ends in the log and the state
+        return run_.finish(EX_FAILED, f"stopped by an error: {err!r}")
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -12,7 +12,9 @@
   The archive keeps its clock layout (video mm:ss = clock hh:mm, docs/11
   §11.5); this page plays it faster, 12 frames a second by default.
   Data: files/index-<list>.json (written by the frame streams) and, per day,
-  the video and its frame CSV.
+  the video and its frame CSV. Days older than a week sit on the cold drive
+  ("cold": true in the index; deploy/bin/cold-videos): when one can't be read,
+  the page says it isn't available right now.
 -->
 <style>
   :root {
@@ -50,6 +52,10 @@
   .hud { position: absolute; left: 10px; top: 10px; background: rgba(255,251,244,.92); border-radius: 10px; padding: 4px 10px;
          font: 600 15px var(--mono); pointer-events: none; }
   .hud.gap::before { content: "◌ "; color: var(--ink-soft); }
+  .notice { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+            gap: 6px; padding: 24px; text-align: center; background: #1d1c22; color: var(--panel); font: 15px/1.5 var(--body); }
+  .notice strong { font: 600 20px/1.3 var(--head); }
+  .notice[hidden], .hud[hidden] { display: none; }
   button.btn, select { font: inherit; border: 2px solid var(--panel-edge); background: #fff; color: var(--ink); border-radius: 10px;
                        padding: 5px 10px; cursor: pointer; min-height: 34px; }
   button.btn:hover { border-color: var(--accent-2); }
@@ -101,6 +107,7 @@
       <div class="stage">
         <video id="video" playsinline muted preload="auto"></video>
         <div class="hud" id="hud" aria-live="off" title="When we fetched this picture. The camera's own time is in its bar."></div>
+        <div class="notice" id="notice" role="status" hidden></div>
       </div>
       <div class="card">
         <div class="bar">
@@ -223,13 +230,35 @@ async function selectCamera(id, day, t) {
   await selectDay(day && cam.days.some((d) => d.day === day) ? day : cam.days[cam.days.length - 1].day, t);
 }
 
+// A day that can't be read right now: most likely one kept on the cold drive while the drive can't be
+// reached (the index marks those "cold"). Say so in words; the other days still play.
+function showUnavailable(d) {
+  const box = $("notice");
+  box.textContent = "";
+  box.append(Object.assign(document.createElement("strong"), { textContent: "Not available right now" }),
+    Object.assign(document.createElement("span"), { textContent: d && d.cold
+      ? "This day is kept on the cold drive, which can't be reached at the moment. It comes back once it can; the last week's days are always here."
+      : "This day's video can't be loaded at the moment." }));
+  box.hidden = false;
+  $("hud").hidden = true;
+  $("frameInfo").textContent = "";
+}
+
+function hideUnavailable() {
+  $("notice").hidden = true;
+  $("hud").hidden = false;
+}
+
 async function selectDay(day, t) {
   const d = state.cam.days.find((x) => x.day === day);
   if (!d) return;
   state.day = d;
   $("day").value = day;
-  const r = await fetch("files/" + d.csv);
-  state.rows = r.ok ? parseCsv(await r.text()) : [];
+  hideUnavailable();
+  let r = null;
+  try { r = await fetch("files/" + d.csv); } catch (_) { /* unreachable: said below */ }
+  if (state.day !== d) return;                           // another day was picked meanwhile
+  state.rows = r && r.ok ? parseCsv(await r.text()) : [];
   state.rows.forEach((row) => { row.s = parseFloat(row.video_s); });
   state.frames = state.rows.filter((row) => row.kind === "frame");
   const first = state.frames[0];
@@ -237,6 +266,7 @@ async function selectDay(day, t) {
   const gaps = state.frames.slice(1).map((f, i) => f.s - state.frames[i].s).sort((a, b) => a - b);
   state.spacing = gaps.length ? Math.max(0.05, gaps[Math.floor((gaps.length - 1) / 2)]) : 1;
   video.src = "files/" + d.video;
+  if (!(r && r.ok) && d.cold) showUnavailable(d);
   $("downloads").innerHTML = `<a href="files/${d.video}" download>video</a> · <a href="files/${d.csv}" download>picture list (CSV)</a>`;
   renderSpeeds();
   drawCoverage();
@@ -360,6 +390,8 @@ $("stepFwd").addEventListener("click", () => step(1));
 $("clock").addEventListener("input", (e) => { video.currentTime = Number(e.target.value); });
 $("clock").addEventListener("change", writeHash);
 video.addEventListener("timeupdate", update);
+video.addEventListener("error", () => { if (state.day && video.getAttribute("src")) showUnavailable(state.day); });
+video.addEventListener("loadedmetadata", hideUnavailable);
 video.addEventListener("seeked", update);
 video.addEventListener("play", update);
 video.addEventListener("pause", () => { update(); writeHash(); });

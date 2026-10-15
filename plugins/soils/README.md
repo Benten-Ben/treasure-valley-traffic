@@ -87,7 +87,7 @@ Migration `0001_soils.sql`, schema `soils`. Only map units touching the box are 
 | `soils.polygon` | 21,999 | `gid` (an integer key, new when its area is reloaded), `geom` (MultiPolygon, 4326), `geom_lo`, `label_pt`, `area_m2`, `area_in_box_m2` |
 | `soils.ground_type` | 380 | the ground's soil types (below) |
 | `soils.build` | per run | each load or photo run: inputs, settings, counts, licence, republish, credit |
-| `soils.photo_stats`, view `soils.ground_colour` | (P2) | each ground type's measured colour, spread and texture; the view below |
+| `soils.photo_stats`, view `soils.ground_colour` | about 2,000 per photo build | each map unit's and ground type's measured colour, spread and texture, per flight day and pooled ([below](#the-photo-statistics)); the view below |
 
 **The dominant component** has the largest share; ties go to a major component, then the lowest key. Its **surface
 horizon** is the topmost mineral one (O horizons skipped).
@@ -145,30 +145,224 @@ one build, NAIP 2025 comes before the 2023 tiles and the class mask before the p
 
 | Layer | File | What |
 |---|---|---|
-| `ground` | `ground.fgb` (EPSG:32611) | every polygon, whole: `id` (`soils.polygon.gid`), `ground_type` (`soils.ground_type.gid`; 0 for none), `misc`, `mukey`. 21,999 features, 46 MB |
-| `ground_types` | `ground_types.json` (`soils.ground_types/1`) | each ground type by its `gid`: its key, series, texture, `misc`, fragment cover, dry albedo, map units and area |
+| `ground` | `ground.fgb` (EPSG:32611) | every polygon, whole: `id` (`soils.polygon.gid`), `ground_type` (`soils.ground_type.gid`; 0 for none), `mukey`, `misc` (in that order). 21,999 features, 46 MB |
+| `ground_types` | `ground_types.json` (`soils.ground_types/1`) | each ground type by its `gid`: its key, series, texture, `misc`, `landform`, fragment cover, dry albedo, map units and area |
+| `palette` | `palette.json` (`soils.palette/1`) | once a photo build is loaded: each ground type's measured colour, spread and texture ([below](#the-palette)) |
 
-The ground reads `soils/ground` (without it the ground stays flat) and rasterises `ground_type`. Both layers are
-public domain, republish yes, credit "Soils: USDA NRCS, Soil Survey Geographic Database (SSURGO)", and not base
-layers. The command checks the export against the ground's rules (`inputs.resolve`) before it leaves it in place. P2
-adds `palette.json` (`soils.palette/1`) to the same export, keyed by the same `gid`: take the palette and the ground from
-one export.
+The ground reads `soils/ground` (without it the ground stays flat) and rasterises `ground_type`, and reads
+`soils/palette` for the colours (without it, flat colours per type, labelled). Take the palette and the ground from one
+export: both are keyed by the same `gid`. The ground layers are public domain, republish yes, credit "Soils: USDA
+NRCS, Soil Survey Geographic Database (SSURGO)"; the palette is ODbL-1.0 (it was measured through mask v0, made from
+OpenStreetMap and Overture), republish yes, with every input's credit (NAIP, SSURGO, OSM, Overture, NHD, CDL, CSB,
+Copernicus). None is a base layer. The command checks the export against the ground's rules (`inputs.resolve`)
+before it leaves it in place.
+
+- **`misc` comes last in `ground.fgb`.** PostGIS's `ST_AsFlatGeobuf` (3.6.4 on the VM) writes the column after a null
+  under the null's index, a running count rather than the column's own. With `misc` (null for every soil) before
+  `mukey`, the first export read back `misc` = the map unit's key and `mukey` = null for 20,835 of the 21,999
+  polygons (found Oct 11 by P2, and fixed by putting `misc` last; `test_photo_load` decodes the file's bytes to check
+  it). Any export through `ST_AsFlatGeobuf` with a nullable column before another has the same fault.
+- **`landform`**: the landform of the type's map units' dominant components, the one covering most of the box. P2's
+  texture fallback matches types by texture class and landform.
+
+## The photo statistics
+
+Each ground type's colour, spread and texture, measured from NAIP 2025 over its uncovered ground (plan P2; the soils
+design, build step 3). They give the ground its soil colours and the card its "bare ground in July" swatch.
+
+```bash
+# 1. The decode pass, in the worker image with the MrSID SDK mounted (heavy: 3 GB, 3 CPUs, no network; resumable
+#    by window, so a chunk at a time is fine: --limit N)
+python plugins/soils/build/photo_stats.py run --out $TVT_ARCHIVE/soils/photo/photo-<UTC stamp> --cog <a cold-drive folder> \
+    --naip ada=.../ortho_1-1_hm_s_id001_2025_1.sid --naip canyon=.../ortho_1-1_hm_s_id027_2025_1.sid --dsdk /dsdk
+# 2. The ten-box calibration (light: 1 GB, under a minute), into the same folder
+python plugins/soils/build/photo_stats.py calibrate --out <the build> --naip ada=... --naip canyon=...
+# 3. Pool, check and assemble the 2 m COG (stats.json, report.json; the COG beside its parts)
+python plugins/soils/build/photo_stats.py finish --out <the build>
+# 4. Load and export (ingest image)
+python3 -m ingest soils-photo-load --build $TVT_ARCHIVE/soils/photo/<build>
+python3 -m ingest soils-export
+```
+
+The pass reads the newest soils export, mask v0 and farm export in `$TVT_ARCHIVE` (or `--soils`, `--mask`,
+`--farm`), the July 2025 Sentinel-2 median, the same-day normalisation and the colour gains (`--july`, `--norm`,
+`--gains`; `$TVT_SOURCES`), and the two county mosaics, each window decoded at 0.6 m (`mrsiddecode -s 1`) into the
+container's tmpfs and deleted. `calibrate` in a build folder uses the run's own inputs and rules (`run.json`), refuses a
+flag that says otherwise (a sweep goes in a folder of its own), and records them in `calibration.json`; `finish`
+takes a calibration only when they match.
+
+**One mosaic per place.** The county mosaics reach a few kilometres past their county lines: Ada's mask covers about
+3,630 km² (the county 2,747), Canyon's 2,143, and they overlap by about 390 km² along the county line. Each pixel is
+served by one of them: inside a county's survey area (the export's `areasymbol`: ID001 is Ada County, ID665 Canyon)
+by that county's mosaic, and elsewhere by the nearest county's (a 20 m grid of the nearest county, `owner_grid`); the
+other mosaic serves it only where the first doesn't cover it. So nothing is counted twice, and in the COG the two
+mosaics' balancing meets at the county line, where G1b's seam handling looks for it.
+
+**Colour on one flight day's scale** (`--gains`, `photo.Gains`). NAIP 2025 was flown on four days in Ada and Canyon,
+and the first build's flight-day check fired (median 3.15 against the design's 3), so the conditional Sentinel-2 read
+the owner approved (decision 22) was made: Sentinel-2 L2A blue, green and red on each flight day (the same scenes as
+the NDVI curves; 63 range reads, 389 MB, nothing kept but the fits). Per day and band a monotone curve takes NAIP's DN
+(10 m means of the 2 m COG) to same-day reflectance, and each day's table puts its DNs on the June 18 flight's scale
+(June 18 is 63% of the photo): the reference curve inverted at that day's reflectance. The pass applies the table
+before anything else reads the colour, so the statistics, the dark rule and the COG's colour bands are all on June
+18's scale; the NDVI keeps its own curves. The fit, its checks and the scripts are with the server's sources
+(`sentinel2/naip_colour/`: `gains.json`, `PROVENANCE.md`), as naip_norm's are.
+LizardTech's SDK is for internal use only: it's mounted read-only at run time and never committed, as in
+[basemap](../../basemap/README.md#county-wide-detail-from-the-naip-county-mosaics-oct-7).
+
+**Uncovered ground, `photo-v1`** (`build/photo.py`). A 0.6 m pixel is sampled when it is
+- inside a soil polygon and at least 10 m from its edge (SSURGO's lines are about ±12 m; slivers give nothing);
+- outside mask v0's `covered`: roofs + 1 m, roads + 2 m beyond half their width, paving + 2 m, water + 5 m
+  (intermittent too), rail yards, aeroways and CDL 2025's developed land (classes 123-124);
+- not green: the photo's NDVI, put on Sentinel-2's scale by its flight day's curve (naip_norm's "band 4"), under
+  **0.45** (the land-cover spike's one green cut), and the July 2025 Sentinel-2 median under **0.30**;
+- not shadow or asphalt: not dark (OKLab L under **0.50**) and neutral (chroma under 0.025) or blue-shifted (b under
+  0) ⚠️. The ten-box calibration chose these cuts: raising L to 0.6-0.7 made every box worse (the class mask's soils
+  are darker than the photo mask's), and in this bright photo they only bite in the mountain boxes' shade;
+- inside crop fields, only row crops and fallow: farm's `crop_cover` group none, corn, roots or fallow, and the
+  pixel's CSB field (farm's `fields.fgb`) isn't hay, small grains, specialty or pasture. Stubble isn't soil.
+
+**What's kept**, per (map unit, flight day) and summed over the windows (`photo.Accumulator`): the pixel count, the
+OKLab sums and cross-products (the mean and covariance), 256-bin histograms of L, a and b (the median and L's 10th and
+90th percentiles), and the texture energy of L and chroma in five octaves, 1.2-19.2 m: the mean square of the masked
+difference of Gaussians S(s/2) − S(s), where S is the Gaussian blur of the uncovered pixels only, counted where 75% of
+the blur's support is uncovered (`photo.octave_energy` measures any array the same way, for G1b's noise). Per soil
+polygon: the count, sums and histograms, for the outlier check.
+
+**Pooling** (`build/pool.py`). A ground type is its map units summed. It's **measured** with at least 20,000 pixels
+(0.72 ha) in at least 3 polygons that each gave 500. Otherwise it borrows, in order:
+1. `series`: every type of its series, any texture;
+2. `texture`: every soil type with its texture class and landform;
+3. `albedo`: L from a straight fit of the measured types' L on their dry albedo, chroma, hue, spread and texture from
+   its texture class's measured types (or every measured soil). Only when the fit has some skill (r of 0.5 or more):
+   otherwise the type takes those peers' colour as it is, L included, labelled `texture` with a note that says so.
+   The first build's fit had r 0.28, which put every such type at L 0.75-0.80, the mean; with the colour gains it's
+   0.11.
+
+A miscellaneous area borrows nothing (water, urban land, rock outcrop and the like have no series, texture or albedo
+of their own), and NOTCOM isn't a soil. A type with nothing to borrow gets no row: the palette says `none` and the
+ground paints it flat. **Beyond the mosaics** there's no NAIP 2025. The county mosaics reach a few kilometres past
+Ada and Canyon (into Owyhee, Elmore, Boise, Gem and Payette counties and a strip of Malheur, Oregon: about a fifth of
+the sampled pixels), so a type there is measured from what those strips hold, and borrows only where it has too
+little. The line between measured and flat colours follows the mosaics' edges, not the county lines. A type found
+only beyond them is a flat type colour, labelled by its fallback; the 2023 tiles' colour fit is cut (plan §0's
+cut-first list).
+
+**Checks** (`report.json`, and the build's counts):
+- the same type on different flight days: per-flight colour gains are needed when the median type's largest dE
+  between days is over 3 (the design's rule). With the gains applied, `flight_days` reports what's left
+  (`gains_applied`, `over_rule`), mostly each type's spread over the valley, and `pair_offsets` the flights' own
+  offsets (per pair of days, the median paired difference over the types on both);
+- the share of colour variance the types explain; Spearman's rho of type L against dry albedo;
+- polygons whose median lies more than 3 (Mahalanobis, in the type's own spread) from their type, with 2,000 pixels
+  or more: a list for review;
+- the ten-box calibration (`calibration.json`): in each box's 500 m class window (the spike's "as of July" classes,
+  shifted onto the photo by the spike's NAIP-to-lidar offsets), each type's photo-v1 median against its median under
+  the class mask (short dry grass, flat not green, pale surfaced). It passes at a median dE of 3 or less over the
+  (box, type) pairs with 2,000 pixels under both. Boxes h, i and j have no NAIP 2025; they're measured on their NAIP
+  2023 crops with the 2023 curve.
+
+**The 2 m NAIP COG** for G1b (`finish`, beside its parts on the cold drive): `naip2025_2m.tif`, 4 bands, uint8, on the
+ground's 2 m grid, the extent of Ada and Canyon, DEFLATE, 512 px tiles, with an internal mask (cells at least half
+covered by a county mosaic). Bands 1-3 are the area means of the 0.6 m red, green and blue on the June 18 flight's
+scale (the colour gains); band 4, `ndvi`, is the photo's NDVI on Sentinel-2's scale by its flight day's curve, coded
+1..255 for −1..+1 (`(code − 128) / 127`; 0 where no flight polygon covers it). Both are per-day normalised. Each cell
+comes from its own county's mosaic (above). It's Copernicus-derived public-domain NAIP: the ground reads it as the raw
+input `naip-2m` (basemap/ground/inputs.py), crediting both. `naip2025_2m.json` beside it says what it is (bands,
+coding, grid, colour, sources, credits, sha256), and
+`flights.fgb` holds USDA's seamline polygons with their days and local times, for the sun angle G1b normalises by
+(C8).
+
+### The build on scratch (Oct 11-15)
+
+`photo-20261011T2012Z`, from soils export `20261011T195225Z` (the first with `areasymbol`), mask v0
+`20261011T144701Z`, farm export `20261011T130710Z` and the colour gains (`gains.json` e07d6065...):
+- **The pass:** 5,159 windows in three chunks under `heavy`, 3.0 hours with three workers (about 2 s a window), within
+  its 3 GB. 14.6 billion valid pixels in the windows' cores, 6.7 billion sampled (46%); the rest were
+  green (27%), within 10 m of a polygon's edge (14%), covered (10.5%), crop stubble or hay (1.4%), outside the flight
+  polygons (0.6%) or dark (0.1%). About 80% of the sampled pixels are in Ada's and Canyon's survey areas, the rest in
+  the mosaics' strips beyond them (Elmore 8.8%, Owyhee 7.9%, Boise 1.5%, Payette, Gem and Malheur 1.2%).
+- **Ground types:** 211 measured, 38 from their series, 127 from texture class and landform (55 of them would have
+  taken L from dry albedo, but the fit has no skill: r 0.11), and 4 with no colour (Dams, Mined land, Pits and
+  dumps, and NOTCOM). 2,572 rows, 1.5 MB in PostGIS. `finish` took 8.4 minutes, 7.8 of them the COG.
+- **The ten boxes:** 24 (box, type) pairs, median dE **1.36** (90th percentile 5.76): **pass**. By box: a 1.09, b 1.01,
+  c 13.0, d 1.73, e 0.85, f 0.15, downtown 14.9, h 2.18, i 0.12, j 1.25. The two misses are urban land in town, where
+  the class mask is mostly dry lawn and sidewalk, which isn't soil either, and photo-v1 keeps only vacant lots. The
+  valley-wide palette colour against the class mask's in the boxes is 4.59 (spatial spread plus the mask's bias).
+- **Flight days, with the gains:** 91 types were measured on two days or more, and the median type's largest dE
+  between its days is **5.71** (84% over 3), up from 3.15 without the gains. Per pair of days (the median paired
+  difference, later minus earlier), L is now +4.4 for June 18/July 24 (53 types; interquartile range 2.1 to 6.2), +4.3
+  for May 25/June 18 (53), +6.9 for May 25/July 24 (18), +4.9 for May 25/May 30 (14), and -1.9 for May 30/June 18
+  (15; May 30 isn't normalised). Yet the gains bring the photo closer to Sentinel-2 across the flight seams, bare
+  ground included: the mismatch with same-day Sentinel-2's step there falls from 4.9 to 3.0 over all land and from
+  4.1 to 3.1 on bare ground (`seam_bare.py`, in `naip_colour/PROVENANCE.md`), most at the June 18/July 24 seams,
+  where the raw photo's July camera had the step backwards. So what's left between flight days is partly real (the
+  ground either side of a seam differs in same-day Sentinel-2 too), partly each type's spread over the valley, and
+  partly the tables: soils sit at red DN 170-200, where May 25's table darkens most and July 24's brightens by 14-23
+  DN, following a kink in June 18's red curve that may come from the fit (Sentinel-2's median per NAIP bin mixes
+  land covers) rather than the camera. A type's palette colour pools its flight days by area; `soils.photo_stats`
+  keeps each day's row.
+- **The rest:** the types explain 16% of the pixels' colour variance; type L against dry albedo, Spearman's rho 0.08
+  (199 types; 0.27 without the gains); 209 of 14,314 polygons are listed as far from their type (Scism 62, Lankbush
+  20, Truesdale 19: types measured on more than one flight day).
+- **The COG:** 3.36 GB on the cold drive, in the build's folder (its 2 m parts, 3.2 GB, were deleted once it was
+  checked: GDAL's validator found no errors, and 20 random parts matched it exactly).
+
+The first build, `photo-20261011T1600Z` (Oct 11), counted the 390 km² where the county mosaics overlap twice (1.07
+billion of its 15.66 billion pixels; half of some map units' pixels) and had no colour gains. It's superseded; its
+raw-colour COG stays on the cold drive as the colour fit's input.
+
+### The palette
+
+`palette.json` (`soils.palette/1`), from `soils.ground_colour` and each type's own rows:
+
+```json
+{"schema": "soils.palette/1", "colour_space": "OKLab", "about": {"...": "what each field is"},
+ "builds": [{"build": "photo-...", "finished": "...", "photo": "naip2025", "mask": "photo-v1", "octaves_m": [1.2, ...],
+             "rules": {...}, "calibration": "pass", "flight_days": {...}}],
+ "types": [{"gid": 12, "id": "colthorp:silt-loam", "status": "measured", "misc": null, "modifier": null,
+            "frag_cover_pct": null, "build": "photo-...", "photo": "naip2025", "mask": "photo-v1",
+            "flights": ["2025-06-18"], "n_px": 3430045, "n_polygons": 9, "lab_med": [0.804, 0.005, 0.039],
+            "lab_cov": [...6], "l_p10": 0.71, "l_p90": 0.90, "oct_l": [...5], "oct_c": [...5]}]}
+```
+
+`status` is `measured`, `series`, `texture`, `albedo` (borrowed: a flat type colour, labelled) or `none` (no colour:
+paint it flat and say so). Every type in `soils.ground_type` is listed. The numbers are as measured, never styled: the
+ground's look is the ground's job. The colours are on the June 18 flight's scale when the build had the colour gains
+(`builds[].flight_days.gains_applied`).
+
+**Licence.** The palette was measured through mask v0 (OpenStreetMap, Overture), farm's crop cover and fields (CSB,
+CDL, Sentinel-2) and Sentinel-2's July median, NDVI curves and colour gains. A photo build carries every input of
+each export layer it reads, whole (`photo_stats.inputs_of`), so the palette's licence is the share-alike one,
+ODbL-1.0, and it credits all of them; an input that may not be republished would make `soils-export` refuse it.
+`soils.build` records the same licence for the build (`photo_load.licence_of`, the ground's export rule), and
+plugin.json lists the photo statistics as a derived source, `naip_photo`. (Migration 0001's header still says
+photo_stats adds only NAIP's licence; it's applied, so the comment is left for a later migration.)
+
+**On production** (the deploy runbook): run the pass there, on production's soils export, mask v0 and farm export,
+rather than copying a scratch build: a build names the exports it read (`stats.json` `soils_export`, its inputs'
+notes, `soils.build.params`), and its polygon outliers use `soils.polygon` gids, which are new whenever an area is
+reloaded. Then `soils-photo-load` as tvt_build, and `soils-export`.
 
 ## Still to come
 
-- The photo statistics (P2, `plugins/soils/build/photo_stats.py`): each ground type's colour, spread and texture from
-  NAIP 2025 over its uncovered ground, into `soils.photo_stats`, and `palette.json` in the export.
 - The layer, card, legend and APIs (P1-app): `/api/soils/tiles/units/{z}/{x}/{y}` (MVT layers `soils` from the zoom
   bands above, `soil_labels` from `label_pt`, the survey bounds), `/api/soils/at`, `/api/soils/mapunit/<mukey>`.
-- When soils-load reloads an area, P2's photo statistics and the export after them go stale (M1's
-  `ops.build_pending`, once it lands).
+- When soils-load reloads an area, the photo statistics and the export after them go stale (M1's
+  `ops.build_pending`, once it lands): a photo build for the changed map units, then soils-export.
+- When the land-cover classes run valley-wide, the photo statistics become their by-product (mask `classes-v1`), with
+  no second decode pass.
 
 ## Tests
 
 - `python3 -m unittest plugins.soils.tests.test_package`: reading and deriving, on a synthetic survey
   (`tests/synthetic.py`; nothing in the repository is real SSURGO data).
-- `TVT_TEST_DATABASE_URL=... python3 -m unittest plugins.soils.tests.test_load plugins.soils.tests.test_export`: the
-  load, the derived geometry, `mapunit_shares()`, `ground_colour` and the export in a test database (each test rolls
-  back; the export goes to a temporary archive).
-- `prepare.py` needs GDAL: on the VM, `worker-test -C <checkout> plugins.soils.tests.test_prepare` (the worker image,
-  where a skip counts as a failure).
+- `TVT_TEST_DATABASE_URL=... python3 -m unittest plugins.soils.tests.test_load plugins.soils.tests.test_export
+  plugins.soils.tests.test_photo_load`: the load, the derived geometry, `mapunit_shares()`, `ground_colour`, the
+  photo-statistics load and the export with its palette in a test database (each test rolls back; exports go to a
+  temporary archive).
+- The worker's code needs the worker image: on the VM, `worker-test -C <checkout> plugins.soils.tests.test_prepare
+  plugins.soils.tests.test_photo plugins.soils.tests.test_pool plugins.soils.tests.test_photo_stats` (a skip counts
+  as a failure). `test_photo` and `test_pool` need only NumPy and SciPy; `test_photo_stats` runs the decode pass,
+  calibration and finish end to end on a synthetic county (a 0.6 m GeoTIFF read as NAIP 2023's crops are; the SDK
+  isn't in the image) with synthetic copies of every other input.
