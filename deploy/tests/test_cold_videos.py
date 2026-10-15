@@ -530,14 +530,19 @@ class RefuseTest(Base):
         rel = self.rel(656, self.d9)
         src = os.path.join(self.cameras, rel)
         digest = sha(src)
-        cold = self.cv.Cold(self.mount, self.marker, 200.0, self.cameras)  # past cold_settings' checks
-        with self.assertRaises(self.cv.Stop) as caught:
-            self.cv.move(rel, self.cameras, cold, self.cv.Pace(0))
-        self.assertEqual(caught.exception.code, 2)
-        self.assertIn("is the file itself", str(caught.exception))
-        self.assertStays(rel)
-        self.assertEqual(sha(src), digest)
-        self.assertFalse([n for n in os.listdir(os.path.dirname(src)) if n.startswith(".")])
+        alias = os.path.join(self.tmp, "alias")                             # a hard link beside the archive,
+        os.makedirs(os.path.dirname(os.path.join(alias, rel)))              # never on the real cold drive
+        os.link(src, os.path.join(alias, rel))
+        for folder in (self.cameras, alias):                                # past cold_settings' checks
+            with self.subTest(folder=folder):
+                cold = self.cv.Cold(self.mount, self.marker, 200.0, folder)
+                with self.assertRaises(self.cv.Stop) as caught:
+                    self.cv.move(rel, self.cameras, cold, self.cv.Pace(0))
+                self.assertEqual(caught.exception.code, 2)
+                self.assertIn("is the file itself", str(caught.exception))
+                self.assertStays(rel)
+                self.assertEqual(sha(src), digest)
+                self.assertFalse([n for n in os.listdir(os.path.dirname(src)) if n.startswith(".")])
 
 
 class ReadersTest(Base):
