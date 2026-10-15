@@ -54,6 +54,33 @@ class ColourTest(unittest.TestCase):
         with self.assertRaises(self.P.PhotoError):
             self.P.Curve([0, 1], [1, 0])
 
+    def test_colour_gains_put_each_day_on_the_reference_scale(self):
+        days = ["2025-05-25", "2025-06-18"]
+        dn = np.arange(256, dtype=np.float64)
+        ident = {b: dn.tolist() for b in self.P.GAIN_BANDS}
+        may = {"red": np.clip(dn + 10, 0, 255).tolist(), "green": dn.tolist(), "blue": np.clip(dn * 0.9, 0, 255).tolist()}
+        doc = {"format": self.P.GAINS_FORMAT, "reference_day": "2025-06-18",
+               "days": {"2025-05-25": {"lut": may}, "2025-06-18": {"lut": ident}}}
+        g = self.P.Gains(doc, days)
+        r, gr, b = (np.array([[100, 100, 100]], np.uint8),) * 3
+        flight = np.array([[0, 1, 2]], np.uint8)                       # none, May 25, June 18
+        rgb, lin = g.apply(flight, r, gr, b)
+        self.assertEqual([float(v) for v in rgb[0][0]], [100.0, 110.0, 100.0])
+        self.assertEqual([float(v) for v in rgb[2][0]], [100.0, 90.0, 100.0])
+        # The reference day and a pixel with no flight day come out as P.colour gives them.
+        L, a, bb = self.P.colour_linear(*lin)
+        L0, a0, b0 = self.P.colour(r, gr, b)
+        for got, want in ((L, L0), (a, a0), (bb, b0)):
+            np.testing.assert_allclose(got[0, [0, 2]], want[0, [0, 2]], atol=1e-5)
+        self.assertGreater(float(L[0, 1]), float(L0[0, 1]))            # May 25's red read higher
+        with self.assertRaises(self.P.PhotoError):                     # a table that falls
+            self.P.Gains(dict(doc, days={**doc["days"], "2025-05-25": {"lut": dict(may, red=dn[::-1].tolist())}}),
+                         days)
+        with self.assertRaises(self.P.PhotoError):                     # a flight day with no tables
+            self.P.Gains(doc, days + ["2025-07-24"])
+        with self.assertRaises(self.P.PhotoError):
+            self.P.Gains(dict(doc, format="other/1"), days)
+
     def test_ndvi_coding_for_the_cog(self):
         v = np.array([-1.0, 0.0, 1.0, 0.5, np.nan, -2.0], np.float32)
         code = self.P.encode_ndvi(v)

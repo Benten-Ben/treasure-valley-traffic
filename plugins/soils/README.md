@@ -236,7 +236,8 @@ polygon: the count, sums and histograms, for the outlier check.
 3. `albedo`: L from a straight fit of the measured types' L on their dry albedo, chroma, hue, spread and texture from
    its texture class's measured types (or every measured soil). Only when the fit has some skill (r of 0.5 or more):
    otherwise the type takes those peers' colour as it is, L included, labelled `texture` with a note that says so.
-   The first build's fit had r 0.28, which put every such type at L 0.75-0.80, the mean.
+   The first build's fit had r 0.28, which put every such type at L 0.75-0.80, the mean; with the colour gains it's
+   0.11.
 
 A miscellaneous area borrows nothing (water, urban land, rock outcrop and the like have no series, texture or albedo
 of their own), and NOTCOM isn't a soil. A type with nothing to borrow gets no row: the palette says `none` and the
@@ -272,32 +273,44 @@ coding, grid, colour, sources, credits, sha256), and
 `flights.fgb` holds USDA's seamline polygons with their days and local times, for the sun angle G1b normalises by
 (C8).
 
-### The first build (Oct 11, on the scratch database)
+### The build on scratch (Oct 11-15)
 
-`photo-20261011T1600Z`, from soils export `20261011T153514Z`, mask v0 `20261011T144701Z` and farm export
-`20261011T130710Z`:
-- **The pass:** 5,159 windows (452 in both counties) in three chunks under `heavy`, 2.8 hours with three workers
-  (about 1.9 s a window), 1.84 GB at most of its 3 GB. 7.0 billion pixels sampled, 45% of the valid pixels: the rest
-  were green (28%), within 10 m of a polygon's edge (14%), covered (10.5%), crop stubble or hay (1.5%), outside the
-  flight polygons (0.6%) or dark (0.3%).
-- **Ground types:** 211 measured, 38 from their series, 72 from texture class and landform, 55 from dry albedo, and 4
-  with no colour (Dams, Mined land, Pits and dumps, and NOTCOM). 2,572 rows, 1.5 MB in PostGIS. `finish` took
-  5.5 minutes, 4 of them the COG.
+`photo-20261011T2012Z`, from soils export `20261011T195225Z` (the first with `areasymbol`), mask v0
+`20261011T144701Z`, farm export `20261011T130710Z` and the colour gains (`gains.json` e07d6065...):
+- **The pass:** 5,159 windows in three chunks under `heavy`, 3.0 hours with three workers (about 2 s a window), within
+  its 3 GB. 14.6 billion valid pixels in the windows' cores, 6.7 billion sampled (46%); the rest were
+  green (27%), within 10 m of a polygon's edge (14%), covered (10.5%), crop stubble or hay (1.4%), outside the flight
+  polygons (0.6%) or dark (0.1%). About 80% of the sampled pixels are in Ada's and Canyon's survey areas, the rest in
+  the mosaics' strips beyond them (Elmore 8.8%, Owyhee 7.9%, Boise 1.5%, Payette, Gem and Malheur 1.2%).
+- **Ground types:** 211 measured, 38 from their series, 127 from texture class and landform (55 of them would have
+  taken L from dry albedo, but the fit has no skill: r 0.11), and 4 with no colour (Dams, Mined land, Pits and
+  dumps, and NOTCOM). 2,572 rows, 1.5 MB in PostGIS. `finish` took 8.4 minutes, 7.8 of them the COG.
 - **The ten boxes:** 24 (box, type) pairs, median dE **1.36** (90th percentile 5.76): **pass**. By box: a 1.09, b 1.01,
-  c 13.0, d 1.73, e 0.85, f 0.13, downtown 14.9, h 2.18, i 0.12, j 1.25. The two misses are urban land in town, where
+  c 13.0, d 1.73, e 0.85, f 0.15, downtown 14.9, h 2.18, i 0.12, j 1.25. The two misses are urban land in town, where
   the class mask is mostly dry lawn and sidewalk, which isn't soil either, and photo-v1 keeps only vacant lots. The
-  valley-wide palette colour against the class mask's in the boxes is 3.76 (spatial spread plus the mask's bias).
-- **Flight days:** 91 types were measured on two days or more. The median type's largest dE between its days is
-  **3.15**, just over the rule's 3, so `gains_needed` is true. Most of that is the type's spread over the valley, not
-  the flight: per pair of days, the flights' own offset (the median paired difference over the types on both) is dE
-  0.8 for June 18/July 24 (53 types), 2.2 for May 25/June 18 (53), 1.3 for May 25/July 24 (18), 2.0 for May 30/June 18
-  (15) and 3.3 for May 25/May 30 (14; May 30 is 0.6% of the photo's area), almost all of it in L, with L's
-  interquartile ranges crossing 0 for all but the May 30 pairs. Whether to make the approved Sentinel-2 read for
-  per-flight gains is the lead's call (it would mean a second pass); the COG's colour isn't normalised.
-- **The rest:** the types explain 15% of the pixels' colour variance; type L against dry albedo, Spearman's rho 0.27
-  (199 types; the fit's slope 0.19); 136 of 14,371 polygons are listed as far from their type (water, pits and
-  playas lead the list).
-- **The COG:** 3.35 GB (its 2 m parts, 2.7 GB, are deleted once it's checked).
+  valley-wide palette colour against the class mask's in the boxes is 4.59 (spatial spread plus the mask's bias).
+- **Flight days, with the gains:** 91 types were measured on two days or more, and the median type's largest dE
+  between its days is **5.71** (84% over 3), up from 3.15 without the gains. Per pair of days (the median paired
+  difference, later minus earlier), L is now +4.4 for June 18/July 24 (53 types; interquartile range 2.1 to 6.2), +4.3
+  for May 25/June 18 (53), +6.9 for May 25/July 24 (18), +4.9 for May 25/May 30 (14), and -1.9 for May 30/June 18
+  (15; May 30 isn't normalised). Yet the gains bring the photo closer to Sentinel-2 across the flight seams, bare
+  ground included: the mismatch with same-day Sentinel-2's step there falls from 4.9 to 3.0 over all land and from
+  4.1 to 3.1 on bare ground (`seam_bare.py`, in `naip_colour/PROVENANCE.md`), most at the June 18/July 24 seams,
+  where the raw photo's July camera had the step backwards. So what's left between flight days is partly real (the
+  ground either side of a seam differs in same-day Sentinel-2 too), partly each type's spread over the valley, and
+  partly the tables: soils sit at red DN 170-200, where May 25's table darkens most and July 24's brightens by 14-23
+  DN, following a kink in June 18's red curve that may come from the fit (Sentinel-2's median per NAIP bin mixes
+  land covers) rather than the camera. A type's palette colour pools its flight days by area; `soils.photo_stats`
+  keeps each day's row.
+- **The rest:** the types explain 16% of the pixels' colour variance; type L against dry albedo, Spearman's rho 0.08
+  (199 types; 0.27 without the gains); 209 of 14,314 polygons are listed as far from their type (Scism 62, Lankbush
+  20, Truesdale 19: types measured on more than one flight day).
+- **The COG:** 3.36 GB on the cold drive, in the build's folder (its 2 m parts, 3.2 GB, were deleted once it was
+  checked: GDAL's validator found no errors, and 20 random parts matched it exactly).
+
+The first build, `photo-20261011T1600Z` (Oct 11), counted the 390 km² where the county mosaics overlap twice (1.07
+billion of its 15.66 billion pixels; half of some map units' pixels) and had no colour gains. It's superseded; its
+raw-colour COG stays on the cold drive as the colour fit's input.
 
 ### The palette
 
