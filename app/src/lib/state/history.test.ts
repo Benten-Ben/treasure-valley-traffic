@@ -26,6 +26,7 @@ function fakeMap() {
 			cam = { ...cam, ...o } as CameraView;
 			fire();
 		}),
+		panBy: vi.fn(),
 		flyTo(o: Partial<CameraView>) {
 			// Interrupting a flight ends it first (MapLibre's stop()).
 			if (moving) {
@@ -126,6 +127,37 @@ describe('view history', () => {
 		expect(f.cam.zoom).toBe(14);
 		expect(h.back()).toBe(true);
 		expect(f.cam).toEqual(view(10));
+	});
+
+	it('an offset rides along: in the fly, in the jump under reduced motion (then panned by it at once), and back', () => {
+		const f = fakeMap();
+		const flown: unknown[] = [];
+		const own = f.map.flyTo;
+		f.map.flyTo = (o: Partial<CameraView>) => {
+			flown.push(o);
+			return own.call(f.map, o);
+		};
+		let reduced = false;
+		const h = new ViewHistory({ reducedMotion: () => reduced });
+		h.attach(f.map as unknown as Map);
+		h.fly({ zoom: 14, offset: [-160, 0] });
+		expect(flown.at(-1)).toEqual({ zoom: 14, offset: [-160, 0] });
+		f.finish();
+		expect(h.back([-160, 0])).toBe(true);
+		expect(flown.at(-1)).toEqual({ ...view(10), offset: [-160, 0] });
+		f.finish();
+		reduced = true;
+		h.fly({ zoom: 13, offset: [-160, 12] });
+		expect(f.cam.zoom).toBe(13);
+		// The jump puts the centre in the middle; the pan takes it 160 px left and 12 down (panBy moves the map the other way).
+		expect(f.map.panBy).toHaveBeenLastCalledWith([160, -12], { animate: false });
+		expect(h.back([-160, 0])).toBe(true);
+		// (The fake keeps every option it's given, the offsets too.)
+		expect(f.cam).toMatchObject(view(10));
+		expect(f.map.panBy).toHaveBeenCalledTimes(2);
+		// No offset, no pan.
+		h.fly({ zoom: 12 });
+		expect(f.map.panBy).toHaveBeenCalledTimes(2);
 	});
 
 	it('detach puts the map’s own flyTo back', () => {

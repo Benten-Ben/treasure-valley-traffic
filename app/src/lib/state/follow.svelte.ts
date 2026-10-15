@@ -8,8 +8,12 @@ import type { Loop } from '#lib/map/loop.js';
  *
  * - `start(target)` eases to the target, then keeps it at the centre of the
  *   view after every rendered frame (the render loop runs at least
- *   `FOLLOW_FPS` while following, so a slow bus is still tracked).
- * - Wheel and pinch zoom stay centred on it while following.
+ *   `FOLLOW_FPS` while following, so a slow bus is still tracked). Started
+ *   with an `offset` (the bus card's Follow, while the inspect card is open:
+ *   §14.3 "Regions"), it keeps the target that far from the centre instead,
+ *   in the area the card leaves, for as long as it follows.
+ * - Wheel and pinch zoom keep the view's centre still while following: the
+ *   target, unless it's kept off centre (then the next frame puts it back).
  * - Any drag ends it, as do Esc (its place in the Esc order), leaving
  *   Explore, and `stop()`.
  * - ViewHistoryChip shows "Following bus 2213 · Esc" while it runs.
@@ -43,6 +47,8 @@ export class Follow {
 	#map: Map | null = null;
 	#loop: Pick<Loop, 'want'> | null = null;
 	#easing = false;
+	/** Where the target is kept, from the map's padded centre (px). */
+	#offset: [number, number] = [0, 0];
 	#zoomAround: { scroll: boolean; touch: boolean } | null = null;
 	#o: Required<FollowOptions>;
 
@@ -70,26 +76,42 @@ export class Follow {
 		return this.current?.kind === kind && this.current.id === id;
 	}
 
-	/** Follow a target (replacing any other). Returns false when it can't start now. */
-	start(target: FollowTarget, o: { zoom?: number } = {}): boolean {
+	/**
+	 * Follow a target (replacing any other), kept `offset` px from the middle
+	 * of the map's padding. Returns false when it can't start now.
+	 */
+	start(target: FollowTarget, o: { zoom?: number; offset?: [number, number] | null } = {}): boolean {
 		const map = this.#map;
 		if (!map || !this.#o.canFollow()) return false;
 		if (this.current) this.#unlisten(map);
 		this.current = target;
+		this.#offset = o.offset ? [o.offset[0], o.offset[1]] : [0, 0];
 		map.on('render', this.#onRender);
 		map.on('dragstart', this.#onDrag);
 		this.#centreZoom(map, true);
 		this.#loop?.want('follow', FOLLOW_FPS);
 		const at = target.position();
 		if (at) {
-			if (this.#o.reducedMotion()) map.jumpTo({ center: at, ...(o.zoom !== undefined ? { zoom: o.zoom } : {}) });
+			const zoom = o.zoom !== undefined ? { zoom: o.zoom } : {};
+			if (this.#o.reducedMotion()) this.#place(map, at, zoom);
 			else {
 				this.#easing = true;
 				map.once('moveend', () => (this.#easing = false));
-				map.easeTo({ center: at, duration: FOLLOW_EASE_MS, ...(o.zoom !== undefined ? { zoom: o.zoom } : {}) });
+				map.easeTo({ center: at, duration: FOLLOW_EASE_MS, ...zoom, ...this.#offsetOption() });
 			}
 		}
 		return true;
+	}
+
+	#offsetOption(): { offset?: [number, number] } {
+		return this.#offset[0] || this.#offset[1] ? { offset: this.#offset } : {};
+	}
+
+	/** Put the target where it's kept, at once (a jump; an instant ease when it's kept off centre, since a jump takes no offset). */
+	#place(map: Map, at: [number, number], o: { zoom?: number } = {}) {
+		const off = this.#offsetOption();
+		if (off.offset) map.easeTo({ center: at, ...o, ...off, animate: false });
+		else map.jumpTo({ center: at, ...o });
 	}
 
 	/** Stop following (the view stays where it is). */
@@ -133,7 +155,8 @@ export class Follow {
 		if (!at) return;
 		const p = map.project(at);
 		const c = map.project(map.getCenter());
-		if (Math.hypot(p.x - c.x, p.y - c.y) > FOLLOW_SLACK_PX) map.jumpTo({ center: at });
+		const [dx, dy] = this.#offset;
+		if (Math.hypot(p.x - c.x - dx, p.y - c.y - dy) > FOLLOW_SLACK_PX) this.#place(map, at);
 	};
 }
 

@@ -1,7 +1,8 @@
-import type { CameraOptions, Map } from 'maplibre-gl';
+import type { CameraOptions, FlyToOptions, Map } from 'maplibre-gl';
 import type { AppCtx } from '#lib/app/context.js';
 import { historyOf } from '#lib/state/history.svelte.js';
 import { register, type KeyBinding } from './keys.js';
+import { fitPadding, type Landing } from './padding.js';
 
 /**
  * WP2's own keys (docs/14 §14.3, "Keymap"): layers and the map camera, and
@@ -40,12 +41,18 @@ export function overviewBounds(tiles?: readonly number[] | null): [[number, numb
 
 /**
  * Overview (O and the camera widget): the valley from straight above, north
- * up, fitted inside the map's padding (the open columns and bars), with 40 px
- * to spare.
+ * up, fitted inside the map's padding (the bars and columns) with 40 px to
+ * spare; with a `landing` (the inspect card is open), inside the area the
+ * card leaves.
  */
-export function overviewCamera(map: Map, tiles?: readonly number[] | null): CameraOptions | null {
-	const cam = map.cameraForBounds(overviewBounds(tiles), { padding: 40, bearing: 0, pitch: 0 });
+export function overviewCamera(map: Map, tiles?: readonly number[] | null, landing?: Landing | null): CameraOptions | null {
+	const cam = map.cameraForBounds(overviewBounds(tiles), { padding: fitPadding(40, landing), bearing: 0, pitch: 0 });
 	return cam ? { ...cam, bearing: 0, pitch: 0 } : null;
+}
+
+/** Home (H and the camera widget): over Meridian, landing left of the inspect card while it's open. */
+export function homeFlight(landing?: Landing | null): FlyToOptions {
+	return { ...HOME, duration: 1200, ...(landing ? { offset: landing.offset } : {}) };
 }
 
 const PAN_PX = 120;
@@ -63,13 +70,14 @@ export function registerDefaultKeys(app: AppCtx, opts: { help: () => void }): ()
 		else m.easeTo({ duration: 220, ...o });
 	};
 	// H and O are programmatic flies: through the view history, so the view they leave goes on it
-	// (a jump under reduced motion, still pushed) and Backspace or the chip comes back.
-	const fly = (o: CameraOptions) => {
+	// (a jump under reduced motion, still pushed) and Backspace or the chip comes back. With the
+	// inspect card open they land in the area it leaves (`app.landing`).
+	const fly = (o: FlyToOptions) => {
 		const m = map();
 		if (!m) return;
 		const history = historyOf(app);
 		if (history.attached) history.fly({ duration: 1200, ...o });
-		else if (reducedMotion()) m.jumpTo(o);
+		else if (reducedMotion()) m.jumpTo({ center: o.center, zoom: o.zoom, bearing: o.bearing, pitch: o.pitch });
 		else m.flyTo({ duration: 1200, ...o });
 	};
 	const pan = (dx: number, dy: number) => {
@@ -97,7 +105,7 @@ export function registerDefaultKeys(app: AppCtx, opts: { help: () => void }): ()
 		{ id: 'rotate-right', codes: ['KeyE'], label: 'E', description: 'Rotate right', group: 'Camera', help: false, run: () => ease({ bearing: (map()?.getBearing() ?? 0) + ROTATE_DEG }) },
 		{ id: 'tilt-up', codes: ['KeyR'], label: 'R / F', description: `Tilt up / down ${TILT_DEG}°`, group: 'Camera', run: () => ease({ pitch: Math.min(map()?.getMaxPitch() ?? 75, (map()?.getPitch() ?? 0) + TILT_DEG) }) },
 		{ id: 'tilt-down', codes: ['KeyF'], label: 'F', description: 'Tilt down', group: 'Camera', help: false, run: () => ease({ pitch: Math.max(0, (map()?.getPitch() ?? 0) - TILT_DEG) }) },
-		{ id: 'home', codes: ['KeyH'], label: 'H', description: 'Home: over Meridian', group: 'Camera', run: () => fly(HOME) },
+		{ id: 'home', codes: ['KeyH'], label: 'H', description: 'Home: over Meridian', group: 'Camera', run: () => fly(homeFlight(app.landing?.())) },
 		{
 			id: 'overview',
 			codes: ['KeyO'],
@@ -106,7 +114,7 @@ export function registerDefaultKeys(app: AppCtx, opts: { help: () => void }): ()
 			group: 'Camera',
 			run: () => {
 				const m = map();
-				const cam = m && overviewCamera(m, app.manifest?.bounds);
+				const cam = m && overviewCamera(m, app.manifest?.bounds, app.landing?.());
 				if (cam) fly(cam);
 			}
 		},

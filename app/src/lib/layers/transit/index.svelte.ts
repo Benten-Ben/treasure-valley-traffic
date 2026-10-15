@@ -568,12 +568,12 @@ export class TransitModule implements LayerModule {
 		if (this.#useOverlay && this.#visible) this.#ctx?.overlay.set(RING_GROUP, this.#ring);
 	}
 
-	/** Follow a bus (the bus card's Follow); again to stop. */
+	/** Follow a bus (the bus card's Follow), kept left of the open inspect card (`app.landing`); again to stop. */
 	toggleFollow(vid: string): void {
 		const f = this.follow;
 		if (!f) return;
 		if (f.is('bus', vid)) return f.stop();
-		f.start({ kind: 'bus', id: vid, label: `bus ${busNumber(vid)}`, position: () => this.position(vid) });
+		f.start({ kind: 'bus', id: vid, label: `bus ${busNumber(vid)}`, position: () => this.position(vid) }, { offset: this.#ctx?.landing?.()?.offset });
 	}
 
 	/** Where a bus is drawn now (lon, lat), or null when it isn't. */

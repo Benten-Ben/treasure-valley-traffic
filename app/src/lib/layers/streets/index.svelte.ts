@@ -78,8 +78,8 @@ export class StreetsModule implements LayerModule {
 			this.status = 'stale';
 			this.error = `Some road tiles failed to load: ${e.error?.message ?? 'unknown error'}`;
 		});
-		// Hidden and moving: let the tiles go, so a hidden Streets fetches nothing for the new view. The map's
-		// padding following the inspect card isn't a move (its jumpTo fires movestart all the same).
+		// Hidden and moving: let the tiles go, so a hidden Streets fetches nothing for the new view. A change of
+		// the map's padding alone (a resize into another layout) isn't a move (its jumpTo fires movestart all the same).
 		scope.on('movestart', (e) => {
 			if (this.#visible || !this.#keeping || (e as Partial<PaddingMove>).tvtPadding === true) return;
 			this.#keeping = false;

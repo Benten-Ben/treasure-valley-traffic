@@ -7,10 +7,10 @@
 	import CameraWidget from './CameraWidget.svelte';
 	import InspectCard from './InspectCard.svelte';
 	import { ESC, handleKey, onEscape } from './keys.js';
-	import { registerDefaultKeys } from './keymap.js';
+	import { reducedMotion, registerDefaultKeys } from './keymap.js';
 	import LegendStack from './LegendStack.svelte';
 	import LoadingCard from './LoadingCard.svelte';
-	import { applyPadding, chromePadding, type Padding } from './padding.js';
+	import { applyPadding, cardLanding, chromePadding, revealPan, revealTarget, type Landing, type Padding } from './padding.js';
 	import Sheet from './Sheet.svelte';
 	import { slots } from './slots.svelte.js';
 	import TabBar from './TabBar.svelte';
@@ -36,8 +36,10 @@
 	 * - In a mode (look-through, calibrate) the mode's banner replaces the
 	 *   toolbar, and the mode's own panel takes the screen.
 	 *
-	 * It also owns the one key handler (the keymap registry), WP2's keys, and
-	 * the map's hover tooltip.
+	 * It also owns the one key handler (the keymap registry), WP2's keys, the
+	 * map's hover tooltip and its padding (`padding.ts`): where the app's own
+	 * camera moves land while the inspect card is open (`app.landing`), and
+	 * the pan that brings a clicked selection out from under the card.
 	 */
 	let { app }: { app: AppCtx } = $props();
 
@@ -62,18 +64,14 @@
 	const exploring = $derived(app.modes.current === 'explore');
 	const banner = $derived(slots.banner(app.modes.current));
 
-	// The map's padding follows the open columns (§14.3 "Regions"), in Explore only: the modes set
-	// their own and put this one back from their snapshot. A change waits for a flight to land.
+	// The map's padding follows the fixed chrome (§14.3 "Regions"), in Explore only: the modes set
+	// their own and put this one back from their snapshot. A change waits for a flight to land. The
+	// inspect card doesn't change it (on a tilted map that would skew the scene): the app's own moves
+	// land clear of the card by `landing`, and a click the card would cover pans clear (below).
 	let vw = $state(typeof innerWidth === 'number' ? innerWidth : 1280);
 	let vh = $state(typeof innerHeight === 'number' ? innerHeight : 800);
-	const padding = $derived(
-		chromePadding({
-			layout: phone ? 'phone' : tablet ? 'tablet' : 'desktop',
-			width: vw,
-			height: vh,
-			inspect: !phone && app.selection.current !== null
-		})
-	);
+	const layout = $derived(phone ? 'phone' : tablet ? 'tablet' : 'desktop');
+	const padding = $derived(chromePadding({ layout, width: vw, height: vh }));
 	let padWanted: { map: MapLibre; padding: Padding } | null = null;
 	let padWaiting: MapLibre | null = null;
 	function padNow() {
@@ -100,6 +98,28 @@
 			else padNow();
 		});
 	});
+
+	/** Where a camera move the app starts now lands: left of the inspect card while it's open (`app.landing`). */
+	function landing(): Landing | null {
+		const map = ctx.map;
+		if (!map || phone || ctx.modes.current !== 'explore' || !ctx.selection.current) return null;
+		const el = map.getContainer();
+		return cardLanding({ layout, width: el.clientWidth, height: el.clientHeight, stored: map.getPadding() });
+	}
+
+	// A click that selects something the open card would cover pans it clear: a plain ease, after every
+	// click listener has run, so a layer that moves the map itself (a camera's fly, a station's pan) goes
+	// first and this sees where the thing ended up.
+	let column: HTMLElement | undefined = $state();
+	let slot: HTMLElement | undefined = $state();
+	function reveal(map: MapLibre, at: { lng: number; lat: number }) {
+		if (ctx.map !== map || phone || !exploring || !ctx.selection.current || map.isMoving() || !column || !slot) return;
+		const box = map.getContainer().getBoundingClientRect();
+		const s = slot.getBoundingClientRect();
+		const p = map.project([at.lng, at.lat]);
+		const to = revealTarget(p, { left: s.left - box.left, top: s.top - box.top, bottom: column.getBoundingClientRect().bottom - box.top });
+		if (to) revealPan(map, at, to, reducedMotion());
+	}
 
 	// The open credits card (map/controls.css) keeps clear of the toolbar, or a mode's banner, by its real
 	// width, which grows with the layers there are: the CSS reads it from --toolbar-width.
@@ -131,6 +151,13 @@
 	// The app context never changes for the life of the layout.
 	const ctx = untrack(() => app);
 	const unkeys = registerDefaultKeys(ctx, { help: () => toggleHelp() });
+	Object.defineProperty(ctx, 'landing', { value: landing, configurable: true, enumerable: false });
+	const unpick = ctx.picker.onPick((pick) => {
+		const map = ctx.map;
+		if (!map || !pick.selection || phone) return;
+		const at = map.unproject([pick.x, pick.y]);
+		if (Number.isFinite(at.lng) && Number.isFinite(at.lat)) queueMicrotask(() => reveal(map, at));
+	});
 	const stopEsc = onEscape(ESC.popover + 1, () => {
 		if (!helpOpen) return false;
 		helpOpen = false;
@@ -154,6 +181,8 @@
 
 	onDestroy(() => {
 		unkeys();
+		if (ctx.landing === landing) Reflect.deleteProperty(ctx, 'landing');
+		unpick();
 		stopEsc();
 		unhover();
 		tooltip.hide();
@@ -178,9 +207,9 @@
 			<aside class="left" aria-label="Legends">
 				<LegendStack {app} collapsed={tablet} />
 			</aside>
-			<div class="right">
+			<div class="right" bind:this={column}>
 				<div class="widget"><CameraWidget {app} /></div>
-				<div class="inspect-slot"><InspectCard {app} /></div>
+				<div class="inspect-slot" bind:this={slot}><InspectCard {app} /></div>
 			</div>
 		{/if}
 		<ViewHistoryChip {app} />

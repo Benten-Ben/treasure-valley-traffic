@@ -297,12 +297,16 @@ export class RoadWeatherModule implements LayerModule {
 		return this.#ctx ? windowsOf(this.#ctx).numberOf(stationKey(id)) : null;
 	}
 
-	/** Fly the map to a station (a programmatic fly: the view history keeps where it was; a jump under reduced motion). */
+	/**
+	 * Fly the map to a station (a programmatic fly: the view history keeps where it was; a jump under reduced
+	 * motion), landing left of the inspect card while it's open (`app.landing`, §14.3 "Regions").
+	 */
 	flyTo(id: number): void {
 		const map = this.#scope?.map;
 		const s = this.#byId.get(id);
 		if (!map || !s || !this.#ctx) return;
-		const to = { center: [s.lon, s.lat] as [number, number], zoom: Math.max(map.getZoom(), 13) };
+		const offset = this.#ctx.landing?.()?.offset;
+		const to = { center: [s.lon, s.lat] as [number, number], zoom: Math.max(map.getZoom(), 13), ...(offset ? { offset } : {}) };
 		const h = historyOf(this.#ctx);
 		if (h.attached) h.fly(to);
 		else map.flyTo(to);

@@ -1,5 +1,7 @@
-import { describe, expect, it } from 'vitest';
-import { overviewBounds, VALLEY } from './keymap.js';
+import type { Map } from 'maplibre-gl';
+import { describe, expect, it, vi } from 'vitest';
+import { HOME, homeFlight, overviewBounds, overviewCamera, VALLEY } from './keymap.js';
+import { cardLanding, chromePadding } from './padding.js';
 
 describe('Overview frames the populated valley, not the tiles', () => {
 	it('the valley box, Caldwell to east Boise and Kuna to Eagle', () => {
@@ -17,5 +19,24 @@ describe('Overview frames the populated valley, not the tiles', () => {
 			[VALLEY[2], 43.7]
 		]);
 		expect(overviewBounds([-100, 40, -99, 41])).toEqual(overviewBounds());
+	});
+});
+
+describe('H and O land left of the open inspect card (§14.3 "Regions")', () => {
+	const stored = chromePadding({ layout: 'desktop', width: 1280, height: 800 });
+	const card = cardLanding({ layout: 'desktop', width: 1280, height: 800, stored });
+
+	it('Home: over Meridian, offset into the area the card leaves', () => {
+		expect(homeFlight(null)).toEqual({ ...HOME, duration: 1200 });
+		expect(homeFlight(card)).toEqual({ ...HOME, duration: 1200, offset: [-160, 0] });
+	});
+
+	it('Overview: fitted with the card\'s column as more padding', () => {
+		const cameraForBounds = vi.fn(() => ({ center: { lng: -116.4, lat: 43.6 }, zoom: 10.2, bearing: 0 }));
+		const map = { cameraForBounds } as unknown as Map;
+		expect(overviewCamera(map, null, null)).toMatchObject({ zoom: 10.2, bearing: 0, pitch: 0 });
+		expect(cameraForBounds).toHaveBeenLastCalledWith(overviewBounds(), { padding: { top: 40, right: 40, bottom: 40, left: 40 }, bearing: 0, pitch: 0 });
+		overviewCamera(map, null, card);
+		expect(cameraForBounds).toHaveBeenLastCalledWith(overviewBounds(), { padding: { top: 40, right: 360, bottom: 40, left: 40 }, bearing: 0, pitch: 0 });
 	});
 });

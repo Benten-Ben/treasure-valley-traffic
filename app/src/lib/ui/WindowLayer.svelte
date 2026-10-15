@@ -53,7 +53,7 @@
 			label: 'Backspace',
 			description: 'Back to the previous view',
 			group: 'Camera',
-			run: () => history.back()
+			run: () => history.back(ctx.landing?.()?.offset)
 		})
 	);
 	// Esc closes the focused window; with focus outside every window, the top one (the most

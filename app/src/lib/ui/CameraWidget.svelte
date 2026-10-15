@@ -4,7 +4,7 @@
 	import type { AppCtx } from '#lib/app/context.js';
 	import { historyOf } from '#lib/state/history.svelte.js';
 	import Icon from './Icon.svelte';
-	import { HOME as HOME_VIEW, overviewCamera, reducedMotion } from './keymap.js';
+	import { homeFlight, overviewCamera, reducedMotion } from './keymap.js';
 	import { slots } from './slots.svelte.js';
 	import { tooltip } from './tooltip.svelte.js';
 	import { HOME, OVERVIEW, ZOOM_IN, ZOOM_OUT } from './window-icons.js';
@@ -106,12 +106,13 @@
 		} else map.easeTo({ pitch: Math.min(lastPitch, map.getMaxPitch()), duration: duration(400) });
 	}
 
+	// Both land in the area the inspect card leaves while it's open (`app.landing`).
 	function home() {
-		history.fly({ ...HOME_VIEW, duration: 1200 });
+		history.fly(homeFlight(ctx.landing?.()));
 	}
 
 	function overview() {
-		const cam = map && overviewCamera(map, ctx.manifest?.bounds);
+		const cam = map && overviewCamera(map, ctx.manifest?.bounds, ctx.landing?.());
 		if (cam) history.fly({ ...cam, duration: 1200 });
 	}
 

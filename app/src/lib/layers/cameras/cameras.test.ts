@@ -1,4 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import type { Map as MapLibre } from 'maplibre-gl';
+import { describe, expect, it, vi } from 'vitest';
+import type { AppCtx } from '#lib/app/context.js';
+import { cardLanding, chromePadding } from '#lib/ui/padding.js';
+import { flyToCamera } from './fly.js';
 import { ALL_LAYERS, cameraLayers, CAMERA_LAYERS, checkImage, FOOTPRINT_MINZOOM, metres, movedLines, notchImage, type Calibration } from './cameras.js';
 import { cameraIdOf, cameraKey, flyTarget, landBeside, landing, paddedCentre } from './place.js';
 import { clampZoom, IDENTITY, MAX_ZOOM, panBy, wheelFactor, zoomAt } from './zoom.js';
@@ -126,5 +130,39 @@ describe('zoom and pan in the picture', () => {
 	it('turns wheel notches into steps', () => {
 		expect(wheelFactor(-100)).toBeCloseTo(1.25, 6);
 		expect(wheelFactor(100)).toBeCloseTo(0.8, 6);
+	});
+});
+
+describe('a fly to a camera lands clear of the open inspect card', () => {
+	const stored = chromePadding({ layout: 'tablet', width: 1000, height: 800 });
+	const fakeMap = () => {
+		const flyTo = vi.fn();
+		const map = {
+			getContainer: () => ({ getBoundingClientRect: () => ({ left: 0, top: 0, width: 1000, height: 800 }) }),
+			getPadding: () => stored,
+			getBearing: () => 15,
+			flyTo
+		} as unknown as MapLibre;
+		return { map, flyTo };
+	};
+	const app = (open: boolean) => ({ modes: { current: 'explore' }, landing: () => (open ? cardLanding({ layout: 'tablet', width: 1000, height: 800, stored }) : null) }) as unknown as AppCtx;
+
+	it('with no landing point: the middle of the map\'s padding, or of the area the card leaves', () => {
+		const at: [number, number] = [-116.2, 43.6];
+		const closed = fakeMap();
+		expect(flyToCamera(app(false), closed.map, at, null)).toEqual(paddedCentre({ left: 0, top: 0, width: 1000, height: 800 }, stored));
+		expect(closed.flyTo).toHaveBeenLastCalledWith(expect.objectContaining({ center: at, zoom: 18, bearing: 15, pitch: 50, offset: [0, 0] }));
+		const open = fakeMap();
+		const card = chromePadding({ layout: 'tablet', width: 1000, height: 800, inspect: true });
+		const to = flyToCamera(app(true), open.map, at, null);
+		expect(to).toEqual(paddedCentre({ left: 0, top: 0, width: 1000, height: 800 }, card));
+		// Left of the tablet's card (320 px and its margins).
+		expect(to.x).toBeLessThan(1000 - 336);
+		expect(open.flyTo).toHaveBeenLastCalledWith(expect.objectContaining({ offset: [-140, 0] }));
+	});
+
+	it('a landing point (the free middle, or beside its window) wins', () => {
+		const m = fakeMap();
+		expect(flyToCamera(app(true), m.map, [-116.2, 43.6], { x: 500, y: 300 })).toEqual({ x: 500, y: 300 });
 	});
 });

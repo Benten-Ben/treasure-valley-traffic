@@ -67,12 +67,22 @@ describe('picker', () => {
 		const listeners: Record<string, (e: unknown) => void> = {};
 		const fakeMap = { on: (t: string, f: (e: unknown) => void) => (listeners[t] = f), off: () => {}, getLayer: () => undefined, getCanvas: () => ({ style: {} }) };
 		p.attach(fakeMap as never);
+		// Pick listeners hear each click once it has selected (the chrome pans a covered one clear).
+		const heard: { id: string | null; x: number; y: number; selected: number }[] = [];
+		const unpick = p.onPick((k) => heard.push({ id: k.selection?.id ?? null, x: k.x, y: k.y, selected: picked.length }));
 		listeners.click({ point: { x: 101, y: 100 }, originalEvent: {} });
 		expect(picked.map((s) => s?.id)).toEqual(['b']);
+		expect(heard).toEqual([{ id: 'b', x: 101, y: 100, selected: 1 }]);
 		listeners.click({ point: { x: 300, y: 300 }, originalEvent: {} });
 		expect(picked.at(-1)).toBeNull(); // an empty click clears the selection
+		expect(heard.at(-1)).toEqual({ id: null, x: 300, y: 300, selected: 2 });
 		exploring = false;
 		listeners.click({ point: { x: 101, y: 100 }, originalEvent: {} });
 		expect(picked).toHaveLength(2);
+		expect(heard).toHaveLength(2);
+		exploring = true;
+		unpick();
+		listeners.click({ point: { x: 101, y: 100 }, originalEvent: {} });
+		expect(heard).toHaveLength(2);
 	});
 });

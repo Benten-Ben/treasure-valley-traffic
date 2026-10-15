@@ -50,6 +50,13 @@ export interface Hover {
 	y: number;
 }
 
+/** What a click selected (null when it cleared the selection), and where it was (map px). */
+export interface Picked {
+	selection: Selection | null;
+	x: number;
+	y: number;
+}
+
 export interface PickerOptions {
 	/** Whether clicks and hover pick now (the map is in Explore). */
 	canPick: () => boolean;
@@ -96,6 +103,7 @@ export class Picker {
 	#sources = new Set<HitSource>();
 	#layers = new globalThis.Map<string, Interactive[]>();
 	#hoverFns = new Set<(h: Hover | null) => void>();
+	#pickFns = new Set<(p: Picked) => void>();
 	#hovered: Hover | null = null;
 	#moveFrame = 0;
 	#lastMove: MapMouseEvent | null = null;
@@ -172,6 +180,12 @@ export class Picker {
 		return () => this.#hoverFns.delete(fn);
 	}
 
+	/** Hear about each click's pick, once it has selected (the chrome pans a covered one clear); returns the unsubscribe. */
+	onPick(fn: (p: Picked) => void): () => void {
+		this.#pickFns.add(fn);
+		return () => this.#pickFns.delete(fn);
+	}
+
 	get hovered(): Hover | null {
 		return this.#hovered;
 	}
@@ -191,7 +205,9 @@ export class Picker {
 	#onClick = (e: MapMouseEvent) => {
 		if (!this.#o.canPick()) return;
 		const touch = (e.originalEvent as PointerEvent | undefined)?.pointerType === 'touch';
-		this.#o.select(this.pickAt(e.point, touch).top);
+		const selection = this.pickAt(e.point, touch).top;
+		this.#o.select(selection);
+		for (const fn of this.#pickFns) fn({ selection, x: e.point.x, y: e.point.y });
 	};
 
 	#onMove = (e: MapMouseEvent) => {

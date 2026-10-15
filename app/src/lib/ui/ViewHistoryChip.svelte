@@ -11,7 +11,8 @@
 	 * Top centre, under the top bar (docs/14 §14.3; WP3):
 	 *
 	 * - the "↩ Back to previous view" chip, for 8 s after each programmatic
-	 *   fly; it (or Backspace) flies back to the view before;
+	 *   fly; it (or Backspace) flies back to the view before (left of the
+	 *   inspect card while it's open);
 	 * - while following, the "Following bus 2213 · Esc" banner, with Stop.
 	 */
 	let { app }: { app: AppCtx } = $props();
@@ -34,7 +35,7 @@
 
 <div class="top" class:empty={!chip && !follow.current && !slots.items('history').length}>
 	{#if chip}
-		<button class="chip card" onclick={() => history.back()} aria-keyshortcuts="Backspace">
+		<button class="chip card" onclick={() => history.back(ctx.landing?.()?.offset)} aria-keyshortcuts="Backspace">
 			<Icon icon={BACK} size={18} />
 			<span>Back to previous view</span>
 			<kbd class="num">Backspace</kbd>

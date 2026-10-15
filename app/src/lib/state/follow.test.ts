@@ -37,7 +37,17 @@ function fakeMap() {
 		scrollZoom: handler(zoom.scroll),
 		touchZoomRotate: handler(zoom.touch)
 	};
-	return { map, fire, zoom, get center() { return center; } };
+	return {
+		map,
+		fire,
+		zoom,
+		get center() {
+			return center;
+		},
+		setCenter(c: { lng: number; lat: number }) {
+			center = c;
+		}
+	};
 }
 
 describe('follow', () => {
@@ -78,6 +88,38 @@ describe('follow', () => {
 		expect(f.zoom.scroll.around || f.zoom.touch.around).toBe(false);
 		f.fire('render');
 		expect(f.map.jumpTo).toHaveBeenCalledTimes(1);
+	});
+
+	it('started with an offset (the inspect card open), it keeps the target that far from the centre', () => {
+		const f = fakeMap();
+		// An ease with an offset puts the target at the centre plus the offset: on this flat map, 0.0001° a pixel.
+		f.map.easeTo.mockImplementation((o: { center: [number, number]; offset?: [number, number] }) => {
+			const [dx, dy] = o.offset ?? [0, 0];
+			f.setCenter({ lng: o.center[0] - dx / 10000, lat: o.center[1] + dy / 10000 });
+		});
+		const follow = new Follow({ reducedMotion: () => false });
+		follow.attach(f.map as unknown as Map, { want: vi.fn() });
+		let pos: [number, number] = [-116.3, 43.65];
+		follow.start({ kind: 'bus', id: '7', label: 'bus 7', position: () => pos }, { offset: [-160, 0] });
+		expect(f.map.easeTo).toHaveBeenLastCalledWith(expect.objectContaining({ center: [-116.3, 43.65], offset: [-160, 0] }));
+		f.fire('moveend');
+		// Where it was put: no move.
+		f.fire('render');
+		expect(f.map.easeTo).toHaveBeenCalledTimes(1);
+		expect(f.map.jumpTo).not.toHaveBeenCalled();
+		// It moves: put back at the offset, at once.
+		pos = [-116.29, 43.65];
+		f.fire('render');
+		expect(f.map.easeTo).toHaveBeenLastCalledWith({ center: [-116.29, 43.65], offset: [-160, 0], animate: false });
+		expect(f.center.lng).toBeCloseTo(-116.29 + 0.016, 9);
+		expect(f.map.jumpTo).not.toHaveBeenCalled();
+		// Under reduced motion it starts there at once too.
+		const g = fakeMap();
+		const still = new Follow({ reducedMotion: () => true });
+		still.attach(g.map as unknown as Map, null);
+		still.start({ kind: 'bus', id: '8', label: 'bus 8', position: () => [-116.25, 43.6] }, { offset: [-160, 0], zoom: 15 });
+		expect(g.map.easeTo).toHaveBeenCalledWith({ center: [-116.25, 43.6], zoom: 15, offset: [-160, 0], animate: false });
+		expect(g.map.jumpTo).not.toHaveBeenCalled();
 	});
 
 	it('stops when the map leaves Explore, and won’t start outside it', () => {

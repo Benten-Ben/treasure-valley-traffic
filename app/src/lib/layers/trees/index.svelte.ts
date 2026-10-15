@@ -412,24 +412,29 @@ export class TreesModule implements LayerModule {
 		return p;
 	}
 
-	/** Fly to a built area (the legend's "Go there"). */
+	/**
+	 * Fly to a built area (the legend's "Go there"), fitted in the map's padding, or in the area the inspect card
+	 * leaves while it's open (`app.landing`, §14.3 "Regions").
+	 */
 	goTo(area: TreeArea): void {
 		const ctx = this.#ctx;
 		const map = this.#scope?.map;
 		if (!ctx || !map) return;
 		const [w, s, e, n] = area.bounds;
-		const cam = map.cameraForBounds(
-			[
-				[w, s],
-				[e, n]
-			],
-			{ padding: 60 }
-		);
-		const zoom = Math.min(17, Math.max(MODELS_ZOOM + 0.5, cam?.zoom ?? 16));
+		const box: [[number, number], [number, number]] = [
+			[w, s],
+			[e, n]
+		];
+		const cam = map.cameraForBounds(box, { padding: 60 });
+		const land = ctx.landing?.();
+		// With the card open the area fits the space it leaves, and its middle lands there.
+		const fit = land ? map.cameraForBounds(box, { padding: { top: 60 + land.extra.top, right: 60 + land.extra.right, bottom: 60 + land.extra.bottom, left: 60 + land.extra.left } }) : cam;
+		const zoom = Math.min(17, Math.max(MODELS_ZOOM + 0.5, fit?.zoom ?? 16));
 		const center = cam?.center ?? [(w + e) / 2, (s + n) / 2];
+		const to = { center, zoom, duration: 1200, ...(land ? { offset: land.offset } : {}) };
 		const h = historyOf(ctx);
-		if (h.attached) h.fly({ center, zoom, duration: 1200 });
-		else map.flyTo({ center, zoom, duration: 1200 });
+		if (h.attached) h.fly(to);
+		else map.flyTo(to);
 	}
 
 	summary(): string | null {

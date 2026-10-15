@@ -1,4 +1,4 @@
-import type { FlyToOptions, Map } from 'maplibre-gl';
+import type { FlyToOptions, Map, PointLike } from 'maplibre-gl';
 import type { AppCtx } from '#lib/app/context.js';
 import type { CameraView } from './view.svelte.js';
 
@@ -14,6 +14,9 @@ import type { CameraView } from './view.svelte.js';
  * - After each push a "↩ Back to previous view" chip shows for 8 s
  *   (ViewHistoryChip); Backspace or the chip pops the stack and flies back.
  * - User gestures (drag, wheel, keys that ease) never push.
+ * - A fly's `offset` lands its centre that far from the middle of the map's
+ *   padding (the chrome passes the inspect card's, §14.3 "Regions"), under
+ *   reduced motion too; Back takes one the same way.
  */
 export const HISTORY_DEPTH = 10;
 export const CHIP_MS = 8000;
@@ -133,26 +136,28 @@ export class ViewHistory {
 		this.#flight = 'none';
 	};
 
-	/** Fly somewhere, pushing the view it leaves (a jump under reduced motion, still pushed). */
+	/** Fly somewhere, pushing the view it leaves (a jump under reduced motion, still pushed, and still offset). */
 	fly(options: FlyToOptions): void {
 		const map = this.#map;
 		if (!map) return;
 		if (this.#o.reducedMotion()) {
 			if (this.#o.canPush()) this.push();
-			const { center, zoom, bearing, pitch, roll, padding } = options;
-			map.jumpTo({ center, zoom, bearing, pitch, roll, ...(typeof padding === 'object' ? { padding } : {}) });
+			jump(map, options);
 		} else map.flyTo(options);
 	}
 
-	/** Go back to the previous view; false when there's none. */
-	back(): boolean {
+	/**
+	 * Go back to the previous view (its centre `offset` px from the middle of
+	 * the map's padding, when given); false when there's none.
+	 */
+	back(offset?: [number, number] | null): boolean {
 		const map = this.#map;
 		const prev = this.stack.at(-1);
 		if (!map || !prev) return false;
 		this.stack = this.stack.slice(0, -1);
 		this.chipUntil = 0;
-		const to = { center: prev.center, zoom: prev.zoom, bearing: prev.bearing, pitch: prev.pitch };
-		if (this.#o.reducedMotion()) map.jumpTo(to);
+		const to: FlyToOptions = { center: prev.center, zoom: prev.zoom, bearing: prev.bearing, pitch: prev.pitch, ...(offset ? { offset } : {}) };
+		if (this.#o.reducedMotion()) jump(map, to);
 		else {
 			this.#backing = true;
 			map.flyTo(to);
@@ -170,6 +175,19 @@ export class ViewHistory {
 		this.stack = [];
 		this.chipUntil = 0;
 	}
+}
+
+/** A fly's jump under reduced motion: `jumpTo` takes no offset, so the map is then panned by it at once. */
+function jump(map: Map, options: FlyToOptions) {
+	const { center, zoom, bearing, pitch, roll, padding, offset } = options;
+	map.jumpTo({ center, zoom, bearing, pitch, roll, ...(typeof padding === 'object' ? { padding } : {}) });
+	const [x, y] = offsetOf(offset);
+	if (x || y) map.panBy([-x, -y], { animate: false });
+}
+
+function offsetOf(o: PointLike | undefined): [number, number] {
+	if (!o) return [0, 0];
+	return Array.isArray(o) ? [o[0], o[1]] : [o.x, o.y];
 }
 
 declare module '#lib/app/context.js' {
