@@ -501,6 +501,44 @@ class RefuseTest(Base):
         self.assertEqual(self.run_cv()[0], 2)
         self.assertNothingMoved()
 
+    def test_the_camera_folder_on_the_drive_cant_be_the_archive(self):
+        before = {rel: sha(os.path.join(self.cameras, rel)) for d in (self.d8, self.d9)
+                  for rel in (self.rel(656, d), self.rel(656, d, "csv"))}
+        self.h.free_gb = lambda where: 1500.0                               # room enough, wherever it looks
+        archive = os.path.dirname(self.cameras)
+        drive = os.path.join(self.tmp, "drive2")                           # beside the archive, never on
+        os.makedirs(drive)                                                  # the real cold drive
+        os.symlink(self.cameras, os.path.join(drive, "cameras"))
+        for mount, folder in ((archive, self.cameras),                     # the archive itself
+                              (drive, os.path.join(drive, "cameras")),      # reached through a link
+                              (self.tmp, archive),                          # around it
+                              (self.cameras, os.path.join(self.cameras, "video"))):   # inside it
+            with self.subTest(folder=folder):
+                marker = os.path.join(mount, ".tvt-cold-drive")
+                open(marker, "w").close()
+                self.conf(COLD_MOUNT=mount, COLD_MARKER=marker, COLD_CAMERAS=folder)
+                code, out = self.run_cv()
+                self.assertEqual(code, 2, out)
+                self.assertIn("the camera archive", out)
+                self.assertNothingMoved()
+        for rel, digest in before.items():
+            self.assertEqual(sha(os.path.join(self.cameras, rel)), digest)
+
+    def test_a_file_that_is_its_own_copy_stays(self):
+        """However the drive's folder reaches the archive (a bind mount, a hard link), a file is never
+        replaced by a link to itself."""
+        rel = self.rel(656, self.d9)
+        src = os.path.join(self.cameras, rel)
+        digest = sha(src)
+        cold = self.cv.Cold(self.mount, self.marker, 200.0, self.cameras)  # past cold_settings' checks
+        with self.assertRaises(self.cv.Stop) as caught:
+            self.cv.move(rel, self.cameras, cold, self.cv.Pace(0))
+        self.assertEqual(caught.exception.code, 2)
+        self.assertIn("is the file itself", str(caught.exception))
+        self.assertStays(rel)
+        self.assertEqual(sha(src), digest)
+        self.assertFalse([n for n in os.listdir(os.path.dirname(src)) if n.startswith(".")])
+
 
 class ReadersTest(Base):
     """The camera roll-up and the library index read through the links (plugins/cameras)."""

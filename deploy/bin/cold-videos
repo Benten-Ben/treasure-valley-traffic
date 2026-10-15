@@ -147,6 +147,27 @@ def inside(path, folder):
     return path.startswith(folder.rstrip(os.sep) + os.sep)
 
 
+def overlaps(folder, archive):
+    """Why the camera folder on the drive can't be used beside the archive, or None. It mustn't be
+    the archive, nor hold it or sit inside it, however it reaches it (through symlinks, or a bind
+    mount of the same folder): a file would then be its own copy, and the link put in its place
+    would point at itself."""
+    a, b = os.path.realpath(folder), os.path.realpath(archive)
+    if a == b:
+        return "is"
+    if inside(a, b):
+        return "is inside"
+    if inside(b, a):
+        return "holds"
+    for x, y in ((folder, archive), (os.path.join(folder, "video"), os.path.join(archive, "video"))):
+        try:
+            if os.path.samefile(x, y):
+                return "is"
+        except OSError:
+            pass
+    return None
+
+
 def cold_settings():
     """The cold drive and its camera folder, from heavy.conf. Raises Stop when they're not set
     up. The folder is checked as written, not resolved: the symlinks point at it by that path,
@@ -376,6 +397,11 @@ def room(cold, size):
     return free
 
 
+def same_file(dst, src):
+    return (f"{dst} on the cold drive is the file itself ({src}): the drive's camera folder reaches the "
+            f"archive (a bind mount or a hard link?), so nothing moves; the original stays")
+
+
 def move(rel, cameras, cold, pace):
     """Moves one file to the cold drive and leaves a symlink to the copy in its place.
     Returns (bytes, sha256, note), or None when it's no longer a regular file."""
@@ -392,6 +418,8 @@ def move(rel, cameras, cold, pace):
         there = None
     if there is not None and not stat.S_ISREG(there.st_mode):
         raise CheckFailed(f"{dst} is there but isn't a plain file")
+    if there is not None and os.path.samestat(there, st):
+        raise Stop(same_file(dst, src), EX_USAGE)
     sha, note = None, ""
     if there is not None and there.st_size == st.st_size:
         sha = sha256_of(src, pace)
@@ -419,6 +447,8 @@ def move(rel, cameras, cold, pace):
     now = os.lstat(src)
     if (now.st_ino, now.st_size, now.st_mtime_ns) != (st.st_ino, st.st_size, st.st_mtime_ns):
         raise CheckFailed("the original changed while it was copied; it stays, and the next run copies it again")
+    if os.path.samestat(os.stat(dst), now):  # never a link to the file itself, the only copy
+        raise Stop(same_file(dst, src), EX_USAGE)
     link = hidden(src, LINK)
     if os.path.lexists(link):
         os.remove(link)
@@ -510,6 +540,10 @@ def run(args, run_):
     if not os.path.isdir(cold.folder):
         raise Stop(f"the camera folder on the cold drive ({cold.folder}) isn't there: make it first "
                    f"(deploy/README.md)", EX_USAGE)
+    how = overlaps(cold.folder, cameras)
+    if how:
+        raise Stop(f"the camera folder on the cold drive ({cold.folder}) {how} the camera archive ({cameras}): "
+                   f"COLD_CAMERAS must be a folder of its own on the drive", EX_USAGE)
 
     held = []
     try:

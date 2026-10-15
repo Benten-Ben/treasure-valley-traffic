@@ -383,14 +383,27 @@ lead nowhere. The library says **"Not available right now"** for those days,
 and the other days play; a moved file's URL answers 404 with the same words
 (the Caddyfile's `handle_errors`). The index keeps listing the days, the
 roll-up doesn't redo them, and `cold-videos` refuses to start (exit 69),
-which `status` flags (`! cold-vid`). Once the drive is back, everything
-reads through the links again.
+which `status` flags (`! cold-vid`). Plugging the drive back in isn't enough:
+a VM started without it sees an empty placeholder in its place, and the
+containers' mounts don't see a drive mounted later. Restart the VM once the
+drive is back (the drive's own notes say the same); the old days then play
+again with nothing else to do.
+
+**The only copy.** A moved video has no other copy: its original on the VM's
+disk is replaced by the link, a camera day can't be fetched again, and the
+project has no backups yet (Oct 7: "not yet"). The cold drive is one USB
+drive with no redundancy, and its own notes keep only-copies off it; decision
+A1 makes older camera videos the exception. If the drive fails, every day
+more than a week old is lost; the last week stays on the VM's disk.
 
 **Settings.** Paths on the VM stay out of the repo:
 
 - `/srv/tvt/work/heavy.conf`: heavy's `COLD_MOUNT`, `COLD_MARKER` and
   `COLD_KEEP_GB`, plus `COLD_CAMERAS`, the camera folder on the drive (inside
-  `COLD_MOUNT`), and optionally `COLD_VIDEO_KEEP_DAYS` (default 7).
+  `COLD_MOUNT`, and a folder of its own: `cold-videos` refuses, exit 2, one
+  that is the camera archive, holds it or sits inside it, through links or a
+  bind mount too, and stops if a file's copy turns out to be the file itself),
+  and optionally `COLD_VIDEO_KEEP_DAYS` (default 7).
 - `deploy/.env`: `COLD_MOUNT`, the same mount point, for `compose.cold.yml`,
   and `compose.cold.yml` added to `COMPOSE_FILE`.
 

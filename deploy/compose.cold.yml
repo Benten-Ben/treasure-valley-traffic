@@ -24,8 +24,11 @@
 #      repo);
 #   2. add this file to COMPOSE_FILE in deploy/.env, e.g.
 #      COMPOSE_FILE=docker-compose.yml:compose.live-images.yml:compose.cold.yml
-#   3. outside the nightly roll-up (00:00-04:00 Boise, and check rolling_up):
-#      docker compose up -d --build cameras regional web
+#   3. outside the nightly roll-up (00:00-04:00 Boise, and check rolling_up),
+#      from deploy/: build the capture image (the new index code) under
+#      heavy, as image builds are, with `docker compose build cameras
+#      regional`; then `docker compose up -d cameras regional web` (the
+#      mount), and check that each sees the drive;
 #   4. only then switch on the mover's timer.
 services:
   web:
