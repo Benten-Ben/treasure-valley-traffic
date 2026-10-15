@@ -247,7 +247,8 @@ def plan(cameras, cutoff, now_s=None):
     base = os.path.join(cameras, "video")
     todo, kept = [], Counter()
     try:
-        cams = sorted(e.name for e in os.scandir(base) if e.is_dir(follow_symlinks=False))
+        with os.scandir(base) as it:
+            cams = sorted(e.name for e in it if e.is_dir(follow_symlinks=False))
     except FileNotFoundError:
         return [], kept
     for cam in cams:
