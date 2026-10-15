@@ -22,6 +22,10 @@ Details of each source: [ingest/README.md](../../ingest/README.md).
 road-weather stations (`ITD RWIS`) and Oregon DOT's cameras (`ODOT`): the map's
 Cameras layer shows ACHD's, its Road weather layer the others (docs/14 §14.6).
 The frames and videos live in `$TVT_ARCHIVE/cameras/`, not in the database.
+On the VM, videos older than a week move to the cold drive and leave a
+symlink in place ([deploy/README.md](../../deploy/README.md#older-camera-videos-on-the-cold-drive));
+the roll-up counts a link as a finished video, and the library index marks
+those days `"cold": true`.
 
 **Code:** `ingest/sources/` (the sources and the frame stream),
 `ingest/camera_video.py` (daily videos and the video library's index),

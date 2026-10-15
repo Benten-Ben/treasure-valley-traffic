@@ -6,7 +6,7 @@ with symlinks left in their place (decision A1).
 Against synthetic trees: a made-up camera archive, capture status files and work folder (heavy's
 settings, which cold-videos reads), a fixed clock and fixed free disk. Nothing here touches the
 real /srv or docker. On the VM, set COLD_VIDEOS_TEST_COLD to a scratch folder on the cold drive to
-make the copies there (through virtiofs) instead of in a temporary folder.
+make the copies there (through the VM's share of the drive) instead of in a temporary folder.
 """
 import datetime as dt
 import fcntl

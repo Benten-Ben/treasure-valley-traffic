@@ -167,6 +167,37 @@ class TheVm(Base):
         self.assertEqual(code, 0, out)
         self.assertIn(f"  cold:     1582 GB free on {cold} (kept free: 200 GB)", out)
 
+    def test_the_cold_videos_last_run(self):
+        self.camera_day(652, "2026-10-10")
+        state = os.path.join(self.cameras, "cold-videos.json")
+        code, out = self.run_status()
+        self.assertEqual(code, 0, out)
+        self.assertIn("  cold-vid: no run yet", out)
+        run = {"finished": "2026-10-11T08:05:00Z", "result": "done", "code": 0, "why": "", "moved": 830,
+               "bytes": 2.1 * 2**30, "left": 0, "cold_free_gb": 1498.4, "last_done": "2026-10-11T08:05:00Z"}
+        with open(state, "w") as f:
+            json.dump(run, f)
+        code, out = self.run_status()
+        self.assertEqual(code, 0, out)
+        self.assertIn("  cold-vid: last run 6 h ago, done: moved 830 files (2.1 GB); 1498 GB free on the cold drive\n", out)
+        # Not now (the roll-up ran late) is fine for a day; two days without a finished run isn't.
+        with open(state, "w") as f:
+            json.dump(dict(run, result="not now", code=75, why="the camera roll-up is still going (key_cameras)",
+                           moved=0, bytes=0, last_done="2026-10-09T08:05:00Z"), f)
+        code, out = self.run_status()
+        self.assertEqual(code, 1, out)
+        self.assertIn("! cold-vid: last run 6 h ago, not now: the camera roll-up is still going (key_cameras); "
+                      "moved 0 files (0.0 GB); 1498 GB free on the cold drive; last finished run: 2 d ago", out)
+        with open(state, "w") as f:
+            json.dump(dict(run, result="no cold drive", code=69, why="the cold drive isn't mounted", moved=0,
+                           cold_free_gb=None, left=0), f)
+        code, out = self.run_status()
+        self.assertEqual(code, 1, out)
+        self.assertIn("! cold-vid: last run 6 h ago, no cold drive: the cold drive isn't mounted; moved 0 files", out)
+        with open(state, "w") as f:
+            f.write("{")
+        self.assertIn("! cold-vid: its state file can't be read", self.run_status()[1])
+
     def test_the_lock_holder_and_its_age(self):
         self.camera_day(652, "2026-10-10")
         with open(os.path.join(self.work, "heavy.owner"), "w") as f:

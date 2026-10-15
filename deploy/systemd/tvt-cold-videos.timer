@@ -1,0 +1,12 @@
+# Daily at 02:00 Boise, after the nightly camera roll-up (from 00:05, about an hour);
+# cold-videos itself waits until both capture services report it finished.
+[Unit]
+Description=Daily: camera videos older than a week to the cold drive
+
+[Timer]
+OnCalendar=*-*-* 02:00:00 America/Boise
+Persistent=true
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

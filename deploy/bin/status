@@ -11,6 +11,8 @@ One line each (a line that needs a look starts with "!"):
   roll-up   last night's camera roll-up: going or finished, and the day's videos made, failed
             or missing (from the capture services' status files and the archive's videos, failure
             notes and JPEG folders)
+  cold-vid  the last run of cold-videos (camera days older than a week to the cold drive): what
+            it moved, and whether one has finished in the last two days
   restart   a planned VM restart in MAINTENANCE
   sources   the scheduled sources by state (ops.source_status: fresh, late, stale, never), with
             a line for each that isn't fresh or is failing, and its last error
@@ -42,6 +44,7 @@ import sys
 HERE = os.path.dirname(os.path.realpath(__file__))
 DISK_LOOK_GB = 15               # under this, heavy jobs with any peak are close to refused
 RUNNING_LONG_S = 18 * 3600      # longer than heavy's day window: no run under heavy can still be going
+COLD_LATE_S = 50 * 3600         # cold-videos runs daily: two days without a finished run needs a look
 DB_TIMEOUT_S = 30
 PGOPTIONS = "-c default_transaction_read_only=on -c statement_timeout=10s"
 
@@ -217,6 +220,38 @@ def rollup(report, t):
         report.sub(problem, look=True)
 
 
+def cold_videos(report, t):
+    """The last run of bin/cold-videos, from its state file beside the capture archive."""
+    path = os.path.join(os.path.dirname(heavy.STATUS_DIR), "cold-videos.json")
+    try:
+        with open(path) as f:
+            d = json.load(f)
+    except FileNotFoundError:
+        report.ok("cold-vid", "no run yet (bin/cold-videos runs daily after the roll-up once its timer is on)")
+        return
+    except (OSError, ValueError) as err:
+        report.look("cold-vid", f"its state file can't be read: {err}")
+        return
+
+    def age(key):
+        try:
+            when = dt.datetime.strptime(d[key], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=dt.timezone.utc)
+        except (KeyError, TypeError, ValueError):
+            return None
+        return t.timestamp() - when.timestamp()
+
+    text = (f"last run {ago(age('finished'))} ago, {d.get('result', '?')}: "
+            + (f"{d['why']}; " if d.get("why") else "")
+            + f"moved {d.get('moved', 0)} files ({(d.get('bytes') or 0) / heavy.GB:.1f} GB)"
+            + (f", {d['left']} still to move" if d.get("left") else "")
+            + (f"; {d['cold_free_gb']:.0f} GB free on the cold drive" if d.get("cold_free_gb") is not None else ""))
+    done = age("last_done")
+    late = done is None or done > COLD_LATE_S
+    if late:
+        text += f"; last finished run: {ago(done) + ' ago' if done is not None else 'never'}"
+    (report.look if late or d.get("code") not in (0, 75) else report.ok)("cold-vid", text)
+
+
 def restart(report, t):
     m = heavy.maintenance(t)
     if m is None:
@@ -338,6 +373,7 @@ def main(argv, run=None):
     disk(report)
     lock(report, t.timestamp() - heavy.OFFSET)
     rollup(report, t)
+    cold_videos(report, t)
     restart(report, t)
     if not args.no_db:
         database(report, run or psql_runner(args.db_container, args.db, args.db_user),

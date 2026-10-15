@@ -1,0 +1,28 @@
+# Camera videos older than a week to the cold drive (decision A1): deploy/bin/cold-videos,
+# started daily by tvt-cold-videos.timer. Install: deploy/README.md, "Older camera videos on
+# the cold drive".
+[Unit]
+Description=Treasure Valley Traffic: camera videos older than a week to the cold drive
+Documentation=https://github.com/Benten-Ben/treasure-valley-traffic/blob/main/deploy/README.md
+After=local-fs.target remote-fs.target
+ConditionPathExists=/srv/tvt/work/bin/cold-videos
+
+[Service]
+Type=oneshot
+# The camera archive's owner (uid 1000, as the capture containers run), so it may replace
+# files there; the camera folder on the cold drive belongs to it too.
+User=1000
+Group=1000
+UMask=0002
+# Wait up to 5 hours for tonight's roll-up to finish; it reads its rules and paths from
+# heavy and heavy.conf beside it in /srv/tvt/work.
+ExecStart=/srv/tvt/work/bin/cold-videos --wait 300
+# 75: not now (the roll-up ran late, a restart is planned); the next day's run catches up.
+SuccessExitStatus=75
+TimeoutStartSec=7h
+Nice=10
+IOSchedulingClass=idle
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=full

@@ -309,8 +309,8 @@ class Pace:
 
 
 def drop_cache(fd):
-    """Asks the kernel to forget fd's cached pages, so a read comes from the drive (through
-    virtiofs, from the host) rather than from what was just written."""
+    """Asks the kernel to forget fd's cached pages, so the read-back comes from the drive
+    rather than from the VM's cached copy of what was just written."""
     if hasattr(os, "posix_fadvise"):
         try:
             os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)

@@ -575,6 +575,10 @@ JPEG, 752 about 32 KB.
   AV1 bitstream, checked by a test).
 - **Originals:** keep the JPEGs 2 days (today and yesterday), then delete
   them once their video exists (owner, Oct 5). Measuring needs 24–48 hours.
+- **Older videos:** finished days more than a week old move to the cold
+  drive (decision A1, Oct 8, 2026), each left as a symlink in its place, so
+  the library and every other reader keep the same paths
+  ([deploy/README.md](../deploy/README.md#older-camera-videos-on-the-cold-drive)).
 - **Getting a frame back:** every frame can be pulled out of the video as an
   image, and the CSV beside the video maps frame numbers to fetch times. The
   pictures aren't byte-identical to the originals, but they're close:
