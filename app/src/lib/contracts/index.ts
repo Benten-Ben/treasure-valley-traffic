@@ -10,3 +10,4 @@ export * from './meta.js';
 export * from './network.js';
 export * from './tracks.js';
 export * from './live.js';
+export * from './layer-tiles.js';

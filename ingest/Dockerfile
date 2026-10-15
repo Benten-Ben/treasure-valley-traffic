@@ -14,6 +14,11 @@ COPY db db
 COPY ingest ingest
 # The plugins: their code, manifests (read at start) and migrations (db/migrate.py).
 COPY plugins plugins
+# The ground's export contract (basemap/ground/manifest.py, standard library): plugins' export commands write
+# their manifests with it. The base bake's plan (basemap/landscape/plan.py, standard library and basemap/ground):
+# an export with base layers checks them against the bake's rules before it's finished (water-export).
+COPY basemap/ground basemap/ground
+COPY basemap/landscape basemap/landscape
 # uid 1000 owns the archive and frames folders on the server.
 USER 1000:1000
 CMD ["sh", "-c", "python3 db/migrate.py && exec python3 -m ingest serve"]

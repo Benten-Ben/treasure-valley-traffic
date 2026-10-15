@@ -104,8 +104,10 @@ export const DISCS = 'trees-discs';
  * discs stop at z15 once the models take over.
  */
 export const CREDIT_LAYER = 'trees-credit';
-/** The map's attribution while Trees is on. */
-export const CREDIT = 'Trees: USGS 3DEP lidar, City of Boise, US Forest Service';
+/** The map's attribution while Trees is on (the conifer cue's Sentinel-2 images are Copernicus data, §19.3). */
+export const CREDIT = 'Trees: USGS 3DEP lidar, City of Boise, US Forest Service; contains modified Copernicus Sentinel data 2025';
+/** The credit Copernicus asks for, on a tree the spring Sentinel-2 image typed. */
+export const SENTINEL2_CREDIT = 'Contains modified Copernicus Sentinel data 2025';
 /** The scene's group of tree models. */
 export const TREES_3D = 'trees-3d';
 
@@ -435,8 +437,22 @@ export function treeTitle(d: Pick<TreeDetail, 'kind' | 'type' | 'catalogue'>): s
 
 const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
 
+/**
+ * Whether the spring Sentinel-2 cue made a placed tree a conifer (§19.3): its
+ * crown read green over the April snow (the build's fit.spring.evergreen) in
+ * an area where the cue types trees (fit.spring.area_checked: its calls were
+ * checked against labelled trees there). Elsewhere it is recorded but types
+ * nothing, so a conifer there came from the width curve.
+ */
+export function typedBySpring(d: Pick<TreeDetail, 'kind' | 'type' | 'fit'>): boolean {
+	const s = d.fit?.spring;
+	if (d.kind !== 'placed' || d.type !== 'conifer' || typeof s !== 'object' || s === null) return false;
+	const c = s as { evergreen?: unknown; area_checked?: unknown };
+	return c.evergreen === true && c.area_checked === true;
+}
+
 /** How we know, in plain words (§19.3): the lidar, the trunk point's distance to the crown, or the placement's fit. */
-export function howWeKnow(d: Pick<TreeDetail, 'kind' | 'fit' | 'lidar' | 'log'>): string[] {
+export function howWeKnow(d: Pick<TreeDetail, 'kind' | 'type' | 'fit' | 'lidar' | 'log'>): string[] {
 	const year = lidarYear(d);
 	const f = d.fit ?? {};
 	const out: string[] = [];
@@ -453,6 +469,8 @@ export function howWeKnow(d: Pick<TreeDetail, 'kind' | 'fit' | 'lidar' | 'log'>)
 		if (sd !== null)
 			out.push(Math.abs(sd) < 0.5 ? 'Its crown is a typical width for its height.' : `Its crown is ${Math.abs(sd).toFixed(1)} standard deviations ${sd > 0 ? 'wider' : 'narrower'} than typical for its height.`);
 		if (f.crowded === true) out.push('It stands in a cluster, so its crown meets its neighbours high up.');
+		if (typedBySpring(d))
+			out.push("It's a conifer because its crown is green over the snow in an early-April 2025 Sentinel-2 image, when broadleaf trees are still bare.");
 	} else {
 		out.push(`The ${year} lidar doesn't show it (planted after the flight, or under 3 m), so its height and crown are estimated from its species and trunk diameter (US Forest Service Urban Tree Database, Boise).`);
 		const there = num(f.lidar_height_there_m);
@@ -506,10 +524,15 @@ export function trunkIn(d: Pick<TreeDetail, 'catalogue' | 'fit'>): number | null
 	return num(d.catalogue?.dbh_in) ?? num(d.fit?.dbh_in);
 }
 
-/** The panel's credits by kind: the lidar always; the City for catalogued and estimated trees; the Urban Tree Database for estimated ones. */
-export function credits(kind: TreeKind, catalogue: string | null, year = '2023'): string[] {
+/**
+ * The panel's credits by kind: the lidar always; the City for catalogued and
+ * estimated trees; the Urban Tree Database for estimated ones; Copernicus for
+ * a tree the spring Sentinel-2 image typed (spring: typedBySpring).
+ */
+export function credits(kind: TreeKind, catalogue: string | null, year = '2023', spring = false): string[] {
 	const out = [`USGS 3DEP lidar (${year})`];
 	if (kind !== 'placed') out.push(`${catalogue ? (CATALOGUE_NAME[catalogue] ?? catalogue) : 'City of Boise'} tree inventory`);
 	if (kind === 'estimated') out.push('US Forest Service Urban Tree Database (McPherson, van Doorn & Peper 2016)');
+	if (spring && kind === 'placed') out.push(SENTINEL2_CREDIT);
 	return out;
 }

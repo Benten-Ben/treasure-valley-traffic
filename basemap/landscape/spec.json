@@ -1,0 +1,27 @@
+{
+  "spec": 1,
+  "about": "The base bake's tile spec (basemap/landscape/README.md). plan.py and bake.py read this file and test_plan.py checks it; the numbers here are the contract. A change here changes every bake's name.",
+  "entry": "landscape",
+  "file": "landscape-{digest}.pmtiles",
+  "format": "pbf",
+  "minzoom": 8,
+  "maxzoom": 16,
+  "promoteId": "id",
+  "zoom_about": "Vector tiles (MVT in PMTiles, gzip) from z8 to z16 (plan §3.5): z16 tiles are about 440 m across here, at 4096 units a tile about 0.11 m each, and the app overzooms them for curbs, crosswalks and stalls (z16.5-17.5). A layer's minzoom and maxzoom in its export manifest narrow its range; a minzoom past z16 is baked at z16 and left to the style.",
+  "writer": {
+    "extent": 4096,
+    "buffer": 80,
+    "simplification": 1.0,
+    "simplificationMaxZoom": 0.0,
+    "maxSize": 16000000,
+    "maxFeatures": 10000000,
+    "about": "GDAL's PMTiles (MVT) writer: EXTENT, BUFFER, SIMPLIFICATION (in tile units, below z16) and SIMPLIFICATION_MAX_ZOOM (none at z16, so real-width surfaces keep their shape). MAX_SIZE and MAX_FEATURES are set far above anything a tile should hold, because past them GDAL quietly coarsens or drops features: the bake measures tiles itself instead (the budget, and the largest tile per zoom in its report)."
+  },
+  "keep": 2,
+  "budget": {
+    "zoom": 16,
+    "box": "downtown",
+    "maxBytes": 60000,
+    "about": "Every z16 tile touching the downtown box (basemap/ground/spec.json's 'downtown', 2 x 2 km, 30 tiles) is at most 60 KB as stored and sent (gzip; 10^3 bytes, as perf.mjs counts). Downtown is where roads' surfaces and markings are densest, so the budget binds once roads exports its base layers; every bake checks it, and an over-budget bake isn't switched in."
+  }
+}

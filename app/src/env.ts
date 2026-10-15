@@ -5,6 +5,13 @@ export const variables = defineEnvVars({
 		description: 'PostgreSQL + PostGIS connection string. Camera features answer 503 without it.',
 		schema: (value) => value || undefined
 	},
+	TILES_DATABASE_URL: {
+		description:
+			"The connection toggled layers' tile cuts use (#lib/server/mvt). The server logs in as tvt_tiles, which " +
+			"deploy/tvt_tiles.sql makes a plain login that may read only core and the tile plugins' schemas, never " +
+			"restricted or private ones. Unset: they use DATABASE_URL (dev and tests), and the app says so once.",
+		schema: (value) => value || undefined
+	},
 	FRAMES_DIR: {
 		description: 'Folder where captured camera frames (calibration reference images) are kept.',
 		schema: (value) => value || '../data/frames'

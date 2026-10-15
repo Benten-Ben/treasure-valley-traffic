@@ -115,7 +115,7 @@ ingest/                 the ingest core: CLI, polite HTTP, database helpers, sha
 plugins/                one folder per subject (roads, intersections, cameras, transit, conditions, safety, flow,
                         development): plugin.json, README, ingest code, migrations, tests (docs/15). Private
                         plugins live on the server (TVT_PLUGIN_PATH), never here
-deploy/                 Docker Compose + Caddy for the server VM
+deploy/                 Docker Compose + Caddy for the server VM, and the VM's heavy, worker-test and sheets tools (deploy/bin)
 tools/                  standalone research scripts (GPS run analysis, etc.)
 tvt/                    THROWAWAY PROTOTYPE ingestion package; lessons only, not the foundation
 tests/                  tests for tvt/
@@ -139,18 +139,26 @@ basemap/build.sh                       # build self-hosted basemap into data/til
 
 export DATABASE_URL=postgres://tvt:<password>@localhost/tvt   # never commit a real password
 python3 db/migrate.py                  # apply db/migrations/, then the plugins' migrations
+python3 -m unittest discover -s deploy/scratch/tests   # scratch rules, tvt_build's policy (needs deploy/bin/heavy)
 python3 -m ingest run all              # every scheduled source (cameras, signals, crossings, COMPASS, ...)
 python3 -m ingest stream idaho511_frames   # key-camera frames (needs TVT_ARCHIVE)
 python3 -m ingest stream itd_wzdx         # ITD work zones every 5 min (needs TVT_ARCHIVE)
 python3 -m ingest stream idaho511_api     # the 511 API (needs TVT_ARCHIVE and IDAHO511_API_KEY)
 python3 -m ingest rollup --day 2026-10-05  # daily camera videos by hand (normally automatic)
 python3 -m ingest match-intersections --dry-run   # rebuild intersections from the signal sources
-python3 -m ingest osm-load --inbox         # OSM extract downloaded by hand (needs TVT_ARCHIVE, osmium)
+python3 -m ingest osm-load --inbox         # OSM extract downloaded by hand, into every consumer (needs TVT_ARCHIVE, osmium)
+python3 -m ingest osm-load --only roads.osm_street   # one OSM consumer, on the extract we hold
 python3 -m ingest segment-match           # rematch lane sources and OSM to ACHD segments by hand
 python3 -m ingest -h                      # every command, the plugins' included
 python3 -m unittest discover -s ingest/tests -t .   # ingest core (set TVT_TEST_DATABASE_URL for the database tests)
 python3 -m unittest discover -s plugins -t .        # every plugin's tests
+python3 -m unittest discover -s basemap/ground -t . # the ground's contract (worker tests skip; run them in tvt-worker)
 python3 tools/check_public.py              # nothing private in what would be pushed
+/srv/tvt/work/bin/heavy --deadline HH:MM --runtime MIN --peak GB "<label>" <command>   # a heavy job on the VM (deploy/README.md)
+/srv/tvt/work/bin/worker-test -C <checkout> discover -s <dir> -t .   # worker-image tests on the VM; a skip fails
+python3 -m basemap.sheets.places          # the review places: ten boxes, 34 key cameras, Eagle and Chinden, three spots
+/srv/tvt/work/bin/sheets -C <checkout> --pkg <pkg> -- --places cameras --layer <plugin>/<layer>   # review sheets, into the private files
+cd app && node scripts/map-sheets.mjs --url <preview> --places cameras   # map screenshots of the same places (basemap/sheets/README.md)
 ```
 
 Front-end environment (app/README.md): `TVT_FRAME_SOURCE=fixture` serves

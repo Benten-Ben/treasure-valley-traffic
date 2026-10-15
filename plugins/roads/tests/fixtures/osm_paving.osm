@@ -1,0 +1,348 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Synthetic OpenStreetMap-format fixture for the roads plugin's osm_paving consumer
+     (plugins/roads/ingest/sources/osm_paving.py). Everything here is made up: ids, names and
+     coordinates are invented, not copied from OpenStreetMap. Service ways and walkways stand in a
+     row near (-116.30, 43.60), and the alley and rail-trail cases in a second row at 43.603, one per
+     case (each way's comment names its owner and what it tests); the tests' synthetic developed land
+     (a build loaded in the database test) covers everything west of -116.275, and not the rest. The lot relation 761 crosses the valley box's south edge and its way 752 lies
+     wholly outside, so only a smart cut holds the whole lot. Objects are sorted by type and id, as
+     osmium extract requires. Generated once by hand; edit it directly. -->
+<osm version="0.6" generator="hand-written">
+  <node id="6011" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6000000" lon="-116.3000000"/>
+  <node id="6019" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6010000" lon="-116.3000000"/>
+  <node id="6021" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6000000" lon="-116.2980000"/>
+  <node id="6029" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6010000" lon="-116.2980000"/>
+  <node id="6031" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6000000" lon="-116.2960000"/>
+  <node id="6039" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6010000" lon="-116.2960000"/>
+  <node id="6041" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6000000" lon="-116.2700000"/>
+  <node id="6049" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6010000" lon="-116.2700000"/>
+  <node id="6051" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6000000" lon="-116.2940000"/>
+  <node id="6059" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6010000" lon="-116.2940000"/>
+  <node id="6061" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6000000" lon="-116.2920000"/>
+  <node id="6069" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6010000" lon="-116.2920000"/>
+  <node id="6071" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6000000" lon="-116.2900000"/>
+  <node id="6079" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6010000" lon="-116.2900000"/>
+  <node id="6081" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6000000" lon="-116.2720000"/>
+  <node id="6089" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6010000" lon="-116.2720000"/>
+  <node id="6091" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6000000" lon="-116.2880000"/>
+  <node id="6092" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6000000" lon="-116.2870000"/>
+  <node id="6093" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6010000" lon="-116.2870000"/>
+  <node id="6094" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6010000" lon="-116.2880000"/>
+  <node id="6111" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6000000" lon="-116.2840000"/>
+  <node id="6119" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6010000" lon="-116.2840000">
+    <tag k="kerb" v="lowered"/>
+    <tag k="tactile_paving" v="yes"/>
+  </node>
+  <node id="6121" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6000000" lon="-116.2820000"/>
+  <node id="6122" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6005000" lon="-116.2820000">
+    <tag k="highway" v="crossing"/>
+    <tag k="crossing" v="marked"/>
+  </node>
+  <node id="6129" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6010000" lon="-116.2820000"/>
+  <node id="6131" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6000000" lon="-116.2800000"/>
+  <node id="6132" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6005000" lon="-116.2800000">
+    <tag k="highway" v="crossing"/>
+    <tag k="crossing" v="unmarked"/>
+  </node>
+  <node id="6139" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6010000" lon="-116.2800000"/>
+  <node id="6141" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6000000" lon="-116.2780000"/>
+  <node id="6142" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6005000" lon="-116.2780000">
+    <tag k="highway" v="crossing"/>
+    <tag k="crossing" v="traffic_signals"/>
+  </node>
+  <node id="6149" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6010000" lon="-116.2780000"/>
+  <node id="6151" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6000000" lon="-116.2760000"/>
+  <node id="6159" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6010000" lon="-116.2760000"/>
+  <node id="6161" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6000000" lon="-116.2740000"/>
+  <node id="6162" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6005000" lon="-116.2740000">
+    <tag k="highway" v="crossing"/>
+    <tag k="crossing" v="uncontrolled"/>
+    <tag k="crossing:markings" v="no"/>
+  </node>
+  <node id="6169" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6010000" lon="-116.2740000"/>
+  <node id="6171" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6000000" lon="-116.2660000"/>
+  <node id="6179" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6010000" lon="-116.2660000"/>
+  <node id="6181" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6000000" lon="-116.2640000"/>
+  <node id="6189" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6010000" lon="-116.2640000"/>
+  <node id="6191" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6000000" lon="-116.2620000"/>
+  <node id="6199" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6010000" lon="-116.2620000"/>
+  <node id="6201" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6000000" lon="-116.2600000"/>
+  <node id="6209" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6010000" lon="-116.2600000"/>
+  <node id="6211" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6030000" lon="-116.3000000"/>
+  <node id="6212" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6030000" lon="-116.2990000"/>
+  <node id="6213" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6040000" lon="-116.2990000"/>
+  <node id="6214" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6040000" lon="-116.3000000"/>
+  <node id="6221" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6030000" lon="-116.2980000"/>
+  <node id="6222" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6030000" lon="-116.2970000"/>
+  <node id="6229" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6040000" lon="-116.2970000"/>
+  <node id="6231" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6030000" lon="-116.2960000"/>
+  <node id="6239" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6040000" lon="-116.2960000"/>
+  <node id="6241" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6030000" lon="-116.2940000"/>
+  <node id="6242" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6035000" lon="-116.2940000">
+    <tag k="highway" v="crossing"/>
+    <tag k="crossing" v="marked"/>
+    <tag k="railway" v="abandoned"/>
+  </node>
+  <node id="6249" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6040000" lon="-116.2940000"/>
+  <node id="6901" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6050000" lon="-116.3100000">
+    <tag k="amenity" v="parking"/>
+    <tag k="name" v="Point Lot"/>
+  </node>
+  <node id="6902" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6050000" lon="-116.3050000">
+    <tag k="kerb" v="raised"/>
+  </node>
+  <node id="6903" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6050000" lon="-116.3040000">
+    <tag k="railway" v="crossing"/>
+    <tag k="crossing" v="uncontrolled"/>
+  </node>
+  <node id="6904" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6050000" lon="-116.3030000">
+    <tag k="highway" v="crossing"/>
+    <tag k="crossing" v="zebra"/>
+    <tag k="kerb" v="flush"/>
+  </node>
+  <node id="6905" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6050000" lon="-116.3020000">
+    <tag k="highway" v="traffic_signals"/>
+  </node>
+  <node id="6906" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6050000" lon="-116.3010000">
+    <tag k="highway" v="crossing"/>
+    <tag k="crossing_ref" v="zebra"/>
+  </node>
+  <node id="7011" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6000000" lon="-116.3100000"/>
+  <node id="7012" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6000000" lon="-116.3090000"/>
+  <node id="7013" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6010000" lon="-116.3090000"/>
+  <node id="7014" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6010000" lon="-116.3100000"/>
+  <node id="7021" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6000000" lon="-116.3080000"/>
+  <node id="7022" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6000000" lon="-116.3075000"/>
+  <node id="7023" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6005000" lon="-116.3075000"/>
+  <node id="7024" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6005000" lon="-116.3080000"/>
+  <node id="7031" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6000000" lon="-116.3070000"/>
+  <node id="7032" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6000000" lon="-116.3069700"/>
+  <node id="7033" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6000200" lon="-116.3069700"/>
+  <node id="7034" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6000200" lon="-116.3070000"/>
+  <node id="7041" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6000000" lon="-116.2580000"/>
+  <node id="7042" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6000000" lon="-116.2570000"/>
+  <node id="7043" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6010000" lon="-116.2570000"/>
+  <node id="7044" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6010000" lon="-116.2580000"/>
+  <node id="7051" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6000000" lon="-116.3060000"/>
+  <node id="7052" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6000000" lon="-116.3055000"/>
+  <node id="7053" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6005000" lon="-116.3055000"/>
+  <node id="7054" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6005000" lon="-116.3060000"/>
+  <node id="7061" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6000000" lon="-116.2560000"/>
+  <node id="7062" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6000000" lon="-116.2550000"/>
+  <node id="7063" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6010000" lon="-116.2550000"/>
+  <node id="7064" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6010000" lon="-116.2560000"/>
+  <node id="7511" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.0010000" lon="-116.6000000"/>
+  <node id="7512" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.0010000" lon="-116.5980000"/>
+  <node id="7513" version="1" timestamp="2026-09-01T00:00:00Z" lat="42.9990000" lon="-116.5980000"/>
+  <node id="7521" version="1" timestamp="2026-09-01T00:00:00Z" lat="42.9990000" lon="-116.6000000"/>
+  <node id="7541" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.0002000" lon="-116.5995000"/>
+  <node id="7542" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.0002000" lon="-116.5985000"/>
+  <node id="7543" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.0006000" lon="-116.5985000"/>
+  <node id="7544" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.0006000" lon="-116.5995000"/>
+  <!-- osm_paving: a driveway, untagged, on developed land (concrete, estimated) -->
+  <way id="601" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="6011"/><nd ref="6019"/>
+    <tag k="highway" v="service"/>
+    <tag k="service" v="driveway"/>
+  </way>
+  <!-- osm_paving: a one-way parking aisle, asphalt as tagged -->
+  <way id="602" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="6021"/><nd ref="6029"/>
+    <tag k="highway" v="service"/>
+    <tag k="service" v="parking_aisle"/>
+    <tag k="oneway" v="yes"/>
+    <tag k="surface" v="asphalt"/>
+  </way>
+  <!-- osm_paving: a drive-through -->
+  <way id="603" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="6031"/><nd ref="6039"/>
+    <tag k="highway" v="service"/>
+    <tag k="service" v="drive-through"/>
+    <tag k="name" v="Fixture Drive-Through"/>
+  </way>
+  <!-- osm_paving: an untagged service way on crops (surface unknown) -->
+  <way id="604" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="6041"/><nd ref="6049"/>
+    <tag k="highway" v="service"/>
+  </way>
+  <!-- osm_paving: emergency access with a width -->
+  <way id="605" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="6051"/><nd ref="6059"/>
+    <tag k="highway" v="service"/>
+    <tag k="service" v="emergency_access"/>
+    <tag k="width" v="6 m"/>
+  </way>
+  <!-- osm_street: an alley -->
+  <way id="606" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="6061"/><nd ref="6069"/>
+    <tag k="highway" v="service"/>
+    <tag k="service" v="alley"/>
+  </way>
+  <!-- osm_valley: a service way tagged with lanes -->
+  <way id="607" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="6071"/><nd ref="6079"/>
+    <tag k="highway" v="service"/>
+    <tag k="lanes" v="1"/>
+  </way>
+  <!-- osm_paving: gravel as tagged, on crops -->
+  <way id="608" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="6081"/><nd ref="6089"/>
+    <tag k="highway" v="service"/>
+    <tag k="surface" v="gravel"/>
+  </way>
+  <!-- osm_paving: a service way drawn as an area -->
+  <way id="609" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="6091"/><nd ref="6092"/><nd ref="6093"/><nd ref="6094"/><nd ref="6091"/>
+    <tag k="highway" v="service"/>
+    <tag k="area" v="yes"/>
+  </way>
+  <!-- osm_paving: a sidewalk, with a kerb at its north end -->
+  <way id="611" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="6111"/><nd ref="6119"/>
+    <tag k="highway" v="footway"/>
+    <tag k="footway" v="sidewalk"/>
+  </way>
+  <!-- osm_paving: a crossing marked on the way, and on its node -->
+  <way id="612" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="6121"/><nd ref="6122"/><nd ref="6129"/>
+    <tag k="highway" v="footway"/>
+    <tag k="footway" v="crossing"/>
+    <tag k="crossing" v="marked"/>
+    <tag k="crossing:markings" v="zebra"/>
+  </way>
+  <!-- osm_paving: a crossing whose node says unmarked -->
+  <way id="613" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="6131"/><nd ref="6132"/><nd ref="6139"/>
+    <tag k="highway" v="footway"/>
+    <tag k="footway" v="crossing"/>
+  </way>
+  <!-- osm_paving: a crossing at signals (marking not known) -->
+  <way id="614" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="6141"/><nd ref="6142"/><nd ref="6149"/>
+    <tag k="highway" v="footway"/>
+    <tag k="footway" v="crossing"/>
+  </way>
+  <!-- osm_paving: a path carrying the sidewalk tag -->
+  <way id="615" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="6151"/><nd ref="6159"/>
+    <tag k="highway" v="path"/>
+    <tag k="footway" v="sidewalk"/>
+    <tag k="surface" v="asphalt"/>
+  </way>
+  <!-- osm_paving: a cycleway crossing; its node's crossing:markings=no wins over crossing=uncontrolled -->
+  <way id="616" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="6161"/><nd ref="6162"/><nd ref="6169"/>
+    <tag k="highway" v="cycleway"/>
+    <tag k="footway" v="crossing"/>
+  </way>
+  <!-- osm_paving: an access aisle -->
+  <way id="617" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="6171"/><nd ref="6179"/>
+    <tag k="highway" v="footway"/>
+    <tag k="footway" v="access_aisle"/>
+  </way>
+  <!-- osm_paving: a traffic island -->
+  <way id="618" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="6181"/><nd ref="6189"/>
+    <tag k="highway" v="footway"/>
+    <tag k="footway" v="traffic_island"/>
+  </way>
+  <!-- osm_paths: a plain footway -->
+  <way id="619" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="6191"/><nd ref="6199"/>
+    <tag k="highway" v="footway"/>
+  </way>
+  <!-- osm_paths: steps (the sidewalk rule is for footways, paths and cycleways) -->
+  <way id="620" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="6201"/><nd ref="6209"/>
+    <tag k="highway" v="steps"/>
+    <tag k="footway" v="sidewalk"/>
+  </way>
+  <!-- osm_paving: an alley drawn as an area (area=yes on a closed way: osmium gives a closed line) -->
+  <way id="621" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="6211"/><nd ref="6212"/><nd ref="6213"/><nd ref="6214"/><nd ref="6211"/>
+    <tag k="highway" v="service"/>
+    <tag k="service" v="alley"/>
+    <tag k="area" v="yes"/>
+  </way>
+  <!-- osm_paving: an alley tagged area=yes on a way that isn't closed (a validator's warning) -->
+  <way id="622" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="6221"/><nd ref="6222"/><nd ref="6229"/>
+    <tag k="highway" v="service"/>
+    <tag k="service" v="alley"/>
+    <tag k="area" v="yes"/>
+  </way>
+  <!-- osm_paving: service="alley " with a stray space: not exactly alley, so not osm_street's -->
+  <way id="623" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="6231"/><nd ref="6239"/>
+    <tag k="highway" v="service"/>
+    <tag k="service" v="alley "/>
+  </way>
+  <!-- osm_paving: a crossing on a rail trail (railway=abandoned isn't a rail crossing): marked on the way -->
+  <way id="624" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="6241"/><nd ref="6242"/><nd ref="6249"/>
+    <tag k="highway" v="footway"/>
+    <tag k="footway" v="crossing"/>
+    <tag k="crossing" v="marked"/>
+    <tag k="railway" v="abandoned"/>
+  </way>
+  <!-- a surface lot, untagged, on developed land (asphalt, estimated) -->
+  <way id="701" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="7011"/><nd ref="7012"/><nd ref="7013"/><nd ref="7014"/><nd ref="7011"/>
+    <tag k="amenity" v="parking"/>
+    <tag k="parking" v="surface"/>
+    <tag k="capacity" v="40"/>
+  </way>
+  <!-- a parking garage (concrete, estimated, anywhere) -->
+  <way id="702" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="7021"/><nd ref="7022"/><nd ref="7023"/><nd ref="7024"/><nd ref="7021"/>
+    <tag k="amenity" v="parking"/>
+    <tag k="parking" v="multi-storey"/>
+    <tag k="building" v="parking"/>
+    <tag k="name" v="Fixture Garage"/>
+  </way>
+  <!-- a mapped stall, a few metres across -->
+  <way id="703" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="7031"/><nd ref="7032"/><nd ref="7033"/><nd ref="7034"/><nd ref="7031"/>
+    <tag k="amenity" v="parking_space"/>
+  </way>
+  <!-- a gravel lot as tagged, on crops -->
+  <way id="704" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="7041"/><nd ref="7042"/><nd ref="7043"/><nd ref="7044"/><nd ref="7041"/>
+    <tag k="amenity" v="parking"/>
+    <tag k="surface" v="gravel"/>
+  </way>
+  <!-- an underground lot (no material) -->
+  <way id="705" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="7051"/><nd ref="7052"/><nd ref="7053"/><nd ref="7054"/><nd ref="7051"/>
+    <tag k="amenity" v="parking"/>
+    <tag k="parking" v="underground"/>
+    <tag k="layer" v="-1"/>
+  </way>
+  <!-- an untagged lot on crops (surface unknown) -->
+  <way id="706" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="7061"/><nd ref="7062"/><nd ref="7063"/><nd ref="7064"/><nd ref="7061"/>
+    <tag k="amenity" v="parking"/>
+  </way>
+  <!-- the edge lot's ring, in the box -->
+  <way id="751" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="7511"/><nd ref="7512"/><nd ref="7513"/>
+  </way>
+  <!-- the edge lot's ring, outside the box -->
+  <way id="752" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="7513"/><nd ref="7521"/><nd ref="7511"/>
+  </way>
+  <!-- the edge lot's hole -->
+  <way id="754" version="2" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="7541"/><nd ref="7542"/><nd ref="7543"/><nd ref="7544"/><nd ref="7541"/>
+  </way>
+  <!-- a parking lot across the south edge (multipolygon) -->
+  <relation id="761" version="3" timestamp="2026-09-03T00:00:00Z">
+    <member type="way" ref="751" role="outer"/>
+    <member type="way" ref="752" role="outer"/>
+    <member type="way" ref="754" role="inner"/>
+    <tag k="type" v="multipolygon"/>
+    <tag k="amenity" v="parking"/>
+    <tag k="name" v="Edge Lot"/>
+  </relation>
+</osm>

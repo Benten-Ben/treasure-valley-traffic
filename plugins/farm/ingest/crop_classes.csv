@@ -1,0 +1,134 @@
+code,name,group,nass_hex,agrimet
+1,Corn,corn,#FFD200,FCRN
+2,Cotton,specialty,#FF2424,
+3,Rice,grain,#00A8E2,
+4,Sorghum,corn,#FF9E09,
+5,Soybeans,roots,#246E00,
+6,Sunflower,roots,#FFFF00,
+10,Peanuts,roots,#6EA300,
+11,Tobacco,specialty,#00AD49,
+12,Sweet Corn,corn,#DDA309,SCRN
+13,Pop or Orn Corn,corn,#DDA309,FCRN
+14,Mint,specialty,#7CD2FF,PPMT
+21,Barley,grain,#E0007A,SGRN
+22,Durum Wheat,grain,#876052,SGRN
+23,Spring Wheat,grain,#D6B56B,SGRN
+24,Winter Wheat,grain,#A36E00,WGRN
+25,Other Small Grains,grain,#D49EBA,
+26,Dbl Crop WinWht/Soybeans,grain,#6E6E00,
+27,Rye,grain,#AC007A,WGRN
+28,Oats,grain,#9F5787,SGRN
+29,Millet,grain,#6E0047,
+30,Speltz,grain,#D49EBA,
+31,Canola,roots,#D1FF00,
+32,Flaxseed,roots,#7C99FF,
+33,Safflower,roots,#D4D400,
+34,Rape Seed,roots,#D1FF00,
+35,Mustard,roots,#00AD49,
+36,Alfalfa,hay,#FFA3E0,ALFP ALFM
+37,Other Hay/Non Alfalfa,hay,#A3F08A,PAST
+38,Camelina,roots,#00AD49,
+39,Buckwheat,grain,#D49EBA,
+41,Sugarbeets,roots,#A800E2,BEET
+42,Dry Beans,roots,#A30000,BEAN
+43,Potatoes,roots,#6E2400,POTA POTS
+44,Other Crops,specialty,#00AD49,
+45,Sugarcane,specialty,#AF7CFF,
+46,Sweet Potatoes,roots,#6E2400,
+47,Misc Vegs & Fruits,roots,#FF6666,
+48,Watermelons,roots,#FF6666,
+49,Onions,roots,#FFCC66,ONYN
+50,Cucumbers,roots,#FF6666,
+51,Chick Peas,roots,#00AD49,
+52,Lentils,roots,#00DDAD,
+53,Peas,roots,#52FF00,PEAS
+54,Tomatoes,roots,#F0A177,
+55,Caneberries,specialty,#FF6666,
+56,Hops,specialty,#00AD49,
+57,Herbs,specialty,#7CD2FF,
+58,Clover/Wildflowers,hay,#E8BDFF,
+59,Sod/Grass Seed,specialty,#ADFFDD,
+60,Switchgrass,specialty,#00AD49,
+61,Fallow/Idle Cropland,fallow,#BDBD77,
+63,Forest,other,#92CC92,
+64,Shrubland,other,#C5D49E,
+65,Barren,other,#CCBDA1,
+66,Cherries,specialty,#FF00FF,
+67,Peaches,specialty,#FF8EAA,
+68,Apples,specialty,#B8004F,APPL
+69,Grapes,specialty,#6E4487,WGRP
+70,Christmas Trees,specialty,#007777,
+71,Other Tree Crops,specialty,#AF9A6E,
+72,Citrus,specialty,#FFFF7C,
+74,Pecans,specialty,#B56E5B,
+75,Almonds,specialty,#00A382,
+76,Walnuts,specialty,#E9D4AD,
+77,Pears,specialty,#AF9A6E,
+81,Clouds/No Data,other,#F0F0F0,
+82,Developed,developed,#9A9A9A,
+83,Water,other,#496EA1,
+87,Wetlands,other,#7CAFAF,
+88,Nonag/Undefined,other,#E8FFBD,
+92,Aquaculture,other,#00FFFF,
+111,Open Water,other,#496EA1,
+112,Perennial Ice/Snow,other,#D2E0F8,
+121,Developed/Open Space,developed,#9A9A9A,
+122,Developed/Low Intensity,developed,#9A9A9A,
+123,Developed/Med Intensity,developed,#9A9A9A,
+124,Developed/High Intensity,developed,#9A9A9A,
+131,Barren,other,#CCBDA1,
+141,Deciduous Forest,other,#92CC92,
+142,Evergreen Forest,other,#92CC92,
+143,Mixed Forest,other,#92CC92,
+152,Shrubland,other,#C5D49E,
+176,Grassland/Pasture,pasture,#E8FFBD,PAST
+190,Woody Wetlands,other,#7CAFAF,
+195,Herbaceous Wetlands,other,#7CAFAF,
+204,Pistachios,specialty,#00FF8A,
+205,Triticale,grain,#D49EBA,WGRN
+206,Carrots,roots,#FF6666,
+207,Asparagus,roots,#FF6666,
+208,Garlic,roots,#FF6666,
+209,Cantaloupes,roots,#FF6666,
+210,Prunes,specialty,#FF8EAA,
+211,Olives,specialty,#334733,
+212,Oranges,specialty,#E26E24,
+213,Honeydew Melons,roots,#FF6666,
+214,Broccoli,roots,#FF6666,
+215,Avocados,specialty,#66994A,
+216,Peppers,roots,#FF6666,
+217,Pomegranates,specialty,#AF9A6E,
+218,Nectarines,specialty,#FF8EAA,
+219,Greens,roots,#FF6666,
+220,Plums,specialty,#FF8EAA,
+221,Strawberries,roots,#FF6666,
+222,Squash,roots,#FF6666,
+223,Apricots,specialty,#FF8EAA,
+224,Vetch,hay,#00AD49,
+225,Dbl Crop WinWht/Corn,corn,#FFD200,FCRN
+226,Dbl Crop Oats/Corn,corn,#FFD200,FCRN
+227,Lettuce,roots,#FF6666,
+228,Dbl Crop Triticale/Corn,corn,#FFD200,FCRN
+229,Pumpkins,roots,#FF6666,
+230,Dbl Crop Lettuce/Durum Wht,roots,#876052,
+231,Dbl Crop Lettuce/Cantaloupe,roots,#FF6666,
+232,Dbl Crop Lettuce/Cotton,roots,#FF2424,
+233,Dbl Crop Lettuce/Barley,roots,#E0007A,
+234,Dbl Crop Durum Wht/Sorghum,grain,#FF9E09,
+235,Dbl Crop Barley/Sorghum,grain,#FF9E09,
+236,Dbl Crop WinWht/Sorghum,grain,#A36E00,
+237,Dbl Crop Barley/Corn,corn,#FFD200,FCRN
+238,Dbl Crop WinWht/Cotton,grain,#A36E00,
+239,Dbl Crop Soybeans/Cotton,roots,#246E00,
+240,Dbl Crop Soybeans/Oats,roots,#246E00,
+241,Dbl Crop Corn/Soybeans,corn,#FFD200,FCRN
+242,Blueberries,specialty,#000099,
+243,Cabbage,roots,#FF6666,
+244,Cauliflower,roots,#FF6666,
+245,Celery,roots,#FF6666,
+246,Radishes,roots,#FF6666,
+247,Turnips,roots,#FF6666,
+248,Eggplants,roots,#FF6666,
+249,Gourds,roots,#FF6666,
+250,Cranberries,specialty,#FF6666,
+254,Dbl Crop Barley/Soybeans,grain,#246E00,

@@ -62,9 +62,13 @@ if (browser) {
 	prewarm();
 }
 
-/** `path?v=<version>` once /api/meta has answered; the plain path when it has no version. */
+/**
+ * `path?v=<version>` once /api/meta has answered; the plain path when it has
+ * no version. Toggled layers' tiles take theirs from `versions.layers`
+ * (#lib/contracts/layer-tiles), not from here.
+ */
 export async function dataUrl(path: string, version?: keyof DataVersions): Promise<string> {
 	const m = await meta;
 	const v = version ? m?.versions?.[version] : null;
-	return v ? `${path}${path.includes('?') ? '&' : '?'}v=${encodeURIComponent(v)}` : path;
+	return typeof v === 'string' && v ? `${path}${path.includes('?') ? '&' : '?'}v=${encodeURIComponent(v)}` : path;
 }

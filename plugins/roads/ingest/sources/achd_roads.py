@@ -20,7 +20,7 @@ import time
 import urllib.error
 
 from ingest import db, http
-from .. import segment_match
+from .. import marks, segment_match
 
 LAYER = "https://gis.achdidaho.org/server/rest/services/Maintenance/Road_Centerline/MapServer/7"
 FIELDS = ["OBJECTID", "PermID", "StrtConcat", "StName", "FuncClass", "PostSpeed", "EmergSpeed", "OneWay",
@@ -164,6 +164,7 @@ def run(conn):
         features, f.bytes, f.robots = fetch_all(f)
         stats = store(conn, f.id, f.started_at, features)
         f.records = stats["segments"]
+        marks.mark(conn, SOURCE["name"], changed(stats), "segments")
     # Changed segments: every source matched to them is rematched (owner, Oct 6); otherwise any
     # whose matches are out of date (an earlier rematch that failed). Each is committed in turn;
     # one that fails is logged and the rest still run.

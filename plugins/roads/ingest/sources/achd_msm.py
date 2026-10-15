@@ -27,7 +27,7 @@ import json
 from collections import Counter
 
 from ingest import arcgis, db
-from .. import segment_match
+from .. import marks, segment_match
 
 LAYER = "https://gis.achdidaho.org/server/rest/services/ArcGIS_Hub/Master_Street_Map_Arterials/FeatureServer/1"
 
@@ -184,6 +184,7 @@ def run(conn):
                                                                         precision=6)
         stats, changed = store(conn, f.id, f.started_at, [arcgis.esri_feature(x) for x in features])
         f.records = stats["arterials"]
+        marks.mark(conn, SOURCE["name"], changed, "arterials")
         # Inside the fetch: if matching fails, the store rolls back with it and the run is retried.
         if changed or segment_match.stale(conn, [SOURCE["name"]]):
             stats.update({f"match {k}": v for k, v in match(conn).items()})

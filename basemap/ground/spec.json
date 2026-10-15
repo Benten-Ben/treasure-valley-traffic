@@ -1,0 +1,57 @@
+{
+  "spec": 1,
+  "about": "The ground's grid, class boxes and tile spec (basemap/ground/README.md). grid.py and tiles.py read this file and test_grid.py and test_tiles.py check it; the numbers here are the contract.",
+  "grid": {
+    "crs": "EPSG:32611",
+    "origin": [495920, 4855750],
+    "res": 10,
+    "size": [8967, 9494],
+    "levels": {"sentinel2": 10, "painter": 2, "classes": 0.5},
+    "lonlat": [-117.05, 43.0, -115.95, 43.85],
+    "about": "Sentinel-2's own 10 m grid (pixel edges on multiples of 10 m in UTM 11N), cut to the envelope of the map box (basemap/build.sh's bbox, densified before projecting) widened to whole 10 m pixels. The July 2025 NDVI layer is on exactly this grid. origin is the upper-left corner; size is [columns, rows] at 10 m. The painter's 2 m and the class boxes' 0.5 m grids are exact sub-grids: 5 and 20 cells per 10 m cell, same origin."
+  },
+  "boxes": [
+    {"id": "a", "name": "Dry Creek at Bogus Basin Road, foothills", "county": "Ada",
+     "lonlat": [-116.179, 43.683, -116.161, 43.696], "utm": [566158, 4836992, 567624, 4838452]},
+    {"id": "b", "name": "Barber Pool, Boise River", "county": "Ada",
+     "lonlat": [-116.126, 43.551, -116.108, 43.564], "utm": [570583, 4822376, 572053, 4823836]},
+    {"id": "c", "name": "North End and Hyde Park", "county": "Ada",
+     "lonlat": [-116.214, 43.622, -116.196, 43.635], "utm": [563401, 4830190, 564868, 4831649]},
+    {"id": "d", "name": "South Meridian, Locust Grove and Lake Hazel", "county": "Ada",
+     "lonlat": [-116.377, 43.545, -116.359, 43.558], "utm": [550317, 4821527, 551783, 4822983]},
+    {"id": "e", "name": "New York Canal south of Nampa", "county": "Canyon",
+     "lonlat": [-116.578, 43.503, -116.560, 43.516], "utm": [534107, 4816761, 535570, 4818213]},
+    {"id": "f", "name": "Initial Point butte, south of Kuna", "county": "Ada",
+     "lonlat": [-116.400, 43.363, -116.382, 43.376], "utm": [548605, 4801301, 550075, 4802756]},
+    {"id": "downtown", "name": "Downtown Boise row", "county": "Ada",
+     "lonlat": null, "utm": [564000, 4829000, 566000, 4831000]},
+    {"id": "h", "name": "Bogus Basin", "county": "Boise",
+     "lonlat": [-116.112, 43.758, -116.094, 43.771], "utm": [571467, 4845378, 572933, 4846838]},
+    {"id": "i", "name": "Owyhee front at Wilson Creek", "county": "Owyhee",
+     "lonlat": [-116.679, 43.263, -116.661, 43.276], "utm": [526046, 4790071, 527514, 4791521]},
+    {"id": "j", "name": "Owyhee Mountains near Silver City", "county": "Owyhee",
+     "lonlat": [-116.739, 43.024, -116.721, 43.037], "utm": [521260, 4763513, 522732, 4764962]}
+  ],
+  "boxes_about": "The land-cover spike's ten test boxes (agreed with the owner Oct 7). utm is [west, south, east, north] in the grid's metres: the envelope of lonlat (densified) widened to whole metres, which is exactly the extent of the spike's 0.5 m lidar rasters, so it lies on the 0.5 m class grid. The downtown row is the 2 x 2 km square of four 1 km lidar tiles, so it has no lon/lat definition.",
+  "tiles": {
+    "scheme": "xyz",
+    "crs": "EPSG:3857",
+    "tileSize": 512,
+    "format": "webp",
+    "quality": 80,
+    "opaque": true,
+    "valley": {"minzoom": 8, "maxzoom": 15, "from": "painter"},
+    "detail": {"minzoom": 17, "maxzoom": 17, "from": "classes", "boxes": "all"},
+    "outside": "valley",
+    "about": "512 px lossy WebP, opaque (no alpha), XYZ tiles in Web Mercator. Valley-wide z8-z15 (1.73 m per pixel at z15, matching the 2 m painter), built from the painter grid; z16 overzooms z15. z17 only in tiles touching the ten class boxes (0.43 m per pixel), built from the 0.5 m classes with the valley paint outside each box (plan §3.5). Pixels outside the grid are the flat Valley colour, so the edge of the ground matches the flat ground beyond it. quality is the starting value; G1a may lower it per zoom to meet the budget."
+  },
+  "budget": {
+    "valleyDefault": {"maxBytes": 600000, "maxRequests": 14},
+    "clayDefault": {"maxBytes": 0, "maxRequests": 0},
+    "view": {"center": [-116.4, 43.6], "zoom": 10, "pitch": 45, "viewport": [1280, 800]},
+    "archiveBytes": 700000000,
+    "about": "First load at the default view (tiles/manifest.json's center and zoom, the perf harness's pitch 45 and 1280 x 800, scenario S1): with Base set to Valley, every request to the ground's files (PMTiles header, directories and tiles) counts, at most 0.6 MB (10^6 bytes, as perf.mjs counts) in at most 14 requests, inside the page's 6 MB. Clay never loads the ground (Clay is flat in v1). archiveBytes is the planning size of the valley file (about 0.6 GB) plus the detail file."
+  },
+  "flat": {"valley": "#eee7da", "clay": "#f3ede2"},
+  "flat_about": "Today's flat ground, app/src/lib/map/flavors.ts GROUND (test_tiles.py checks they agree). It is what the map shows wherever the ground isn't painted: always in Clay, and in Valley until a ground build exists."
+}

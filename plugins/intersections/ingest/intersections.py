@@ -73,6 +73,7 @@ from dataclasses import dataclass, field
 
 from ingest import db
 from ingest.utm import to_utm
+from plugins.roads.ingest import marks as roads_marks
 from plugins.roads.ingest import streets
 
 UTM = 26911
@@ -934,7 +935,8 @@ def write_crossings(conn, built, area=None):
 
 def build(conn, seen_at, area=None, reviews=None):
     """The whole build in the caller's transaction (no commit). Returns (stats, details).
-    reviews: Review list; by default the reviews file."""
+    reviews: Review list; by default the reviews file. When the signals roads-build reads change, it's marked."""
+    signals_before = roads_marks.signals(conn)
     seeds, poles, regional, others, osm_nodes, roads, osm_roads, existing = load(conn, area)
     if reviews is None:
         reviews = load_reviews()
@@ -954,6 +956,9 @@ def build(conn, seen_at, area=None, reviews=None):
     if w["OSM links"]:
         stats["OSM links"] = w["OSM links"]
     details.update({"built": built, "camera_links": cam_links})
+    changed = {sid for sid, *_ in signals_before ^ roads_marks.signals(conn)}       # each signal once, moved or not
+    if roads_marks.mark(conn, SOURCE["name"], len(changed), "active signals"):
+        stats["roads-build marked"] = True
     return stats, details
 
 

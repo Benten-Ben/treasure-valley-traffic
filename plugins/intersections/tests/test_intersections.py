@@ -270,8 +270,17 @@ class DatabaseTest(unittest.TestCase):
                        round(ST_X(ST_Transform(geom, 26911))::numeric - {self.x0}), round(ST_Y(ST_Transform(geom, 26911))::numeric - {self.y0})
                 from core.intersection where geom && ST_MakeEnvelope(%s, %s, %s, %s, 4326) order by id""", AREA).fetchall()
 
+    def roads_marks(self):
+        """roads-build's marks by the intersections (its signals feed the real-width roads' junctions)."""
+        row = self.conn.execute("""select marks from ops.build_pending
+                                   where build = 'roads-build' and marked_by = %s""", (ix.SOURCE["name"],)).fetchone()
+        return row[0] if row else 0
+
     def test_build_links_and_reruns(self):
         c = self.conn
+        if not c.execute("select to_regclass('ops.build_pending') is not null").fetchone()[0]:
+            self.skipTest("ops.build_pending is missing: apply migration 0021")
+        c.execute("delete from ops.build_pending where build = 'roads-build'")
         self.road("W Alpha Ave", (-300, 0), (0, 0))
         self.road("E Alpha Ave", (0, 0), (300, 0))
         self.road("N Beta St", (0, 0), (0, 300))
@@ -298,6 +307,7 @@ class DatabaseTest(unittest.TestCase):
                                  returning id""").fetchone()[0]
 
         stats, _ = ix.build(c, T0, AREA, reviews=[])
+        self.assertEqual(self.roads_marks(), 1)                 # a new signal: roads-build is marked
         rows = self.intersections()
         self.assertEqual(len(rows), 2)
         main, cand = rows
@@ -327,6 +337,7 @@ class DatabaseTest(unittest.TestCase):
             stats, _ = ix.build(c, T0 + timedelta(hours=hour), AREA, reviews=[review])
             self.assertEqual([(r[0], r[2]) for r in self.intersections()], [(main[0], "active"), (cand[0], "retired")])
             self.assertEqual((stats["new"], stats["retired"], stats["retired by review"]), (0, 0, 1))
+        self.assertEqual(self.roads_marks(), 1)                 # a candidate retired: no signal changed
         self.assertEqual(c.execute("select count(*) from core.signal_device where id = any(%s) and intersection_id is not null",
                                    (lone,)).fetchone(), (0,))
         # Without the review it's scored as before.
@@ -337,14 +348,21 @@ class DatabaseTest(unittest.TestCase):
         c.execute(f"update core.signal_device set geom = {self.pt(10, 11)} where id = %s", (seed_id,))
         c.execute("update core.signal_device set active = false where id = any(%s)", (lone,))
         stats, _ = ix.build(c, T0 + timedelta(days=1), AREA, reviews=[])
+        self.assertEqual(self.roads_marks(), 1)                 # the signal stays snapped to its junction
         rows2 = self.intersections()
         self.assertEqual([r[0] for r in rows2], [main[0], cand[0]])
         self.assertEqual((rows2[0][2], rows2[1][2]), ("active", "retired"))
         self.assertEqual((stats["new"], stats["retired"]), (0, 1))
 
-        # The poles come back: the retired row is reused, found within 30 m.
+        # The poles come back: the retired row is reused, found within 30 m. (The signal stood 4 m off, as a hand
+        # edit might leave it: the rebuild puts it back, and that's a change roads-build reads.)
         c.execute("update core.signal_device set active = true where id = any(%s)", (lone,))
+        c.execute("update core.intersection set geom = ST_Translate(geom, 0.00005, 0) where id = %s", (main[0],))
         stats, _ = ix.build(c, T0 + timedelta(days=2), AREA, reviews=[])
+        self.assertEqual(self.roads_marks(), 2)
+        self.assertEqual(c.execute("""select reason from ops.build_pending where build = 'roads-build'
+                                      and marked_by = %s""", (ix.SOURCE["name"],)).fetchone(),
+                         ("intersections: 1 active signals changed",))
         rows3 = self.intersections()
         self.assertEqual([(r[0], r[2]) for r in rows3], [(main[0], "active"), (cand[0], "candidate")])
         self.assertEqual(stats["new"], 0)

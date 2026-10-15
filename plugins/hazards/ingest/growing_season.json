@@ -1,0 +1,7 @@
+{
+  "about": "The valley's growing season, for the burn scars' fade (burn_scars.py; README, 'Burn scars'). A scar steps down after each of the first three whole growing seasons that begin after its fire, so a fire in July waits for next spring's regrowth. Read by core's rules-by-date evaluator (ingest/seasons.py). April through October is an estimate ⚠️, not yet checked against a source: it's meant to take in spring green-up on the valley's rangeland and foothills and the frost-free months. NCEI's 1991-2020 climate normals (docs/sources/gardening.md, 'Frost, growing season and hardiness') are the source to check it against. Only the end matters for a fire between April and December (its first step comes on Nov 1 of the next year); the start decides whether a fire from January to March has that year's season counted. To change it, edit this file: the next refresh recomputes every scar's steps and records a new tile version.",
+  "rules": [
+    {"id": "growing", "level": "seasonal", "value": "growing", "yearly": {"start": "04-01", "end": "10-31"},
+     "text": "April through October", "source": "estimate (⚠️), see about"}
+  ]
+}

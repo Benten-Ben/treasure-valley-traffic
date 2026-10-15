@@ -1,18 +1,26 @@
 """python3 -m ingest sources | run NAME... | run all | serve | stream NAME | backfill NAME PATH | COMMAND ...
 
-COMMAND is a plugin's own subcommand, registered in its plugin.json (e.g.
-match-intersections, rollup, osm-load); `python3 -m ingest -h` lists them.
+COMMAND is core's osm-load (ingest/osm_extract.py: the OpenStreetMap extract,
+into every plugin's consumers) or a plugin's own subcommand, registered in its
+plugin.json (e.g. match-intersections, rollup); `python3 -m ingest -h` lists them.
 """
 
 import argparse
+import importlib
+import os
 import sys
 import time
 import traceback
 
-from . import db
+from . import builds, db
 from .sources import COMMANDS, SOURCES, STREAMS, command
 
 BUILTINS = ("sources", "run", "serve", "stream", "backfill")
+CORE_COMMANDS = {   # name: (module, help); each module's main(argv) gets the arguments after the name
+    "osm-load": ("ingest.osm_extract",
+                 "load an OpenStreetMap extract downloaded by hand into every plugin's consumers "
+                 "(--inbox, --file PATH, --archived; --only CONSUMER, --cut-only, --list)"),
+}
 
 
 def due(conn, name, schedule, retry_after="1 hour"):
@@ -36,7 +44,20 @@ def run_one(conn, name):
 
 def serve(check_every_s):
     """Run scheduled sources when they're due. One-off and by-request sources
-    have no schedule (the database refuses one), so they never run here."""
+    have no schedule (the database refuses one), so they never run here. Nor do
+    builds: a source marks a build out of date (ingest/builds.py), and builds.Run
+    refuses to start in this process or anything it starts. Two exceptions,
+    each logged in ops.fetch as a source: the `intersections` source rebuilds
+    core.intersection here once a day (about 10 s; it predates the rule), and
+    the trails pollers relink the trail lines a poll changed once its data is
+    committed (plugins/trails/ingest/match.py, `trails_match`: at most 40
+    lines, about 2 s; each statement limited to 20 s and the relink to 60 s,
+    then left to the trails-match build), which the landscape plan's P6-data
+    row asks for so that a closure the City posts shows within the hour.
+    Water's hourly `canal_season` source is no build: it fetches nothing but
+    turns gauge readings and dates into lifecycles (plan P5), as a poller
+    turns its readings into episodes, since its 48-hour rule needs a clock."""
+    os.environ[builds.SERVE_ENV] = "1"
     print(f"ingest serve: checking every {check_every_s} s", flush=True)
     while True:
         try:
@@ -60,8 +81,10 @@ def serve(check_every_s):
 
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
-    if clash := sorted(set(COMMANDS) & set(BUILTINS)):
+    if clash := sorted(set(COMMANDS) & (set(BUILTINS) | set(CORE_COMMANDS))):
         sys.exit(f"plugin command(s) {', '.join(clash)} clash with the built-in ones")
+    if argv and argv[0] in CORE_COMMANDS:
+        sys.exit(importlib.import_module(CORE_COMMANDS[argv[0]][0]).main(argv[1:]))
     if argv and argv[0] in COMMANDS:
         sys.exit(command(argv[0])(argv[1:]))
 
@@ -78,6 +101,8 @@ def main(argv=None):
     bf = sub.add_parser("backfill", help="load a streaming source's raw archive into the database")
     bf.add_argument("name", choices=sorted(n for n, m in STREAMS.items() if hasattr(m, "backfill")))
     bf.add_argument("path", help="archive folder, e.g. $TVT_ARCHIVE/vrt-gtfs-rt")
+    for name, (_, text) in CORE_COMMANDS.items():
+        sub.add_parser(name, help=text, add_help=False)
     for name, (plugin, entry) in COMMANDS.items():
         sub.add_parser(name, help=f"{entry['help']} ({plugin.name})", add_help=False)
     args = ap.parse_args(argv)

@@ -1,0 +1,17 @@
+# Caps for a one-off production load at a deploy (`docker compose run` of the ingest
+# service), which runs under the VM's heavy tool. `docker compose run` has no option for a
+# memory cap, so the cap goes here, and heavy refuses a compose run whose service has none.
+# Give it on the command line, after the files the deploy uses, from this folder:
+#
+#   heavy --deadline 17:00 --runtime 30 --peak 1 "roads load (deploy)" \
+#     docker compose -f docker-compose.yml -f compose.private.yml -f compose.load.yml \
+#       run --rm --no-deps -e DATABASE_URL ingest python3 -m ingest ...
+#
+# `-e DATABASE_URL` passes the shell's value (the load's role, tvt_build): set it there,
+# never on the command line, which heavy's log records. Never add this file to
+# COMPOSE_FILE: the running ingest service would get these caps too.
+services:
+  ingest:
+    mem_limit: 2g
+    memswap_limit: 2g
+    cpus: 2

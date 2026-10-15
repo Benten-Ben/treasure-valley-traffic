@@ -14,6 +14,9 @@
     {"name": "nifc_wfigs_perimeters", "module": "ingest.sources.nifc_wfigs_perimeters", "kind": "source",
      "license": "none stated (NIFC disclaimer only)", "credit": "National Interagency Fire Center (WFIGS), from IRWIN",
      "republish": "yes"},
+    {"name": "nifc_wfigs_perimeters_backfill", "module": "ingest.wfigs_backfill", "kind": "manual",
+     "license": "none stated (NIFC disclaimer only)", "credit": "National Interagency Fire Center (WFIGS), from IRWIN",
+     "republish": "yes"},
     {"name": "nasa_firms", "module": "ingest.sources.nasa_firms", "kind": "source",
      "license": "NASA open data", "credit": "NASA FIRMS (LANCE/ESDIS)", "republish": "yes"},
     {"name": "nws_wwa", "module": "ingest.sources.nws_wwa", "kind": "source",
@@ -21,7 +24,13 @@
     {"name": "usgs_quakes", "module": "ingest.sources.usgs_quakes", "kind": "source",
      "license": "public domain", "credit": "U.S. Geological Survey, Earthquake Hazards Program", "republish": "yes"}
   ],
-  "tables": [],
-  "storage": "Small, and only on change: under 1 MB a day typical, a few MB on a busy fire day (new perimeter versions at 10-100 KB each). Everything goes to core's raw.record and evt.event; no tables of its own (ch. 17 Q8). Transfer is about 60 MB a day before gzip (which we ask for), most of it the hourly FIRMS files (4 x 200 KB) and the USGS week feed (1.4 MB), cut to the ring before storing.",
+  "tables": ["hazards.burn_scar", "hazards.burn_scar_shown"],
+  "commands": [
+    {"name": "burn-scars", "module": "ingest.burn_scars",
+     "help": "build hazards.burn_scar from the fire perimeters in raw.record, by hand when the perimeter poller has marked it (python3 -m ingest.builds); never inside serve"},
+    {"name": "wfigs-backfill", "module": "ingest.wfigs_backfill",
+     "help": "load the approved Aug-Dec 2025 read of fire perimeters (made Oct 11, 2026; kept on the server) into raw.record (--load)"}
+  ],
+  "storage": "Small, and only on change: under 1 MB a day typical, a few MB on a busy fire day (new perimeter versions at 10-100 KB each). The sources' records go to core's raw.record and evt.event (ch. 17 Q8). One table of its own, hazards.burn_scar (landscape sprint): the burn scars derived from the perimeters by the burn-scars build, a few dozen fires a year in the map box (under 5 MB), each build's tile version in core.layer_version. Transfer is about 60 MB a day before gzip (which we ask for), most of it the hourly FIRMS files (4 x 200 KB) and the USGS week feed (1.4 MB), cut to the ring before storing.",
   "ethics": "Road network and nature, not people: NWS alerts about people (Child Abduction, Blue Alert, Law Enforcement, Missing Person) are dropped before storing; FIRMS hotspots are pixel footprints, never pins on houses or structure-fire alerts; IDL's last_edited_user is dropped. api.weather.gov is robots-disallowed and never fetched (the WWA url field, api.weather.gov plus cap_id, is a link for display only). IDL states no license: internal, credited, until a courtesy note is answered (ch. 17 Q17)."
 }

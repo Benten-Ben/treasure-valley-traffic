@@ -1,13 +1,13 @@
 {
   "name": "water",
-  "title": "Water: river gauges and floods, snow, swimming water, river hazards and drought",
+  "title": "Water: hydrography (rivers, creeks, canals, ponds), river gauges and floods, snow, swimming water, river hazards and drought",
   "depends": [],
   "visibility": "public",
   "order": 62,
   "sources": [
     {"name": "nwps_gauges", "module": "ingest.sources.nwps_gauges", "kind": "source",
      "license": "US government work (public domain)",
-     "credit": "NOAA National Weather Service (NWPS; Northwest River Forecast Center); observations courtesy of the U.S. Geological Survey",
+     "credit": "NOAA National Weather Service (NWPS; Northwest River Forecast Center); observations courtesy of the U.S. Geological Survey where NWPS names a USGS site",
      "republish": "yes"},
     {"name": "nrcs_snotel", "module": "ingest.sources.nrcs_snotel", "kind": "source",
      "license": "US government work (USDA NRCS); public domain assumed",
@@ -21,9 +21,56 @@
     {"name": "usdm_drought", "module": "ingest.sources.usdm_drought", "kind": "source",
      "license": "free to reproduce with the required credit (NDMC permission page)",
      "credit": "U.S. Drought Monitor: National Drought Mitigation Center (University of Nebraska-Lincoln), USDA, NOAA and NASA; map courtesy of NDMC",
-     "republish": "aggregates"}
+     "republish": "aggregates"},
+    {"name": "idwr_irrigation_orgs", "module": "ingest.sources.idwr_irrigation_orgs", "kind": "source",
+     "license": "none stated (IDWR disclaimer: made available as a public service)",
+     "credit": "Idaho Department of Water Resources", "republish": "internal"},
+    {"name": "idwr_season_of_use", "module": "ingest.sources.idwr_season_of_use", "kind": "source",
+     "license": "none stated (IDWR disclaimer: made available as a public service)",
+     "credit": "Idaho Department of Water Resources", "republish": "internal"},
+    {"name": "canal_season", "module": "ingest.season", "kind": "source",
+     "license": "derived: NWPS readings (public domain), the water network (ODbL), the HydroShare canal network's names (CC BY 4.0), the districts' dates (cited), IDWR's season of use (none stated)",
+     "credit": "NOAA National Weather Service (NWPS); the irrigation districts, as cited; Idaho Department of Water Resources (Season of Use); © OpenStreetMap contributors; USGS National Hydrography Dataset; Tatum, T., Bittmann, B., Stone, H., Kaiser, K. E. (2022), Treasure Valley Irrigation System, HydroShare, doi:10.4211/hs.24a5f761bf4f41fb9b872b130d9d1a3f (CC BY 4.0; modified)",
+     "republish": "internal"},
+    {"name": "nhd_hr", "module": "ingest.sources.nhd_hr", "kind": "manual",
+     "license": "public domain", "credit": "USGS National Hydrography Dataset", "republish": "yes"},
+    {"name": "hydroshare_canals", "module": "ingest.sources.hydroshare_canals", "kind": "manual",
+     "license": "CC BY 4.0",
+     "credit": "Tatum, T., Bittmann, B., Stone, H., Kaiser, K. E. (2022), Treasure Valley Irrigation System, HydroShare, doi:10.4211/hs.24a5f761bf4f41fb9b872b130d9d1a3f (CC BY 4.0; modified)",
+     "republish": "yes"},
+    {"name": "osm_waterways", "module": "ingest.sources.osm_waterways", "kind": "manual",
+     "license": "ODbL", "credit": "© OpenStreetMap contributors", "republish": "yes"},
+    {"name": "canal_dates", "module": "ingest.sources.canal_dates", "kind": "manual",
+     "license": "facts (dates) from each district's own page, cited",
+     "credit": "The irrigation districts, as each entry of canal_dates.json cites", "republish": "yes"}
   ],
-  "tables": [],
-  "storage": "About 1.7 MB a day in raw.record, most of it NWPS readings (37 gauges, mostly 15-minute values: about 3,500 rows a day, roughly 0.6 GB a year); SNOTEL about 100 station-hours a day; E. coli, hazards and drought a few rows a week. Once, at the start: each gauge's first sweep loads its 30 days of history (about 100,000 rows, some 40 MB, over the first day) and the first drought run loads the archive since 2000 (about 14,000 rows). evt.event: a handful of open rows (floods, live river hazards, drought episodes). Downloads: about 4-5 MB a day, mostly NWPS's weekly 30-day series.",
-  "ethics": "Rivers, snow and drought, not people. The river-hazard layer's editor user names (Creator, Editor) and its Internal Comments field (which names people) are never stored. The City of Boise layers (E. coli, river hazards) state no license: used internally with credit until the City answers a courtesy note (docs/17 Q17). Hazards and water quality are shown in the agencies' own words; we make no swim, float or safe calls. ArcGIS layers are only queried. The USGS Water Data API and api.weather.gov are not used (their robots.txt disallows us); the Drought Monitor's polygon files sit under a disallowed path and aren't collected."
+  "tables": [
+    "water.load", "water.nhd_flowline", "water.nhd_polygon", "water.nhd_line", "water.nhd_point", "water.nhd_flow",
+    "water.hydroshare_canal", "water.osm_feature", "water.idwr_org", "water.idwr_season",
+    "water.build", "water.reach", "water.reach_link", "water.reach_evidence", "water.body", "water.structure",
+    "water.canal", "water.gauge", "water.canal_org", "water.canal_season", "water.canal_date"
+  ],
+  "commands": [
+    {"name": "nhd-load", "module": "ingest.nhd",
+     "help": "load NHD HU4 1705 as plugins/water/build/prepare.py prepared it (--from FILE.gpkg)"},
+    {"name": "hydroshare-load", "module": "ingest.hydroshare",
+     "help": "load the HydroShare canal network as plugins/water/build/prepare.py prepared it (--from FILE.gpkg)"},
+    {"name": "water-build", "module": "ingest.build",
+     "help": "build the water network: OSM's geometry with NHD's facts, canals, topology, gauges (by hand)"},
+    {"name": "water-export", "module": "ingest.export",
+     "help": "export the water network's base layers and the ground's water mask to $TVT_ARCHIVE/water/export/"},
+    {"name": "canal-season", "module": "ingest.season",
+     "help": "derive each canal's water season (on, off, unknown) into evt.event now, as the hourly canal_season source does (--dry-run, --as-of, --canal NAME)"},
+    {"name": "canal-dates-load", "module": "ingest.sources.canal_dates",
+     "help": "load the districts' canal dates (plugins/water/ingest/canal_dates.json) into water.canal_date, then derive the canal season (--dry-run, --file)"}
+  ],
+  "osm_consumers": [
+    {"source": "osm_waterways",
+     "tags": ["nw/waterway", "a/waterway=riverbank,dock,boatyard,dam,weir", "n/natural=spring",
+              "a/natural=water,wetland,spring", "a/water", "a/landuse=reservoir,basin", "a/leisure=swimming_pool"],
+     "geometry": ["point", "linestring", "polygon"],
+     "tables": ["water.osm_feature"]}
+  ],
+  "storage": "About 1.7 MB a day in raw.record, most of it NWPS readings (37 gauges, mostly 15-minute values: about 3,500 rows a day, roughly 0.6 GB a year); SNOTEL about 100 station-hours a day; E. coli, hazards and drought a few rows a week. Once, at the start: each gauge's first sweep loads its 30 days of history (about 100,000 rows, some 40 MB, over the first day) and the first drought run loads the archive since 2000 (about 14,000 rows). evt.event: a handful of open rows (floods, live river hazards, drought episodes). Downloads: about 4-5 MB a day, mostly NWPS's weekly 30-day series. Hydrography (the water schema, landscape sprint): under 100 MB with indexes, measured in README.md; the NHD and HydroShare copies are replaced by each load, OpenStreetMap's water is versioned in place, and the drawn tables are rebuilt by each water-build. IDWR: 63 polygons a month, a few hundred kB.",
+  "ethics": "Rivers, snow and drought, not people. The river-hazard layer's editor user names (Creator, Editor) and its Internal Comments field (which names people) are never stored. The City of Boise layers (E. coli, river hazards) state no license: used internally with credit until the City answers a courtesy note (docs/17 Q17). Hazards and water quality are shown in the agencies' own words; we make no swim, float or safe calls. ArcGIS layers are only queried. The USGS Water Data API and api.weather.gov are not used (their robots.txt disallows us); the Drought Monitor's polygon files sit under a disallowed path and aren't collected. Hydrography: NHD is public domain; OpenStreetMap is ODbL, so the drawn network, which carries OSM's geometry, is ODbL and credits both; the HydroShare canal network is CC BY 4.0, cited with its creators and DOI, downloaded once by hand (its download path is closed to robots). IDWR's irrigation organizations and season of use state no license: internal, credited, never in the base map or the exports, and their Owner field is never fetched; a courtesy note to IDWR is the owner's to send. Canal banks are irrigation access, not public paths."
 }

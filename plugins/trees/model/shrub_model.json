@@ -1,0 +1,9 @@
+{
+ "source": "Fitted Oct 8, 2026 in the land-cover spike (exp25c and exp25d on the project's server) on 277 isolated, compact, single-topped shrub clumps from the ten test areas' central 500 m: Theil-Sen on log width against log height, with the spread 1.4826 x the median absolute deviation of log width. Width is the clump's equal-area width; bush: mostly near-infrared green, sage: not green, a plant by its lidar scatter. docs/19 §19.8.",
+ "band_m": [0.3, 2.4],
+ "width": {
+  "bush": {"a": 1.478, "b": 0.247, "sd_log": 0.179, "n": 225},
+  "sage": {"a": 1.279, "b": 0.154, "sd_log": 0.167, "n": 52}
+ },
+ "dome": {"a": 0.6, "n": 2.0, "note": "the shape the score rebuilds each shrub with: z = H * (1 - a * (d/R)^n)"}
+}

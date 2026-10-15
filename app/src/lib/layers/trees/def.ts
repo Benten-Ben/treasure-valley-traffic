@@ -17,7 +17,7 @@ const def: LayerDef = {
 	icon: TREE,
 	order: 50,
 	blurb: 'Every tree in the lidar: 3D trees from z15, crown discs farther out',
-	source: 'USGS 3DEP lidar · City of Boise · US Forest Service',
+	source: 'USGS 3DEP lidar · City of Boise · US Forest Service · Copernicus Sentinel-2',
 	loadingText: 'Loading trees…',
 	// Always offered when the map has a database: the legend says where trees are built so far.
 	available: () => true,

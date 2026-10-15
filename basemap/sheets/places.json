@@ -1,0 +1,73 @@
+{
+ "places": 1,
+ "about": "Where the sheet tool draws (basemap/sheets/README.md): the ten test boxes (from basemap/ground/spec.json), the 34 key-camera intersections (names from plugins/cameras/ingest/key_cameras.csv, centres here), two divided-road corridors and three spots. Every frame is a square on the ground grid (EPSG:32611), `size` metres wide at `res` metres a pixel; res must be a level of the grid (it divides 10 m or is a multiple of it).",
+ "credit": "© OpenStreetMap contributors",
+ "licence": "ODbL-1.0",
+ "osm": {
+  "extract": "idaho-261005-20261007-cd0984ee.osm.pbf",
+  "how": "Derived Oct 11, 2026 from the held extract. Cameras: the centroid of the crossings of the two named roads (core.osm_way, the osm_valley load) nearest the camera, the nearest traffic_signals node, the closest point of the named way, or a roundabout's centre, as each entry says (derive_places.sql); the camera's own position only picked which crossing it watches. Corridors: the road's centreline sampled every 0.002 degrees (the centroid of its carriageways' crossings with a line across it), simplified to 4 m. Spots: the OSM feature each names (osmium tags-filter of the extract)."
+ },
+ "defaults": {
+  "boxes": {"res": 1},
+  "cameras": {"size": 240, "res": 0.25},
+  "corridors": {"size": 600, "step": 580, "res": 0.5},
+  "spots": {"size": 1500, "res": 1}
+ },
+ "cameras": [
+  {"image_id": 636, "lonlat": [-116.202627, 43.612861], "osm": "crossing of 4 point(s)"},
+  {"image_id": 645, "lonlat": [-116.250535, 43.630625], "osm": "crossing of 6 point(s)"},
+  {"image_id": 655, "lonlat": [-116.354465, 43.662986], "osm": "crossing of 12 point(s)"},
+  {"image_id": 656, "lonlat": [-116.354549, 43.619498], "osm": "crossing of 14 point(s)"},
+  {"image_id": 657, "lonlat": [-116.354791, 43.604953], "osm": "crossing of 3 point(s)"},
+  {"image_id": 658, "lonlat": [-116.354279, 43.648391], "osm": "crossing of 8 point(s)"},
+  {"image_id": 659, "lonlat": [-116.354361, 43.633841], "osm": "crossing of 8 point(s)"},
+  {"image_id": 664, "lonlat": [-116.279795, 43.649018], "osm": "crossing of 9 point(s)"},
+  {"image_id": 674, "lonlat": [-116.393741, 43.593483], "osm": "crossing of 2 point(s)", "size": 400, "res": 0.5},
+  {"image_id": 676, "lonlat": [-116.35476, 43.596385], "osm": "crossing of 2 point(s)", "size": 400, "res": 0.5},
+  {"image_id": 677, "lonlat": [-116.334358, 43.597287], "osm": "crossing of 2 point(s)", "size": 400, "res": 0.5},
+  {"image_id": 680, "lonlat": [-116.274136, 43.590204], "osm": "crossing of 4 point(s)"},
+  {"image_id": 687, "lonlat": [-116.291242, 43.597036], "osm": "crossing of 1 point(s): where I 184 leaves I 84 (the wye)", "size": 1400, "res": 1},
+  {"image_id": 698, "lonlat": [-116.354506, 43.590406], "osm": "crossing of 6 point(s)"},
+  {"image_id": 699, "lonlat": [-116.374537, 43.590264], "osm": "crossing of 4 point(s)"},
+  {"image_id": 700, "lonlat": [-116.393771, 43.590112], "osm": "crossing of 8 point(s)"},
+  {"image_id": 704, "lonlat": [-116.393572, 43.596642], "osm": "crossing of 1 point(s)"},
+  {"image_id": 709, "lonlat": [-116.334349, 43.590315], "osm": "crossing of 6 point(s)"},
+  {"image_id": 710, "lonlat": [-116.274102, 43.575721], "osm": "crossing of 16 point(s)"},
+  {"image_id": 717, "lonlat": [-116.393851, 43.575561], "osm": "crossing of 4 point(s)"},
+  {"image_id": 718, "lonlat": [-116.393859, 43.560984], "osm": "crossing of 4 point(s)"},
+  {"image_id": 725, "lonlat": [-116.374465, 43.662909], "osm": "crossing of 6 point(s)"},
+  {"image_id": 737, "lonlat": [-116.203923, 43.616989], "osm": "crossing of 4 point(s)"},
+  {"image_id": 748, "lonlat": [-116.202328, 43.615045], "osm": "crossing of 4 point(s)"},
+  {"image_id": 751, "lonlat": [-116.473674, 43.663006], "osm": "traffic_signals node 10292584987", "size": 400, "res": 0.5},
+  {"image_id": 752, "lonlat": [-116.334471, 43.662864], "osm": "crossing of 2 point(s)"},
+  {"image_id": 753, "lonlat": [-116.317437, 43.660657], "osm": "crossing of 2 point(s)"},
+  {"image_id": 754, "lonlat": [-116.299022, 43.656037], "osm": "crossing of 2 point(s)"},
+  {"image_id": 762, "lonlat": [-116.204499, 43.602899], "osm": "traffic_signals node 126330068"},
+  {"image_id": 792, "lonlat": [-116.413901, 43.490556], "osm": "centre of roundabout way 619759398"},
+  {"image_id": 810, "lonlat": [-116.354748, 43.601119], "osm": "crossing of 10 point(s)"},
+  {"image_id": 817, "lonlat": [-116.393798, 43.546421], "osm": "crossing of 2 point(s)"},
+  {"image_id": 825, "lonlat": [-116.393587, 43.611937], "osm": "crossing of 2 point(s)"},
+  {"image_id": 835, "lonlat": [-116.443596, 43.662895], "osm": "crossing of 9 point(s)"}
+ ],
+ "corridors": [
+  {"id": "eagle-rd", "short": "Eagle Road", "name": "Eagle Road (SH-55), Overland Road to Chinden Boulevard", "line": [
+   [-116.354506, 43.5904], [-116.354822, 43.5984], [-116.354834, 43.6044], [-116.354639, 43.6124],
+   [-116.354468, 43.6304], [-116.354285, 43.6384], [-116.35433, 43.6484], [-116.354248, 43.6564],
+   [-116.354264, 43.6584], [-116.354465, 43.6624]]},
+  {"id": "chinden-blvd", "short": "Chinden Boulevard", "name": "Chinden Boulevard (US 20/26), SH-16 to Veterans Memorial Parkway", "line": [
+   [-116.4737, 43.663004], [-116.4237, 43.662823], [-116.4187, 43.662846], [-116.4162, 43.662914],
+   [-116.4012, 43.662838], [-116.3787, 43.662919], [-116.3637, 43.66288], [-116.3537, 43.662984],
+   [-116.3462, 43.662927], [-116.3362, 43.662942], [-116.3337, 43.662818], [-116.3312, 43.662604],
+   [-116.3212, 43.661215], [-116.3162, 43.660449], [-116.3137, 43.6599], [-116.2912, 43.653975],
+   [-116.2887, 43.653259], [-116.2862, 43.652267], [-116.2712, 43.644637], [-116.2687, 43.643289],
+   [-116.2662, 43.64173], [-116.2512, 43.631086]]}
+ ],
+ "spots": [
+  {"id": "table-rock", "name": "Table Rock and the foothills above Warm Springs", "lonlat": [-116.14519, 43.59634],
+   "size": 2000, "res": 1, "osm": "node 358653045 (natural=peak, Table Rock, 1,112 m)"},
+  {"id": "airport", "name": "Boise Airport", "lonlat": [-116.21768, 43.56035], "size": 5000, "res": 2.5,
+   "osm": "relation 6619008 (aeroway=aerodrome): the centre of its 4.9 x 2.8 km bounding box"},
+  {"id": "industrial", "name": "Amalgamated Sugar Company, Nampa (industrial)", "lonlat": [-116.57683, 43.61234],
+   "size": 1800, "res": 1, "osm": "way 231777886 (landuse=industrial): the centre of its 1.0 x 1.6 km bounding box"}
+ ]
+}

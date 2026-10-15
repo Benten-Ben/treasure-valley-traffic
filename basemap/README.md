@@ -21,6 +21,17 @@ The contract is `BasemapManifest` in
 
 Background on all of these: [docs/09](../docs/09-base-map-data.md).
 
+**The ground** (the painted base of the Valley look, landscape sprint): its contract is in
+[`ground/`](ground/README.md): the grid every ground raster shares, the export manifests plugins write for it,
+what it reads (public inputs only), the flat fallback, and the tile spec with its first-load budget. The
+painter and its tiles come next; until then the map's ground is flat, as it is today.
+
+**The base bake** (landscape sprint): water, paving, road surfaces and markings and paved paths, which draw for
+every viewer, are baked from the plugins' exports into one versioned file of vector tiles,
+`landscape-<digest>.pmtiles` (z8–16), switched in with the manifest's `landscape` entry, the previous file kept
+([`landscape/`](landscape/README.md)). While any of it carries internal data (roads' ACHD and ITD widths), the file
+is tailnet-only, and `landscape/bake.py check --public` says so. Built Oct 11; no plugin exports a base layer yet.
+
 ## Build
 
 ```bash

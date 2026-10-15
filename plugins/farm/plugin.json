@@ -1,15 +1,32 @@
 {
   "name": "farm",
-  "title": "Farms and crops: crop water use",
+  "title": "Farms and crops: crop fields and crop water use",
   "depends": [],
   "visibility": "public",
   "order": 67,
   "sources": [
     {"name": "agrimet_et", "module": "ingest.sources.agrimet_et", "kind": "source",
      "license": "U.S. Government work (public domain, inferred); provisional data",
-     "credit": "U.S. Bureau of Reclamation, AgriMet", "republish": "yes"}
+     "credit": "U.S. Bureau of Reclamation, AgriMet", "republish": "yes"},
+    {"name": "nass_csb", "module": "ingest.sources.nass_csb", "kind": "manual",
+     "license": "public domain", "credit": "USDA NASS Crop Sequence Boundaries", "republish": "yes"},
+    {"name": "nass_cdl", "module": "ingest.sources.nass_cdl", "kind": "manual",
+     "license": "public domain", "credit": "USDA NASS Cropland Data Layer", "republish": "yes"}
   ],
-  "tables": [],
-  "storage": "raw.record only (no tables of its own until core's met_station and readings land, ch. 17 Q8): one record per station-day (about 80-350 bytes) and one per station's daily crop chart (about 0.5 KB at the lawn-only Boise stations, 4 KB at Parma). In season (April-October) about 6 day records and 6 charts a day, roughly 30 KB a day with row overhead, about 6 MB a season; off season about 1 KB a day. Provisional values that Reclamation revises add versions.",
-  "ethics": "Reads only the static chart files under www.usbr.gov/pn/agrimet/chart/, which robots.txt allows; /pn-bin and the RISE API are robots-disallowed and never used (collecting AgriMet's weather there needs Reclamation's OK, ch. 17 §17.7). One GET per file, 3 s apart, at most 12 a day in season and 6 a week off season (12 in the first two weeks of January). Weather stations at agency sites; nothing about people. Values are provisional and are labelled so wherever shown; credit Reclamation AgriMet."
+  "tables": ["farm.edition", "farm.crop_class", "farm.cdl_year", "farm.build", "farm.field", "farm.field_lo",
+             "farm.crop_year", "farm.crop_fields", "farm.crop_fields_lo8", "farm.crop_fields_lo9", "farm.crop_fields_lo10"],
+  "commands": [
+    {"name": "farm-csb-load", "module": "ingest.csb_load",
+     "help": "load a Crop Sequence Boundaries edition from its GeoPackage (--gpkg FILE --edition NAME)"},
+    {"name": "farm-cdl-load", "module": "ingest.cdl_load",
+     "help": "load the CDL classes, their crop groups and Idaho accuracy, and index the CDL rasters (--cdl DIR)"},
+    {"name": "farm-fields-load", "module": "ingest.fields_load",
+     "help": "load a crop-fields build made in the worker image (--build DIR): agreement, July state, then growth"},
+    {"name": "farm-export", "module": "ingest.export",
+     "help": "export the crop fields and crop_cover.tif for the ground ($TVT_ARCHIVE/farm/export/<build>/)"},
+    {"name": "farm-derive", "module": "ingest.derive",
+     "help": "work the crop fields' growth, plats and dissolves out again from development's permits and plats as they are now"}
+  ],
+  "storage": "Crop fields: about 21,500 rows (the 2018-2025 CSB edition), 15-25 MB with indexes and the z8-10 dissolves; a few MB more per yearly edition, since fields that vanish are kept, closed. The CDL rasters indexed in farm.cdl_year are copied to $TVT_ARCHIVE/farm/cdl/ (about 25 MB, plus about 10 MB a year), and each build folder ($TVT_ARCHIVE/farm/build/<id>/: per-field stats and crop_cover.tif) and export is about 5-10 MB. Reloaded once a year, by hand.",
+  "ethics": "AgriMet: static chart files only (robots.txt disallows /pn-bin and the RISE API, never used); one GET per file, 3 s apart, at most 12 a day in season and 6 a week off season (12 in the first two weeks of January); weather stations at agency sites; values are provisional and labelled so; credit Reclamation AgriMet. Crop fields: USDA NASS's Crop Sequence Boundaries and Cropland Data Layer (public domain), downloaded by hand with the owner's OK for each yearly edition, never scheduled; the outlines are modelled and are always called estimated fields. CSB has no owners, and fields are never joined to the Assessor's parcels in anything public. Growth flags join COMPASS's permits and plats (development's sources, republish yes), at each farm load and by hand with farm-derive."
 }

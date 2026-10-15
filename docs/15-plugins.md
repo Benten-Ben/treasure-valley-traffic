@@ -66,7 +66,10 @@ Chapter 17's research added six more core pieces, decided Oct 7
   clouds, smoke, model forecasts) with valid and issue times, kept as files
   with an index in the database.
 - **Recurring lifecycles** and one rules-by-date evaluator (seasons,
-  weekdays, hours, overrides), in Python and TypeScript.
+  weekdays, hours, overrides). Built in Python in the landscape sprint
+  (`ingest/seasons.py`, Oct 2026). The TypeScript twin was dropped from v1,
+  since the app reads the lifecycles the plugins write; the shared cases
+  (`ingest/tests/seasons_cases.json`) are there for a twin if one is needed.
 - **The sun and moon ephemeris** and lighting state, in Python and
   TypeScript.
 - **Surface-model (nDSM) tiles** in the base map: heights of buildings and
@@ -81,7 +84,16 @@ backcountry (the Boise National Forest and the Owyhee wilderness) and a
 weather context of about 300 km.
 
 The base map's streets (for drawing) are core; the road network as data
-(ACHD's segments, lanes) is the `roads` plugin.
+(ACHD's segments, lanes) is the `roads` plugin. The buffer-and-bearing line
+matcher moved from `roads` to core in the landscape sprint
+(`ingest/linematch.py`), once trails needed it too: roads matches its lane
+sources and OpenStreetMap to ACHD's segments with it, and trails will link
+the agencies' trail lines to OpenStreetMap's paths. The OpenStreetMap
+extract's handling moved to core in the same sprint (`ingest/osm_extract.py`,
+`python3 -m ingest osm-load`), once roads, trails, water and fences all read
+it: one hand download, one MD5 check, one archive and one cut of the valley
+box, read by each plugin's consumers (`osm_consumers` in its manifest), with a
+partition that gives each highway way to one of them.
 
 ## 15.2 What a plugin is
 
@@ -107,7 +119,8 @@ The manifest says:
 | `order` | where its sources run among plugins it doesn't depend on (lower first) |
 | `sources` | each source's name, module, kind (`source`, `stream`, or `manual` for by-hand loads), license, credit, and `republish`: `yes`, `aggregates`, `internal` or `no` |
 | `tables` | the tables it owns (for exports and backups) |
-| `commands` | its own `python3 -m ingest` subcommands (e.g. `osm-load`) |
+| `commands` | its own `python3 -m ingest` subcommands (e.g. `match-intersections`) |
+| `osm_consumers` | what it reads from the OpenStreetMap extract (landscape sprint, Oct 2026): for one of its by-hand sources, the osmium tags-filter expressions, the geometry it gets (points, lines, polygons, relations) and the tables it writes. Core's `python3 -m ingest osm-load` ([ingest/osm_extract.py](../ingest/osm_extract.py)) cuts the valley box once and runs every consumer, each with its own MD5 gate; highway ways go to one consumer each, by tags |
 | `storage` | expected growth per day, so the disk plan can add them up |
 | `ethics` | anything special (e.g. "no plate or face recognition") |
 
@@ -133,6 +146,59 @@ How the pieces plug in:
   private folder. One catch-all API route, `/api/<plugin>/…`, hands requests
   to the plugin's handlers, so today's URLs (`/api/transit/…`,
   `/api/cameras/…`) stay the same.
+- **Tiles for toggled layers** (landscape sprint, Oct 2026): a plugin
+  exports its layers' tile definitions from
+  `app/src/lib/server/<plugin>/tiles.ts` (the MVT layers, each read from
+  one table or view per zoom band), and core's one route serves them at
+  `/api/<plugin>/tiles/<layer>/{z}/{x}/{y}?v=`. They read only the
+  plugin's own schema and core, never `restricted` or a private plugin's
+  schema: the definitions are checked for it, and on the server the cuts
+  log in as `tvt_tiles`, a plain login granted nothing else, and not
+  the internal tables a plugin keeps in its schema beside its tile data
+  (its `never_tables` list: ACHD's field notes, `roads.bike_facility_note`)
+  ([deploy/tvt_tiles.sql](../deploy/tvt_tiles.sql)). Each build that
+  changes a layer adds a row to `core.layer_version`
+  (`ingest/layer_version.py`), in the same transaction as its data, with
+  the layer's license, `republish` and credit; that row's version is the
+  layer's `?v=`, and a layer with no row serves no tiles.
+- **Builds and their marks** (landscape sprint, Oct 2026): a plugin's
+  builds (`roads-build`, `water-build`, `trails-match`, its exports) never
+  run inside `ingest serve`, which only collects. A source whose new data
+  a build should take in marks the build, in the same transaction as its
+  data (`builds.mark(conn, "roads-build", by=..., reason=...)`), and the
+  build runs by hand, under the VM's `heavy` when it's heavy, inside
+  `builds.Run` (`ingest/builds.py`): it logs its run in `ops.build_run`,
+  clears the marks it saw when it started once it succeeds, and may mark
+  the builds that follow it (`then=["landscape-bake"]`). A build command
+  logs its own run that way and is run plainly; say so in the plugin's
+  README. (`python3 -m ingest.builds run` logs a run for a command that
+  doesn't log itself, and a `builds.Run` of the same build inside it
+  refuses.) `ops.build_status` shows each build's age, marks and failures,
+  and `ops.source_status` each scheduled source's last good fetch against
+  its schedule (migration 0021); `/api/meta` and the VM's `bin/status`
+  report both. One exception predates the rule: the intersections
+  plugin's scheduled `intersections` source rebuilds `core.intersection`
+  inside `ingest serve` once a day (about 10 s). And by the landscape
+  plan's design (P6-data), the trails pollers relink the few lines a poll
+  changed once its data is committed (at most 40 lines, a few seconds;
+  each statement limited to 20 s and the relink to 60 s, then left to the
+  build), in their own try block with their own `ops.fetch` row
+  (`trails_match`), so that a closure the City posts shows within the hour;
+  the full rematch, `trails-match`, is a build like the others. Not a
+  build: the water plugin's hourly `canal_season` source fetches nothing
+  but turns gauge readings and the districts' dates into lifecycles, as a
+  poller turns its readings into episodes, because its 48-hour "unknown"
+  rule needs a clock (P5; under a second, each statement limited to 30 s).
+- **Base layers, baked** (landscape sprint, Oct 2026): what draws for
+  every viewer (water, paving, road surfaces and markings, paved paths)
+  isn't cut live. A plugin marks those layers `base: true` in its export
+  (`$TVT_ARCHIVE/<plugin>/export/<build>/`), and core's bake
+  ([basemap/landscape](../basemap/landscape/README.md)) puts every one
+  into one versioned PMTiles file served from `/tiles/`, a source-layer
+  `<plugin>.<layer>` each. The file's `republish` is its strictest
+  layer's, so it's tailnet-only while any layer is internal. Private
+  plugins' data, aggregates-only sources, and IDWR's and the City of
+  Boise's sources never go in.
 
 ## 15.3 Private plugins
 
@@ -175,7 +241,7 @@ sampler.
 
 | Plugin | What's in it today | Depends on | Visibility |
 |---|---|---|---|
-| `roads` | ACHD's road segments and the road tiles (`/api/tiles/roads`, the Streets layer's data), the lane inventories (ITD HPMS, ACHD's Master Street Map, COMPASS's centerline), OpenStreetMap's ways, lanes and signal nodes, the shared segment matcher, `core.segment_lanes`, and the coming Lanes layer | — | public (OSM parts ODbL) |
+| `roads` | ACHD's road segments and the road tiles (`/api/tiles/roads`, the Streets layer's data), the lane inventories (ITD HPMS, ACHD's Master Street Map, COMPASS's centerline), OpenStreetMap's ways, lanes and signal nodes, their matches to ACHD's segments (on core's line matcher), `core.segment_lanes`, and the coming Lanes layer | — | public (OSM parts ODbL) |
 | `intersections` | Everywhere traffic streams meet and are controlled: COMPASS's signals and Regional_Signals, ACHD's 2022 signal points (signals, beacons, school and fire signals), the intersection build and its reviews, FRA rail crossings and their links; later roundabouts | `roads`, `cameras` | public, internal until COMPASS answers |
 | `cameras` | ACHD's camera list, 511's views, the key-camera and road-weather frame streams, daily videos, the video library, calibration | — | public (images not republished) |
 | `transit` | VRT's GTFS and live positions, route matching, ribbons, progress, tracks | — | public |
@@ -187,8 +253,8 @@ sampler.
 | `parcels` | Ada County Assessor parcels and characteristics, aggregates by corridor | `development` | **private** |
 | `hazards` | Fire and warnings (ch. 17 Wave A, Oct 7): IDL's fire-restriction stages, NIFC's WFIGS incidents and perimeters, NASA FIRMS detections, NWS watches, warnings and advisories (person alerts dropped), USGS quakes | — | public (IDL stages internal) |
 | `air` | Smoke: NOAA's HMS smoke polygons (AirNow waits on the owner's form) | — | public |
-| `water` | Rivers and snow: NWPS gauges (37 in the ring), SNOTEL hourly, Boise's E. coli results and river hazards, the Drought Monitor by county | — | public (Boise's layers internal) |
-| `trails` | Ridge to Rivers trail conditions and the Greenbelt's closures and detours | — | public, aggregates until the City answers |
+| `water` | Rivers and snow: NWPS gauges (37 in the ring), SNOTEL hourly, Boise's E. coli results and river hazards, the Drought Monitor by county. The water network (landscape sprint): OpenStreetMap's waterways with NHD's facts, HydroShare's canal names, canals and their topology, gauges; IDWR's irrigation organizations and season of use for canal cards; the canal season (on, off or unknown per canal, from the New York Canal's gauge, the districts' dates and IDWR's legal season) | — | public (Boise's and IDWR's layers internal) |
+| `trails` | Ridge to Rivers trail conditions and the Greenbelt's closures and detours; OpenStreetMap's paths, tracks and trail routes (landscape sprint), with the City's lines linked onto them (`trails-match`) | — | public, aggregates until the City answers (the links too) |
 | `lands` | Forest orders (Region 4) and IDPR's route closures and area restrictions | — | public, IDPR aggregates |
 | `weather` | Aviation Weather Center METARs for the ring's airports | — | public |
 | `wildlife` | IDFG's roadkill reports (about 9,300 in the ring), sensitive-species rules before anything public | — | public, aggregates only |

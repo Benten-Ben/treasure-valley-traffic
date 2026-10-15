@@ -1,0 +1,1008 @@
+#!/usr/bin/env python3
+"""heavy: run a heavy job on the project VM under the shared lock, with a deadline.
+
+  heavy --deadline HH:MM --runtime MIN --peak GB [--cold GB] [-n | -w MIN] [--dry-run] <label> <command> [args...]
+  heavy --status
+
+  --deadline HH:MM  Boise time (the VM's clock is UTC). The job doesn't start past its
+                    deadline, or when --runtime doesn't fit before it, and is stopped there:
+                    SIGTERM to its process group and its labelled containers, SIGKILL 60 s later.
+                    Day window 06:00-23:15. Night window: once tonight's camera roll-up has
+                    finished (both capture status files say rolling_up false after 00:05),
+                    until 05:45. Nothing from 23:15 until then. A planned VM restart in
+                    /srv/tvt/work/MAINTENANCE moves the deadline to 10 minutes before it.
+  --runtime MIN     how long the job should take, in whole minutes
+  --peak GB         the most the job writes on / (0 if nothing; an image build writes the
+                    image and its build cache). Starting needs 12 GB plus that free. The job
+                    is stopped if / falls under 11 GB free (the camera capture pauses under 10).
+  --cold GB         what the job writes on the cold drive: it must be mounted, with the room
+                    heavy.conf keeps free there (COLD_KEEP_GB, default 200) plus that
+  -n                don't wait for the lock: exit 75 at once if it's busy
+  -w MIN            wait at most MIN minutes, for the lock and for a closed window to open
+                    (the roll-up to end). Without -w: a closed window refuses at once, and the
+                    lock is waited for as long as the runtime still fits before the deadline.
+  --dry-run         check everything and say what would happen; run nothing
+  --status          the lock's holder and waiters, the window, the roll-up, free disk, recent jobs
+  <label>           who is running what, e.g. "P2 decode (B2)"; shown to anyone waiting
+
+Caps. A `docker run` needs --memory (give --memory-swap the same, and --cpus). A
+`docker compose run` can't take a cap, so its service needs mem_limit in the compose files
+it reads (`docker compose config` shows it); for production loads, add
+deploy/compose.load.yml. heavy adds --label tvt.heavy=<id> to `docker run`, `docker
+container run` and `docker compose run`, so the deadline stops the container too. Scripts
+that start containers themselves pass --label "$HEAVY_LABEL". The deadline can't reach
+what `docker exec` runs inside another container (a pg_dump in the database's): that
+command has to stop itself, e.g. under `timeout` (deploy/README.md).
+
+The job gets HEAVY_ID, HEAVY_LABEL, HEAVY_DEADLINE (ISO) and HEAVY_DEADLINE_EPOCH. A heavy
+inside a heavy job runs its command at once, under the outer lock and deadline (the caps
+are still checked), but only while that job is running and holds the lock.
+
+MAINTENANCE: the lead's note of a planned VM restart. heavy reads the time on its line
+`restart: 2026-10-12 23:30` (Boise, or with an offset or Z; a bare HH:MM means the next
+one, or one up to 2 hours ago that hasn't happened yet). Without that line it takes the
+note's one time; a note with none, or several, refuses every job until it's fixed. A note
+from before the VM's last start is ignored.
+
+/srv/tvt/work/heavy.conf (KEY=value lines; the VM's own settings, not in the repo):
+COLD_MOUNT, COLD_MARKER (a file there only when the drive is mounted), COLD_KEEP_GB.
+
+Exit: the command's; 2 usage; 73 not enough free disk; 75 not now (the lock is busy with
+-n, the wait ran out, outside the windows, a roll-up going, past the deadline, the runtime
+doesn't fit, a VM restart planned); 123 stopped because / fell under 11 GB free; 124
+stopped at the deadline; 130 interrupted.
+
+Source: deploy/bin/heavy in the repo; installed in /srv/tvt/work/bin. Browser-spec runs
+(/srv/tvt/work/e2e/run.sh) hold the lock shared while they go and start none while a heavy
+job holds it or waits for it (heavy.wait.<pid>).
+"""
+import argparse
+import datetime as dt
+import fcntl
+import json
+import os
+import re
+import signal
+import subprocess
+import sys
+import time
+from zoneinfo import ZoneInfo
+
+TZ = ZoneInfo("America/Boise")
+WORK = "/srv/tvt/work"
+STATUS_DIR = "/srv/tvt/archive/cameras/status"
+STATUS_FILES = ("key_cameras.json", "regional-cameras.json")
+ROOT = "/"
+
+GB = 2**30                      # as df -h and the camera collector count them
+FREE_MIN_GB = 12                # free on / to start, plus the job's peak
+FLOOR_GB = 11                   # stop the job under this (the capture pauses under 10)
+COLD_KEEP_GB = 200              # kept free on the cold drive, unless heavy.conf says otherwise
+DAY = (dt.time(6, 0), dt.time(23, 15))
+NIGHT = (dt.time(0, 5), dt.time(5, 45))   # opens once the roll-up (from 00:05) has finished
+MAINTENANCE_MARGIN = dt.timedelta(minutes=10)
+RUNNING_LATE = dt.timedelta(hours=2)      # a bare HH:MM up to this long ago is a late restart
+GRACE_S = 60.0
+DISK_EVERY_S = 2                # often enough that little is written between checks
+WAIT_POLL_S = 2
+OFFSET = 0.0                    # seconds added to the clock (the tests' harness sets it)
+
+EX_USAGE, EX_DISK, EX_LATER, EX_FLOOR, EX_DEADLINE, EX_INT = 2, 73, 75, 123, 124, 130
+
+
+class Refused(Exception):
+    """A job that can't start. waitable: it may start later by itself (the window opens,
+    the roll-up ends), which -w waits for."""
+
+    def __init__(self, message, code=EX_LATER, waitable=False):
+        super().__init__(message)
+        self.code = code
+        self.waitable = waitable
+
+
+def now():
+    return dt.datetime.fromtimestamp(time.time() + OFFSET, TZ)
+
+
+def at(day, clock):
+    return dt.datetime.combine(day, clock, TZ)
+
+
+def hm(t):
+    return t.strftime("%H:%M")
+
+
+def path(name):
+    return os.path.join(WORK, name)
+
+
+# --- the VM's own settings ------------------------------------------------------
+
+def settings():
+    """KEY=value lines from heavy.conf in the work folder (the VM's paths that aren't the
+    project's, kept out of the repo)."""
+    out = {}
+    try:
+        with open(path("heavy.conf")) as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    key, value = line.split("=", 1)
+                    out[key.strip()] = value.strip().strip("\"'")
+    except OSError:
+        pass
+    return out
+
+
+def cold_drive():
+    """(mount, marker, GB kept free) from heavy.conf, or None when it names no cold drive."""
+    s = settings()
+    if not s.get("COLD_MOUNT"):
+        return None
+    try:
+        keep = float(s.get("COLD_KEEP_GB") or COLD_KEEP_GB)
+    except ValueError:
+        keep = COLD_KEEP_GB
+    return s["COLD_MOUNT"], s.get("COLD_MARKER", ""), keep
+
+
+def cold_mounted(cold):
+    mount, marker, _ = cold
+    return os.path.exists(marker) if marker else os.path.isdir(mount)
+
+
+# --- the camera roll-up -------------------------------------------------------
+
+def read_statuses(status_dir=None):
+    """[(name, dict or None)] for the two capture services' status files."""
+    out = []
+    for name in STATUS_FILES:
+        try:
+            with open(os.path.join(status_dir or STATUS_DIR, name)) as f:
+                out.append((name, json.load(f)))
+        except (OSError, ValueError):
+            out.append((name, None))
+    return out
+
+
+def _beat(d):
+    """(heartbeat epoch, cadence s) of a status dict, or None."""
+    try:
+        return float(d["heartbeat"]), float(d.get("cadence_s") or 600)
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def rollup_finished(t, statuses):
+    """(True, why) once both capture services have checked for a roll-up after 00:05
+    and report none going. A service writes its status at the start of each loop and
+    checks for a due roll-up at the end, so a heartbeat a cadence after 00:05 shows a
+    check made after 00:05."""
+    since = at(t.date(), NIGHT[0]).timestamp()
+    for name, d in statuses:
+        tag = name.removesuffix(".json")
+        beat = _beat(d) if d is not None else None
+        if beat is None:
+            return False, f"{tag}'s status can't be read, so the roll-up's state is unknown"
+        hb, cadence = beat
+        age = t.timestamp() - hb
+        if age > 3 * cadence + 60:
+            return False, f"{tag}'s status is stale (last heartbeat {age / 60:.0f} min ago), so the roll-up's state is unknown"
+        if d.get("rolling_up"):
+            return False, f"{tag} is still rolling up"
+        due = since + cadence + 60
+        if hb < due:
+            return False, f"{tag} hasn't reported since its first roll-up check after 00:05 (by about {hm(dt.datetime.fromtimestamp(due, TZ))})"
+    return True, "both capture services report tonight's roll-up finished"
+
+
+def rolling_now(t, statuses):
+    """Capture services whose fresh status says they're rolling up."""
+    names = []
+    for name, d in statuses:
+        beat = _beat(d) if d is not None else None
+        if beat and d.get("rolling_up") and t.timestamp() - beat[0] <= 3 * beat[1] + 60:
+            names.append(name.removesuffix(".json"))
+    return names
+
+
+# --- windows and deadlines ----------------------------------------------------
+
+def window(t, statuses):
+    """(name, close) of the heavy-job window open at t, or raise Refused."""
+    clock = t.time()
+    if DAY[0] <= clock < DAY[1]:
+        going = rolling_now(t, statuses)
+        if going:
+            raise Refused(f"the camera roll-up is still going ({', '.join(going)}); heavy jobs wait for it",
+                          waitable=True)
+        return "day", at(t.date(), DAY[1])
+    if NIGHT[0] <= clock < NIGHT[1]:
+        done, why = rollup_finished(t, statuses)
+        if done:
+            return "night", at(t.date(), NIGHT[1])
+        raise Refused(f"it's {hm(t)} in Boise and {why}. At night heavy jobs run only once tonight's "
+                      f"camera roll-up has finished (then until 05:45), otherwise from 06:00", waitable=True)
+    if clock >= DAY[1] or clock < NIGHT[0]:
+        raise Refused(f"it's {hm(t)} in Boise: no heavy jobs from 23:15 until tonight's camera roll-up "
+                      f"(from 00:05) has finished; then until 05:45, or from 06:00", waitable=True)
+    raise Refused(f"it's {hm(t)} in Boise: the night window closed at 05:45; the day window opens at 06:00",
+                  waitable=True)
+
+
+def parse_hhmm(text):
+    m = re.fullmatch(r"([01]?\d|2[0-3]):([0-5]\d)", text or "")
+    if not m:
+        raise Refused(f"--deadline takes HH:MM in Boise time (got {text!r})", EX_USAGE)
+    return dt.time(int(m[1]), int(m[2]))
+
+
+def resolve_deadline(t, clock):
+    """The deadline as a time: today's HH:MM, except that late in the evening an early-morning
+    deadline means the coming night window (a job that waits for tonight's roll-up)."""
+    deadline = at(t.date(), clock)
+    if deadline <= t and t.time() >= DAY[1] and clock <= NIGHT[1]:
+        deadline = at(t.date() + dt.timedelta(days=1), clock)
+    return deadline
+
+
+_DATETIME = re.compile(r"\d{4}-\d\d-\d\d[T ]\d\d:\d\d(?::\d\d)?(?:Z|[+-]\d\d:?\d\d)?")
+_HHMM = re.compile(r"\b([01]?\d|2[0-3]):([0-5]\d)\b")
+_RESTART_LINE = re.compile(r"^\s*restart\s*:(.*)$", re.IGNORECASE | re.MULTILINE)
+
+
+def _times(text, t):
+    """The times in text, in order: dates with times (Boise unless they give an offset or Z)
+    and bare HH:MMs, each of those taken as the next one or one up to RUNNING_LATE ago."""
+    found = []
+    for m in _DATETIME.finditer(text):
+        try:
+            when = dt.datetime.fromisoformat(m[0].replace("Z", "+00:00").replace(" ", "T"))
+        except ValueError:
+            continue
+        found.append((m.start(), when.replace(tzinfo=TZ) if when.tzinfo is None else when.astimezone(TZ)))
+    blanked = _DATETIME.sub(lambda m: " " * len(m[0]), text)
+    for m in _HHMM.finditer(blanked):
+        clock = dt.time(int(m[1]), int(m[2]))
+        for days in (-1, 0, 1):
+            when = at(t.date() + dt.timedelta(days=days), clock)
+            if t - RUNNING_LATE <= when < t - RUNNING_LATE + dt.timedelta(days=1):
+                found.append((m.start(), when))
+                break
+    return [when for _, when in sorted(found, key=lambda f: f[0])]
+
+
+def parse_maintenance(text, t):
+    """The planned restart's time from MAINTENANCE: the first time on its `restart:` line,
+    else the note's one time. None when there's no time, or no such line and several times
+    (which one would be the restart?)."""
+    m = _RESTART_LINE.search(text)
+    if m:
+        times = _times(m[1], t)
+        return times[0] if times else None
+    times = set(_times(text, t))
+    return times.pop() if len(times) == 1 else None
+
+
+def boot_time():
+    """When the VM last started (epoch), or None where /proc/stat doesn't say."""
+    try:
+        with open("/proc/stat") as f:
+            for line in f:
+                if line.startswith("btime "):
+                    return float(line.split()[1])
+    except OSError:
+        pass
+    return None
+
+
+def restart_done(restart, booted=None):
+    """True if the VM has started since about the planned time (a MAINTENANCE file left over)."""
+    booted = boot_time() if booted is None else booted
+    return booted is not None and booted + OFFSET >= (restart - dt.timedelta(minutes=30)).timestamp()
+
+
+def maintenance(t, work=None):
+    """(text, restart time or None) for a restart still to come, or None."""
+    try:
+        with open(os.path.join(work or WORK, "MAINTENANCE")) as f:
+            text = f.read().strip()
+    except OSError:
+        return None
+    restart = parse_maintenance(text, t)
+    if restart is not None and restart_done(restart):
+        return None
+    return text, restart
+
+
+def plan(t, deadline, runtime_min, statuses, maint=None):
+    """(window name, deadline) for a job asked to end by deadline, or raise Refused. A
+    planned VM restart brings the deadline forward to 10 minutes before it."""
+    if deadline <= t:
+        raise Refused(f"it's past the deadline ({hm(deadline)}; it's {hm(t)} in Boise)")
+    name, close = window(t, statuses)
+    if deadline > close:
+        raise Refused(f"the deadline {hm(deadline)} is after the {name} window closes at {hm(close)}: "
+                      f"give {hm(close)} or earlier", EX_USAGE)
+    if maint is not None:
+        text, restart = maint
+        if restart is None:
+            raise Refused("a VM restart is planned and MAINTENANCE gives no one time I can read (the lead "
+                          f"puts `restart: YYYY-MM-DD HH:MM` on a line of its own): {text!r}")
+        if restart - MAINTENANCE_MARGIN < deadline:
+            deadline = restart - MAINTENANCE_MARGIN
+            if deadline <= t:
+                raise Refused(f"a VM restart is planned at {restart:%Y-%m-%d %H:%M} ({text!r})")
+    left = (deadline - t).total_seconds() / 60
+    if runtime_min > left:
+        raise Refused(f"the job's {runtime_min} min don't fit before {hm(deadline)} ({left:.0f} min left)")
+    return name, deadline
+
+
+# --- disk ---------------------------------------------------------------------
+
+def free_gb(where):
+    st = os.statvfs(where)
+    return st.f_bavail * st.f_frsize / GB
+
+
+def disk_problems(peak, cold_gb, free=None):
+    free = free or free_gb
+    problems = []
+    need, have = FREE_MIN_GB + peak, free(ROOT)
+    if have < need:
+        problems.append(f"{have:.1f} GB free on {ROOT}; the job needs {FREE_MIN_GB} GB + its peak "
+                        f"{peak:g} GB = {need:g} GB")
+    if cold_gb is not None:
+        cold = cold_drive()
+        if cold is None:
+            problems.append(f"--cold, but {path('heavy.conf')} names no cold drive (COLD_MOUNT)")
+        elif not cold_mounted(cold):
+            problems.append(f"the cold drive isn't mounted ({cold[1] or cold[0]} is missing)")
+        else:
+            mount, _, keep = cold
+            need_c, have_c = keep + cold_gb, free(mount)
+            if have_c < need_c:
+                problems.append(f"{have_c:.0f} GB free on the cold drive; the job needs {keep:g} GB + "
+                                f"{cold_gb:g} GB = {need_c:g} GB")
+    return problems
+
+
+# --- the command --------------------------------------------------------------
+
+# Options that take a value: docker's own (before its subcommand), docker compose's (before
+# its subcommand) and docker compose run's. Every other option takes none.
+_DOCKER_VALUE = {"--config", "-c", "--context", "-H", "--host", "-l", "--log-level",
+                 "--tlscacert", "--tlscert", "--tlskey"}
+_COMPOSE_VALUE = {"-f", "--file", "-p", "--project-name", "--profile", "--env-file",
+                  "--project-directory", "--ansi", "--parallel", "--progress"}
+_COMPOSE_RUN_VALUE = {"--cap-add", "--cap-drop", "-e", "--env", "--env-from-file", "--entrypoint",
+                      "-l", "--label", "--name", "-p", "--publish", "--pull", "-u", "--user",
+                      "-v", "--volume", "-w", "--workdir"}
+# docker run's options that take no value; every other option takes one.
+_BOOL_LONG = {"--rm", "--detach", "--interactive", "--tty", "--init", "--privileged", "--read-only",
+              "--publish-all", "--no-healthcheck", "--oom-kill-disable", "--help", "--quiet",
+              "--sig-proxy", "--disable-content-trust", "--use-api-socket"}
+_BOOL_SHORT = set("dhitPq")
+
+
+def first_word(cmd, i, takes_value):
+    """The index of the first word from i on that isn't an option or an option's value."""
+    while i < len(cmd):
+        a = cmd[i]
+        if not a.startswith("-") or a == "-":
+            return i
+        i += 2 if a in takes_value else 1
+    return None
+
+
+def docker_command(cmd):
+    """(kind, index of the subcommand) of a docker command. kind: 'run' (docker run, docker
+    container run), 'compose-run' (docker compose ... run), 'exec' (docker exec, docker
+    container exec, docker compose ... exec) or 'other'; (None, None) if it isn't docker."""
+    if not cmd or os.path.basename(cmd[0]) != "docker":
+        return None, None
+    i = first_word(cmd, 1, _DOCKER_VALUE)
+    if i is None:
+        return "other", None
+    if cmd[i] == "container" and i + 1 < len(cmd):
+        i += 1
+    if cmd[i] in ("run", "exec"):
+        return cmd[i], i
+    if cmd[i] == "compose":
+        j = first_word(cmd, i + 1, _COMPOSE_VALUE)
+        if j is not None and cmd[j] == "run":
+            return "compose-run", j
+        if j is not None and cmd[j] == "exec":
+            return "exec", j
+    return "other", i
+
+
+def run_options(args):
+    """docker run's options: the words before the image."""
+    opts, i = [], 0
+    while i < len(args):
+        a = args[i]
+        if a == "--" or not a.startswith("-") or a == "-":
+            break
+        opts.append(a)
+        if a.startswith("--"):
+            if "=" not in a and a not in _BOOL_LONG and i + 1 < len(args):
+                opts.append(args[i + 1])
+                i += 1
+        elif len(a) == 2 and a[1] not in _BOOL_SHORT and i + 1 < len(args):
+            opts.append(args[i + 1])
+            i += 1
+        i += 1
+    return opts
+
+
+def has_option(opts, long, short=None):
+    for a in opts:
+        if a == long or a.startswith(long + "="):
+            return True
+        if short and not a.startswith("--") and a.startswith("-") and a[1:2] == short:
+            return True
+    return False
+
+
+def compose_config(prefix, service):
+    """The service's settings as `docker compose config` resolves them, with the same
+    files, project and .env as the command (prefix: the words before `run`)."""
+    try:
+        out = subprocess.run([*prefix, "config", "--format", "json", service], capture_output=True,
+                             text=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired) as err:
+        raise Refused(f"can't read the caps of the compose service {service} ({err})", EX_USAGE)
+    if out.returncode != 0:
+        raise Refused(f"can't read the caps of the compose service {service}: docker compose config said "
+                      f"{out.stderr.strip()[:300]!r}", EX_USAGE)
+    try:
+        return json.loads(out.stdout)["services"][service]
+    except (ValueError, KeyError, TypeError):
+        raise Refused(f"can't read the caps of the compose service {service} from docker compose config",
+                      EX_USAGE)
+
+
+def compose_caps(service):
+    """(memory, memory+swap, cpus) of a resolved compose service; None where it sets none."""
+    limits = ((service.get("deploy") or {}).get("resources") or {}).get("limits") or {}
+    return (service.get("mem_limit") or limits.get("memory"), service.get("memswap_limit"),
+            service.get("cpus") or limits.get("cpus"))
+
+
+def prepare(cmd, hid, config=None):
+    """The command to run, with the deadline's label added to a docker run or a docker compose
+    run; raise Refused for one without a memory cap. Returns (cmd, notes)."""
+    kind, i = docker_command(cmd)
+    notes = []
+    if kind == "run":
+        opts = run_options(cmd[i + 1:])
+        if not has_option(opts, "--memory", "m"):
+            raise Refused("a docker run under heavy needs --memory (and --memory-swap the same, and "
+                          "--cpus): every heavy job is capped", EX_USAGE)
+        if not has_option(opts, "--memory-swap"):
+            notes.append("no --memory-swap on the docker run: it may swap as much again as --memory")
+        if not has_option(opts, "--cpus"):
+            notes.append("no --cpus on the docker run: the job may take every core")
+    elif kind == "compose-run":
+        k = first_word(cmd, i + 1, _COMPOSE_RUN_VALUE)
+        if k is None:
+            raise Refused("can't find the service in this docker compose run", EX_USAGE)
+        memory, swap, cpus = compose_caps((config or compose_config)(cmd[:i], cmd[k]))
+        if not memory:
+            raise Refused(f"the compose service {cmd[k]} has no memory cap, and docker compose run can't "
+                          "add one: give it mem_limit in a compose file (for a production load, add "
+                          "-f compose.load.yml: deploy/README.md)", EX_USAGE)
+        if not swap:
+            notes.append(f"no memswap_limit on the compose service {cmd[k]}: it may swap as much again")
+        if not cpus:
+            notes.append(f"no cpus on the compose service {cmd[k]}: the job may take every core")
+    elif kind == "exec":
+        notes.append("the deadline can't stop what docker exec runs inside its container: the command "
+                     "must stop itself by then (e.g. under timeout; deploy/README.md)")
+    else:
+        notes.append("can't see this command's caps: containers it starts need --memory and "
+                     '--label "$HEAVY_LABEL" (so the deadline stops them), and what it runs with docker '
+                     "exec must stop itself by the deadline")
+    if kind in ("run", "compose-run"):
+        cmd = cmd[:i + 1] + ["--label", f"tvt.heavy={hid}"] + cmd[i + 1:]
+    return cmd, notes
+
+
+# --- lock, owner and log files ----------------------------------------------
+
+def stamp(t=None):
+    return (t or now()).strftime("%Y-%m-%d %H:%M:%S %Z")
+
+
+def redact(text):
+    """text without the passwords in URLs (postgres://user:password@host)."""
+    return re.sub(r"(://[^:/@\s]+:)[^@\s]+@", r"\1***@", text)
+
+
+def log_line(event, label, detail=""):
+    try:
+        with open(path("heavy.log"), "a") as f:
+            f.write(f"{stamp()}\t{event}\t{label}\t{redact(detail)}\n")
+    except OSError:
+        pass
+
+
+def holder():
+    """Who holds the lock, as far as the files say."""
+    try:
+        with open(path("heavy.owner")) as f:
+            return f.read().strip()
+    except OSError:
+        pass
+    runs = []
+    slots = os.path.join(WORK, "e2e", "slots")
+    try:
+        for name in sorted(os.listdir(slots)):
+            if name.endswith(".owner"):
+                with open(os.path.join(slots, name)) as f:
+                    runs.append(f.read().strip())
+    except OSError:
+        pass
+    return "e2e runs going: " + "; ".join(runs) if runs else "unknown holder"
+
+
+def waiters():
+    """The labels of heavy jobs waiting for the lock (a dead pid's wait file is stale)."""
+    out = []
+    try:
+        names = os.listdir(WORK)
+    except OSError:
+        return out
+    for name in sorted(names):
+        pid = name.rsplit(".", 1)[-1]
+        if name.startswith("heavy.wait.") and pid.isdigit() and _alive(int(pid)):
+            try:
+                with open(path(name)) as f:
+                    out.append(f.read().strip())
+            except OSError:
+                pass
+    return out
+
+
+def _alive(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def lock_state(fd):
+    """'free', 'shared' (browser-spec runs going) or 'exclusive' (a heavy job)."""
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        return "free"
+    except BlockingIOError:
+        pass
+    try:
+        fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        return "shared"
+    except BlockingIOError:
+        return "exclusive"
+
+
+def outer_job_problem(hid):
+    """None if heavy job hid is running and holds the lock (heavy.id names it and its pid
+    lives); else what's wrong."""
+    try:
+        with open(path("heavy.id")) as f:
+            words = f.read().split()
+    except OSError:
+        return "no heavy job is running"
+    if len(words) < 2 or words[0] != hid:
+        return f"the heavy job running is {words[0] if words else 'unknown'}, not {hid}"
+    if not words[1].isdigit() or not _alive(int(words[1])):
+        return f"heavy job {hid} has ended"
+    try:
+        fd = os.open(path("heavy.lock"), os.O_RDONLY)
+    except OSError:
+        return "there's no heavy.lock"
+    try:
+        if lock_state(fd) != "exclusive":
+            return f"heavy job {hid} doesn't hold heavy.lock"
+    finally:
+        os.close(fd)
+    return None
+
+
+# --- signals ------------------------------------------------------------------
+
+STOP = []
+
+
+def _on_signal(signum, _frame):
+    STOP.append(signal.Signals(signum).name)
+
+
+def install_signals():
+    for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+        if signal.getsignal(sig) != signal.SIG_IGN:      # nohup's HUP stays ignored
+            signal.signal(sig, _on_signal)
+
+
+# --- running and stopping -----------------------------------------------------
+
+def group_alive(pgid):
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def containers(hid):
+    try:
+        out = subprocess.run(["docker", "ps", "-q", "--filter", f"label=tvt.heavy={hid}"],
+                             capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    return out.stdout.split()
+
+
+def stop(proc, hid, reason):
+    say(f"{reason}: stopping the job (SIGTERM now, SIGKILL after {GRACE_S:g} s)")
+    pgid = proc.pid
+    try:
+        os.killpg(pgid, signal.SIGTERM)
+    except (ProcessLookupError, PermissionError):
+        pass
+    ids = containers(hid)
+    stopper = None
+    if ids:
+        say(f"stopping {len(ids)} container(s) labelled tvt.heavy={hid}")
+        try:
+            stopper = subprocess.Popen(["docker", "stop", "-t", f"{GRACE_S:.0f}", *ids],
+                                       stdout=subprocess.DEVNULL)
+        except OSError:
+            stopper = None
+    end = time.monotonic() + GRACE_S + 5
+    while time.monotonic() < end:
+        if proc.poll() is not None and not group_alive(pgid) and not (ids and containers(hid)):
+            break
+        time.sleep(1)
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass
+    left = containers(hid)
+    if left:
+        subprocess.run(["docker", "kill", *left], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if stopper:
+        try:
+            stopper.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            stopper.kill()
+    try:
+        proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        pass
+
+
+def watch(proc, hid, deadline, cold_gb):
+    """Wait for the job and whatever it leaves running in its process group or labelled
+    containers; stop it at the deadline, before a planned restart, at the disk floor or on a
+    signal. Returns (exit code, why it was stopped or None)."""
+    rc, next_disk, warned = None, 0.0, set()
+    cold = cold_drive() if cold_gb is not None else None
+    while True:
+        if rc is None:
+            try:
+                rc = proc.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                pass
+        else:
+            time.sleep(1)
+        why = code = None
+        t = now()
+        if time.monotonic() >= next_disk:
+            next_disk = time.monotonic() + DISK_EVERY_S
+            have = free_gb(ROOT)
+            if have < FLOOR_GB:
+                why, code = f"only {have:.1f} GB free on {ROOT} (the floor is {FLOOR_GB} GB)", EX_FLOOR
+            elif cold is not None and cold_mounted(cold) and free_gb(cold[0]) < cold[2]:
+                why, code = f"under {cold[2]:g} GB free on the cold drive", EX_FLOOR
+            m = maintenance(t)
+            if m and m[1] is not None and m[1] - MAINTENANCE_MARGIN < deadline:
+                deadline = m[1] - MAINTENANCE_MARGIN
+                say(f"a VM restart is planned at {hm(m[1])}: the job now stops at {hm(deadline)}")
+            elif m and m[1] is None and "maintenance" not in warned:
+                warned.add("maintenance")
+                say(f"MAINTENANCE appeared and gives no one time I can read: {m[0]!r}")
+        if STOP:
+            why, code = f"interrupted ({STOP[0]})", EX_INT
+        elif why is None and t >= deadline:
+            why, code = f"deadline {hm(deadline)} reached", EX_DEADLINE
+        if why:
+            stop(proc, hid, why)
+            return code, why
+        if rc is not None:
+            if group_alive(proc.pid):
+                if "group" not in warned:
+                    warned.add("group")
+                    say("the command ended but left processes running; waiting for them (the deadline holds)")
+                continue
+            if containers(hid):
+                if "containers" not in warned:
+                    warned.add("containers")
+                    say(f"the command ended but containers labelled tvt.heavy={hid} still run; waiting for them")
+                continue
+            return (128 - rc if rc < 0 else rc), None
+
+
+def say(message):
+    print(f"heavy: {message}", file=sys.stderr, flush=True)
+
+
+# --- commands -----------------------------------------------------------------
+
+def parse(argv):
+    p = argparse.ArgumentParser(prog="heavy", add_help=False, usage=__doc__.split("\n\n")[1].strip())
+    p.add_argument("-h", "--help", action="store_true")
+    p.add_argument("--deadline")
+    p.add_argument("--runtime", type=int)
+    p.add_argument("--peak", type=float)
+    p.add_argument("--cold", type=float)
+    p.add_argument("-n", dest="nowait", action="store_true")
+    p.add_argument("-w", dest="wait", type=int)
+    p.add_argument("--dry-run", action="store_true")
+    p.add_argument("label", nargs="?")
+    p.add_argument("command", nargs=argparse.REMAINDER)
+    args = p.parse_args(argv)
+    if args.help:
+        print(__doc__.strip())
+        sys.exit(0)
+    if not args.label or not args.command:
+        raise Refused("give a label and a command (heavy -h)", EX_USAGE)
+    missing = [f for f, v in (("--deadline HH:MM", args.deadline), ("--runtime MIN", args.runtime),
+                              ("--peak GB", args.peak)) if v is None]
+    if missing:
+        raise Refused(f"say {', '.join(missing)} (heavy -h has the rules)", EX_USAGE)
+    if args.runtime < 0 or args.peak < 0 or (args.cold is not None and args.cold < 0) \
+            or (args.wait is not None and args.wait < 0):
+        raise Refused("--runtime, --peak, --cold and -w take numbers of 0 or more", EX_USAGE)
+    if args.nowait and args.wait is not None:
+        raise Refused("-n and -w don't go together", EX_USAGE)
+    if args.command[:1] == ["--"]:
+        args.command = args.command[1:]
+    args.deadline_clock = parse_hhmm(args.deadline)
+    return args
+
+
+def check(args, t=None):
+    """Every check before taking the lock: (window name, deadline). Raises Refused."""
+    t = t or now()
+    name, deadline = plan(t, args.deadline_at, args.runtime, read_statuses(), maintenance(t))
+    problems = disk_problems(args.peak, args.cold)
+    if problems:
+        raise Refused("not enough free disk: " + "; ".join(problems), EX_DISK)
+    return name, deadline
+
+
+def pause(seconds):
+    """Sleep, waking for a signal."""
+    end = time.monotonic() + seconds
+    while time.monotonic() < end and not STOP:
+        time.sleep(min(1.0, end - time.monotonic()))
+    if STOP:
+        raise Refused(f"interrupted ({STOP[0]}) while waiting", EX_INT)
+
+
+def wait_for_window(args, give_up):
+    """check(), waiting for the window to open or the roll-up to end while -w allows."""
+    said = None
+    while True:
+        try:
+            return check(args)
+        except Refused as err:
+            if give_up is None or not err.waitable or now() >= give_up:
+                raise
+            if str(err) != said:
+                say(f"{err}; waiting (until {hm(give_up)} at most)")
+                said = str(err)
+            pause(60)
+
+
+def wait_for_lock(fd, args, until):
+    """Take the lock exclusively, waiting until `until`; leaves heavy.wait.<pid> meanwhile,
+    so no new browser-spec run starts."""
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return
+    except BlockingIOError:
+        pass
+    if args.nowait:
+        raise Refused(f"busy ({holder()}); not waiting")
+    say(f"waiting for heavy.lock ({holder()}), until {hm(until)} at most")
+    waitf = path(f"heavy.wait.{os.getpid()}")
+    with open(waitf, "w") as f:
+        f.write(f"{args.label} (pid {os.getpid()}, waiting since {stamp()})\n")
+    try:
+        while True:
+            if now() >= until:
+                raise Refused(f"still busy at {hm(until)} ({holder()}); giving up")
+            pause(WAIT_POLL_S)
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                return
+            except BlockingIOError:
+                continue
+    finally:
+        try:
+            os.remove(waitf)
+        except OSError:
+            pass
+
+
+def describe(args, deadline):
+    return (f"deadline {hm(deadline)}, runtime {args.runtime} min, peak {args.peak:g} GB"
+            + (f", cold {args.cold:g} GB" if args.cold is not None else ""))
+
+
+def run_job(args):
+    hid = f"{int(time.time())}-{os.getpid()}"
+    cmd, notes = prepare(args.command, hid)
+    start = now()
+    args.deadline_at = resolve_deadline(start, args.deadline_clock)
+    give_up = start + dt.timedelta(minutes=args.wait) if args.wait is not None else None
+    if args.dry_run:
+        name, deadline = check(args)
+        print(f"heavy: would run in the {name} window: {describe(args, deadline)}")
+        print("heavy: command: " + " ".join(cmd))
+        for note in notes:
+            print(f"heavy: note: {note}")
+        os.makedirs(WORK, exist_ok=True)
+        fd = os.open(path("heavy.lock"), os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o664)
+        state = lock_state(fd)
+        os.close(fd)
+        print("heavy: the lock is free" if state == "free" else f"heavy: the lock is busy ({holder()}): it would wait")
+        return 0
+    install_signals()
+    name, deadline = wait_for_window(args, give_up)
+    for note in notes:
+        say(f"note: {note}")
+    fd = os.open(path("heavy.lock"), os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o664)
+    until = deadline - dt.timedelta(minutes=args.runtime)
+    if give_up is not None:
+        until = min(until, give_up)
+    wait_for_lock(fd, args, until)
+    name, deadline = check(args)        # time may have passed: the window, deadline and disk again
+    caps = describe(args, deadline)
+    owner, ident = path("heavy.owner"), path("heavy.id")
+    with open(owner, "w") as f:
+        f.write(f"{args.label} (pid {os.getpid()}, since {stamp()}; {caps})\n")
+    with open(ident, "w") as f:
+        f.write(f"{hid} {os.getpid()}\n")
+    log_line("start", args.label, f"{caps}; {' '.join(cmd)}")
+    say(f"running in the {name} window: {caps}")
+    started = time.monotonic()
+    env = dict(os.environ, HEAVY_ID=hid, HEAVY_LABEL=f"tvt.heavy={hid}",
+               HEAVY_DEADLINE=deadline.isoformat(timespec="minutes"),
+               HEAVY_DEADLINE_EPOCH=str(int(deadline.timestamp() - OFFSET)))
+    try:
+        try:
+            proc = subprocess.Popen(cmd, pass_fds=(fd,), start_new_session=True, env=env)
+        except OSError as err:
+            say(f"can't run {cmd[0]}: {err}")
+            log_line("end", args.label, f"exit 127 (can't run: {err})")
+            return 127
+        code, why = watch(proc, hid, deadline, args.cold)
+        minutes = (time.monotonic() - started) / 60
+        log_line("end", args.label, f"exit {code} after {minutes:.1f} min" + (f" ({why})" if why else ""))
+        if not why and minutes > args.runtime * 1.5 + 5:
+            say(f"took {minutes:.0f} min against a stated {args.runtime}: state more next time")
+        return code
+    finally:
+        for f in (ident, owner):
+            try:
+                os.remove(f)
+            except OSError:
+                pass
+
+
+def nested(args):
+    """Inside a heavy job: run the command now, under the outer job's lock and deadline, once
+    that job is shown to be running and the command's caps are checked."""
+    hid = os.environ["HEAVY_ID"]
+    problem = outer_job_problem(hid)
+    if problem:
+        raise Refused(f"HEAVY_ID={hid} is set, but {problem}: unset HEAVY_ID to run this as a heavy "
+                      "job of its own", EX_USAGE)
+    cmd, notes = prepare(args.command, hid)
+    if args.dry_run:
+        print(f"heavy: inside heavy job {hid}: would run at once: {' '.join(cmd)}")
+        for note in notes:
+            print(f"heavy: note: {note}")
+        return 0
+    say(f"inside heavy job {hid}: running {args.label!r} under its lock and "
+        f"deadline ({os.environ.get('HEAVY_DEADLINE', '?')})")
+    for note in notes:
+        say(f"note: {note}")
+    os.execvp(cmd[0], cmd)
+
+
+def status():
+    t = now()
+    try:
+        fd = os.open(path("heavy.lock"), os.O_RDONLY)
+    except OSError:
+        print("lock:     no heavy.lock yet")
+    else:
+        state = lock_state(fd)
+        os.close(fd)
+        age = ""
+        try:
+            age = f", for {(time.time() - os.stat(path('heavy.owner')).st_mtime) / 60:.0f} min"
+        except OSError:
+            pass
+        print("lock:     " + {"free": "free", "shared": f"shared ({holder()})",
+                              "exclusive": f"held ({holder()}{age})"}[state])
+    for w in waiters():
+        print(f"waiting:  {w}")
+    statuses = read_statuses()
+    try:
+        name, close = window(t, statuses)
+        print(f"window:   {name}, open until {hm(close)} (it's {hm(t)} in Boise)")
+    except Refused as err:
+        print(f"window:   closed: {err}")
+    for n, d in statuses:
+        beat = _beat(d) if d is not None else None
+        if beat is None:
+            print(f"capture:  {n.removesuffix('.json')}: unreadable")
+        else:
+            print(f"capture:  {n.removesuffix('.json')}: rolling_up {str(bool(d.get('rolling_up'))).lower()}, "
+                  f"paused_low_disk {str(bool(d.get('paused_low_disk'))).lower()}, "
+                  f"heartbeat {t.timestamp() - beat[0]:.0f} s ago")
+    print(f"disk:     {free_gb(ROOT):.1f} GB free on {ROOT} (to start: {FREE_MIN_GB} GB + the job's peak; "
+          f"floor {FLOOR_GB} GB)")
+    cold = cold_drive()
+    if cold is None:
+        print("cold:     none set (COLD_MOUNT in heavy.conf)")
+    elif cold_mounted(cold):
+        print(f"cold:     {free_gb(cold[0]):.0f} GB free on {cold[0]} (kept: {cold[2]:g} GB)")
+    else:
+        print(f"cold:     not mounted ({cold[1] or cold[0]} missing)")
+    m = maintenance(t)
+    if m:
+        print(f"restart:  planned: {m[0]!r}" + (f" ({m[1]:%Y-%m-%d %H:%M} Boise)" if m[1] else
+                                                " (no one time I can read: every job is refused)"))
+    try:
+        with open(path("heavy.log")) as f:
+            lines = f.readlines()[-6:]
+    except OSError:
+        lines = []
+    for line in lines:
+        print("recent:   " + line.rstrip("\n").replace("\t", "  "))
+    return 0
+
+
+def main(argv):
+    if argv[:1] == ["--status"]:
+        return status()
+    args = None
+    try:
+        args = parse(argv)
+        if os.environ.get("HEAVY_ID"):
+            return nested(args)
+        return run_job(args)
+    except Refused as err:
+        say(str(err))
+        if err.code != EX_USAGE and args is not None and not args.dry_run:
+            log_line("refused", args.label, f"exit {err.code}: {err}")
+        return err.code
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

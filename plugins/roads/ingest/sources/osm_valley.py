@@ -11,19 +11,26 @@ Where the data comes from: by hand only. Geofabrik's robots.txt, read Oct 6,
 source has no schedule; it isn't in the registry's SOURCES, so `run all` and
 `serve` never touch it. The owner downloads the Idaho extract in a browser
 (download.geofabrik.de/north-america/us/idaho.html), copies it (and its .md5)
-to the server, and loads it with
+to the server, and loads it with core's OpenStreetMap loader
+(ingest/osm_extract.py), which reads one extract into every plugin's
+consumers, this one first:
 
     python3 -m ingest osm-load --inbox          # newest file in $TVT_ARCHIVE/osm/inbox/
     python3 -m ingest osm-load --file PATH      # a .osm.pbf or OSM XML file
 
-which registers the source, logs the load in ops.fetch, and archives the
-file in $TVT_ARCHIVE/osm/ (the last two are kept). The extract loaded last
-time (same MD5) is skipped. If Geofabrik agrees to a weekly scripted
-download, it gets added through ingest/http.py.
+It registers the source, logs the load in ops.fetch, and archives the file
+in $TVT_ARCHIVE/osm/ (the last two are kept). The extract this source loaded
+last (same MD5, in $TVT_ARCHIVE/osm/last-loaded.json, its own gate) is
+skipped. If Geofabrik agrees to a weekly scripted download, it gets added
+through ingest/http.py. The inbox, MD5 and archive helpers and the keep rule
+live in core now (the landscape sprint's loader, Oct 2026); they're imported
+back here unchanged. load_file() still loads this source on its own.
 
-Processing (osmium-tool, installed in the ingest image):
+Processing (osmium-tool, installed in the ingest image), over the core
+loader's smart cut of the box (or a whole extract, with load_file):
   1. osmium extract: cut the valley box (-117.05,43.00,-115.95,43.85),
-     keeping ways that cross its edge whole;
+     keeping ways that cross its edge whole (complete_ways: on the smart cut,
+     the same ways and nodes as on the whole extract);
   2. osmium tags-filter: highway ways, and nodes tagged
      highway=traffic_signals, crossing=traffic_signals,
      crossing:signals=yes or railway=level_crossing;
@@ -72,7 +79,6 @@ the matched rule's share × cos(bearing difference), halved when the way and
 the segment are both named and the names disagree.
 """
 
-import glob
 import hashlib
 import json
 import os
@@ -84,10 +90,10 @@ from collections import Counter, defaultdict
 from datetime import datetime, timezone
 
 from ingest import db
-from .. import segment_match
-
-PAGE = "https://download.geofabrik.de/north-america/us/idaho.html"   # where the owner downloads it by hand
-BOX = (-117.05, 43.00, -115.95, 43.85)          # left, bottom, right, top
+from ingest.osm_extract import (BOX, LANE_KEYS, MAJOR, NOT_ROADS, OSM_SUFFIXES, PAGE, ROADS,  # noqa: F401
+                                _suffix, archive_dir, archive_file, archive_name, extracts, file_md5, inbox_file,
+                                keep_way, parse_md5, prune)
+from .. import marks, segment_match
 
 SOURCE = {
     "name": "osm_valley",
@@ -97,23 +103,18 @@ SOURCE = {
     "schedule": None,   # loaded by hand: Geofabrik's robots.txt disallows scripted downloads (Oct 6, 2026)
     "license": "ODbL",
     "credit": "© OpenStreetMap contributors",
-    "notes": "Geofabrik's Idaho extract, downloaded by hand and loaded with python3 -m ingest.osm_load, cut to "
+    "notes": "Geofabrik's Idaho extract, downloaded by hand and loaded with python3 -m ingest osm-load, cut to "
              "the valley box: major ways and ways with lanes, lanes per direction, signal and crossing nodes. "
              "Its own tables (ODbL).",
 }
 
 TAG_FILTERS = ["w/highway", "n/highway=traffic_signals", "n/crossing=traffic_signals",
                "n/crossing:signals=yes", "n/railway=level_crossing"]
-OSM_SUFFIXES = (".osm.pbf", ".osm.bz2", ".osm.gz", ".osm")
 OSMIUM_TIMEOUT_S = 1800
 SHRINK_GUARD = 0.5            # refuse to retire ways when a load brings fewer than half the active ones
 
-MAJOR = {"motorway", "trunk", "primary", "secondary", "tertiary"}
-MAJOR |= {f"{c}_link" for c in MAJOR}
-ROADS = MAJOR | {"unclassified", "residential", "living_street", "service", "road", "busway"}
-NOT_ROADS = {"proposed", "planned", "construction", "abandoned", "disused", "razed", "demolished",
-             "platform", "bus_stop", "rest_area", "services"}
-LANE_KEYS = ("lanes", "lanes:forward", "lanes:backward")
+# MAJOR, ROADS, NOT_ROADS, LANE_KEYS and keep_way() come from ingest/osm_extract.py: the keep rule
+# is the first rule of core's partition (plan C10), so it lives there, unchanged.
 NOT_INTERSECTION_SIGNALS = {"emergency", "ramp_meter", "blinker", "level_crossing"}   # traffic_signals=*
 
 MATCH_SOURCE = SOURCE["name"]
@@ -251,16 +252,7 @@ def expand_lanes(tags):
     return rows, issues
 
 
-# ---- what we keep ----------------------------------------------------------
-
-def keep_way(tags):
-    hw = tags.get("highway")
-    if not hw or hw in NOT_ROADS or tags.get("area") == "yes":
-        return False
-    if hw in MAJOR:
-        return True
-    return any(k in tags for k in LANE_KEYS) or any(k.startswith("turn:lanes") for k in tags)
-
+# ---- what we keep (keep_way: ingest/osm_extract.py) ------------------------
 
 def special_signal(tags):
     """A fire-station, ramp-meter, blinker or level-crossing signal: not an intersection signal."""
@@ -531,34 +523,7 @@ def load(conn, fetch, src, allow_shrink=False, work_parent=None):
     return stats
 
 
-# ---- the archive -----------------------------------------------------------
-
-def archive_dir(required=True):
-    base = os.environ.get("TVT_ARCHIVE")
-    if not base:
-        if required:
-            raise RuntimeError("set TVT_ARCHIVE: extracts are kept in $TVT_ARCHIVE/osm/")
-        return None
-    folder = os.path.join(base, "osm")
-    os.makedirs(os.path.join(folder, "inbox"), exist_ok=True)
-    return folder
-
-
-def file_md5(path):
-    h = hashlib.md5(usedforsecurity=False)
-    with open(path, "rb") as f:
-        while chunk := f.read(1 << 20):
-            h.update(chunk)
-    return h.hexdigest()
-
-
-def parse_md5(text):
-    """Geofabrik's .md5 files read '<hex>  idaho-latest.osm.pbf'."""
-    m = re.match(r"\s*([0-9a-fA-F]{32})\b", text)
-    if not m:
-        raise ValueError(f"not an MD5 file: {text[:80]!r}")
-    return m.group(1).lower()
-
+# ---- this source's gate (the rest of the archive: ingest/osm_extract.py) ---
 
 def last_loaded(folder):
     """The last extract loaded ({'md5', 'file', 'loaded_at'}), or {}."""
@@ -577,71 +542,30 @@ def mark_loaded(folder, md5, path):
     os.replace(tmp, os.path.join(folder, "last-loaded.json"))
 
 
-def _suffix(path):
-    name = os.path.basename(path).lower()
-    return next((s for s in OSM_SUFFIXES if name.endswith(s)), None)
+def loaded_md5(folder):
+    """This source's gate for core's loader: the MD5 in last-loaded.json, as before (core's other
+    consumers keep theirs in ops.osm_consumer)."""
+    return last_loaded(folder).get("md5")
 
 
-def archive_name(path, md5, day):
-    """idaho-latest.osm.pbf -> idaho-20261006-1a2b3c4d.osm.pbf"""
-    suffix = _suffix(path) or ".osm.pbf"
-    stem = os.path.basename(path)[:-len(suffix)] or "extract"
-    stem = re.sub(r"-latest$", "", stem)
-    return f"{stem}-{day:%Y%m%d}-{md5[:8]}{suffix}"
+def consume(conn, run):
+    """This source as a consumer of core's loader (ingest/osm_extract.py): its own unchanged
+    pipeline over the loader's smart cut (run.cut), store, match, inside the loader's db.Fetch."""
+    stats = load(conn, run.fetch, run.cut, run.allow_shrink, work_parent=run.work_parent)
+    marks.mark(conn, SOURCE["name"], sum(stats.get(k) or 0 for k in ("record versions new", "removed", "ways retired",
+                                                                    "nodes retired")), "ways and nodes")
+    if run.data_as_of:
+        stats["data as of"] = run.data_as_of       # the extract's own header, which the cut may not carry
+    return stats
 
 
-def extracts(folder):
-    """Extracts in the folder (not its inbox), newest first."""
-    paths = [p for p in glob.glob(os.path.join(folder, "*")) if os.path.isfile(p) and _suffix(p)]
-    return sorted(paths, key=os.path.getmtime, reverse=True)
-
-
-def prune(folder, keep=2, protect=()):
-    """Keep the newest `keep` extracts (and their .md5 files), and never the protected ones."""
-    protected = {os.path.abspath(p) for p in protect}
-    removed = []
-    for p in extracts(folder)[keep:]:
-        if os.path.abspath(p) in protected:
-            continue
-        for q in (p, p + ".md5"):
-            if os.path.exists(q):
-                os.remove(q)
-        removed.append(os.path.basename(p))
-    return removed
-
-
-def inbox_file(folder):
-    """The newest extract waiting in $TVT_ARCHIVE/osm/inbox/, or None."""
-    files = extracts(os.path.join(folder, "inbox"))
-    return files[0] if files else None
-
-
-def archive_file(path, folder, md5):
-    """Move a file from the inbox (or copy one from elsewhere) into the archive. Either
-    way, and for a file already archived (a re-load), its time becomes now, which is
-    what pruning goes by."""
-    if os.path.dirname(os.path.abspath(path)) == os.path.abspath(folder):
-        os.utime(path)
-        return path
-    dest = os.path.join(folder, archive_name(path, md5, db.now()))
-    inbox = os.path.join(folder, "inbox")
-    if os.path.dirname(os.path.abspath(path)) == os.path.abspath(inbox):
-        os.replace(path, dest)
-        if os.path.exists(path + ".md5"):
-            os.replace(path + ".md5", dest + ".md5")
-    else:
-        shutil.copyfile(path, dest + ".part")
-        os.replace(dest + ".part", dest)
-    os.utime(dest)
-    return dest
-
-
-# ---- the by-hand loader (python3 -m ingest osm-load) -----------------------
+# ---- this source on its own ------------------------------------------------
 
 def load_file(conn, path, force=False, allow_shrink=False):
-    """Load an extract the owner downloaded by hand, then archive it (when TVT_ARCHIVE is
-    set). Registers the source and logs the load in ops.fetch. Skipped when it's the
-    extract loaded last time, unless force."""
+    """Load an extract the owner downloaded by hand into this source alone (its own cut of the
+    whole file), then archive it (when TVT_ARCHIVE is set). Registers the source and logs the
+    load in ops.fetch. Skipped when it's the extract loaded last time, unless force. The way in
+    is core's loader (`python3 -m ingest osm-load`), which loads every consumer, this one first."""
     if not _suffix(path):
         raise SystemExit(f"{path}: expected a .osm.pbf, .osm, .osm.bz2 or .osm.gz file")
     folder = archive_dir(required=False)

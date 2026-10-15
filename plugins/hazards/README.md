@@ -5,14 +5,16 @@ and perimeters, satellite hotspots, NWS watches, warnings and advisories, and
 earthquakes. This is the "start the clocks" part of
 [ch. 17 §17.4](../../docs/17-sources-for-new-plugins.md#174-proposed-order-with-rough-effort)
 (Wave A): each of these sources keeps only its current state, so history exists
-only from the day we start polling. Ingest only for now; no map layers yet.
+only from the day we start polling. Ingest only for now, plus the data for the
+landscape's burn-scar overlay ([below](#burn-scars)); no map layers yet.
 Persona and source choices:
 [ch. 17 §17.2, Fire and hazards](../../docs/17-sources-for-new-plugins.md#fire-and-hazards).
 
 Everything goes into core's tables (ch. 17 Q8): every record version into
 `raw.record`, and lifecycles (restriction stages, fires, perimeters, alerts)
 into `evt.event` through `ingest/events.py`. Hotspots and quakes are
-occurrences, so they're in `raw.record` only. No migrations. Everything is cut
+occurrences, so they're in `raw.record` only. The one table of its own is
+`hazards.burn_scar` (migration `0001`), derived from the perimeters. Everything is cut
 to the regional ring (west −117.30, south 42.90, east −115.60, north 44.30, as
 in the catalogs; proposed in [DECISIONS](../../docs/DECISIONS.md)).
 
@@ -99,7 +101,10 @@ USGS week feed, cut to the ring before storing.
 ```bash
 python3 -m ingest run idl_fire_restrictions nifc_wfigs_incidents nifc_wfigs_perimeters nasa_firms nws_wwa usgs_quakes
 python3 -m ingest serve                      # runs them on their schedules with everything else
-python3 -m unittest discover -s plugins/hazards/tests -t .
+python3 -m ingest.builds                     # is the burn-scars build marked? (the perimeter poller marks it)
+python3 -m ingest burn-scars [--list]        # run the build by hand (never in serve); --dry-run [--on YYYY-MM-DD] to look
+python3 -m ingest wfigs-backfill --load DIR/<UTC time> [--dry-run]    # load the kept Aug-Dec 2025 read into raw.record
+python3 -m unittest discover -s plugins/hazards/tests -t .   # with TVT_TEST_DATABASE_URL, the database tests too
 ```
 
 **Ethics:** road network and nature, not people. NWS alerts about people (Child
@@ -112,3 +117,130 @@ states no license: internal and credited until IDL answers a courtesy note.
 **Known data quirks:** some outlines are invalid as published (self-
 intersecting slivers in two IDL zones, a zero-area ring in a WFIGS perimeter,
 Oct 7, 2026). They're stored as published; use `ST_MakeValid` before joins.
+On the server's GEOS 3.10, MakeValid's default method gives null for some
+perimeters with near-zero-area slivers (RANGE and WILSON, Oct 11, 2026), so
+the burn scars use `ST_MakeValid(geom, 'method=structure')`.
+
+## Burn scars
+
+Landscape sprint, Oct 2026 (plan C15 and §3.4 K10, package P13; decision 25,
+owner Oct 8). Fires that burned after the ground's photo are drawn on the
+painted ground, in Valley only, as a neutral char tone with a stipple (never
+red), fading over three growing seasons. They aren't clickable in v1. This
+plugin holds the data; the overlay and its tile route come with the map's
+contracts (S3a).
+
+**`hazards.burn_scar`** (`migrations/0001_burn_scar.sql`): one row per fire,
+refreshed from `raw.record`'s `nifc_wfigs_perimeters` versions by
+[`ingest/burn_scars.py`](ingest/burn_scars.py), which fetches nothing. It's
+the build `burn-scars`, and like every build it never runs inside
+`ingest serve` (plan §0 item 27; [`ingest/README.md`](../../ingest/README.md#builds-marked-by-sources-run-by-hand)).
+The perimeter poller marks it in `ops.build_pending`, with its data, when it
+stores new perimeter versions, and when a held scar's fade step has come
+since the last build (a count on this small table, no GEOS; once, not on
+every poll); the backfill's load marks it too. `python3 -m ingest.builds` and
+the VM's `bin/status` show it marked, and `python3 -m ingest burn-scars`
+runs it inside `builds.Run`, which logs the run in `ops.build_run` and clears
+the marks it saw (so it's run plainly, never under `python3 -m ingest.builds
+run`). So the scars follow the poller as often as someone runs
+the build: about 2 s with nothing new, 4 s to rewrite every scar. Each
+statement stops after 60 s (production's login has no limit), and the
+writes stop after 5 minutes, the build marking itself again for the rest.
+The rules:
+
+- **The version:** a fire's newest final perimeter, else its newest version.
+  So a fire with no final perimeter yet is drawn from its newest daily one
+  (4 of the 84 on the scratch copy, Oct 11, 2026), a step beyond plan C15's
+  "final perimeters" for the owner to confirm.
+- **Drawn:** a wildfire or prescribed fire whose perimeter still stands (not
+  withdrawn, deleted or hidden), reaching into the map box, after the photo.
+  Prescribed fires are drawn like wildfires. Complexes are left out, on the
+  assumption that their member fires carry their own perimeters ⚠️ (not yet
+  checked against WFIGS; no complex is held as of Oct 11, 2026).
+- **After the photo:** NAIP 2025 was flown in the box from May 25 to Jul 24,
+  2025 ([ch. 9](../../docs/09-base-map-data.md)), so a fire counts from Jul 25,
+  2025, by its discovery day in Boise (else its perimeter's day: `dated_by`).
+- **The fade, as data:** a scar steps down the day after each of the first
+  three whole growing seasons that begin after its fire: `fade` is 1 until
+  then, then 2/3, 1/3, and 0 (gone). `seasons` and `fade` are as of the
+  refresh; the three step days (`fade_1_on`, `fade_2_on`, `gone_on`) are
+  stored too. The growing season is a rule in
+  [`ingest/growing_season.json`](ingest/growing_season.json), read by core's
+  `ingest/seasons.py`: April through October, an estimate ⚠️ to check against
+  NCEI's climate normals. A fire in July 2025 fades on Nov 1 of 2026, 2027
+  and 2028. A season the fire burned in doesn't count, even from its first
+  day, so a day can cost a year: a fire on Mar 31 first steps down seven
+  months later, one on Apr 1 nineteen months later (any fire from April to
+  October first steps down on Nov 1 of the next year, 12 to 19 months on).
+- **Geometry:** made valid and cut to the map box, the ground's extent
+  (`clipped`), plus `geom_lo`, simplified at 10 m for low zooms. `acres` is
+  the whole fire's, as published. Each fire is worked in a savepoint of its
+  own: one PostGIS can't use (nothing left once made valid, GEOS throwing,
+  or out of time) is left out, named in the run's output and its note in
+  `ops.build_run` (`problems`), and tried again on the next run, while the
+  rest of the layer carries on. A scar already drawn keeps its last good
+  outline and still steps down on its stored days.
+- **Versions:** a build rewrites only what changed, and then records a new
+  version of the tile layer `hazards.burn_scars` in `core.layer_version`
+  (licence and credit as the perimeters'; republish yes). A fade step is a
+  change, so the first build on or after a step's day records it. A gone scar
+  stays in the table; the view **`hazards.burn_scar_shown`** (what the map
+  draws) leaves it out. A refresh that would delete more than half the scars
+  (and more than five) is refused without `--force`: `raw.record` keeps every
+  version, so that would mean something upstream is wrong.
+
+On the scratch copy, Oct 11, 2026: before the backfill, 63 of the 116 fires
+in `raw.record` touched the box, the earliest the RANGE fire (discovered
+Jul 31, 2025, about 27,000 acres). The backfill read brought 27 more fires
+(Aug–Dec 2025, in the ring), 21 of them in the box: 84 scars in all, 22 from
+2025, 5 cut at the box's edge, about 59,000 acres in the box, under 1 MB with
+the low-zoom copy. A build with nothing new takes about 2 s.
+
+**The 2025 backfill** ([`ingest/wfigs_backfill.py`](ingest/wfigs_backfill.py)).
+The poller started on Oct 7, 2026, and its first run read what had changed in
+2026, so a fire from late 2025 is held only if its record changed since. The
+owner approved one small read of the same service for Aug–Dec 2025
+(decision 25). **That read was made on Oct 11, 2026 at 12:02 UTC; don't read
+again.** It took three requests to the service's host: robots.txt (no rules),
+a count and the read; its `provenance.json` says 2, since it counted only the
+last two (reads made since count robots.txt too). Every database loads the
+kept folder with `--load`. It's done in two steps, so that one read can be
+loaded into the scratch database now and production at deploy without asking
+NIFC again:
+
+1. `--fetch --one-off --out DIR`: a count, then one read of the perimeters
+   touching the ring whose fire was discovered from Aug 1 through Dec 31, 2025
+   (Boise time), through `ingest/http.py` (robots.txt first; services3.arcgis.com
+   answers 403, so no rules; our User-Agent; 2 s between requests). Over 400
+   features it stops before reading them. It writes `features.json` and
+   `provenance.json` (the service, filter, window, box, User-Agent, robots
+   result, times, counts, sha256 and the approval) to `DIR/<UTC time>/`. It
+   refuses a window whose read is made (recorded in the code's `WINDOWS`, or
+   a `provenance.json` for it under `DIR`) unless `--read-again`, which needs
+   the owner's OK, and it has no dry run.
+2. `--load DIR/<UTC time>`: checks the file against its sha256 and the read
+   against the approved window its provenance names, keeps that window's
+   features, parses them as the poller does, and adds each fire's
+   perimeter to `raw.record` as a `nifc_wfigs_perimeters` version (a version
+   already held is left alone). The read is logged once per database as a
+   fetch of the one-off source `nifc_wfigs_perimeters_backfill`, with the
+   read's own times, and each version it adds points at it
+   (`raw.record.first_fetch`). No lifecycles: these fires are long out.
+
+A fire discovered from Jul 25 to Jul 31, 2025 is after the photo but outside
+the approved window, so it's drawn only if the poller holds it (RANGE is held).
+If the owner approves that week too, it becomes a second window in `WINDOWS`
+beside the first, read once with `--fetch --window 2025-07-25..2025-07-31`;
+the Aug–Dec read still loads as it is.
+The read's folder is kept on the server with the other downloaded sources
+(`/srv/tvt/work/sources/nifc-wfigs-backfill/`), outside this repository.
+
+**Deploying.** The ingest service applies `0001` at start. The deploy
+runbook adds one step after the grants: load the read into production as
+`tvt_build`, in a capped container with the read's folder mounted read-only
+(`wfigs-backfill --load <folder>`, which marks the build), then run the build
+the same way (`burn-scars --list`, light: a 1 GB container, a few seconds),
+which logs its run and shows the scars. After that, run it whenever
+`bin/status` shows `burn-scars` marked. A scratch refresh replaces the scratch
+copy's `raw.record`, so the read is loaded there again after each refresh,
+and the build run after it.

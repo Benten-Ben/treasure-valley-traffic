@@ -102,6 +102,25 @@ create table ops.fetch (
   `schedule`. A check constraint enforces the project rule in the
   database itself.
 - `ops.schema_migration` records which migration files have run.
+- **Builds and staleness** (migration 0021, landscape sprint M1). Builds
+  (`roads-build`, `water-build`, the base bake, ...) never run inside the
+  scheduled collector loop (the daily `intersections` rebuild, about 10 s,
+  predates the rule and is the one exception). `ops.build_run` logs each build run as
+  `ops.fetch` logs fetches (started, finished, ok, a note, the error, and
+  `covers`: the marks pending when it started). `ops.build_pending` holds
+  one row per build and marker (a source, a command, or `by hand: <who>`)
+  saying a build is out of date; marking again counts up, and a run that
+  succeeds deletes the rows it covered, so a mark made while it ran stays
+  for the next one (`ingest/builds.py`). Two views judge them:
+  `ops.source_status` (each scheduled source's last good fetch against its
+  schedule: fresh until a schedule plus a grace of a quarter of it, at
+  least 15 min; late for two more schedules; then stale; never without a
+  good fetch; with the failed attempts since) and `ops.build_status` (each
+  build's state, age and marks: running; failed when its newest run failed
+  or was killed, even while it's marked (killed: unfinished, and no session
+  holds the advisory lock it took); pending when marked; else built). A
+  source taken out of every manifest keeps its row and schedule, and would
+  read stale for good: set its `schedule` to null by hand when it's retired.
 
 ## 12.4 `raw`: every version of every record
 
@@ -429,6 +448,203 @@ estimate):
 | Major ways (motorway to tertiary) | 7,823: `lanes` on 5,632 (72%), `lanes:forward`/`backward` on 1,177 (15%), any `turn:lanes` on 1,460 (19%), `width` on 6 |
 | Residential, unclassified and service ways | 79,611: `lanes` on 5,176 (6.5%) |
 
+**One extract, several consumers (landscape sprint, Oct 2026; migrations
+0019 and roads 0001).** The extract's handling moved to core
+([ingest/osm_extract.py](../ingest/osm_extract.py), `python3 -m ingest
+osm-load`): one MD5 check, one archive, and one cut of the valley box with
+osmium's `smart` strategy (multipolygons that cross the edge come whole),
+read by each plugin's consumers (`osm_consumers` in its manifest). No
+highway way has two owners; the owner is decided by its tags alone:
+osm_valley's keep rule above, unchanged, then the other streets and alleys
+(`roads.osm_street`), then sidewalks, crossings and the other service ways
+(`roads.osm_paving`, roads 0002), then paths (`trails.osm_paths`, trails 0001).
+On the Oct 5 extract that's 13,917 / 22,785 / 124,582 / 22,263 of the box's 185,358
+highway ways. 1,811 have no owner: 1,369 proposed, 350 under construction,
+65 indoor corridors and 10 other ways that aren't built or aren't roads
+(service areas, rest areas, a platform, an elevator), and 17 built ones that
+no consumer's classes name (12 raceways, 4 `unclassified_link`, 1 runaway-truck
+`escape`), left out until it's decided who takes them. The 12 lane-tagged
+cycleways, tracks and pedestrian ways osm_valley keeps are the named
+exception. The owners load one extract together: osm_valley first, the
+others only the extract it holds, and osm_valley never while a follower that
+holds another extract stays behind. So a way is never in two of their tables
+or in none, unless a follower fails after osm_valley loaded; a build that
+reads `core.osm_way` with `roads.osm_street` or `roads.osm_paving` (the
+roads build) calls `check_partition(conn, names)` first, naming every owner
+it reads (`("osm_valley", "osm_street", "osm_paving")`: the default names
+only the first two), and it refuses until they match again. On scratch,
+Oct 11, no active way was in two of the three tables.
+
+```sql
+-- Each consumer's gate: the extract it loaded last (osm_valley's stays in its file).
+create table ops.osm_consumer (
+  consumer     text primary key,      -- '<plugin>.<source>', e.g. 'roads.osm_street'
+  source       text not null references ops.source,
+  md5          text not null,
+  extract_file text not null,         -- its name in $TVT_ARCHIVE/osm/
+  data_as_of   text,                  -- Geofabrik's header time
+  loaded_at    timestamptz not null default now(),
+  fetch_id     bigint references ops.fetch,
+  objects      bigint,
+  counts       jsonb not null default '{}'
+);
+
+-- roads 0001: the other streets and alleys, versioned in place (no raw.record copies).
+create table roads.osm_street (
+  osm_id bigint primary key, highway text not null, service text,    -- service = 'alley' on alleys
+  name text, ref text, oneway text, width_m real, surface text, access text, maxspeed text,
+  layer smallint, bridge boolean not null, tunnel boolean not null, tags jsonb not null,
+  geom geometry(LineString, 4326) not null, osm_version int, osm_timestamp timestamptz,
+  active boolean not null, first_seen timestamptz not null, last_seen timestamptz not null
+);
+
+-- roads 0002: the paving (the osm_paving consumer), versioned in place like osm_street.
+-- material: asphalt, concrete, gravel, dirt or unknown; material_source 'surface' (the tag),
+-- 'default' (the kind's, estimated) or null (unknown). Untagged service ways and lots take
+-- their default only on CDL developed land (developed: the share on classes 122-124,
+-- measured in PostGIS against roads.developed_land, below).
+create table roads.osm_paving (                   -- service ways but alleys, and walkways
+  osm_id bigint primary key, kind text not null,  -- service, driveway, parking_aisle, drive_through,
+                                                  -- emergency_access, sidewalk, crossing, access_aisle, traffic_island
+  highway text not null, service text, footway text, name text, area boolean not null,
+  surface text, material text not null, material_source text, developed real,
+  width_m real, width_est_m real not null, width_source text not null,   -- 'tagged' or 'default'
+  oneway text, access text, crossing text, crossing_markings text,
+  marked boolean, marked_from text,               -- crossing ways: 'way' or 'node'
+  layer smallint, bridge boolean not null, tunnel boolean not null, tags jsonb not null,
+  geom geometry(LineString, 4326) not null, ...   -- versions as osm_street
+);
+create table roads.osm_parking (                  -- lots and stalls drawn as areas
+  osm_type char(1), osm_id bigint, primary key (osm_type, osm_id),   -- 'w' or 'r' (a multipolygon)
+  kind text not null,                             -- lot or space
+  parking text, name text, operator text, access text, fee text, capacity int, surface text,
+  material text not null, material_source text, developed real, layer smallint, building text,
+  area_m2 real not null, tags jsonb not null, geom geometry(MultiPolygon, 4326) not null, ...
+);
+create table roads.osm_walk_node (                -- crossing and kerb nodes
+  osm_id bigint primary key, kind text not null,  -- crossing or kerb
+  crossing text, crossing_markings text, marked boolean, signals boolean not null,
+  kerb text, tactile_paving text, railway text,
+  ways bigint[] not null,                         -- the roads.osm_paving ways through it
+  tags jsonb not null, geom geometry(Point, 4326) not null, ...
+);
+-- Developed land: the CDL's classes 122-124 traced into polygons in the worker image
+-- (plugins/roads/build/developed.py), loaded by roads-developed-load. One build is current.
+create table roads.developed_build (
+  id text primary key, cdl_file text not null, cdl_year int not null, cdl_res_m real not null,
+  cdl_sha256 text not null, classes int[] not null, srid int not null,
+  license text not null, credit text not null, republish text not null,   -- public domain; "USDA NASS Cropland Data Layer <year>"
+  pieces int not null, parts int not null, area_km2 real not null,
+  made_at timestamptz not null, loaded_at timestamptz not null, current boolean not null
+);
+create table roads.developed_land (
+  id int primary key, piece int not null,
+  geom geometry(Polygon, 5070) not null          -- NASS's grid; at most 256 vertices (ST_Subdivide)
+);
+```
+
+The new consumers' tables keep OpenStreetMap's version and timestamp, the
+loads that first and last saw each object, and `active`; an object missing
+from a load is retired, never deleted, and the archive keeps the last two
+extracts (an exception to the Oct 5 rule for these tables only, owner Oct 8).
+Their license is ODbL, republish yes, recorded in the table's comment and the
+manifest. `roads.osm_street` held 22,785 ways (11 MB with its indexes) on
+scratch on Oct 11. Freshly loaded the same day, with their indexes,
+`roads.osm_paving` held 124,582 ways (53 MB), `roads.osm_parking` 4,387 lots
+and stalls (2 MB) and `roads.osm_walk_node` 65,617 nodes (20 MB). A reload
+rewrites every row it brings, so a table holds up to about twice its size
+until it's vacuumed.
+`roads.developed_land` (the 2025 CDL: 203,546 parts, 861 km²) is 62 MB; it's
+public domain (USDA NASS), and the paving's `developed`, and the materials
+resting on it, credit it too: an export lists it as an input, with
+`roads.developed_build`'s current year and sha256.
+
+**Trails (landscape sprint, Oct 2026; trails 0001).** Schema `trails`. The
+`osm_paths` consumer writes `trails.osm_path` (paths, footways but sidewalks
+and crossings, cycleways, tracks, bridleways, steps, pedestrian ways: 22,200
+on scratch on Oct 11), `trails.osm_area` (pedestrian and footway areas) and
+`trails.osm_route` (hiking, mtb, bicycle, foot and horse route relations, with
+their members in order: 147), versioned in place like `roads.osm_street`. Each
+way carries its surface class, a width estimate and the access rule's result
+(`no_access`, `informal`), computed on load by tags alone; SQL twins of those
+rules (`trails.surface_class`, `trails.no_public_access`,
+`trails.width_estimate`) give the named exception's ways in `core.osm_way` the
+same columns (`trails.exception_way`). `trails-match` links Ridge to Rivers'
+trails and the Greenbelt's closures, read from `raw.record` (`trails.agency_line`),
+to those ways with the core line matcher in 150 m pieces: `trails.link` (one row
+per line and way, full or partial, and whether the way `paints`: takes the
+line's state whole, lying along it with less than 20 m beyond it) and
+`trails.matched_line` (each line's match, and what it draws itself: `along`,
+the stretches of the ways it doesn't paint that lie along it, and `gap`, its
+own line elsewhere). Licences follow plan C3. The layer's ways (`trails.path`,
+with the access rules) and the valley-zoom network (`trails.path_lo`) are
+OpenStreetMap's alone, republish yes; what the City's lines draw
+(`trails.agency_drawn`, `trails.agency_lo`) and say (`trails.agency_state`,
+from `evt.event`; `trails.way_agency`) is republish aggregates, and the views
+over the City's rows run with their reader's privileges, so the tile login
+can't read them ([plugins/trails](../plugins/trails/README.md)). The links
+carry the City's ids, so they're internal, like their sources.
+
+**Real-width roads (landscape sprint, Oct 2026; roads 0003).** `roads-build`
+(`plugins/roads/ingest/build.py`) splits the carriageways of `core.osm_way`
+and `roads.osm_street` into pieces where they meet and gives each a
+cross-section from OpenStreetMap's tags, ACHD's lanes rule
+(`core.segment_lanes`), ACHD's bike network's measured widths, HPMS and
+class defaults; then surfaces, junctions with their curb returns, islands,
+edges, crosswalks on marked crossings, markings and the review list. It
+replaces the tables whole in one transaction (TRUNCATE, so no dead copy of
+the last build stays behind; a reader waits for the build to commit); their
+ids are the build's own, so anything kept across builds keys on the way and
+ACHD's segment. The tables reference each other without foreign keys.
+Geometry in EPSG:32611. Licence ODbL with ACHD's and ITD's values: internal.
+
+```sql
+create table roads.build (id text primary key, started_at timestamptz, finished_at timestamptz,
+  current boolean,                                -- one current
+  extract_md5 text, inputs jsonb, params jsonb, counts jsonb, seconds real,
+  license text, republish text, credit text);
+create table roads.piece (id int primary key, osm_id bigint, seq smallint,
+  source text,                                    -- osm_valley or osm_street
+  highway text, service text, name text, ref text,
+  oneway smallint,                                -- 1 along the line, -1 against, 0 both
+  roundabout boolean, bridge boolean, tunnel boolean, layer smallint,
+  from_node int, to_node int, from_junction int, to_junction int,
+  county text, road_segment_id bigint, seg_same_way boolean, seg_confidence real,
+  length_m real, geom geometry(LineString, 32611));
+create table roads.xsection (piece_id int primary key,         -- roads.piece
+  lanes_fwd smallint, lanes_bwd smallint, centre_turn boolean, turn_fwd text[], turn_bwd text[],
+  lanes_source text,                              -- osm, itd_hpms, achd_msm, osm_valley, compass_centerline, default
+  lanes_conf real, lane_w_m real, bike_l_m real, bike_r_m real, park_l_m real, park_r_m real,
+  shoulder_l_m real, shoulder_r_m real, edge_l text, edge_r text,   -- curb or shoulder
+  median_kind text, median_w_m real, width_left_m real, width_right_m real, total_w_m real,
+  width_tier text,                                -- inventoried, measured, counted, estimated
+  width_source text, material text, material_source text, markings boolean,
+  sources jsonb,                                  -- every part's source
+  republish text,                                 -- yes; aggregates (a class width calibrated on ACHD's
+                                                  -- measurements); internal (an ACHD or ITD input)
+  flags text[]);
+create table roads.junction (id int primary key, kind text,   -- signal, roundabout, interchange, plain
+  nodes smallint, pieces int[], radius_m real, intersection_id bigint, geom geometry(Point, 32611));
+create table roads.surface (id int primary key, kind text,    -- carriageway, junction, deck, median, island
+  piece_id int, junction_id int, material text, tier text, layer smallint,
+  geom geometry(MultiPolygon, 32611), geom_z15 geometry(MultiPolygon, 32611));
+create table roads.edge (id int primary key, kind text,       -- curb, shoulder, deck
+  tier text, layer smallint, piece_id int, junction_id int, geom geometry(MultiLineString, 32611));
+create table roads.marking (id int primary key, kind text,    -- edge, lane, centre_double, twltl, bike, stop_bar, crosswalk
+  dash text, piece_id int, junction_id int, node_osm_id bigint, geom geometry(Geometry, 32611));
+create table roads.arrow (id int primary key, piece_id int, direction text, lane smallint, turns text[],
+  bearing real, geom geometry(Point, 32611));
+create table roads.review (id int primary key, kind text, piece_id int, junction_id int, osm_id bigint,
+  road_segment_id bigint, detail jsonb, geom geometry(Point, 32611));
+```
+
+On scratch, Oct 11, the Oct 5 extract gave 69,893 pieces and 31,087
+junctions; the tables came to 199 MB with their indexes (truncated by each
+build, so that's their size after any number of rebuilds), and the build
+took about 10 minutes as a light job. The rules, the calibration of the
+local streets' default widths, the review list's kinds and the export
+(`roads-export`) are in the roads plugin's README.
+
 **COMPASS (built Oct 6, 2026, migration 0012).** Crashes are `obs.crash`,
 one row per ITD serial number. `crashed_at` is the reported local time, so
 the key is serial number plus time; with TimescaleDB it's a hypertable in
@@ -473,7 +689,8 @@ existing, funded and planned lanes, counting the whole cross-section) and
 by globalid; `pm_id` names a travel-model link of several pieces and stays as
 the join to COMPASS's other data). `core.segment_match` records which ACHD
 segments each of their lines, and each OpenStreetMap way, lies along, by one
-shared matcher (`plugins/roads/ingest/segment_match.py`, in UTM 11N): at least 60% of the
+shared matcher (core's `ingest/linematch.py` since the landscape sprint, through
+roads' `plugins/roads/ingest/segment_match.py`, in UTM 11N): at least 60% of the
 segment within the line's buffer (15 m; 10 m with a street-name check for
 the Master Street Map), or else at least 60% of a line of 20 m or more within
 the segment's buffer (methods `way_in_…`), with bearings within 20°. `share`
@@ -659,7 +876,11 @@ order); blank periods have no row. Road-weather stations are in
   COMPASS's crash records (`restricted.crash_unit`, coded and coarsened,
   since migration 0012) and, if we ever load it, Ada County Assessor data
   ("do not re-distribute"). It's policy, not a permission boundary yet: the
-  app and ingestors connect as the same role.
+  app and ingestors connect as the same role. The toggled layers' tiles
+  are the exception (landscape sprint, Oct 2026): their cuts log in as
+  `tvt_tiles`, a plain login of their own with no access to `restricted`
+  or private plugins' schemas
+  ([deploy/tvt_tiles.sql](../deploy/tvt_tiles.sql)).
 - **No basemap tiles:** those are static PMTiles files built by
   `basemap/`.
 

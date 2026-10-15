@@ -1,15 +1,30 @@
 {
   "name": "trees",
-  "title": "Trees: every tree in the lidar, catalogued trees first",
+  "title": "Trees and shrubs: every tree in the lidar, catalogued trees first, and the shrubs",
   "depends": [],
   "visibility": "public",
   "order": 90,
-  "sources": [],
-  "tables": ["trees.build", "trees.tree", "trees.tree_log"],
+  "sources": [
+    {"name": "usgs_3dep_lidar", "module": "ingest.sources.usgs_3dep_lidar", "kind": "manual",
+     "license": "public domain (U.S. Government work)", "credit": "U.S. Geological Survey, 3D Elevation Program",
+     "republish": "yes"},
+    {"name": "sentinel2", "module": "ingest.sources.sentinel2", "kind": "manual",
+     "license": "Copernicus Sentinel data (free, full and open use)",
+     "credit": "Contains modified Copernicus Sentinel data 2025", "republish": "yes"},
+    {"name": "usda_naip", "module": "ingest.sources.usda_naip", "kind": "manual",
+     "license": "public domain (U.S. Government work)", "credit": "USDA NAIP", "republish": "yes"},
+    {"name": "osm_hedges", "module": "ingest.sources.osm_hedges", "kind": "manual",
+     "license": "ODbL", "credit": "© OpenStreetMap contributors", "republish": "yes"}
+  ],
+  "tables": ["trees.build", "trees.tree", "trees.tree_log", "trees.shrub_build", "trees.shrub", "trees.shrub_area"],
   "commands": [
     {"name": "trees-load", "module": "ingest.load",
-     "help": "load a trees build made in the worker image into the database (--build DIR)"}
+     "help": "load a trees build made in the worker image into the database (--build DIR)"},
+    {"name": "shrubs-load", "module": "ingest.shrubs_load",
+     "help": "load a shrubs build made in the worker image into the database (--build DIR)"},
+    {"name": "shrubs-hedge-check", "module": "ingest.hedge_check",
+     "help": "check the shrubs against OpenStreetMap's hedges (prints a report; writes nothing)"}
   ],
-  "storage": "Small: about 60 trees per hectare where there is canopy (the North End box: about 15,000 rows); each build's files (GeoJSON and a log) stay in $TVT_ARCHIVE/trees/<build>/.",
-  "ethics": "Our own data, derived from public USGS 3DEP lidar and the crown model fitted on the owner's picks (and the US Forest Service's Urban Tree Database, cited). No catalogue's attributes are stored here: a catalogue (like the City of Boise's inventory, private) contributes trunk points to the build and is joined by id only on the owner's own site."
+  "storage": "Small: about 60 trees per hectare where there is canopy (the North End box: about 15,000 rows), and 6 to 570 shrubs per hectare (about 340,000 rows for the ten test boxes); each build's files stay in $TVT_ARCHIVE/trees/<build>/ (trees: GeoJSON and a log; shrubs: GeoJSON, build.json and a 0.5 m why.tif).",
+  "ethics": "Our own data, derived from public USGS 3DEP lidar, two Sentinel-2 NDVI images (early April and July 2025, for the conifer cue; credit \"Contains modified Copernicus Sentinel data 2025\"), USDA NAIP (the shrubs' near-infrared) and the crown model fitted on the owner's picks (and the US Forest Service's Urban Tree Database, cited). The shrubs build reads farm's crop cover (public inputs: CSB, CDL and Sentinel-2, credited in its build) only to leave crops alone. OpenStreetMap's hedges (ODbL) are a check on the shrubs, never drawn or stored. No catalogue's attributes are stored here: a catalogue (like the City of Boise's inventory, private) contributes trunk points to the trees build only and is joined by id only on the owner's own site; the shrubs build never reads one."
 }

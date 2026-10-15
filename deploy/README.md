@@ -118,6 +118,197 @@ curl -X POST http://localhost:8080/api/views/<id>/frame \
 That call writes: it keeps the view's newest frame as its calibration
 reference in `FRAMES_DIR`, so try it on a view nobody has calibrated.
 
+## Toggled layers' tiles: the tvt_tiles login
+
+The app's tiles for toggled layers (soils, crop fields, trails, ...:
+`/api/<plugin>/tiles/<layer>/…`, `app/src/lib/server/mvt.ts`) go to anyone
+who can open the map, so their cuts log in as **`tvt_tiles`**: a plain login
+(no superuser, a member of no other role) that can't write and is granted
+only core and the tile plugins' own schemas, never `restricted` or a private
+plugin's schema (`private_<name>`, `city_trees`), and never the internal
+tables on the file's `never_tables` list, inside those schemas
+(`roads.bike_facility_note`, ACHD's free-text field notes). The app's tile pool
+connects with `TILES_DATABASE_URL`, which `docker-compose.yml` and
+`compose.preview.yml` build from `TILES_DB_PASSWORD` in `.env`. It's a login
+of its own rather than a role the app's connections switch to, because
+those are `tvt`'s, a superuser, which can always switch back.
+
+[`tvt_tiles.sql`](tvt_tiles.sql) makes the login and its grants, and ends
+by checking what it can reach (PUBLIC's grants included). It's idempotent;
+run it as `tvt` before the first toggled layer goes live, and again after
+migrations that add a plugin schema or a table on `never_tables` (a deploy
+step, beside `tvt_build.sql`'s). Until it runs again, a new table in a
+granted schema is readable by the default privileges, a `never_tables` one
+included. The first time, also generate a password on the server
+(`openssl rand -hex 24`), put it in `.env` as `TILES_DB_PASSWORD`, set it
+in the database, and recreate the app:
+
+```bash
+docker compose exec -T db psql -X -v ON_ERROR_STOP=1 -U tvt -d tvt -f - < tvt_tiles.sql
+# First time only. The password goes from .env to the database without being
+# typed or shown (it's hex, so the quotes are safe):
+grep '^TILES_DB_PASSWORD=.' .env | cut -d= -f2- | sed "s/.*/ALTER ROLE tvt_tiles PASSWORD '&';/" \
+  | docker compose exec -T db psql -X -q -v ON_ERROR_STOP=1 -U tvt -d tvt
+docker compose up -d app    # and app-next while the preview is on
+```
+
+Until both are done, those tiles answer 500 (the login fails), logged in
+`docker compose logs app`; nothing else in the app uses the login. A schema
+added since the last run answers empty tiles with `x-tile-status: denied`.
+To serve tiles from a new plugin's schema, add it to the file's
+`tile_schemas` list; the app's unit tests check the list against the
+registered layers.
+
+## Heavy jobs and worker tests on the VM
+
+Three small tools from [`bin/`](bin), installed in `/srv/tvt/work/bin` on the
+VM (Python 3, standard library; tests in [`tests/`](tests), run on the VM
+with `python3 -m unittest discover -s deploy/tests`). After a change, copy
+them in by rename, so a job already running keeps its copy:
+`install -m 755 deploy/bin/heavy /srv/tvt/work/bin/.heavy.new && mv -f /srv/tvt/work/bin/.heavy.new /srv/tvt/work/bin/heavy`
+(the same for `worker-test` and `status`).
+
+**`heavy`** runs a heavy job: a worker container over 1 GB or 1 CPU, any
+production load, an image build, a `pg_dump`, a tile, imagery or lidar
+build. It came out of the landscape sprint's plan (v3 §4.4) after an
+uncapped build stalled the VM during the nightly camera roll-up on Oct 7.
+
+```bash
+/srv/tvt/work/bin/heavy --deadline 22:30 --runtime 90 --peak 3 "P2 decode (B2)" \
+  docker run --rm --memory 3g --memory-swap 3g --cpus 3 -v ... tvt-worker python ...
+/srv/tvt/work/bin/heavy --status      # the lock, the window, the roll-up, free disk, recent jobs
+```
+
+- **One at a time.** It takes `/srv/tvt/work/heavy.lock` exclusively and
+  waits while another heavy job or a browser-spec run (which holds it
+  shared) is going; while it waits, no new browser run starts. `-n` doesn't
+  wait, `-w MIN` waits at most that long, also for a closed window to open.
+- **Windows** (Boise time; the VM's clock is UTC): 06:00–23:15, and at
+  night only once the camera roll-up (from 00:05) has finished, as both
+  capture services' status files show, until 05:45. Nothing from 23:15
+  until then: the roll-up needs the memory. A roll-up still going after
+  06:00 holds day jobs too.
+- **The deadline is enforced.** The job doesn't start past its deadline or
+  when its stated runtime doesn't fit before it. At the deadline it gets
+  SIGTERM (its whole process group, and every container labelled
+  `tvt.heavy=<id>`), then SIGKILL a minute later. `heavy` adds the label to
+  `docker run` and `docker compose run`; scripts that start containers
+  themselves pass `--label "$HEAVY_LABEL"`.
+- **What the deadline can't reach:** a command run with `docker exec`
+  inside another container (a `pg_dump` in the database's). Killing the
+  `docker exec` client leaves it running there, so it has to stop itself,
+  for example under `timeout`, which the database image has:
+
+  ```bash
+  /srv/tvt/work/bin/heavy --deadline 17:00 --runtime 20 --peak 0 --cold 1 "pg_dump (deploy)" sh -c \
+    'docker exec tvt-db-1 timeout -k 60 $((HEAVY_DEADLINE_EPOCH - $(date +%s))) pg_dump ...'
+  ```
+- **A planned VM restart.** The lead writes it in `/srv/tvt/work/MAINTENANCE`,
+  on a line of its own: `restart: 2026-10-12 23:30` (Boise; a bare `23:30`
+  means the next one). The deadline moves to 10 minutes before it. A note
+  with no time, or with several and no `restart:` line, refuses every job.
+- **Disk.** It starts only with 12 GB plus the job's stated peak free on
+  `/` (an image build's peak is the image plus its build cache), and stops
+  the job if `/` falls under 11 GB (the camera capture pauses under 10); it
+  checks every 2 seconds. `--cold GB` is for a job that writes to the cold
+  drive: it must be mounted, with room to spare (its mount is in the VM's
+  `/srv/tvt/work/heavy.conf`, not here).
+- **Caps.** A `docker run` without `--memory` is refused. `docker compose
+  run` can't take a cap, so the service it runs needs `mem_limit` in the
+  compose files the command reads; `heavy` checks with `docker compose
+  config` and refuses one without. A production load at a deploy adds
+  [`compose.load.yml`](compose.load.yml) (2 GB, 2 CPUs) on the command line:
+
+  ```bash
+  cd /srv/tvt/repo/deploy && /srv/tvt/work/bin/heavy --deadline 17:00 --runtime 30 --peak 1 \
+    "roads load (deploy)" \
+    docker compose -f docker-compose.yml -f compose.private.yml -f compose.load.yml \
+      run --rm --no-deps -e DATABASE_URL ingest python3 -m ingest ...
+  ```
+
+  (`DATABASE_URL`, the load's role, comes from the shell: `heavy.log`
+  records the command.) A `heavy` inside a heavy job runs at once, under
+  that job's lock and deadline, with its caps still checked.
+- Exit codes: the command's; 73 not enough disk; 75 not now; 123 stopped
+  for disk; 124 stopped at the deadline (`heavy -h` has the rest).
+
+**`worker-test`** runs unit tests in the worker image
+([`ingest/Dockerfile.worker`](../ingest/Dockerfile.worker)), capped at
+1 GB and 1 CPU with no network and the checkout read-only, and fails the
+run when any test is skipped or none ran: in that image every dependency is
+there, so a skip means a test didn't run. It's light, so it may run at any
+hour, but at most two at once: a third waits for a slot.
+
+```bash
+/srv/tvt/work/bin/worker-test -C <checkout on the VM> discover -s basemap/ground -t .
+```
+
+**`status`** is the VM at a glance, which the lead runs at the start of each
+session: free disk against `heavy`'s start and floor, the cold drive,
+`heavy.lock`'s holder and how long it has held it, last night's camera
+roll-up (going or finished, and the day's videos made, failed or missing),
+a planned restart, and from the database the scheduled sources by state
+(`ops.source_status`) and the builds that are marked, running or failed
+(`ops.build_status`, migration 0021). It reads `heavy`'s rules from the
+`heavy` beside it, and the database read-only (psql in its container, as
+its owner, with a 10 s statement timeout); keys and passwords in errors are
+hidden. A line that needs a look starts with `!`, and it exits 1 if any
+does.
+
+```bash
+/srv/tvt/work/bin/status                                   # production (tvt-db-1, database tvt)
+/srv/tvt/work/bin/status --db-container tvt-scratch-db --db tvt_s1   # a scratch copy
+/srv/tvt/work/bin/status --no-db
+```
+
+The job table (each job's caps and window this sprint) and the work area's
+disk notes are in the VM's `/srv/tvt/work/README.md`.
+
+## Review sheets on the VM
+
+**`sheets`** ([`bin/sheets`](bin/sheets), installed beside `heavy`) draws
+the landscape sprint's image sheets: export layers and rasters over the
+aerial photo at the review places ([basemap/sheets](../basemap/sheets/README.md)).
+It runs the worker image capped like `worker-test` (1 GB, 1 CPU, no network,
+read-only, the checkout at `/repo`), with these mounted read-only: a scratch
+database's exports (`--db`, default `tvt`; or `--archive`), the map's tiles,
+the land-cover spike's NAIP crops and any `--in` folders. It
+writes only to `/srv/tvt/private/sheets/<package>/` (`750`, taking the
+private files' group and setgid bit from its parent):
+
+```bash
+/srv/tvt/work/bin/sheets -C <checkout on the VM> --pkg p7 -- \
+  --places cameras corridors --layer roads/surfaces,by=material --label review-1
+```
+
+- It isn't a unit test, so it keeps the quiet-hours rule: from 23:15 it
+  starts only once tonight's camera roll-up has finished (heavy's reading
+  of the status files), not while a roll-up runs late into the day, and a
+  run that starts in the day has its `--timeout` (default 60 min) cut to
+  end by 23:15. It doesn't start within its time of a planned restart in
+  `MAINTENANCE`.
+- It needs 12 GB plus 1 GB free on `/` to start; the drawing then refuses a
+  run whose frames could take more than leaves 12 GB (a bound from their
+  pixels), and the runner stops the container under 11 GB (exit 123). At
+  most two run at once, each with 1 GB plus 3 GB of memory available
+  (scratch's reserve).
+- An archive (`--db`, default `tvt`; or `--archive`) is mounted one
+  plugin's `export/` folder at a time, which is all a sheet reads.
+  Production's `trees/` is never mounted, nor any folder holding it (its
+  builds carry the City of Boise's inventory), nor, of the land-cover
+  spike's folder, anything but `lidar/` and the NAIP crops. `--in` takes
+  folders under the work folder (not `bin/`, `e2e/` or the scratch
+  folder's tools and secrets; a database's archive is fine) or in
+  production's archive (not the archive itself, which holds `trees/`).
+  The private files and secrets are never mounted.
+- Exit codes: the run's (1 when a frame failed: its error is in the run's
+  `index.json`); 2 usage or a refused mount; 73 disk; 75 not now, or no
+  slot or memory; 123 stopped under 11 GB free; 124 timed out; 137 killed
+  (over its 1 GB: `index.json` lists the frames drawn).
+
+A full run of the 94 frames was 2.3 minutes and 0.23 GB (one panel each,
+Oct 11). Sheets are private and never committed; delete runs once reviewed.
+
 ## Loading an OpenStreetMap extract (by hand)
 
 Geofabrik's robots.txt disallows scripted downloads, so OpenStreetMap comes
@@ -136,22 +327,118 @@ The steps (Builder D's first-run notes, Oct 6):
    [Geofabrik's Idaho page](https://download.geofabrik.de/north-america/us/idaho.html)
    in a browser, and puts both in `${ARCHIVE_DIR:-/srv/tvt/archive}/osm/inbox/`,
    owned by uid 1000.
-4. Load: `docker compose -f deploy/docker-compose.yml exec ingest python3 -m ingest osm-load --inbox`
-   (the old `python3 -m ingest.osm_load` still works). `--file PATH` loads a
-   file from anywhere instead.
+4. Load: `python3 -m ingest osm-load --inbox` (core's loader since the
+   landscape sprint, [ingest/osm_extract.py](../ingest/osm_extract.py); the
+   old `python3 -m ingest.osm_load` still works). `--file PATH` loads a file
+   from anywhere instead; `--only CONSUMER` loads one consumer on the extract
+   we hold (`--archived`), `--list` says what each loaded last. Since Oct 11
+   it's a **heavy job** in its own capped container, never `exec` in the
+   ingest service: the smart cut and osm_valley's own cut each peak at about
+   3.9 GB (osmium keeps a bitmap over every node id, and Idaho's run to about
+   13 billion), so give it 5 GB; `compose.load.yml`'s 2 GB is too little for
+   it. A consumer run on a cut already made peaks at about 0.2 GB. From the
+   server, with `DATABASE_URL` set in the shell (never on the command line,
+   which heavy's log records):
+
+   ```bash
+   /srv/tvt/work/bin/heavy --deadline HH:MM --runtime 10 --peak 1 "osm-load (deploy)" \
+     docker run --rm --memory 5g --memory-swap 5g --cpus 2 --network tvt_default -e DATABASE_URL \
+       -e TVT_ARCHIVE=/srv/archive -v /srv/tvt/archive:/srv/archive \
+       tvt-ingest:latest python3 -m ingest osm-load --inbox
+   ```
+
+   Which role: osm_valley writes `core.osm_way` and friends, which
+   `tvt_build` can't ([scratch/README.md](scratch/README.md)), so a load
+   that includes osm_valley (a new extract) runs as the database owner, as
+   its loads always have, until the runbook decides otherwise. The new
+   consumers alone (`--only roads.osm_street`, on a cut already made) are
+   light and run as `tvt_build`. Run as `tvt_build`, a new extract's load
+   fails osm_valley and holds the streets back (below), so nothing loads and
+   the file stays in the inbox.
 
 What a load does:
 
 - It takes the newest file in the inbox and checks it against the `.md5`
   beside it.
-- An extract with the same MD5 as last time is skipped, unless `--force`.
-- Afterwards the file moves to `$TVT_ARCHIVE/osm/` (renamed with the date
-  and the start of its MD5) and the last two extracts are kept. Pruning
-  never removes the file just loaded, and reloading an archived file
-  refreshes its time, so it counts as the newest.
-- **Shrink guard:** when 1,000 or more ways are active, a load that brings
-  fewer than half of them refuses to retire the rest. Check the file, or
-  pass `--allow-shrink`.
+- Each consumer (`osm_consumers` in the plugins' manifests: `roads.osm_valley`
+  first, then `roads.osm_street`, and later paving, paths, water and
+  barriers) keeps its own MD5 gate, and one that already has this extract is
+  skipped, unless `--force`. Gates: `ops.osm_consumer`, and osm_valley's own
+  `$TVT_ARCHIVE/osm/last-loaded.json`.
+- It cuts the valley box out of the extract once (osmium's `smart` strategy)
+  into `$TVT_ARCHIVE/osm/cut/valley.osm.pbf`, with `valley.json` naming the
+  extract; every consumer reads the cut, and the ground's mask reads it too.
+  Only a run with osm_valley due (heavy anyway), `--make-cut` or
+  `--cut-only` makes the cut. Any other run stops before loading anything
+  when it's missing (on production right after the deploy that brings the
+  loader, and on scratch after every refresh) and says to make it first.
+- osm_valley runs first, then the others. Each runs in its own transaction
+  with its own `ops.fetch` row; one that fails is logged and the others go on
+  (rerun it with `--only`). The command exits 1 if any failed or was held.
+- **One extract for the partition.** `osm_street`, and later `osm_paving` and
+  `osm_paths`, load only the extract osm_valley holds (or loaded in the same
+  run): otherwise a way that gained or lost a lanes tag would be in
+  `core.osm_way` and `roads.osm_street` both, or in neither. One that would
+  load another extract is **held back**, and so is osm_valley when a
+  follower that holds another extract isn't loading in the same run
+  (`--only osm_valley` on a new extract). `--force` doesn't change that;
+  `--allow-mixed` does, and shouldn't be needed. Load a new extract without
+  `--only`, as the database owner. If a follower fails after osm_valley
+  loaded, the load and `--list` say the owners differ, and the roads build
+  refuses to run (`check_partition()`) until the follower is loaded with
+  `--only`.
+- Afterwards, if any consumer loaded it, the file moves to
+  `$TVT_ARCHIVE/osm/` (renamed with the date and the start of its MD5) and
+  the last two extracts are kept. Pruning never removes the file just
+  loaded, and reloading an archived file refreshes its time, so it counts as
+  the newest.
+- **Shrink guard:** a load that brings fewer than half of the active ways
+  (osm_valley: when 1,000 or more are active, as before) or of a consumer's
+  active objects (at any size) refuses to retire the rest. Check the file, or
+  pass `--allow-shrink`. A consumer's load that brings nothing while anything
+  is active is always refused.
+- `roads.osm_paving` measures its service ways and lots against
+  `roads.developed_land` (plan C11), developed land traced from the Cropland
+  Data Layer in the worker image ([plugins/roads](../plugins/roads/README.md)).
+  It loads without it, and says so: untagged service ways and lots stay
+  unknown until a build is loaded, which measures them again. Once farm's
+  `farm-cdl-load` has put the CDL in `/srv/tvt/archive/farm/cdl/`, make a
+  build in the worker (light: about 45 s at 0.15 GB, 1 GB and 1 CPU, no
+  network) and load it, before or after the paving's first load. The load is
+  a production load, so it goes under `heavy` (about a minute; as
+  `tvt_build`, `DATABASE_URL` set in the shell). The archive belongs to uid
+  1000, as both images run:
+
+  ```bash
+  stamp=$(date -u +%Y%m%dT%H%M%SZ)
+  docker run --rm --memory 1g --memory-swap 1g --cpus 1 --network none --user 1000:1000 \
+    -v /srv/tvt/repo:/repo:ro -v /srv/tvt/archive:/srv/archive tvt-worker \
+    python -m plugins.roads.build.developed --cdl /srv/archive/farm/cdl --out /srv/archive/roads/developed/$stamp
+  /srv/tvt/work/bin/heavy --deadline HH:MM --runtime 5 --peak 1 "roads-developed-load (deploy)" \
+    docker run --rm --memory 1g --memory-swap 1g --cpus 1 --network tvt_default -e DATABASE_URL \
+      -e TVT_ARCHIVE=/srv/archive -v /srv/tvt/archive:/srv/archive \
+      tvt-ingest:latest python3 -m ingest roads-developed-load --build /srv/archive/roads/developed/$stamp
+  ```
+
+  Again after each new CDL year (late February, with the owner's OK for the
+  download): `farm-cdl-load`, then these two.
+- Then the refresh cascade (plan §6): the builds that read the new tables
+  (`roads-build`, `water-build`, `trails-match`), the exports, the bake.
+  `roads-build` (the real-width roads, roads 0003) is a production load:
+  under `heavy` as `tvt_build`, about 10 minutes and 0.6 GB in its own
+  container (it measured 579 s on scratch, Oct 11), then `roads-export`
+  (about 15 s), whose base layers the bake reads:
+
+  ```bash
+  /srv/tvt/work/bin/heavy --deadline HH:MM --runtime 15 --peak 1 "roads-build (deploy)" \
+    docker run --rm --memory 2g --memory-swap 2g --cpus 2 --network tvt_default -e DATABASE_URL \
+      -e TVT_ARCHIVE=/srv/archive -v /srv/tvt/archive:/srv/archive \
+      tvt-ingest:latest sh -c 'python3 -m ingest roads-build && python3 -m ingest roads-export'
+  ```
+
+  The build holds its tables until it commits (it truncates them), so
+  nothing should read them live meanwhile; `roads-export` waits for it, and
+  keeps the newest two exports in `$TVT_ARCHIVE/roads/export/`.
 
 Timing at server scale, estimated Oct 6:
 
@@ -179,6 +466,37 @@ differ, the Oct 7 load is the fact; the Oct 6 numbers were sizing guesses.
 | `core.osm_node` | about 2,800 (752 intersection signals, about 1,709 crossing signals, 342 level crossings, less overlaps) | 767 signals, 1,742 crossing signals, 345 level crossings |
 | `core.segment_match` | about 6,000–9,000 | 14,054 ACHD segments matched, plus 2,222 turn-bay matches |
 | `raw.record` | about 16,300 rows (5–8 MB) on the first load, then about 150–500 new versions (60–200 KB) a week | not recorded |
+
+The other streets and alleys (`roads.osm_street`, the `osm_street`
+consumer), loaded on scratch from the same extract on Oct 11: 22,785 ways
+(20,815 residential, 1,003 alleys, 948 unclassified, 17 living streets, 2
+roads; about 5,600 km), 11 MB with indexes, in 16 s on the cut. The valley
+cut is 32 MB.
+
+Trails' paths (`trails.osm_path`, `osm_area`, `osm_route`: the `osm_paths`
+consumer), on scratch on Oct 11: 22,200 ways, 82 areas and 147 route
+relations in 21 s on the cut, as `tvt_build`. Then `python3 -m ingest
+trails-match` (light, about 25 s) links Ridge to Rivers' trails and the
+Greenbelt's closures to them and draws the routes; the load marks it.
+On production, after trails 0001: the grants (`tvt_build.sql`, and
+`tvt_tiles.sql` again, which keeps the tile login off the views over the
+City's rows: `trails.agency_line`, `agency_state`, `way_agency`), then
+`osm-load --only trails.osm_paths` on the cut already made, then
+`trails-match`, both as `tvt_build` in a capped container, never inside
+`ingest serve`. Run `trails-match` again after each water build (its
+canal-bank rule reads `water.reach`), until water's build marks it.
+
+## Unmerged code and builds: the scratch database and tvt_build
+
+Since Oct 11 (landscape sprint, F6), **unmerged code never touches the
+production database**. A branch's migrations, loads and builds run against
+`tvt-scratch-db`, a capped copy of production on its own internal network,
+refreshed by hand. Builds and loads run as **`tvt_build`**, a role with caps
+(`statement_timeout` 45 min, `temp_file_limit` 5 GB, `work_mem` 64 MB, one
+parallel worker) and only the grants builds need, on scratch and on
+production alike. Production gets new schemas through its migrations, then the
+role's grants again, then its loads, each in its own capped container. How it
+works, the grants and the commands: [scratch/README.md](scratch/README.md).
 
 ## Preview of main's app (UI v2)
 

@@ -1,0 +1,352 @@
+#!/usr/bin/env python3
+"""status: the project VM at a glance, for the lead at the start of each session (landscape sprint, M1).
+
+  status [--no-db] [--db-container NAME] [--db NAME] [--db-user NAME]
+
+One line each (a line that needs a look starts with "!"):
+  time      Boise and UTC
+  disk      free on / against heavy's rules (a heavy job starts with 12 GB plus its peak, and
+            stops under 11; the camera capture pauses under 10), and on the cold drive
+  heavy     heavy.lock: free, held (by whom, for how long) or shared (browser-spec runs); who waits
+  roll-up   last night's camera roll-up: going or finished, and the day's videos made, failed
+            or missing (from the capture services' status files and the archive's videos, failure
+            notes and JPEG folders)
+  restart   a planned VM restart in MAINTENANCE
+  sources   the scheduled sources by state (ops.source_status: fresh, late, stale, never), with
+            a line for each that isn't fresh or is failing, and its last error
+  builds    each build that failed (or was killed), is running or is marked (ops.build_status),
+            and the rest's age
+
+The database is read with psql inside its container (docker exec, as its owner over the socket),
+read-only, with a 10 s statement timeout. Default: container tvt-db-1, database tvt, user tvt
+(--db-container tvt-scratch-db for the scratch copy). Before migration 0021 the views aren't
+there, and it says so. --no-db skips the database.
+
+The windows, the roll-up rule, the cold drive and MAINTENANCE are heavy's, read from the heavy
+beside this file, so the two tools always agree.
+
+Exit: 0 nothing needs a look; 1 something does; 2 usage.
+
+Source: deploy/bin/status in the repo; installed in /srv/tvt/work/bin beside heavy.
+"""
+import argparse
+import datetime as dt
+import importlib.machinery
+import importlib.util
+import json
+import os
+import re
+import subprocess
+import sys
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+DISK_LOOK_GB = 15               # under this, heavy jobs with any peak are close to refused
+RUNNING_LONG_S = 18 * 3600      # longer than heavy's day window: no run under heavy can still be going
+DB_TIMEOUT_S = 30
+PGOPTIONS = "-c default_transaction_read_only=on -c statement_timeout=10s"
+
+
+def load_heavy(path=None):
+    """heavy, from beside this file (or path), as a module: its rules and paths."""
+    path = path or os.path.join(HERE, "heavy")
+    loader = importlib.machinery.SourceFileLoader("heavy_for_status", path)
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+    return module
+
+
+heavy = load_heavy()
+
+
+class Report:
+    def __init__(self):
+        self.lines = []
+        self.looks = 0
+
+    def ok(self, key, text):
+        self.lines.append(f"  {key + ':':9} {text}")
+
+    def look(self, key, text):
+        self.looks += 1
+        self.lines.append(f"! {key + ':':9} {text}")
+
+    def sub(self, text, look=False):
+        if look:
+            self.looks += 1
+        self.lines.append(f"{'!' if look else ' '}            {text}")
+
+
+def ago(seconds):
+    """'40 s', '12 min', '5 h', '3 d'."""
+    if seconds is None:
+        return "?"
+    s = max(0, round(seconds))
+    if s < 90:
+        return f"{s} s"
+    if s < 90 * 60:
+        return f"{round(s / 60)} min"
+    if s < 36 * 3600:
+        return f"{round(s / 3600)} h"
+    return f"{round(s / 86400)} d"
+
+
+def redact(text):
+    """text without passwords in URLs or keys and tokens in query strings."""
+    text = heavy.redact(text or "")
+    return re.sub(r"(?i)\b((?:api_?)?key|token|secret|password|sig)=([^&\s\"']+)", r"\1=***", text)
+
+
+# --- the VM -------------------------------------------------------------------
+
+def disk(report):
+    have = heavy.free_gb(heavy.ROOT)
+    text = (f"{have:.1f} GB free on {heavy.ROOT} (heavy jobs start with {heavy.FREE_MIN_GB} GB + their peak "
+            f"and stop under {heavy.FLOOR_GB}; the camera capture pauses under 10)")
+    (report.look if have < DISK_LOOK_GB else report.ok)("disk", text)
+    cold = heavy.cold_drive()
+    if cold is None:
+        report.ok("cold", "none set (COLD_MOUNT in heavy.conf)")
+    elif not heavy.cold_mounted(cold):
+        report.look("cold", f"not mounted ({cold[1] or cold[0]} is missing)")
+    else:
+        free = heavy.free_gb(cold[0])
+        text = f"{free:.0f} GB free on {cold[0]} (kept free: {cold[2]:g} GB)"
+        (report.look if free < cold[2] else report.ok)("cold", text)
+
+
+def lock(report, now_s):
+    try:
+        fd = os.open(heavy.path("heavy.lock"), os.O_RDONLY)
+    except OSError:
+        report.ok("heavy", "free (no heavy.lock yet)")
+        return
+    try:
+        state = heavy.lock_state(fd)
+    finally:
+        os.close(fd)
+    if state == "free":
+        report.ok("heavy", "heavy.lock is free")
+    elif state == "shared":
+        report.ok("heavy", f"heavy.lock is shared: {heavy.holder()}")
+    else:
+        try:
+            age = f", for {ago(now_s - os.stat(heavy.path('heavy.owner')).st_mtime)}"
+        except OSError:
+            age = ""
+        report.ok("heavy", f"heavy.lock is held: {heavy.holder()}{age}")
+    for w in heavy.waiters():
+        report.sub(f"waiting: {w}")
+
+
+def rollup_day(t):
+    """The day whose videos last night's roll-up makes: yesterday, or the day before until
+    tonight's roll-up starts (00:05)."""
+    back = 2 if t.time() < heavy.NIGHT[0] else 1
+    return t.date() - dt.timedelta(days=back)
+
+
+def has_frames(folder):
+    """A JPEG day folder the roll-up would encode: its index and at least one picture. (One
+    without is skipped as empty, and makes neither a video nor a failure note.)"""
+    if not os.path.exists(os.path.join(folder, "index.csv")):
+        return False
+    try:
+        with os.scandir(folder) as entries:
+            return any(e.name.endswith(".jpg") for e in entries)
+    except OSError:
+        return False
+
+
+def videos(cameras, day):
+    """(camera-days, videos made, failed) for one local day in the camera archive
+    (plugins/cameras/ingest/camera_video.py's layout). A camera-day counts if it has a video, a
+    failure note, or JPEGs to encode: the capture deletes a day's JPEGs once its video is made,
+    after two days or sooner when disk is low, so the videos are counted for themselves."""
+    cams = set()
+    for sub in ("jpeg", "video"):
+        try:
+            with os.scandir(os.path.join(cameras, sub)) as entries:
+                cams.update(e.name for e in entries if e.is_dir())
+        except OSError:
+            pass
+    had = made = failed = 0
+    for cam in sorted(cams):
+        video = os.path.join(cameras, "video", cam, f"{day:%Y}", f"{cam}-{day.isoformat()}.mp4")
+        if os.path.exists(video):
+            had, made = had + 1, made + 1
+        elif os.path.exists(video + ".failed"):
+            had, failed = had + 1, failed + 1
+        elif has_frames(os.path.join(cameras, "jpeg", cam, day.isoformat())):
+            had += 1
+    return had, made, failed
+
+
+def rollup(report, t):
+    statuses = heavy.read_statuses()
+    unread = []
+    for name, d in statuses:
+        beat = heavy._beat(d) if d is not None else None
+        tag = name.removesuffix(".json")
+        if beat is None:
+            unread.append(f"{tag}'s status can't be read")
+        elif t.timestamp() - beat[0] > 3 * beat[1] + 60:
+            unread.append(f"{tag} last reported {ago(t.timestamp() - beat[0])} ago")
+        elif d.get("paused_low_disk"):
+            unread.append(f"{tag} has paused for low disk")
+    going = heavy.rolling_now(t, statuses)
+    day = rollup_day(t)
+    had, made, failed = videos(os.path.dirname(heavy.STATUS_DIR), day)
+    missing = had - made - failed
+    counts = f"{made} of {had} camera-day videos made for {day.isoformat()}" + (f", {failed} failed" if failed else "")
+    tonight = heavy.NIGHT[0] <= t.time() < heavy.DAY[0]
+    finished, why = heavy.rollup_finished(t, statuses)
+    if going:
+        late = t.time() >= heavy.DAY[0]
+        text = f"going ({', '.join(going)}): {counts}" + ("; it holds heavy jobs until it ends" if late else "")
+        (report.look if late else report.ok)("roll-up", text)
+    elif tonight and not finished and had:
+        report.ok("roll-up", f"tonight's hasn't finished yet ({why}): {counts}")
+    elif had == 0:
+        report.look("roll-up", f"no camera videos or JPEGs for {day.isoformat()} in the archive")
+    elif missing or failed:
+        report.look("roll-up", f"not going, and {counts}" + (f", {missing} missing" if missing else ""))
+    else:
+        report.ok("roll-up", f"finished: {counts}")
+    for problem in unread:
+        report.sub(problem, look=True)
+
+
+def restart(report, t):
+    m = heavy.maintenance(t)
+    if m is None:
+        report.ok("restart", "none planned")
+    elif m[1] is None:
+        report.look("restart", f"MAINTENANCE gives no one time heavy can read, so it refuses every job: {m[0]!r}")
+    else:
+        report.look("restart", f"planned {m[1]:%Y-%m-%d %H:%M} Boise: {m[0]!r}")
+
+
+# --- the database -------------------------------------------------------------
+
+READY = ("select to_regclass('ops.source_status') is not null "
+         "and to_regclass('ops.build_status') is not null")
+DATA = """
+select json_build_object(
+  'sources', coalesce((select json_agg(json_build_object(
+      'source', source, 'state', state, 'every_s', extract(epoch from schedule)::bigint,
+      'age_s', extract(epoch from age)::bigint, 'failures', failures,
+      'last_error', left(last_error, 300)) order by source) from ops.source_status), '[]'::json),
+  'builds', coalesce((select json_agg(json_build_object(
+      'build', build, 'state', state, 'age_s', extract(epoch from age)::bigint,
+      'pending_s', extract(epoch from now() - pending_since)::bigint, 'pending_by', pending_by,
+      'pending_reason', left(pending_reason, 200), 'run_s', extract(epoch from now() - last_run_at)::bigint,
+      'last_error', left(last_error, 300)) order by build) from ops.build_status), '[]'::json))
+"""
+
+
+class DbError(Exception):
+    pass
+
+
+def psql_runner(container, db, user):
+    """A function that runs one statement read-only in the database's container and returns its output."""
+    def run(sql):
+        cmd = ["docker", "exec", "-e", f"PGOPTIONS={PGOPTIONS}", container, "psql", "-X", "-q", "-A", "-t",
+               "-v", "ON_ERROR_STOP=1", "-U", user, "-d", db, "-c", sql]
+        try:
+            out = subprocess.run(cmd, capture_output=True, text=True, timeout=DB_TIMEOUT_S)
+        except (OSError, subprocess.TimeoutExpired) as err:
+            raise DbError(str(err))
+        if out.returncode != 0:
+            raise DbError((out.stderr or out.stdout).strip()[:300])
+        return out.stdout.strip()
+    return run
+
+
+SOURCE_ORDER = {"stale": 0, "never": 1, "late": 2, "fresh": 3}
+BUILD_ORDER = {"failed": 0, "running": 1, "pending": 2, "built": 3}
+
+
+def database(report, run, where):
+    try:
+        ready = run(READY) == "t"
+        if not ready:
+            report.ok("sources", f"{where}: the staleness views aren't there yet (migration 0021)")
+            return
+        data = json.loads(run(DATA))
+    except (DbError, ValueError) as err:
+        report.look("sources", f"{where} didn't answer: {redact(str(err))}")
+        return
+    sources = data.get("sources") or []
+    counts = {s: 0 for s in ("fresh", "late", "stale", "never")}
+    for s in sources:
+        counts[s["state"]] = counts.get(s["state"], 0) + 1
+    worth = sorted((s for s in sources if s["state"] != "fresh" or s["failures"]),
+                   key=lambda s: (SOURCE_ORDER.get(s["state"], 9), -(s["age_s"] or 10**12), s["source"]))
+    text = f"{len(sources)} scheduled in {where}: " + ", ".join(f"{n} {s}" for s, n in counts.items() if n)
+    (report.look if worth else report.ok)("sources", text if sources else f"no scheduled sources in {where}")
+    for s in worth:
+        word = "failing" if s["state"] == "fresh" else s["state"]
+        line = (f"{s['source']}: {word}" + ("" if s["age_s"] is None else f", last good fetch {ago(s['age_s'])} ago")
+                + f" (every {ago(s['every_s'])})")
+        if s["failures"]:
+            line += f"; {s['failures']} failed tr{'y' if s['failures'] == 1 else 'ies'} since"
+            if s.get("last_error"):
+                line += f": {redact(s['last_error'])[:200]}"
+        report.sub(line)
+    builds = sorted(data.get("builds") or [], key=lambda b: (BUILD_ORDER.get(b["state"], 9), b["build"]))
+    if not builds:
+        report.ok("builds", "none has run or been marked")
+        return
+    n = {s: sum(1 for b in builds if b["state"] == s) for s in BUILD_ORDER}
+    text = ", ".join(f"{v} {k}" for k, v in n.items() if v)
+    (report.look if n["pending"] or n["running"] or n["failed"] else report.ok)("builds", text)
+    for b in builds:
+        built = "never built" if b["age_s"] is None else f"last built {ago(b['age_s'])} ago"
+        by = "; ".join(b.get("pending_by") or [])
+        if b["state"] == "running":
+            long = ", longer than a run should take" if (b["run_s"] or 0) > RUNNING_LONG_S else ""
+            line = f"{b['build']}: running for {ago(b['run_s'])}{long}; {built}"
+        elif b["state"] == "pending":
+            line = (f"{b['build']}: marked {ago(b['pending_s'])} ago ({by}), newest: "
+                    f"{redact(b.get('pending_reason'))}; {built}")
+        elif b["state"] == "failed":
+            marked = "" if b.get("pending_s") is None else f"; still marked, since {ago(b['pending_s'])} ago ({by})"
+            line = f"{b['build']}: its last run failed: {redact(b.get('last_error'))[:200]}{marked}; {built}"
+        else:
+            line = f"{b['build']}: {built}"
+        report.sub(line)
+
+
+# --- the command --------------------------------------------------------------
+
+def main(argv, run=None):
+    p = argparse.ArgumentParser(prog="status", description=__doc__.split("\n")[0])
+    p.add_argument("--no-db", action="store_true", help="skip the database")
+    p.add_argument("--db-container", default="tvt-db-1")
+    p.add_argument("--db", default="tvt")
+    p.add_argument("--db-user", default="tvt")
+    try:
+        args = p.parse_args(argv)
+    except SystemExit as err:
+        return 0 if err.code == 0 else 2
+    t = heavy.now()
+    report = Report()
+    utc = t.astimezone(dt.timezone.utc)
+    report.ok("time", f"{t:%Y-%m-%d %H:%M %Z} in Boise ({utc:%H:%M} UTC)")
+    disk(report)
+    lock(report, t.timestamp() - heavy.OFFSET)
+    rollup(report, t)
+    restart(report, t)
+    if not args.no_db:
+        database(report, run or psql_runner(args.db_container, args.db, args.db_user),
+                 f"{args.db} ({args.db_container})")
+    for line in report.lines:
+        print(line)
+    print(f"{report.looks} thing{'' if report.looks == 1 else 's'} to look at" if report.looks else "nothing to look at")
+    return 1 if report.looks else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

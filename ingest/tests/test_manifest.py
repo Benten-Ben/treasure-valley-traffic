@@ -134,6 +134,55 @@ class CheckTest(unittest.TestCase):
                     manifest.find([folder.path])
                 self.assertIn(word, str(cm.exception))
 
+    def test_osm_consumers(self):
+        def consumer(**kw):
+            return {"source": "osm_x", "tags": ["w/highway=path,track", "r/route=hiking"],
+                    "geometry": ["linestring", "relation"], "tables": ["t.osm_x"], **kw}
+
+        def with_consumer(name, c, kind="manual", **source):
+            osm = {"license": "ODbL", "credit": "© OpenStreetMap contributors", "republish": "yes", **source}
+            return plugin(name, [entry("osm_x", kind=kind, **osm)], tables=["t.osm_x"], osm_consumers=[c])
+
+        self.folder.write(with_consumer("good", consumer()))
+        self.folder.write(with_consumer("lots", consumer(tags=["a/amenity=parking", "n/amenity=parking_space"],
+                                                         geometry=["polygon", "point"])))
+        self.folder.write(with_consumer("strict", consumer(), republish="internal"))    # stricter than yes is fine
+        p = {p.name: p for p in manifest.find([self.folder.path])}
+        self.assertEqual(p["good"].osm_consumers[0]["source"], "osm_x")
+        self.assertEqual(len(p), 3)
+        cases = [
+            (with_consumer("a", consumer(), kind="source"), "manual"),
+            (with_consumer("b", consumer(source="osm_y")), "manual"),
+            (with_consumer("c", {**consumer(), "help": "x"}), "exactly"),
+            (with_consumer("d", consumer(tags=["highway=path"])), "tags-filter"),
+            (with_consumer("e", consumer(tags=["w/highway!=path"])), "tags-filter"),
+            (with_consumer("f", consumer(tags=["ww/highway"])), "tags-filter"),
+            (with_consumer("g", consumer(tags=[])), "tags"),
+            (with_consumer("h", consumer(geometry=["multipolygon"])), "geometry"),
+            (with_consumer("i", consumer(geometry=["linestring", "linestring"])), "geometry"),
+            (with_consumer("j", consumer(tags=["w/highway=path"])), "relation needs"),
+            (with_consumer("k", consumer(tables=["other.table"])), "tables"),
+            (plugin("l", [entry("osm_x", kind="manual", license="ODbL", credit="© OpenStreetMap contributors")],
+                    tables=["t.osm_x"], osm_consumers=[consumer(), consumer()]), "twice"),
+            (plugin("m", [entry("osm_x", kind="manual")], tables=["t.osm_x"], osm_consumers={}), "list"),
+            # The osm-landscape design's paving filter as written: osmium export would make no areas of it.
+            (with_consumer("n", consumer(tags=["nwr/amenity=parking,parking_space"], geometry=["polygon"])),
+             "polygon needs an a/"),
+            (with_consumer("o", consumer(tags=["w/highway=service", "a/amenity=parking"], geometry=["linestring"])),
+             "a/ expressions need geometry polygon"),
+            (with_consumer("p", consumer(tags=["nw/barrier"], geometry=["linestring"])), "n/ expressions need"),
+            (with_consumer("q", consumer(geometry=["linestring", "relation", "point"])), "point needs an n/"),
+            (with_consumer("r", consumer(), license="CC0"), "ODbL"),
+            (with_consumer("s", consumer(), credit="OSM"), "OpenStreetMap contributors"),
+        ]
+        for m, word in cases:
+            with self.subTest(m["name"]):
+                folder = Folder(self)
+                folder.write(m)
+                with self.assertRaises(manifest.ManifestError) as cm:
+                    manifest.find([folder.path])
+                self.assertIn(word, str(cm.exception))
+
     def test_folders_without_a_manifest_are_not_plugins(self):
         os.makedirs(os.path.join(self.folder.path, "notes"))
         os.makedirs(os.path.join(self.folder.path, "__pycache__"))

@@ -141,8 +141,14 @@ class DatabaseTest(unittest.TestCase):
         parsed, _ = per.parse([f])
         stats = per.store(self.conn, None, T0, parsed)
         self.assertEqual((stats["record versions new"], stats["events new"]), (1, 1))
+        if self.conn.execute("select to_regclass('ops.build_pending') is not null").fetchone()[0]:
+            # A new version marks the burn-scars build with the data (by this test's source name; rolled back).
+            self.assertIn("1 new perimeter version", stats["burn-scars marked"])
+            self.assertEqual(self.conn.execute("select marks from ops.build_pending where build = 'burn-scars' "
+                                               "and marked_by = %s", (name,)).fetchone(), (1,))
         stats = per.store(self.conn, None, T0 + timedelta(hours=1), {})       # rebuilt from the database
         self.assertEqual((stats["events changed"], stats["events closed"]), (0, 0))
+        self.assertNotIn("burn-scars marked", stats)                         # nothing new, already marked
         moved = copy.deepcopy(f)                                               # remapped 40 m east
         moved["geometry"]["rings"] = [[[x + 0.0005, y] for x, y in ring] for ring in f["geometry"]["rings"]]
         moved["attributes"]["poly_DateCurrent"] = ms(T0 + timedelta(hours=2))

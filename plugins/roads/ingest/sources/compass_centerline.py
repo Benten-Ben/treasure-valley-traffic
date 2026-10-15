@@ -29,7 +29,7 @@ import json
 from collections import Counter
 
 from ingest import arcgis, db
-from .. import segment_match
+from .. import marks, segment_match
 
 LAYER = "https://swidrdc.org/arcgis/rest/services/COMPASSData/CommonFeatures/FeatureServer/0"
 HUB = "https://share-open-data-compassidaho.hub.arcgis.com/datasets/compassidaho::regionalcenterline-2"
@@ -188,6 +188,7 @@ def run(conn):
                                                                         precision=6, max_features=MAX_PIECES)
         stats, changed = store(conn, f.id, f.started_at, [arcgis.esri_feature(x) for x in features])
         f.records = stats["pieces"]
+        marks.mark(conn, SOURCE["name"], changed, "pieces")
         # Inside the fetch: if matching fails, the store rolls back with it and the run is retried.
         if changed or segment_match.stale(conn, [SOURCE["name"]]):
             stats.update({f"match {k}": v for k, v in match(conn).items()})

@@ -18,18 +18,23 @@ import unittest
 
 from ingest import manifest
 from ingest import sources as registry
-from ingest.__main__ import BUILTINS, main
+from ingest.__main__ import BUILTINS, CORE_COMMANDS, main
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 PLUGINS_DIR = os.path.join(REPO, "plugins")
 
 SOURCES_BEFORE = ["achd_cameras", "idaho511_views_oneoff", "idaho511_rwis_sites_oneoff",  # the last: WP16, Oct 7
-                  "vrt_gtfs", "achd_roads", "itd_hpms", "achd_msm", "compass_centerline", "fra_crossings",
+                  "vrt_gtfs", "achd_roads", "itd_hpms", "achd_msm", "compass_centerline",
+                  "achd_bike_network",                                      # P7b, landscape sprint (Oct 11)
+                  "fra_crossings",
                   "achd_signal_points", "compass_signals", "compass_regional_signals", "intersections",
                   # ch. 17 Wave A (Oct 7): hazards (order 60) runs before safety's crashes, the rest after
                   "idl_fire_restrictions", "nifc_wfigs_incidents", "nifc_wfigs_perimeters", "nasa_firms", "nws_wwa",
                   "usgs_quakes", "compass_crashes", "noaa_hms_smoke", "nwps_gauges", "nrcs_snotel", "boise_ecoli",
-                  "boise_river_hazards", "usdm_drought", "r2r_trails", "boise_greenbelt_closures", "usfs_r4_orders",
+                  "boise_river_hazards", "usdm_drought",
+                  "idwr_irrigation_orgs", "idwr_season_of_use",                # P4-data, landscape sprint (Oct 11)
+                  "canal_season",                                              # P5, landscape sprint (Oct 11)
+                  "r2r_trails", "boise_greenbelt_closures", "usfs_r4_orders",
                   "idpr_route_closures", "idpr_area_restrictions", "awc_metar", "idfg_roadkill", "agrimet_et",
                   "swpc_ovation", "swpc_kp_1m", "compass_counts", "compass_growth", "compass_plats", "compass_congestion"]
 STREAMS_BEFORE = ["vrt_realtime", "idaho511_frames", "itd_wzdx", "idaho511_api"]
@@ -38,7 +43,7 @@ WHERE = {  # source: plugin (docs/15 §15.4)
     "idl_fire_restrictions": "hazards", "nifc_wfigs_incidents": "hazards", "nifc_wfigs_perimeters": "hazards",
     "nasa_firms": "hazards", "nws_wwa": "hazards", "usgs_quakes": "hazards", "noaa_hms_smoke": "air",
     "nwps_gauges": "water", "nrcs_snotel": "water", "boise_ecoli": "water", "boise_river_hazards": "water",
-    "usdm_drought": "water", "r2r_trails": "trails", "boise_greenbelt_closures": "trails",
+    "usdm_drought": "water", "canal_season": "water", "r2r_trails": "trails", "boise_greenbelt_closures": "trails",
     "usfs_r4_orders": "lands", "idpr_route_closures": "lands", "idpr_area_restrictions": "lands",
     "awc_metar": "weather", "idfg_roadkill": "wildlife", "agrimet_et": "farm", "swpc_ovation": "sky",
     "swpc_kp_1m": "sky",
@@ -46,6 +51,7 @@ WHERE = {  # source: plugin (docs/15 §15.4)
     "idaho511_frames": "cameras",
     "vrt_gtfs": "transit", "vrt_realtime": "transit",
     "achd_roads": "roads", "itd_hpms": "roads", "achd_msm": "roads", "compass_centerline": "roads",
+    "achd_bike_network": "roads",
     "fra_crossings": "intersections", "achd_signal_points": "intersections", "compass_signals": "intersections",
     "compass_regional_signals": "intersections", "intersections": "intersections",
     "itd_wzdx": "conditions", "idaho511_api": "conditions",
@@ -73,12 +79,20 @@ class RegistryTest(unittest.TestCase):
             self.assertEqual(registry.PLUGIN_OF[name], plugin, name)
             module = (registry.SOURCES.get(name) or registry.STREAMS[name]).__name__
             self.assertTrue(module.startswith(f"plugins.{plugin}.ingest."), module)
-        self.assertEqual([e["name"] for _, e in registry.MANUAL if _.name == "roads"], ["osm_valley"])
+        self.assertEqual([e["name"] for _, e in registry.MANUAL if _.name == "roads"],
+                         ["osm_valley", "osm_street", "osm_paving", "cdl_developed"])
+        self.assertEqual([e["name"] for _, e in registry.MANUAL if _.name == "soils"], ["ssurgo"])
+        self.assertEqual([e["name"] for _, e in registry.MANUAL if _.name == "hazards"],
+                         ["nifc_wfigs_perimeters_backfill"])
+        self.assertEqual([e["name"] for _, e in registry.MANUAL if _.name == "trails"], ["osm_paths", "trails_match"])
+        self.assertEqual([e["name"] for _, e in registry.MANUAL if _.name == "water"],
+                         ["nhd_hr", "hydroshare_canals", "osm_waterways", "canal_dates"])
 
     def test_the_plugins(self):
         self.assertEqual(sorted(p.name for p in ours()),
                          ["air", "cameras", "conditions", "development", "farm", "flow", "hazards", "intersections",
-                          "lands", "roads", "safety", "sky", "trails", "transit", "trees", "water", "weather", "wildlife"])
+                          "lands", "roads", "safety", "sky", "soils", "trails", "transit", "trees", "water", "weather",
+                          "wildlife"])
 
     def test_manifests_agree_with_their_modules(self):
         for plugin in ours():
@@ -104,11 +118,19 @@ class RegistryTest(unittest.TestCase):
 
     def test_commands_resolve_and_keep_clear_of_the_built_ins(self):
         self.assertEqual(sorted(registry.COMMANDS),
-                         ["match-intersections", "match-routes", "osm-load", "rollup", "route-colors", "segment-match",
-                          "transit-progress", "transit-ribbons", "trees-load"])
-        self.assertFalse(set(registry.COMMANDS) & set(BUILTINS))
+                         ["burn-scars", "canal-dates-load", "canal-season", "farm-cdl-load", "farm-csb-load", "farm-derive", "farm-export",
+                          "farm-fields-load", "hydroshare-load", "match-intersections", "match-routes", "nhd-load",
+                          "roads-build", "roads-developed-load", "roads-export", "rollup", "route-colors",
+                          "segment-match", "shrubs-hedge-check", "shrubs-load", "soils-export", "soils-load",
+                          "trails-match", "transit-progress", "transit-ribbons", "trees-load", "water-build",
+                          "water-export", "wfigs-backfill"])
+        self.assertFalse(set(registry.COMMANDS) & (set(BUILTINS) | set(CORE_COMMANDS)))
         for name in registry.COMMANDS:
             self.assertTrue(callable(registry.command(name)), name)
+        # osm-load moved to core with the landscape sprint's loader (ingest/osm_extract.py).
+        self.assertEqual(sorted(CORE_COMMANDS), ["osm-load"])
+        for name, (module, _) in CORE_COMMANDS.items():
+            self.assertTrue(callable(importlib.import_module(module).main), name)
 
     def test_tables_exist_and_have_one_owner(self):
         created = set()
@@ -149,8 +171,12 @@ class CommandLineTest(unittest.TestCase):
     def test_help_lists_the_plugin_commands(self):
         code, out = self.run_main("-h")
         self.assertEqual(code, 0)
-        for name in registry.COMMANDS:
+        for name in [*registry.COMMANDS, *CORE_COMMANDS]:
             self.assertIn(name, out)
+
+    def test_a_core_command_gets_its_own_arguments(self):
+        code, _ = self.run_main("osm-load", "--no-such-flag")
+        self.assertEqual(code, 2)                     # osm_extract's own parser refused it
 
 
 if __name__ == "__main__":

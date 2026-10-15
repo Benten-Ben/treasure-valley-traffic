@@ -20,11 +20,24 @@ A manifest:
     commands        optional extra `python3 -m ingest` subcommands: {"name",
                     "module", "help"} and optionally "function" (default main),
                     called with the arguments after the command's name
+    osm_consumers   optional: what it reads from the OpenStreetMap extract that
+                    `python3 -m ingest osm-load` loads (ingest/osm_extract.py):
+                    {"source" (one of its "manual" sources: name, module,
+                    license, credit and republish live there; the license is
+                    ODbL and the credit "© OpenStreetMap contributors"), "tags"
+                    (in osmium's tags-filter syntax, e.g.
+                    "w/highway=residential,road"; n/ nodes, w/ ways as lines,
+                    a/ closed ways and multipolygons as areas, r/ relations),
+                    "geometry" (what it gets: "point", "linestring", "polygon",
+                    "relation", one for each type its tags name: n/ point, w/
+                    linestring, a/ polygon, r/ relation), "tables" (the tables
+                    it writes, from its own tables)}
     storage, ethics short notes
 
 Kinds: "source" (run by `run` and `serve`), "stream" (run continuously by
-`stream`) and "manual" (loaded by hand with a plugin command; listed for its
-license, never scheduled). republish: "yes", "aggregates", "internal" or "no".
+`stream`) and "manual" (loaded by hand, with a plugin command or as one of its
+osm_consumers; listed for its license, never scheduled). republish: "yes",
+"aggregates", "internal" or "no".
 
 Order. Plugins: dependencies first, then by order, then by name (migrations
 use this). Sources and streams, each kind on its own: a plugin's entries run
@@ -45,10 +58,20 @@ VISIBILITY = ("public", "private")
 DEFAULT_ORDER = 100
 FILE = "plugin.json"
 
-_FIELDS = {"name", "title", "depends", "visibility", "order", "sources", "tables", "commands", "storage", "ethics"}
+_FIELDS = {"name", "title", "depends", "visibility", "order", "sources", "tables", "commands", "osm_consumers",
+           "storage", "ethics"}
 _REQUIRED = {"name", "title", "depends", "visibility", "sources", "tables", "storage", "ethics"}
 _ENTRY_FIELDS = {"name", "module", "kind", "license", "credit", "republish", "order"}
 _COMMAND_FIELDS = {"name", "module", "help", "function"}
+_CONSUMER_FIELDS = {"source", "tags", "geometry", "tables"}
+OSM_GEOMETRY = ("point", "linestring", "polygon", "relation")
+OSM_TYPE_GEOMETRY = {"n": "point", "w": "linestring", "a": "polygon", "r": "relation"}   # what each type gives
+OSM_LICENSE, OSM_CREDIT = "ODbL", "OpenStreetMap contributors"
+# An osmium tags-filter expression, the subset consumers use: object types (n, w, r, a for
+# areas), a key, and optionally values: "w/highway", "n/crossing:signals=yes",
+# "nwr/amenity=parking,parking_space". No "!=", wildcards or regular expressions.
+OSM_TAG_EXPRESSION = re.compile(r"^(?P<types>[nwra]{1,4})/(?P<key>[A-Za-z0-9_:.-]+)"
+                                r"(?:=(?P<values>[A-Za-z0-9_:.;-]+(?:,[A-Za-z0-9_:.;-]+)*))?$")
 _MODULE = re.compile(r"^[A-Za-z_]\w*(\.[A-Za-z_]\w*)*$")
 _TABLE = re.compile(r"^[a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*$")
 _COMMAND = re.compile(r"^[a-z][a-z0-9-]*$")
@@ -78,6 +101,10 @@ class Plugin:
 
     def entries(self, kind):
         return [e for e in self.manifest["sources"] if e["kind"] == kind]
+
+    @property
+    def osm_consumers(self):
+        return self.manifest.get("osm_consumers", [])
 
 
 def plugin_folders():
@@ -163,6 +190,52 @@ def check_manifest(m, folder_name, where):
             bad(f"{label}: module must be a dotted module path inside the plugin")
         if not isinstance(c.get("function", "main"), str) or not c.get("function", "main").isidentifier():
             bad(f"{label}: function must be a Python name")
+    check_osm_consumers(m, bad)
+
+
+def check_osm_consumers(m, bad):
+    consumers = m.get("osm_consumers", [])
+    if not isinstance(consumers, list):
+        bad("osm_consumers must be a list")
+    manual = {e["name"]: e for e in m["sources"] if e["kind"] == "manual"}
+    seen = set()
+    for i, c in enumerate(consumers):
+        label = f"osm_consumers[{i}]"
+        if not isinstance(c, dict) or set(c) != _CONSUMER_FIELDS:
+            bad(f"{label} must have exactly source, tags, geometry and tables")
+        if c["source"] not in manual:
+            bad(f"{label}: source must name one of its own \"manual\" sources")
+        source = manual[c["source"]]
+        if source["license"] != OSM_LICENSE or OSM_CREDIT not in source["credit"]:
+            bad(f"{label}: {c['source']} reads OpenStreetMap, so its source's license must be {OSM_LICENSE} and its "
+                f"credit \"© {OSM_CREDIT}\" (republish may be stricter than yes)")
+        if c["source"] in seen:
+            bad(f"{label}: {c['source']} is consumed twice")
+        seen.add(c["source"])
+        tags = c["tags"]
+        if not isinstance(tags, list) or not tags or not all(isinstance(t, str) for t in tags):
+            bad(f"{label}: tags must be a non-empty list of osmium tags-filter expressions")
+        for t in tags:
+            match = OSM_TAG_EXPRESSION.match(t)
+            if not match or len(set(match["types"])) != len(match["types"]):
+                bad(f"{label}: {t!r} isn't a tags-filter expression we take (TYPES/KEY or TYPES/KEY=V1,V2; "
+                    "types from n, w, r, a)")
+        geometry = c["geometry"]
+        if (not isinstance(geometry, list) or not geometry or len(set(geometry)) != len(geometry)
+                or not set(geometry) <= set(OSM_GEOMETRY)):
+            bad(f"{label}: geometry must be a list of {', '.join(OSM_GEOMETRY)}")
+        # Each type its tags name gives one geometry, and each geometry needs its type: osmium export
+        # makes areas only from a/ expressions, so geometry polygon with w/ or nwr/ ones gets nothing.
+        types = {t for e in tags for t in OSM_TAG_EXPRESSION.match(e)["types"]}
+        problems = [f"geometry {g} needs {'a' if t == 'w' else 'an'} {t}/ expression in tags"
+                    for t, g in OSM_TYPE_GEOMETRY.items() if g in geometry and t not in types]
+        problems += [f"its {t}/ expressions need geometry {g} (or drop the {t} type)"
+                     for t, g in OSM_TYPE_GEOMETRY.items() if t in types and g not in geometry]
+        if problems:
+            bad(f"{label}: " + "; ".join(problems))
+        tables = c["tables"]
+        if not isinstance(tables, list) or not tables or not set(tables) <= set(m["tables"]):
+            bad(f"{label}: tables must list the tables it writes, each one of the plugin's own tables")
 
 
 def find(folders=None):

@@ -48,6 +48,7 @@ layer that isn't available says why on its button.
 | `TVT_FRAME_SOURCE` | `511` (default) or `fixture`: seeded frames under `FRAMES_DIR/_fixture`, nothing fetched. Tests and build agents use `fixture`. |
 | `CAMERA_IMAGES_ENABLED` | Live camera images (docs/14 §14.6): the capture archive and the on-demand 511 fetcher. Off unless `true`; `deploy/compose.live-images.yml` turns it on. |
 | `TVT_ARCHIVE` | The capture archive; the app reads only `cameras/jpeg` and `cameras/status`, read-only. |
+| `TILES_DATABASE_URL` | The connection toggled layers' tile cuts use (`#lib/server/mvt`). The server logs in as `tvt_tiles`, a plain login that [`deploy/tvt_tiles.sql`](../deploy/tvt_tiles.sql) grants only core and the tile plugins' schemas. Unset (dev and tests), they use `DATABASE_URL`. |
 | `TVT_E2E_REQUIRE_DATA` | `1`: a spec fails, rather than skips, when the seeded data is missing (set in the workflow). |
 | `TVT_E2E_URL` | Run browser specs against a deployed server instead of a local preview (deploy runbook, step 6). |
 
@@ -61,7 +62,7 @@ a package's environment.
 |---|---|
 | `src/routes/(map)/` | The map layout (MapHost and the chrome) and its pages; `calibrate/[id]` is Calibrate mode on the same map |
 | `src/routes/v1/calibrate/[id]/` | The old calibrator, kept until the owner has saved a calibration with the new one |
-| `src/routes/api/` | `meta`, `transit/{network,tracks}`, `cameras` (and `views`, `live`, `status`, `[id]`), `calibrations`, `views/[id]/{calibrations,frame,live/[sha]}`, `roadweather`, `tiles/roads`, `health` |
+| `src/routes/api/` | `meta`, `transit/{network,tracks}`, `cameras` (and `views`, `live`, `status`, `[id]`), `calibrations`, `views/[id]/{calibrations,frame,live/[sha]}`, `roadweather`, `tiles/roads`, `health`, `trails/status` (trail status for feature-state, #lib/server/trails); `[plugin]/tiles/[layer]/…` serves every toggled layer's tiles (#lib/server/mvt) |
 | `src/lib/app/` | Boot (manifest and `/api/meta` before the map exists), the app context, cleanup |
 | `src/lib/components/MapHost.svelte` | Creates the one map |
 | `src/lib/map/` | Style, the Valley and Clay flavors, colors, layer order, the picker, the render loop, buildings |
@@ -72,7 +73,7 @@ a package's environment.
 | `src/lib/state/` | View, modes, windows, history, follow, clock, selection, polling, saved settings |
 | `src/lib/ui/` | The chrome: top bar, toolbar, legends, inspect card, windows, phone sheet and tab bar, keys and help |
 | `src/lib/contracts/` | The JSON contracts shared by server and client |
-| `src/lib/server/` | Database, data versions, tiles, frames, the capture archive, the 511 fetcher and robots.txt, transit queries |
+| `src/lib/server/` | Database, data versions, tiles (`road-tiles.ts`; `mvt.ts` for toggled layers, with each plugin's definitions in `<plugin>/tiles.ts`), frames, the capture archive, the 511 fetcher and robots.txt, transit queries |
 | `src/lib/perf/` | Performance marks and the `?perf` HUD |
-| `scripts/` | The harness: seeds, the fake archive, database clones, the e2e server, `perf.mjs`, `bundle-budget.mjs`, `review-page.mjs` |
+| `scripts/` | The harness: seeds, the fake archive, database clones, the e2e server, `perf.mjs`, `bundle-budget.mjs`, `review-page.mjs`; `map-sheets.mjs`, screenshots of the preview at the review places ([basemap/sheets](../basemap/sheets/README.md)) |
 | `tests/e2e/` | Browser specs, one tag per package (`@wp0` … `@wp17`) |

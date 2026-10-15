@@ -11,7 +11,9 @@ the proposed regional ring (about W −117.30, S 42.90, E −115.60, N 44.30;
 plugins); the ideas behind it are in
 [chapter 16](../16-ideas-and-personas.md#cyclist-and-pedestrian-safety-roads).
 
-**Status: research only; nothing here is approved.** Each source goes to
+**Status: research only; nothing here is approved,** except ACHD's
+Official Bicycle Facility Network, approved and built on Oct 8–11, 2026
+([below](#achd-official-bicycle-facility-network)). Each source goes to
 the owner one at a time before anything is built
 ([SOURCES](../SOURCES.md)). Every entry was checked against its official
 pages, robots.txt and terms on Oct 7, 2026: of the 28 sources, 17 were
@@ -89,6 +91,17 @@ gap: whether COMPASS has a public Eco-Visio counter page ⚠️).
 ### ACHD Official Bicycle Facility Network
 
 Internal only · verified: confirmed · confidence high · effort S
+
+**Built (Oct 11, 2026):** the owner approved it on Oct 8 for the landscape
+sprint (decision 11: "wanna do bike network now too?"), internal and
+credited to ACHD. It's the roads plugin's source `achd_bike_network`
+(package P7b): monthly through the shared ArcGIS reader, versioned in
+`raw.record`, with the widths in `roads.bike_facility`, ACHD's free text
+kept apart, and each street record matched to ACHD's road segments for the
+real-width roads build ([plugins/roads](../../plugins/roads/README.md#achds-bike-network-widths-for-the-real-width-roads)).
+The change check is a content hash of the read, not the DCAT date. On
+Oct 11 the layer held 3,932 records; OBJECTIDs ran 3929–7869, so a reload
+renumbers them and rows are carried over.
 
 - **Endpoint:** `gis.achdidaho.org/server/rest/services/ArcGIS_Hub/Official_Bicycle_Facility_Network/FeatureServer/1`,
   listed in ACHD's open-data hub. A twin MapServer sits on
