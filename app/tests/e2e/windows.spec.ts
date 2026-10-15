@@ -13,8 +13,10 @@ import { expect, mapReady, screenPath, test } from './fixtures.js';
  *   top one;
  * - a window docked right stops beside the camera widget and the Map /
  *   Aerial switch;
- * - the map's padding follows the open columns, and H, O and Back land in
- *   the visible area (under reduced motion too, through the history);
+ * - the map's padding follows the fixed chrome, and H, O and Back land in
+ *   the visible area (under reduced motion too, through the history); the
+ *   inspect card moves nothing, flat or tilted, while a move started with it
+ *   open lands left of it, and a click it would cover pans clear;
  * - at 390×844: a tab bar and a sheet (windows as its tabs), no horizontal
  *   scroll, targets ≥ 44 px;
  * - Backspace returns to the view before a programmatic fly;
@@ -33,6 +35,15 @@ type Info = {
 };
 
 const VIEW = '#map=14/43.615/-116.2023/0/45&layers=cameras';
+/** The map's padding in Explore at 1280×800: the bars, the legend column and the camera widget's (§14.3 "Regions"). */
+const CHROME = { top: 76, right: 72, bottom: 104, left: 312 };
+const MERIDIAN: [number, number] = [-116.3915, 43.6121];
+/**
+ * Console errors less MapLibre's bare "map error Error": closer in than the basemap's z15, a range fetch for a
+ * tile two overscaled tiles share now and then fails in transport ("Failed to fetch"), which no chrome code
+ * touches (the lookthrough and review specs set it aside the same way).
+ */
+const realErrors = (errors: string[]) => errors.filter((e) => e !== 'map error Error');
 
 async function openTest(page: Page, hash = VIEW) {
 	await page.goto(`/?window-test${hash}`);
@@ -404,7 +415,7 @@ test.describe('windows', () => {
 		await page.mouse.up();
 		expect(await page.evaluate(() => (globalThis as any).__tvtWindows.following())).toBeNull();
 	});
-	test('the map padding follows the open columns: H lands in the visible area, the inspect card moves nothing', { tag: '@wp3' }, async ({ page, consoleErrors }) => {
+	test('the map padding follows the fixed chrome: H lands in the visible area; the inspect card moves nothing, flat or tilted', { tag: '@wp3' }, async ({ page, consoleErrors }) => {
 		test.setTimeout(300_000);
 		await openTest(page, '#map=13/43.6/-116.25/0/0&layers=none');
 		const map = () =>
@@ -415,8 +426,9 @@ test.describe('windows', () => {
 			});
 		const at = (lngLat: [number, number]) => page.evaluate((ll) => (globalThis as any).__tvt.map.project(ll), lngLat);
 		const settled = () => page.waitForFunction(() => !(globalThis as any).__tvt.map.isMoving(), null, { timeout: 60_000 });
+		const card = page.getByRole('region', { name: 'Selected marker' });
 		// Below the top bar, above the toolbar, right of the legends, left of the camera widget.
-		await expect.poll(async () => (await map()).padding).toEqual({ top: 76, right: 72, bottom: 104, left: 312 });
+		await expect.poll(async () => (await map()).padding).toEqual(CHROME);
 		let m = await map();
 		// The link's centre is where it said, drawn in the middle of the visible area.
 		expect(Math.abs(m.view.center[0] - -116.25)).toBeLessThan(1e-6);
@@ -426,28 +438,58 @@ test.describe('windows', () => {
 		expect(Math.abs(p.x - mid.x)).toBeLessThan(1.5);
 		expect(Math.abs(p.y - mid.y)).toBeLessThan(1.5);
 
-		// The inspect card opens: the padding takes its column, and the picture stays put.
+		// The inspect card opens and closes: the padding stays the chrome's, and the picture stays put.
 		const fixed: [number, number] = [-116.24, 43.605];
 		const before = await at(fixed);
 		await page.evaluate(() => (globalThis as any).__tvtWindows.select('A test thing'));
-		await expect(page.getByRole('region', { name: 'Selected marker' })).toBeVisible();
-		await expect.poll(async () => (await map()).padding.right).toBe(392);
+		await expect(card).toBeVisible();
+		await page.waitForTimeout(500);
 		await settled();
+		expect((await map()).padding, 'the card takes no padding').toEqual(CHROME);
 		let after = await at(fixed);
 		expect(Math.hypot(after.x - before.x, after.y - before.y), 'the map didn’t move').toBeLessThan(1.5);
 		await page.keyboard.press('Escape');
-		await expect(page.getByRole('region', { name: 'Selected marker' })).toHaveCount(0);
-		await expect.poll(async () => (await map()).padding.right).toBe(72);
+		await expect(card).toHaveCount(0);
+		await page.waitForTimeout(500);
 		await settled();
+		expect((await map()).padding).toEqual(CHROME);
 		after = await at(fixed);
 		expect(Math.hypot(after.x - before.x, after.y - before.y), 'nor when it closes').toBeLessThan(1.5);
+
+		// Tilted and close in, where a new padding would move the perspective and skew the 3D scene (about
+		// 65 px at z19.5, pitch 65): ground points across the screen, some under the card, stay within 1.5 px.
+		// (The North End, as the trees spec: one downtown z15 basemap tile fails to load from the local tiles.)
+		await page.evaluate(() => (globalThis as any).__tvt.map.jumpTo({ center: [-116.20892, 43.62755], zoom: 19.5, pitch: 65, bearing: -12 }));
+		await mapReady(page);
+		const spots: [number, number][] = [
+			[400, 260],
+			[mid.x, mid.y],
+			[860, 600],
+			[m.w - 200, 300],
+			[m.w - 120, 640]
+		];
+		const ground = await page.evaluate((s) => s.map(([x, y]) => (globalThis as any).__tvt.map.unproject([x, y]).toArray() as [number, number]), spots);
+		const drawn = () => page.evaluate((g) => g.map((ll) => (globalThis as any).__tvt.map.project(ll) as { x: number; y: number }), ground);
+		const flat = await drawn();
+		for (const [i, q] of flat.entries()) expect(Math.hypot(q.x - spots[i][0], q.y - spots[i][1]), 'the spots are on the ground').toBeLessThan(1);
+		await page.evaluate(() => (globalThis as any).__tvtWindows.select('A test thing'));
+		await expect(card).toBeVisible();
+		await page.waitForTimeout(500);
+		await settled();
+		await mapReady(page);
+		for (const [i, q] of (await drawn()).entries()) expect(Math.hypot(q.x - flat[i].x, q.y - flat[i].y), `spot ${i} as the card opens`).toBeLessThan(1.5);
+		await page.keyboard.press('Escape');
+		await expect(card).toHaveCount(0);
+		await page.waitForTimeout(500);
+		await settled();
+		for (const [i, q] of (await drawn()).entries()) expect(Math.hypot(q.x - flat[i].x, q.y - flat[i].y), `spot ${i} as it closes`).toBeLessThan(1.5);
 
 		// H: Meridian lands in the middle of the visible area, not of the whole screen.
 		await page.keyboard.press('KeyH');
 		await settled();
 		await mapReady(page);
 		m = await map();
-		p = await at([-116.3915, 43.6121]);
+		p = await at(MERIDIAN);
 		expect(Math.abs(p.x - mid.x)).toBeLessThan(2);
 		expect(Math.abs(p.y - mid.y)).toBeLessThan(2);
 
@@ -458,13 +500,177 @@ test.describe('windows', () => {
 		const saved = (await map()).view;
 		await page.reload();
 		await mapReady(page);
-		await expect.poll(async () => (await map()).padding).toEqual({ top: 76, right: 72, bottom: 104, left: 312 });
+		await expect.poll(async () => (await map()).padding).toEqual(CHROME);
 		const again = (await map()).view;
 		expect(Math.abs(again.center[0] - saved.center[0])).toBeLessThan(2e-5);
 		expect(Math.abs(again.center[1] - saved.center[1])).toBeLessThan(2e-5);
 		await page.waitForTimeout(1500);
 		expect(await page.evaluate(() => location.hash), 'the hash reads the same').toBe(hash);
-		expect(consoleErrors).toEqual([]);
+		expect(realErrors(consoleErrors)).toEqual([]);
+	});
+
+	test('with the inspect card open, H, O and Back land left of it, and the padding, view and hash keep none of it', { tag: '@wp3' }, async ({ page, consoleErrors }) => {
+		test.setTimeout(300_000);
+		await openTest(page, '#map=13/43.6/-116.25/0/0&layers=none');
+		const map = () =>
+			page.evaluate(() => {
+				const m = (globalThis as any).__tvt.map;
+				const c = m.getContainer().getBoundingClientRect();
+				return { padding: m.getPadding(), w: c.width, h: c.height, view: (globalThis as any).__tvt.view };
+			});
+		const at = (lngLat: [number, number]) => page.evaluate((ll) => (globalThis as any).__tvt.map.project(ll), lngLat);
+		const settled = () => page.waitForFunction(() => !(globalThis as any).__tvt.map.isMoving(), null, { timeout: 60_000 });
+		const card = page.getByRole('region', { name: 'Selected marker' });
+		await expect.poll(async () => (await map()).padding).toEqual(CHROME);
+		const { w, h } = await map();
+		const mid = { x: 312 + (w - 312 - 72) / 2, y: 76 + (h - 76 - 104) / 2 };
+		// The middle of the area the card leaves: right of the legends, left of the card's column.
+		const clear = { x: 312 + (w - 312 - 392) / 2, y: mid.y };
+		const near = (q: { x: number; y: number }, r: { x: number; y: number }, what: string, px = 2) => {
+			expect(Math.abs(q.x - r.x), `${what} (x)`).toBeLessThan(px);
+			expect(Math.abs(q.y - r.y), `${what} (y)`).toBeLessThan(px);
+		};
+		await page.evaluate(() => (globalThis as any).__tvtWindows.select('A test thing'));
+		await expect(card).toBeVisible();
+
+		// H lands Meridian left of the card. The map keeps the chrome's padding, and its centre (the view, the
+		// hash) is still the place drawn in the middle of that padding.
+		await page.keyboard.press('KeyH');
+		await settled();
+		await mapReady(page);
+		near(await at(MERIDIAN), clear, 'H: Meridian in the middle of the area the card leaves');
+		let m = await map();
+		expect(m.padding, 'the fly took no padding').toEqual(CHROME);
+		near(await at(m.view.center), mid, 'the view’s centre is the map’s own', 1.5);
+		const box = (await card.boundingBox())!;
+		expect((await at(MERIDIAN)).x).toBeLessThan(box.x);
+
+		// A reload with that hash opens the same picture (the card closed now): Meridian where it was.
+		await page.waitForTimeout(1500);
+		await page.reload();
+		await mapReady(page);
+		await expect.poll(async () => (await map()).padding).toEqual(CHROME);
+		near(await at(MERIDIAN), clear, 'after a reload, the hash held no card');
+		const reloaded = (await map()).view;
+
+		// O with the card open: the valley is fitted to the area the card leaves, and lands as far left as the
+		// map's bounds allow. (MapLibre keeps the padded view inside maxBounds, the terrain's ring: at Overview's
+		// zoom that stops the valley short, so its east end can stay under the card, §14.3 "Regions".)
+		await page.evaluate(() => (globalThis as any).__tvtWindows.select('A test thing'));
+		await expect(card).toBeVisible();
+		await page.keyboard.press('KeyO');
+		await settled();
+		await mapReady(page);
+		const sw = await at([-116.72, 43.47]);
+		const ne = await at([-116.08, 43.73]);
+		for (const q of [sw, ne]) {
+			expect(q.x).toBeGreaterThanOrEqual(312 - 1);
+			expect(q.y).toBeGreaterThanOrEqual(76 - 1);
+			expect(q.y).toBeLessThanOrEqual(h - 104 + 1);
+		}
+		const across = (ne.x - sw.x) / (w - 312 - 392 - 80);
+		expect(across, 'fitted to the area the card leaves, less the 40 px margins').toBeGreaterThan(0.97);
+		expect(across).toBeLessThan(1.03);
+		// Where the bounds' east edge is drawn: at the padded view's right edge when they stop it.
+		const bound = await page.evaluate(([y]) => {
+			const m = (globalThis as any).__tvt.map;
+			return m.project([m.getMaxBounds().getEast(), m.unproject([0, y]).lat]).x as number;
+		}, [mid.y]);
+		if (ne.x > w - 392 + 1) expect(Math.abs(bound - (w - 72)), 'only the bounds stop it short of the card').toBeLessThan(6);
+		expect((await map()).padding).toEqual(CHROME);
+
+		// Back, to the view O left: its centre lands left of the card too.
+		await page.keyboard.press('Backspace');
+		await settled();
+		await mapReady(page);
+		m = await map();
+		expect(Math.abs(m.view.zoom - reloaded.zoom)).toBeLessThan(0.01);
+		expect(Math.abs(m.view.pitch - reloaded.pitch)).toBeLessThan(0.01);
+		near(await at(reloaded.center), clear, 'Back: the previous centre in the middle of the area the card leaves');
+		expect(m.padding).toEqual(CHROME);
+		expect(realErrors(consoleErrors)).toEqual([]);
+	});
+
+	test('a click the open inspect card would cover pans it clear without skewing a tilted map; one already clear moves nothing', { tag: '@wp3' }, async ({ page, consoleErrors }) => {
+		test.setTimeout(300_000);
+		await page.goto('/?window-test&overlay-test#map=16/43.62755/-116.20892/-20/50&layers=none');
+		await mapReady(page);
+		await page.waitForFunction(() => (globalThis as any).__tvtWindows && (globalThis as any).__tvtOverlayTest, null, { timeout: 60_000 });
+		type Sprite = { id: string; x: number; y: number };
+		const sprites = (): Promise<Sprite[]> => page.evaluate(() => (globalThis as any).__tvtOverlayTest.positions());
+		const camera = () =>
+			page.evaluate(() => {
+				const m = (globalThis as any).__tvt.map;
+				const c = m.getCenter();
+				return { center: [c.lng, c.lat], zoom: m.getZoom(), pitch: m.getPitch(), bearing: m.getBearing(), padding: m.getPadding(), w: m.getContainer().clientWidth };
+			});
+		const selected = () => page.evaluate(() => (globalThis as any).__tvt.layers?.selection?.id ?? null);
+		const history = () => page.evaluate(() => (globalThis as any).__tvtWindows.history());
+		const settled = () => page.waitForFunction(() => !(globalThis as any).__tvt.map.isMoving(), null, { timeout: 60_000 });
+		const card = page.getByRole('region', { name: 'Selected marker' });
+		await expect.poll(async () => (await camera()).padding).toEqual(CHROME);
+		const c0 = await camera();
+		// The inspect card's column: 360 px, 16 px from the right edge, from below the camera widget to the toolbar's line.
+		const slot = (await page.locator('.inspect-slot').boundingBox())!;
+		const cardLeft = slot.x;
+		expect(cardLeft).toBe(c0.w - 16 - 360);
+		const underCard = (s: Sprite) => s.x > cardLeft + 30 && s.x < c0.w - 60 && s.y > slot.y + 30 && s.y < 800 - 104 - 30;
+		const all = await sprites();
+		const covered = all.find(underCard);
+		const free = all.find((s) => s.x > 520 && s.x < 700 && s.y > 300 && s.y < 500);
+		expect(covered && free, 'sprites under the card and in the free middle').toBeTruthy();
+		const h0 = await history();
+
+		// Under the card: selected, and the map pans it just clear, at the same height.
+		await page.mouse.click(covered!.x, covered!.y);
+		await expect.poll(selected).toBe(covered!.id);
+		await expect(card).toBeVisible();
+		await page.waitForTimeout(300);
+		await settled();
+		await mapReady(page);
+		const c1 = await camera();
+		const moved = (await sprites()).find((s) => s.id === covered!.id)!;
+		expect(moved.x, 'clear of the card').toBeLessThan(cardLeft - 16);
+		expect(Math.abs(moved.x - (cardLeft - 40)), 'just far enough').toBeLessThan(2);
+		expect(Math.abs(moved.y - covered!.y), 'sideways').toBeLessThan(2);
+		expect(moved.x).toBeLessThan((await card.boundingBox())!.x);
+		// A plain pan: the same zoom, tilt, heading and padding (so no skew), and nothing on the view history.
+		expect(c1.zoom).toBeCloseTo(c0.zoom, 6);
+		expect(c1.pitch).toBeCloseTo(c0.pitch, 6);
+		expect(c1.bearing).toBeCloseTo(c0.bearing, 6);
+		expect(c1.padding).toEqual(CHROME);
+		expect(await history()).toBe(h0);
+		await page.screenshot({ path: screenPath('windows-reveal-pan.png') });
+
+		// Already clear: selected, and nothing moves.
+		const freeNow = (await sprites()).find((s) => s.id === free!.id)!;
+		await page.mouse.click(freeNow.x, freeNow.y);
+		await expect.poll(selected).toBe(free!.id);
+		await page.waitForTimeout(800);
+		await settled();
+		const c2 = await camera();
+		expect(Math.abs(c2.center[0] - c1.center[0])).toBeLessThan(1e-9);
+		expect(Math.abs(c2.center[1] - c1.center[1])).toBeLessThan(1e-9);
+		const still = (await sprites()).find((s) => s.id === free!.id)!;
+		expect(Math.hypot(still.x - freeNow.x, still.y - freeNow.y), 'nothing moved').toBeLessThan(0.5);
+
+		// Under reduced motion the pan is a jump.
+		await page.emulateMedia({ reducedMotion: 'reduce' });
+		await page.keyboard.press('Escape');
+		await expect(card).toHaveCount(0);
+		const next = (await sprites()).find((s) => s.id !== covered!.id && underCard(s));
+		expect(next, 'another sprite under where the card goes').toBeTruthy();
+		const c3 = await camera();
+		await page.mouse.click(next!.x, next!.y);
+		await expect.poll(selected).toBe(next!.id);
+		// Moved already, and not moving: no animation.
+		expect(await page.evaluate(() => (globalThis as any).__tvt.map.isMoving())).toBe(false);
+		expect(Math.abs((await camera()).center[0] - c3.center[0]), 'panned at once').toBeGreaterThan(1e-6);
+		// (The overlay reports where it drew each sprite: the next frame.)
+		await expect.poll(async () => Math.abs((await sprites()).find((s) => s.id === next!.id)!.x - (cardLeft - 40))).toBeLessThan(2);
+		const jumped = (await sprites()).find((s) => s.id === next!.id)!;
+		expect(Math.abs(jumped.y - next!.y)).toBeLessThan(2);
+		expect(realErrors(consoleErrors)).toEqual([]);
 	});
 
 	test('under reduced motion H and O still go on the view history; Overview frames the valley', { tag: '@wp3' }, async ({ page }) => {

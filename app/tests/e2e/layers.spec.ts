@@ -440,9 +440,9 @@ test.describe('layers', () => {
 		expect(roads.urls, 'road tiles fetched again by the toggles').toEqual([]);
 		test.info().annotations.push({ type: 'streets drawn again (ms after the click, SwiftShader)', description: drawnMs.join(', ') });
 
-		// Off with a road selected: hiding Streets closes the road's card, and the map's padding gives the card's
-		// column back with a jumpTo that keeps the picture still. That isn't a move, so the keeper holds on.
-		// Flat for this step, where that jump leaves every point where it was (§14.3 "Regions").
+		// Off with a road selected: hiding Streets closes the road's card. The card never changes the map's
+		// padding (§14.3 "Regions"), so nothing moves and the keeper holds on. (When it did, its jump wasn't a
+		// move either: the padding's moves carry tvtPadding, and the keeper ignores them.)
 		await page.evaluate(() => (globalThis as any).__tvt.map.jumpTo({ pitch: 0 }));
 		await mapReady(page);
 		const padRight = () => page.evaluate(() => (globalThis as any).__tvt.map.getPadding().right as number);
@@ -455,13 +455,13 @@ test.describe('layers', () => {
 		expect(road, 'a road in the free middle').toBeTruthy();
 		await page.mouse.click(road!.x, road!.y);
 		await expect(page.getByRole('region', { name: 'Selected road' })).toBeVisible();
-		await expect.poll(padRight, { message: 'the padding takes the card\'s column' }).toBe(392);
 		await mapReady(page);
+		expect(await padRight(), 'the card takes no padding').toBe(72);
 		const afterCard = countRoadTiles(page);
 		await button.click();
 		await expect(button).toHaveAttribute('aria-pressed', 'false');
 		await expect(page.getByRole('region', { name: 'Selected road' })).toHaveCount(0);
-		await expect.poll(padRight, { message: 'and gives it back when the card closes' }).toBe(72);
+		expect(await padRight(), 'nor gives any back as it closes').toBe(72);
 		expect.soft(await vis('streets-keep'), 'the card closing moved nothing: the keeper holds on').toBe('visible');
 		await button.click();
 		await mapReady(page);
