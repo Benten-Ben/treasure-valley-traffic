@@ -226,7 +226,7 @@ one changes this table and `inputs.USES` in the same review.
 |---|---|---|---|---|
 | `soils/ground` | FlatGeobuf, polygons | integer `ground_type` | **the ground stays flat** | P1-data |
 | `soils/palette` | JSON `soils.palette/1` | per type `gid` (ground.fgb's `ground_type`): `status` (`measured`, or a fallback: `series`, `texture`, `albedo`; `none`), `lab_med`, `lab_cov`, `l_p10`, `l_p90`, `oct_l`, `oct_c` ([soils](../../plugins/soils/README.md#the-palette)) | flat colours per ground type, labelled | P2 |
-| `farm/crop_cover` | GeoTIFF, 10 m grid | bands group, state, confidence | CSB 2025 plus CDL 2025 (C7) | P3-data |
+| `farm/crop_cover` | GeoTIFF, 10 m grid | bands group, state, confidence | CSB 2025 plus CDL 2025 (C7); G1a's painter doesn't read that fallback and refuses without farm's export | P3-data |
 | `farm/fields` | FlatGeobuf, polygons | numeric `bearing` (degrees from north) | CSB 2025, no row bearing | P3-data |
 | `water/mask` | FlatGeobuf, polygons | | mask v0's NHD and OSM water | P4-data |
 
@@ -436,7 +436,7 @@ moves 2 m, h 1 m east and 0.5 m north, downtown 0.5 m; the rest not at all ⚠�
 its photo, but the shift measured on its trees didn't earn its distance).
 
 ```bash
-python basemap/ground/classes.py build --recipe /mnt/g1a/recipe.json [--box f --archive <another folder>]
+python basemap/ground/classes.py build --recipe recipe.json [--box f --archive <another folder>]
 ```
 
 It's a heavy worker job (4-6 GB, 2 CPUs): about 2-8 minutes a box, most of it reading the point cloud. It writes
@@ -566,7 +566,9 @@ What G1a's writer makes (`spec.json` "tiles", `tiles.py`):
 - **z16** overzooms z15 everywhere, the boxes included, as the plan's §3.5 has it. If the boxes' step from
   overzoomed z15 to the z17 classes looks abrupt, adding z16 to the detail file is 185 more tiles and one number in
   `spec.json` (`tiles.detail.minzoom`).
-- **Size:** about 0.6 GB valley-wide, about 40 KB a tile, and tens of MB for the detail file.
+- **Size:** planned at about 0.6 GB valley-wide, about 40 KB a tile, and tens of MB for the detail file. G1a's flat
+  paint is far smaller: the 558 valley tiles painted around the boxes and at the default view average 3.7 KB (2.1 MB),
+  the 612 detail tiles 12 KB (7.4 MB). G1b's texture and photo variation set the real size.
 - **Versions:** `<digest>` is `tiles.digest(plan, painter_version)`. It covers the spec, the painter's version, the
   version of every raw input the plan reads, and the sha256 of every export layer, mask v0 and the classes
   included. A new OSM cut, NAIP release, CDL year, mask v0 or class build gives a new name, and the same inputs give
@@ -575,7 +577,8 @@ What G1a's writer makes (`spec.json` "tiles", `tiles.py`):
 - **Blocks and resuming** ([`tilewrite.py`](tilewrite.py)): each finished block is a file of its WebP tiles with an
   index, written atomically into the run's folder (`<out>/blocks/`), so a stopped run picks up where it was, and the
   two PMTiles files are assembled from the blocks at the end ([`pmtw.py`](pmtw.py): clustered, identical tiles
-  stored once, the header and root directory in the first 16 KiB, leaf directories when the tiles need them).
+  stored once, the header and root directory in the first 16 KiB, leaf directories when the tiles need them, with the
+  tiles up to z12 kept in the root so a low-zoom first load reads no leaf).
   Development runs go to the cold drive's ground folder, not the VM's disk.
 - **Switching in:** `tiles.painted_entry(...)` is written last with `tiles.update_manifest()`, atomically:
 
@@ -599,7 +602,13 @@ harness's S1.
   z9.
 - **Measured** with the map library itself (`app/scripts/ground-firstload.mjs`: a bare page with the app's MapLibre
   and pmtiles, the ground as its only source, served by a local server that logs each range request): the default
-  view draws **12 z10 tiles** (x 179-182, y 372-374) and nothing at other zooms. FIRSTLOAD_RESULTS
+  view draws **12 z10 tiles** (x 179-182, y 372-374) and nothing at other zooms. Their bytes come from G1a's paint (`tilewrite.py paint --view
+  10`: the default view's z10 tiles painted straight from the 10 m level and averaged onto the tile, as the pyramid's
+  2 x 2 averages of the 2 m paint would), and the full file's directory is laid out by `pmtw` with every valley tile
+  (`tilewrite.py estimate`). On Oct 15 (painter g1a-3, scratch exports): **13 requests and 202,920 bytes** (the 16
+  KiB header and root directory, then 12 tiles of 1.0-54.6 KB, 186,536 bytes in all), against the budget's 14 and
+  600,000. G1b's texture and photo variation will add bytes to every tile: that leaves about 33 KB a tile of
+  headroom on average.
 
 ## Commands and tests
 

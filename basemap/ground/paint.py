@@ -42,7 +42,7 @@ from scipy import ndimage as ndi
 
 from basemap.ground import classrules as CR
 from basemap.ground import colour as K
-from basemap.ground import grid, inputs, mask as MASK
+from basemap.ground import grid, mask as MASK
 from basemap.ground import rasterize as R
 
 gdal.UseExceptions()
@@ -447,11 +447,10 @@ class _ManifestOf:
         return self._layers[name]
 
 
-def versions(soils_photo=None, **given):
-    """The raw-input versions the painter names (inputs.resolve(..., versions=)). The painter reads exports only, so
-    none today; G1b's photo variation adds naip-2m. Kept as one place to name them."""
-    out = {k: v for k, v in given.items() if v}
-    return out
+def versions(**given):
+    """The raw-input versions the painter names for inputs.resolve(..., versions=), e.g. {"naip-2m": <sha256>}. G1a's
+    painter reads exports only, so none; G1b's photo variation adds naip-2m. Kept as the one place that names them."""
+    return {k: v for k, v in given.items() if v}
 
 
 def report(painter, plan):
@@ -466,4 +465,4 @@ def report(painter, plan):
                       "band_m": BAND_M, "crop_edge_m": CROP_EDGE_M, "row_period_m": ROW_PERIOD_M}}
 
 
-__all__ = ["Painter", "Palette", "PaintError", "versions", "report", "PAINTER_VERSION", "inputs"]
+__all__ = ["Painter", "Palette", "PaintError", "versions", "report", "PAINTER_VERSION"]

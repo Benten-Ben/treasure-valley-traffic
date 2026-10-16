@@ -10,7 +10,7 @@ import unittest
 
 try:
     import numpy as np
-    from osgeo import gdal, ogr, osr
+    from osgeo import gdal, osr
     from basemap.ground import classrules as CR
     from basemap.ground import colour as K
     from basemap.ground import paint
