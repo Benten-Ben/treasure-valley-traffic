@@ -131,11 +131,16 @@ committed_mb() {
 
 # What a heavy job running outside run.sh counts for (MB): HEAVY_OTHER_MB while one holds
 # heavy.lock (heavy.id's pid lives) and it isn't a scratch job (those hold a slot), else 0.
+# A heavy scratch job asks while its own heavy holds the lock, before it has its slot: that
+# holder is this job (heavy.id's id is the HEAVY_ID heavy gave it), not another one.
 other_heavy_mb() {
 	local id pid f
 	id=$(cat "$WORK/heavy.id" 2>/dev/null) || { echo 0; return; }
 	pid=$(echo "$id" | awk '{ print $2 }')
 	[ -n "$pid" ] && [ -d "/proc/$pid" ] || { echo 0; return; }
+	if [ -n "${SCRATCH_IN_HEAVY:-}" ] && [ -n "${HEAVY_ID:-}" ] && [ "$(echo "$id" | awk '{ print $1 }')" = "$HEAVY_ID" ]; then
+		echo 0; return
+	fi
 	for f in $(live_slots); do
 		grep -qs 'kind=heavy' "$f" && { echo 0; return; }
 	done
