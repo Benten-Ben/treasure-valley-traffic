@@ -476,6 +476,11 @@ under 6 GB; 18 MB). Each box's classes as a share of its cells with data, %:
   moved 3 m onto the lidar where the shrub build measured no shift (a 0.7 m, j 0.5 m), so their green and dry edges
   move; and the July tree level, which now comes from the whole box (e 0.56 against the pooled 0.70, j 0.62 against
   0.50).
+- **Box d with a recipe shift** (a quick look, Oct 15, a partial build outside the archive): with `"shift": [-2.5,
+  0.0]`, the spike's ground-level offset (its lidar about 2.3 m east of the photo) rounded to the class grid, d
+  agrees with the spike in 91% of cells (80% without): short green grass 92% (81%), short dry grass 85% (66%), pale
+  surfaced ground 91% (73%), dark 97% (89%). Whether d's recipe takes it, and so whether the next class build moves d
+  2.5 m west, is for owner review 1.
 - **Box f's tracks** are back: 87,633 cells (2.2 ha) of mapped track turn pale where the photo shows them, 1% of the
   box, against none from the July rule; the rest of f stays short dry grass. Boxes h, i and j gain 4,000-14,000
   track cells each.
