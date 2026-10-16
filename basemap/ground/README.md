@@ -524,8 +524,9 @@ detail file, 10-40 m for the low zooms), from what `inputs.resolve()` returns. B
    SSURGO's Water units yield to the water layer: they take the nearest soil's colour within 50 m, never a "water"
    average. The types meet in a 20 m soft edge (a box blur in OKLab: a straight line between two types becomes a
    linear ramp 20 m wide).
-2. **Crops** from farm's crop cover, inside farm's fields (their own edges) and in its edge band where the CDL agrees,
-   in their July state: green fields a crop green (corn, hay, small grains, roots and vegetables, specialty; natural
+2. **Crops**: farm's crop fields to their own edges (the field's 2025 group), and the crop cover's edge band where the
+   CDL agrees, in the July state of the crop cover's 10 m cells (the nearest within 30 m where a field reaches past
+   them): green fields a crop green (corn, hay, small grains, roots and vegetables, specialty; natural
    July colours, none darker than the ground band's lawn), growing ones green rows over the soil, bare or harvested
    ones the soil with tillage rows, small grains straw. Rows run along the field's bearing, 8 m apart (a texture: the
    real rows are 0.76 m). Never on mapped surfaces. Cropland clusters outside every field (the crop cover's confidence

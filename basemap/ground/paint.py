@@ -47,7 +47,7 @@ from basemap.ground import rasterize as R
 
 gdal.UseExceptions()
 
-PAINTER_VERSION = "g1a-1"
+PAINTER_VERSION = "g1a-2"
 FEATHER_M = 20.0          # soil types' soft edges
 WATER_FILL_M = 50.0       # SSURGO Water units take the nearest soil's colour within this
 HALO_M = 64.0             # every window is painted this much bigger and cut back (>= WATER_FILL_M + FEATHER_M / 2)
@@ -62,7 +62,10 @@ STRAW = "#c7b07a"         # small grains in July: mostly ripe or cut (84% under 
 TALL_GREEN = "#6e8650"
 TALL_DRY_STRAW = "#bea56e"
 FOREST_SHADE = "#5f5542"
-GROWING_GREEN = 0.45      # a growing field: the share of green rows over the soil (0.45 +- 0.35 across a row)
+GROWING_GREEN = 0.45      # a growing field: the share of green over the soil ...
+GROWING_ROWS = 0.15       # ... +- this across a row
+ROW_L = 0.010             # rows in green and bare fields: OKLab L +- this
+STATE_REACH_M = 30.0      # a field's cells beyond the crop cover's take the nearest July state within this
 GRAIN = 3
 FALLOW = 6
 
@@ -279,37 +282,45 @@ class Painter:
         return tuple(out)
 
     def crops(self, P, base, surf):
-        """(crop colour OKLab, weight 0..1) on P: the crop cover's crop cells inside fields (their exact edges) and
-        its edge band; the July state's look; rows along the field's bearing."""
+        """(crop colour OKLab, weight 0..1) on P: crop fields to their own edges (the field's 2025 group) and the crop
+        cover's edge band where the CDL agrees; the July state from the crop cover's 10 m cells (where a field reaches
+        past them, the nearest within STATE_REACH_M); rows along the field's bearing."""
         group, state, conf = self.crop_cells(P)
         if self.fields is not None:
             in_field = R.rasterize(P, self.fields).astype(bool)
             fgroup = R.rasterize(P, self.fields, attribute="crop_group", dtype="uint8")
             bearing = R.rasterize(P, self.fields, attribute="bearing", dtype="float32", fill=-1.0)
             bearing = np.where(in_field & (bearing >= 0), bearing, np.nan).astype(np.float32)
-            crop = (in_field & (fgroup > 0) & (group > 0)) | ((conf == 2) & (group > 0))
-            grp = np.where(in_field & (fgroup > 0), fgroup, group)
+            field_crop = in_field & (fgroup > 0)                    # the field's own edge, not the 10 m cells'
+            crop = field_crop | ((conf == 2) & (group > 0))         # and the edge band where the CDL agrees
+            grp = np.where(field_crop, fgroup, group)
         else:
             bearing = np.full(P.shape, np.nan, np.float32)
             crop = (conf >= 1) & (conf <= 2) & (group > 0)
             grp = group
         crop &= ~surf
+        st = state.copy()
+        need = crop & (st == 0)                                     # a field's edge the 10 m cells don't reach
+        if need.any() and (st > 0).any():
+            d, (iy, ix) = ndi.distance_transform_edt(st == 0, sampling=P.res, return_indices=True)
+            near = need & (d <= STATE_REACH_M)
+            st[near] = st[iy[near], ix[near]]
+        st = np.where(crop & (st == 0), 2, st)                      # still none: growing
         stripe = rows_stripe(P, bearing)
         green = np.zeros(base.shape, np.float32)
         for g, lab in self.green.items():
             green[grp == g] = lab
         paint = base.copy()
-        st = np.where(crop & (state == 0), 2, state)               # a crop cell without a July state: growing
         sel = crop & (st == 1) & (grp != FALLOW)
         paint[sel] = green[sel]
-        paint[sel, 0] += 0.015 * (stripe[sel] - 0.5) * 2
+        paint[sel, 0] += ROW_L * (stripe[sel] - 0.5) * 2
         sel = crop & (st == 2) & (grp != FALLOW)
-        t = np.clip(GROWING_GREEN + 0.35 * (stripe - 0.5) * 2, 0, 1)
+        t = np.clip(GROWING_GREEN + GROWING_ROWS * (stripe - 0.5) * 2, 0, 1)
         paint[sel] = base[sel] + t[sel, None] * (green[sel] - base[sel])
         bare = crop & ((st == 3) | (grp == FALLOW))
         sel = bare & (grp == GRAIN)
         paint[sel] = self.straw
-        paint[bare, 0] += 0.015 * (stripe[bare] - 0.5) * 2
+        paint[bare, 0] += ROW_L * (stripe[bare] - 0.5) * 2
         w = box_blur(crop.astype(np.float32)[..., None], CROP_EDGE_M, P.res)[..., 0]
         w = np.where(surf, 0.0, w)
         return paint, w
