@@ -20,6 +20,7 @@ from basemap.landscape import pmtiles as P
 
 ROOT_BUDGET = 16384 - P.HEADER_LEN       # the header and the root directory fit one 16 KiB request
 LEAF_SIZE = 4096                         # entries a leaf directory holds, to start with
+ROOT_ZOOM = 12                           # with leaves, the tiles up to this zoom stay in the root directory
 
 
 def _put_varint(out, v):
@@ -58,23 +59,33 @@ def _gz(b):
     return gzip.compress(b, mtime=0)
 
 
-def directories(entries):
-    """(root bytes, leaves bytes) compressed, with leaves only when the root alone won't fit ROOT_BUDGET."""
+def directories(entries, root_zoom=ROOT_ZOOM):
+    """(root bytes, leaves bytes) compressed, with leaves only when the root alone won't fit ROOT_BUDGET. Then the
+    tiles up to root_zoom stay in the root directory itself (the spec lets a root hold tiles and leaves), so a first
+    load at the low zooms reads no leaf: one request fewer. The rest go in leaves of LEAF_SIZE entries (more if the
+    root would still be too big)."""
     root = _gz(encode_directory(entries))
     if len(root) <= ROOT_BUDGET:
         return root, b""
+    first_deep = P.tile_id(root_zoom + 1, 0, 0) if root_zoom is not None else 0
+    direct = [e for e in entries if e.tile_id < first_deep]
+    deep = [e for e in entries if e.tile_id >= first_deep]
     size = LEAF_SIZE
     while True:
-        leaves, roots, off = bytearray(), [], 0
-        for i in range(0, len(entries), size):
-            chunk = entries[i:i + size]
+        leaves, pointers, off = bytearray(), [], 0
+        for i in range(0, len(deep), size):
+            chunk = deep[i:i + size]
             body = _gz(encode_directory(chunk))
-            roots.append(P.Entry(chunk[0].tile_id, off, len(body), 0))
+            pointers.append(P.Entry(chunk[0].tile_id, off, len(body), 0))
             leaves += body
             off += len(body)
-        root = _gz(encode_directory(roots))
+        root = _gz(encode_directory(direct + pointers))
         if len(root) <= ROOT_BUDGET:
             return root, bytes(leaves)
+        if direct and size >= len(deep):
+            deep, direct = direct + deep, []                  # the low zooms won't fit beside the pointers
+            size = LEAF_SIZE
+            continue
         size *= 2
 
 

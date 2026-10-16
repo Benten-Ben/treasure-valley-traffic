@@ -1,5 +1,6 @@
 """The PMTiles writer (pmtw.py), read back with the bake's reader. Standard library only."""
 
+import gzip
 import os
 import random
 import tempfile
@@ -69,6 +70,26 @@ class TestWriter(unittest.TestCase):
         first, leaves = pmtw.first_request(path)
         self.assertEqual(first, 16384)
         self.assertEqual(leaves, h.leaf_length)
+
+    def test_low_zooms_stay_in_the_root(self):
+        rnd = random.Random(2)
+        tiles = {(10, 179 + i % 4, 372 + i // 4): rnd.randbytes(30) for i in range(12)}
+        tiles.update({(15, 5800 + i % 150, 11900 + i // 150): rnd.randbytes(rnd.randint(1, 40)) for i in range(3000)})
+        budget, leaf = pmtw.ROOT_BUDGET, pmtw.LEAF_SIZE
+        pmtw.ROOT_BUDGET, pmtw.LEAF_SIZE = 600, 256
+        try:
+            path, h = self.write(tiles)
+        finally:
+            pmtw.ROOT_BUDGET, pmtw.LEAF_SIZE = budget, leaf
+        self.assertGreater(h.leaf_length, 0)
+        with open(path, "rb") as f:
+            f.seek(h.root_offset)
+            root = P.decode_directory(gzip.decompress(f.read(h.root_length)))
+        z10 = [e for e in root if e.run_length and P.zxy(e.tile_id)[0] == 10]
+        self.assertEqual(sum(e.run_length for e in z10), 12)            # every z10 tile in the root
+        self.assertTrue(all(e.run_length == 0 for e in root if P.zxy(e.tile_id)[0] == 15))
+        for k in list(tiles)[::301] + [(10, 179, 372)]:
+            self.assertEqual(P.tile_data(path, *k), tiles[k])
 
     def test_twice_and_empty_are_refused(self):
         w = pmtw.Writer(os.path.join(self.dir, "x.pmtiles"))

@@ -375,20 +375,23 @@ def first_load(view_tiles, sizes, first_request=16384):
     """The default view's first load from a full valley file, estimated from tile sizes (G1a paints only some of its
     tiles): view_tiles [(z, x, y)] as the map library asked for them (app/scripts/ground-firstload.mjs), sizes
     {(z, x, y): bytes} of the painted tiles. The full file's directory is laid out as pmtw writes it, with every valley
-    tile at the median size of the painted ones at its zoom, to find the leaf directories the view reads. Returns
-    {requests, bytes, tiles, tile_bytes, leaves, leaf_bytes, missing, ok, budget}."""
+    tile at a size drawn (seeded) from the painted ones at its zoom, or from all of them, so the directory compresses
+    as a real one would, to find the leaf directories the view reads. Returns {requests, bytes, tiles, tile_bytes,
+    leaves, leaf_bytes, missing, ok, budget}."""
+    import random
     from basemap.landscape import pmtiles as PM
     by_zoom = {}
     for (z, _x, _y), n in sizes.items():
         by_zoom.setdefault(z, []).append(n)
     every = sorted(n for v in by_zoom.values() for n in v) or [40000]
     med = {z: sorted(v)[len(v) // 2] for z, v in by_zoom.items()}
+    rnd = random.Random(15)
     entries, off = [], 0
     ids = sorted(PM.tile_id(z, x, y) for z in range(tiles.VALLEY_ZOOMS[0], tiles.VALLEY_ZOOMS[1] + 1)
                  for x, y in tiles.valley_tiles(z))
     for tid in ids:
         z = PM.zxy(tid)[0]
-        n = med.get(z, every[len(every) // 2])
+        n = rnd.choice(by_zoom.get(z, every))
         entries.append(PM.Entry(tid, off, n, 1))
         off += n
     root, leaves = pmtw.directories(entries)
@@ -397,10 +400,12 @@ def first_load(view_tiles, sizes, first_request=16384):
         roots = PM.decode_directory(gzip.decompress(root))
         for z, x, y in view_tiles:
             tid = PM.tile_id(z, x, y)
-            leaf = max((e for e in roots if e.tile_id <= tid), key=lambda e: e.tile_id)
-            if leaf.tile_id not in touched:
-                touched.add(leaf.tile_id)
-                leaf_bytes += leaf.length
+            e = max((e for e in roots if e.tile_id <= tid), key=lambda e: e.tile_id)
+            if e.run_length:                                    # a tile in the root itself: no leaf to read
+                continue
+            if e.tile_id not in touched:
+                touched.add(e.tile_id)
+                leaf_bytes += e.length
     missing = [t for t in view_tiles if t not in sizes]
     tile_bytes = sum(sizes.get(t, med.get(t[0], every[len(every) // 2])) for t in view_tiles)
     head = first_request                       # the client's first read: the header and root directory, 16 KiB
