@@ -527,9 +527,11 @@ detail file, 10-40 m for the low zooms), from what `inputs.resolve()` returns. B
 2. **Crops**: farm's crop fields to their own edges (the field's 2025 group), and the crop cover's edge band where the
    CDL agrees, in the July state of the crop cover's 10 m cells (the nearest within 30 m where a field reaches past
    them): green fields a crop green (corn, hay, small grains, roots and vegetables, specialty; natural
-   July colours, none darker than the ground band's lawn), growing ones green rows over the soil, bare or harvested
-   ones the soil with tillage rows, small grains straw. Rows run along the field's bearing, 8 m apart (a texture: the
-   real rows are 0.76 m). Never on mapped surfaces. Cropland clusters outside every field (the crop cover's confidence
+   July colours, none darker than the ground band's lawn), growing ones 45% green over the soil, bare or harvested
+   ones the soil, small grains straw. The states blend over 12 m inside the crop, and a field's edge softens over
+   12 m: the crop cover's 10 m cells, and CSB's edges (stepped on CDL's 30 m grid, 5-15 m off the photo), would
+   otherwise show as blocks. Rows, a light and dark stripe along the field's bearing 8 m apart, give the direction
+   (a texture: the real rows are 0.76 m), on levels fine enough to draw them. Never on mapped surfaces. Cropland clusters outside every field (the crop cover's confidence
    3) wait for G1b, which confirms them in the photo. Without farm's export the painter refuses: C7's CSB and CDL
    fallback isn't built, since the crop cover has landed.
 3. **The box classes**, each cell's `floor` as tokens over the soil base (plan §3.4's ground band): short dry grass

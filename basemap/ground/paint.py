@@ -47,12 +47,13 @@ from basemap.ground import rasterize as R
 
 gdal.UseExceptions()
 
-PAINTER_VERSION = "g1a-2"
+PAINTER_VERSION = "g1a-3"
 FEATHER_M = 20.0          # soil types' soft edges
 WATER_FILL_M = 50.0       # SSURGO Water units take the nearest soil's colour within this
 HALO_M = 64.0             # every window is painted this much bigger and cut back (>= WATER_FILL_M + FEATHER_M / 2)
 BOX_FEATHER_M = 75.0      # the class boxes' edges feather into the valley paint over this (plan: 50-100 m)
-CROP_EDGE_M = 4.0         # a field's edge softens over this
+CROP_EDGE_M = 12.0        # a field's edge softens over this (CSB's edges step at 30 m, 5-15 m off the photo)
+STATE_BLUR_M = 12.0       # the July states blend over this inside the crop (the crop cover's cells are 10 m)
 ROW_PERIOD_M = 8.0        # crop rows (a texture, not the real 0.76 m rows: visible from z15 at 1.73 m a pixel)
 BAND_M = 3.0              # the band around vector surfaces painted from the soil base (C8)
 
@@ -62,9 +63,8 @@ STRAW = "#c7b07a"         # small grains in July: mostly ripe or cut (84% under 
 TALL_GREEN = "#6e8650"
 TALL_DRY_STRAW = "#bea56e"
 FOREST_SHADE = "#5f5542"
-GROWING_GREEN = 0.45      # a growing field: the share of green over the soil ...
-GROWING_ROWS = 0.15       # ... +- this across a row
-ROW_L = 0.010             # rows in green and bare fields: OKLab L +- this
+GROWING_GREEN = 0.45      # a growing field: the share of green over the soil
+ROW_L = 0.010             # rows: OKLab L +- this across a row
 STATE_REACH_M = 30.0      # a field's cells beyond the crop cover's take the nearest July state within this
 GRAIN = 3
 FALLOW = 6
@@ -154,6 +154,17 @@ def box_blur(lab, metres, res):
     for c in range(lab.shape[-1]):
         out[..., c] = ndi.uniform_filter(lab[..., c], k, mode="nearest")
     return out
+
+
+def _masked_blur(v, m, metres, res):
+    """v averaged over `metres` (a box) among the cells where m > 0; v itself where none are near."""
+    k = _odd(metres / res)
+    if k <= 1:
+        return v
+    num = ndi.uniform_filter(v * m, k, mode="nearest")
+    den = ndi.uniform_filter(m, k, mode="nearest")
+    with np.errstate(invalid="ignore", divide="ignore"):
+        return np.where(den > 1e-6, num / np.maximum(den, 1e-6), v).astype(np.float32)
 
 
 def centres(win):
@@ -306,21 +317,24 @@ class Painter:
             near = need & (d <= STATE_REACH_M)
             st[near] = st[iy[near], ix[near]]
         st = np.where(crop & (st == 0), 2, st)                      # still none: growing
-        stripe = rows_stripe(P, bearing)
+        # The look per July state, as fractions blended over STATE_BLUR_M inside the crop (the crop cover's 10 m
+        # cells, and CSB's stepped edges, would otherwise show as blocks): how green, and how much straw.
+        green_frac = np.where(st == 1, 1.0, np.where(st == 2, GROWING_GREEN, 0.0)).astype(np.float32)
+        green_frac[grp == FALLOW] = 0.0
+        straw_frac = ((st == 3) & (grp == GRAIN)).astype(np.float32)
         green = np.zeros(base.shape, np.float32)
         for g, lab in self.green.items():
             green[grp == g] = lab
-        paint = base.copy()
-        sel = crop & (st == 1) & (grp != FALLOW)
-        paint[sel] = green[sel]
-        paint[sel, 0] += ROW_L * (stripe[sel] - 0.5) * 2
-        sel = crop & (st == 2) & (grp != FALLOW)
-        t = np.clip(GROWING_GREEN + GROWING_ROWS * (stripe - 0.5) * 2, 0, 1)
-        paint[sel] = base[sel] + t[sel, None] * (green[sel] - base[sel])
-        bare = crop & ((st == 3) | (grp == FALLOW))
-        sel = bare & (grp == GRAIN)
-        paint[sel] = self.straw
-        paint[bare, 0] += ROW_L * (stripe[bare] - 0.5) * 2
+        has_green = np.isin(grp, list(self.green)) & crop
+        m = crop.astype(np.float32)
+        gf = _masked_blur(green_frac, m, STATE_BLUR_M, P.res)
+        sf = _masked_blur(straw_frac, m, STATE_BLUR_M, P.res)
+        gcol = np.stack([_masked_blur(green[..., c], has_green.astype(np.float32), STATE_BLUR_M, P.res)
+                         for c in range(3)], axis=-1)
+        under = base + sf[..., None] * (self.straw - base)
+        paint = under + gf[..., None] * (gcol - under)
+        stripe = rows_stripe(P, bearing)
+        paint[..., 0] += np.where(crop, ROW_L * (stripe - 0.5) * 2, 0.0)
         w = box_blur(crop.astype(np.float32)[..., None], CROP_EDGE_M, P.res)[..., 0]
         w = np.where(surf, 0.0, w)
         return paint, w
