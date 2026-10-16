@@ -432,8 +432,8 @@ manifest names them as RAW inputs only (`3dep`, `overture-buildings`, `naip`, `s
 
 **Frames.** The rules run on the lidar's grid, the photo moved onto it, as the spike did; the classes are then moved
 into the photo's frame by the shrub build's photo shift (OpenStreetMap and the map are traced on the photo). Box b
-moves 2 m, h 1 m east and 0.5 m north, downtown 0.5 m; the rest not at all ⚠️ (box d's ground sits 2.3 m east of
-its photo, but the shift measured on its trees didn't earn its distance).
+moves 2 m west, h 1 m east and 0.5 m north, downtown 0.5 m east; the rest not at all ⚠️ (box d's lidar sits 2.3 m
+east of its photo at ground level, but the shift measured on its trees didn't earn its distance).
 
 ```bash
 python basemap/ground/classes.py build --recipe recipe.json [--box f --archive <another folder>]
@@ -526,14 +526,14 @@ detail file, 10-40 m for the low zooms), from what `inputs.resolve()` returns. B
    linear ramp 20 m wide).
 2. **Crops**: farm's crop fields to their own edges (the field's 2025 group), and the crop cover's edge band where the
    CDL agrees, in the July state of the crop cover's 10 m cells (the nearest within 30 m where a field reaches past
-   them): green fields a crop green (corn, hay, small grains, roots and vegetables, specialty; natural
-   July colours, none darker than the ground band's lawn), growing ones 45% green over the soil, bare or harvested
-   ones the soil, small grains straw. The states blend over 12 m inside the crop, and a field's edge softens over
-   12 m: the crop cover's 10 m cells, and CSB's edges (stepped on CDL's 30 m grid, 5-15 m off the photo), would
-   otherwise show as blocks. Rows, a light and dark stripe along the field's bearing 8 m apart, give the direction
-   (a texture: the real rows are 0.76 m), on levels fine enough to draw them. Never on mapped surfaces. Cropland clusters outside every field (the crop cover's confidence
-   3) wait for G1b, which confirms them in the photo. Without farm's export the painter refuses: C7's CSB and CDL
-   fallback isn't built, since the crop cover has landed.
+   them): green fields a crop green (corn, hay, small grains, roots and vegetables, specialty; natural July colours,
+   none darker than the ground band's lawn), growing ones 45% green over the soil, bare or harvested ones the soil,
+   small grains straw. The states blend over 12 m inside the crop, and a field's edge softens over 12 m: the crop
+   cover's 10 m cells, and CSB's edges (stepped on CDL's 30 m grid, 5-15 m off the photo), would otherwise show as
+   blocks. Rows, a light and dark stripe along the field's bearing 8 m apart, give the direction (a texture: the real
+   rows are 0.76 m), on levels fine enough to draw them. Never on mapped surfaces. Cropland clusters outside every
+   field (the crop cover's confidence 3) wait for G1b, which confirms them in the photo. Without farm's export the
+   painter refuses: C7's CSB and CDL fallback isn't built, since the crop cover has landed.
 3. **The box classes**, each cell's `floor` as tokens over the soil base (plan §3.4's ground band): short dry grass
    and roofs are the soil itself; pale surfaced ground the soil under 35% cream (the materials' gravel); dark surfaced
    ground the asphalt token `#989088`; short green grass the band's lawn `#748357`, tall green grass a lawn green of
@@ -601,14 +601,14 @@ harness's S1.
 - `tiles.first_load(requests)` checks a run's request list. For scale, the whole map box is 20 tiles at z10 and 9 at
   z9.
 - **Measured** with the map library itself (`app/scripts/ground-firstload.mjs`: a bare page with the app's MapLibre
-  and pmtiles, the ground as its only source, served by a local server that logs each range request): the default
-  view draws **12 z10 tiles** (x 179-182, y 372-374) and nothing at other zooms. Their bytes come from G1a's paint (`tilewrite.py paint --view
-  10`: the default view's z10 tiles painted straight from the 10 m level and averaged onto the tile, as the pyramid's
-  2 x 2 averages of the 2 m paint would), and the full file's directory is laid out by `pmtw` with every valley tile
-  (`tilewrite.py estimate`). On Oct 15 (painter g1a-3, scratch exports): **13 requests and 202,920 bytes** (the 16
-  KiB header and root directory, then 12 tiles of 1.0-54.6 KB, 186,536 bytes in all), against the budget's 14 and
-  600,000. G1b's texture and photo variation will add bytes to every tile: that leaves about 33 KB a tile of
-  headroom on average.
+  and pmtiles, the ground as its only source, served by a local server that logs each range request): the default view
+  draws **12 z10 tiles** (x 179-182, y 372-374) and nothing at other zooms. Their bytes come from G1a's paint
+  (`tilewrite.py paint --view 10`: the default view's z10 tiles painted straight from the 10 m level and averaged onto
+  the tile, as the pyramid's 2 x 2 averages of the 2 m paint would), and the full file's directory is laid out by
+  `pmtw` with every valley tile (`tilewrite.py estimate`). On Oct 15 (painter g1a-3, scratch exports): **13 requests
+  and 202,920 bytes** (the 16 KiB header and root directory, then 12 tiles of 1.0-54.6 KB, 186,536 bytes in all),
+  against the budget's 14 and 600,000. G1b's texture and photo variation will add bytes to every tile: that leaves
+  about 33 KB a tile of headroom on average.
 
 ## Commands and tests
 
