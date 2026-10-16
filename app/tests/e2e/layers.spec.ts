@@ -403,7 +403,8 @@ test.describe('layers', () => {
 	});
 
 	test('Streets off and on again fetches no road tile at any pause; moving while it is off fetches none', { tag: '@wp2' }, async ({ page, consoleErrors }) => {
-		test.setTimeout(180_000);
+		// Seven map loads: a loaded laptop's SwiftShader can take half a minute each.
+		test.setTimeout(360_000);
 		await page.goto('/#map=14/43.615/-116.2023/0/45&layers=streets');
 		await mapReady(page);
 		expect(await streetsDrawn(page), 'drawn at first').toBeGreaterThan(0);
@@ -489,8 +490,10 @@ test.describe('layers', () => {
 
 	test('a slow routes request shows the ring and "Loading routes…"; a 500 shows ▲ and Retry', { tag: '@wp2' }, async ({ page }) => {
 		test.setTimeout(300_000);
+		// Slow enough that the check after the ring still sees it loading on a loaded laptop, where one
+		// assertion to the next took 6 s (Oct 15) against a 3 s delay.
 		await page.route('**/api/transit/network**', async (r) => {
-			await new Promise((res) => setTimeout(res, 3000));
+			await new Promise((res) => setTimeout(res, 15_000));
 			await r.continue();
 		});
 		await page.goto('/');
@@ -498,7 +501,7 @@ test.describe('layers', () => {
 		await expect(transit).toHaveAttribute('aria-busy', 'true', { timeout: 20_000 });
 		await expect(page.getByRole('region', { name: 'Transit legend' }).getByText('Loading routes…')).toBeVisible();
 		await page.screenshot({ path: screenPath('layers-loading.png') });
-		await expect(transit).toHaveAttribute('aria-busy', 'false', { timeout: 30_000 });
+		await expect(transit).toHaveAttribute('aria-busy', 'false', { timeout: 60_000 });
 		await expect(page.getByRole('region', { name: 'Transit legend' }).getByText('Loading routes…')).toHaveCount(0);
 
 		await page.unroute('**/api/transit/network**');

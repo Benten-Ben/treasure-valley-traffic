@@ -39,11 +39,26 @@ const VIEW = '#map=14/43.615/-116.2023/0/45&layers=cameras';
 const CHROME = { top: 76, right: 72, bottom: 104, left: 312 };
 const MERIDIAN: [number, number] = [-116.3915, 43.6121];
 /**
- * Console errors less MapLibre's bare "map error Error": closer in than the basemap's z15, a range fetch for a
- * tile two overscaled tiles share now and then fails in transport ("Failed to fetch"), which no chrome code
- * touches (the lookthrough and review specs set it aside the same way).
+ * MapLibre's error details, from the start of a test: create.ts warns "map error detail: …" (the error's
+ * name and message, its source and tile) beside each "map error" it logs, which the console shows as a
+ * bare "map error Error" whatever went wrong.
  */
-const realErrors = (errors: string[]) => errors.filter((e) => e !== 'map error Error');
+function mapErrorDetails(page: Page): string[] {
+	const details: string[] = [];
+	page.on('console', (m) => {
+		if (m.type() === 'warning' && m.text().startsWith('map error detail:')) details.push(m.text());
+	});
+	return details;
+}
+/** A tile's fetch that failed in transport: "map error detail: Error: Failed to fetch · source … · tile …". */
+const FETCH_FAILED = /^map error detail: \w*Error: Failed to fetch( ·|$)/;
+/**
+ * Console errors less MapLibre's bare "map error Error"s, as long as each of those was a fetch that failed in
+ * transport: closer in than the basemap's z15, a range fetch for a tile two overscaled tiles share now and
+ * then does ("Failed to fetch"), which no chrome code touches. Any other map error (a source, the style, a
+ * layer) stays, by its detail.
+ */
+const realErrors = (errors: string[], details: string[]) => [...errors.filter((e) => e !== 'map error Error'), ...details.filter((d) => !FETCH_FAILED.test(d))];
 
 async function openTest(page: Page, hash = VIEW) {
 	await page.goto(`/?window-test${hash}`);
@@ -341,13 +356,15 @@ test.describe('windows', () => {
 		expect(Math.abs(back.pitch - before.pitch)).toBeLessThan(0.01);
 		await expect(page.getByRole('button', { name: /Back to previous view/ })).toHaveCount(0);
 
-		// The camera widget's Overview is a fly too; its chip goes back the same way.
+		// The camera widget's Overview is a fly too, with the chip; Backspace goes back the same way. (Not the
+		// chip after the flight: it hides 8 s after the push, which a loaded laptop's flight can outlast. The
+		// reduced-motion test below clicks it.)
 		await page.getByRole('button', { name: 'Overview: the whole valley' }).click();
 		const chip = page.getByRole('button', { name: /Back to previous view/ });
 		await expect(chip).toBeVisible();
 		await page.waitForFunction(() => !(globalThis as any).__tvt.map.isMoving(), null, { timeout: 60_000 });
 		expect((await page.evaluate(() => (globalThis as any).__tvt.view)).pitch).toBeCloseTo(0, 3);
-		await chip.click();
+		await page.keyboard.press('Backspace');
 		await page.waitForFunction(() => !(globalThis as any).__tvt.map.isMoving(), null, { timeout: 60_000 });
 		const again = await page.evaluate(() => (globalThis as any).__tvt.view);
 		expect(Math.abs(again.center[0] - before.center[0])).toBeLessThan(1e-6);
@@ -417,6 +434,7 @@ test.describe('windows', () => {
 	});
 	test('the map padding follows the fixed chrome: H lands in the visible area; the inspect card moves nothing, flat or tilted', { tag: '@wp3' }, async ({ page, consoleErrors }) => {
 		test.setTimeout(300_000);
+		const details = mapErrorDetails(page);
 		await openTest(page, '#map=13/43.6/-116.25/0/0&layers=none');
 		const map = () =>
 			page.evaluate(() => {
@@ -506,11 +524,12 @@ test.describe('windows', () => {
 		expect(Math.abs(again.center[1] - saved.center[1])).toBeLessThan(2e-5);
 		await page.waitForTimeout(1500);
 		expect(await page.evaluate(() => location.hash), 'the hash reads the same').toBe(hash);
-		expect(realErrors(consoleErrors)).toEqual([]);
+		expect(realErrors(consoleErrors, details)).toEqual([]);
 	});
 
 	test('with the inspect card open, H, O and Back land left of it, and the padding, view and hash keep none of it', { tag: '@wp3' }, async ({ page, consoleErrors }) => {
 		test.setTimeout(300_000);
+		const details = mapErrorDetails(page);
 		await openTest(page, '#map=13/43.6/-116.25/0/0&layers=none');
 		const map = () =>
 			page.evaluate(() => {
@@ -588,11 +607,12 @@ test.describe('windows', () => {
 		expect(Math.abs(m.view.pitch - reloaded.pitch)).toBeLessThan(0.01);
 		near(await at(reloaded.center), clear, 'Back: the previous centre in the middle of the area the card leaves');
 		expect(m.padding).toEqual(CHROME);
-		expect(realErrors(consoleErrors)).toEqual([]);
+		expect(realErrors(consoleErrors, details)).toEqual([]);
 	});
 
 	test('a click the open inspect card would cover pans it clear without skewing a tilted map; one already clear moves nothing', { tag: '@wp3' }, async ({ page, consoleErrors }) => {
 		test.setTimeout(300_000);
+		const details = mapErrorDetails(page);
 		await page.goto('/?window-test&overlay-test#map=16/43.62755/-116.20892/-20/50&layers=none');
 		await mapReady(page);
 		await page.waitForFunction(() => (globalThis as any).__tvtWindows && (globalThis as any).__tvtOverlayTest, null, { timeout: 60_000 });
@@ -670,7 +690,7 @@ test.describe('windows', () => {
 		await expect.poll(async () => Math.abs((await sprites()).find((s) => s.id === next!.id)!.x - (cardLeft - 40))).toBeLessThan(2);
 		const jumped = (await sprites()).find((s) => s.id === next!.id)!;
 		expect(Math.abs(jumped.y - next!.y)).toBeLessThan(2);
-		expect(realErrors(consoleErrors)).toEqual([]);
+		expect(realErrors(consoleErrors, details)).toEqual([]);
 	});
 
 	test('under reduced motion H and O still go on the view history; Overview frames the valley', { tag: '@wp3' }, async ({ page }) => {
@@ -689,14 +709,16 @@ test.describe('windows', () => {
 			expect(Math.abs(a.pitch - b.pitch)).toBeLessThan(0.01);
 		};
 
-		// H jumps (no flight) and pushes; Backspace comes back.
+		// H jumps (no flight) and pushes; the chip comes back. It hides 8 s after the push, and a click's wait
+		// for a stable element took 14 s on a loaded laptop (SwiftShader starves animation frames, Oct 15), so
+		// the click is dispatched on it.
 		await page.keyboard.press('KeyH');
 		await expect(chip).toBeVisible();
 		expect(await history()).toBe(1);
 		const home = await view();
 		expect(home.zoom).toBeCloseTo(13, 3);
 		expect(home.pitch).toBeCloseTo(50, 3);
-		await page.keyboard.press('Backspace');
+		await chip.dispatchEvent('click');
 		await mapReady(page);
 		same(await view(), start);
 		expect(await history()).toBe(0);
@@ -728,8 +750,10 @@ test.describe('windows', () => {
 		expect(fill, 'the valley fills the visible area').toBeGreaterThan(0.7);
 		await mapReady(page);
 		await page.screenshot({ path: screenPath('windows-overview-valley.png') });
-		await chip.click();
+		// Backspace comes back (the chip may have hidden by now).
+		await page.keyboard.press('Backspace');
 		await mapReady(page);
 		same(await view(), start);
+		expect(await history()).toBe(0);
 	});
 });
