@@ -20,7 +20,13 @@ and writes them through the export contract (manifest.py) with RAW inputs only (
                      "points": ["<LAS/LAZ tiles, or an EPT's ept.json>", ...], "points_srs": null,
                      "photo": "<the box's NAIP crop: red, green, blue, near-infrared>",
                      "curve": "naip2025:2025-05-25",       # or "naip2023": the photo's NDVI curve in fits.json
-                     "lidar_name": "USGS 3DEP QL1 lidar (ID_SouthernGaps_D23)", "lidar_date": "2023-10-27"}, ...}}
+                     "lidar_name": "USGS 3DEP QL1 lidar (ID_SouthernGaps_D23)", "lidar_date": "2023-10-27",
+                     "shift": [-2.5, 0.0]},                # optional: the photo shift, overriding the shrub build's
+                ...}}
+
+`shift` is where the photo's features sit relative to the lidar's, east and north in metres (multiples of 0.5 m, at
+most SHIFT_MAX_M): the shrub build measures it on its trees, which can miss a shift seen at ground level (box d). The
+report says which one each box used.
 
 Per box:
 - **lidar**: heights above the bare earth (DSM minus DTM), cells without lidar, the building mask (Overture's
@@ -38,7 +44,8 @@ Per box:
 Writes $TVT_ARCHIVE/ground_classes/export/<build>/: <box>.tif (bands `class` and `floor`, uint8, 0 no data; values in
 classrules.CLASSES), manifest.json, and report.json (each box's inputs, shift, July-rule numbers and class shares).
 A build of some boxes only is partial (<build>-part): readers skip it (manifest.is_partial), and the command line
-refuses to put one in $TVT_ARCHIVE.
+refuses to put one in $TVT_ARCHIVE. After a whole build, whole builds but the newest two are deleted (--keep), never
+the one the switched-in ground tiles name (--tiles, default $TVT_TILES), so their inputs stay checkable.
 """
 
 import argparse
@@ -62,7 +69,7 @@ from osgeo import gdal, ogr, osr  # noqa: E402
 from scipy import ndimage as ndi  # noqa: E402
 
 from basemap.ground import classrules as CR  # noqa: E402
-from basemap.ground import grid, inputs, maskrules as MR  # noqa: E402
+from basemap.ground import grid, inputs, maskrules as MR, tiles  # noqa: E402
 from basemap.ground import manifest as M  # noqa: E402
 from basemap.ground import rasterize as R  # noqa: E402
 
@@ -82,6 +89,7 @@ WHY_SHRUB, WHY_CROP = 1, 5
 S2_SCALE = 10000.0                                # the July rasters: NDVI x 10000, int16
 EPT_PART_M = 400.0
 OSM_MARGIN_M = 30.0
+SHIFT_MAX_M = 10.0                                # a recipe's photo shift, east or north
 
 
 class ClassError(ValueError):
@@ -198,6 +206,23 @@ def preflight(recipe, boxes):
             if not os.path.isfile(p):
                 raise ClassError(f"box {b.id}: no file {p}")
         curve_of(norm, spec["curve"])
+        recipe_shift(b, spec)
+
+
+def recipe_shift(box, spec):
+    """The recipe's photo shift for a box (east, north) in metres, or None: two numbers, each a multiple of 0.5 m (the
+    classes move by whole cells) within SHIFT_MAX_M. Raises ClassError."""
+    v = spec.get("shift")
+    if v is None:
+        return None
+    try:
+        east, north = (float(x) for x in v)
+    except (TypeError, ValueError):
+        raise ClassError(f"box {box.id}: shift is [east, north] in metres, not {v!r}") from None
+    for x in (east, north):
+        if not math.isfinite(x) or abs(x) > SHIFT_MAX_M or abs(x / CR.PX - round(x / CR.PX)) > 1e-9:
+            raise ClassError(f"box {box.id}: shift {v!r}: each is a multiple of {CR.PX} m within {SHIFT_MAX_M:g} m")
+    return east, north
 
 
 def read_tif_on(path, g, band=1):
@@ -564,7 +589,8 @@ def classify_box(box, spec, osm_lines, july_dir, norm, log=print):
     if bld.shape != g.shape:
         raise ClassError(f"box {box.id}: the building mask is {bld.shape}, the lidar {g.shape}")
     sh = read_shrubs(spec["shrubs"], g)
-    shift = sh["shift"]
+    given = recipe_shift(box, spec)
+    shift = given if given is not None else sh["shift"]
     ndvi, lum = read_photo(spec["photo"], g, shift)
     cover = float(np.isfinite(ndvi[~bad]).mean()) if (~bad).any() else 0.0
     if cover < 0.95:
@@ -581,8 +607,12 @@ def classify_box(box, spec, osm_lines, july_dir, norm, log=print):
          "plant": CR.plant_cue(sh["n_ag"], sh["scat"]), "kept": sh["kept"], "treecue": sh["treecue"],
          "field": sh["field"], "p": CR.to_s2(ndvi, curve), "dark": dark}
     cls, fl, st = CR.classify(f, cell, july, on_road, track_line, lum)
-    cls, fl = embed(to_photo_frame(cls, shift), box, offset), embed(to_photo_frame(fl, shift), box, offset)
-    report = {"box": box.id, "name": box.name, "shift_m": list(shift), "photo_cover": round(cover, 4),
+    # placed in the box's window first, then moved: a lidar grid narrower than the window (box h's) keeps the cells
+    # the move takes past its own edge but not the window's
+    cls, fl = to_photo_frame(embed(cls, box, offset), shift), to_photo_frame(embed(fl, box, offset), shift)
+    report = {"box": box.id, "name": box.name, "shift_m": list(shift),
+              "shift_from": "recipe" if given is not None else "shrub build",
+              "shrub_build_shift_m": list(sh["shift"]), "photo_cover": round(cover, 4),
               "lidar_offset_cells": list(offset),
               "curve": spec["curve"], "shrub_build": sh["build"], "brightness": bst,
               "osm_lines": {"roads": len(roads), "tracks": len(tracks)}, "road_cells": int(on_road.sum()),
@@ -693,9 +723,33 @@ class _Lock:
         self.f.close()
 
 
-def build(archive, recipe, box_ids=None, build_id=None, command=None, keep=KEEP, log=print):
+def tiles_builds(tiles_dir):
+    """The class builds the ground tiles were painted from (tiles/manifest.json's ground entry), as a set of ids."""
+    return tiles.entry_builds(tiles_dir, PRODUCT)
+
+
+def prune(archive, keep=KEEP, protect=(), log=print):
+    """Delete whole class builds but the newest `keep`, never a protected one (the build just written, the one the
+    ground tiles name). Partial builds are left alone. Returns the ids removed."""
+    if keep < 1:
+        raise ClassError("keep at least one build")
+    have = M.builds(archive, PRODUCT)
+    gone = [b for b in have[:-keep] if b not in set(protect)]
+    for b in gone:
+        folder = M.export_dir(archive, PRODUCT, b)
+        os.remove(os.path.join(folder, M.FILE))        # first: a half-deleted build is unfinished, never read
+        shutil.rmtree(folder)
+    if gone:
+        log(f"  pruned: {', '.join(gone)} (kept the newest {keep}{' and the protected' if protect else ''})")
+    return gone
+
+
+def build(archive, recipe, box_ids=None, build_id=None, command=None, keep=KEEP, protect=(), log=print):
     """Build the box classes into <archive>/ground_classes/export/<build>/ and return its Manifest. box_ids: some
-    boxes only (a partial build, <build>-part)."""
+    boxes only (a partial build, <build>-part). After a whole build, whole builds but the newest `keep` are deleted,
+    never the one just written or those in protect (the build the ground tiles name: tiles_builds)."""
+    if keep < 1:
+        raise ClassError("keep at least one build")
     all_ids = [b.id for b in grid.boxes()]
     box_ids = list(box_ids or all_ids)
     unknown = [b for b in box_ids if b not in all_ids]
@@ -755,14 +809,7 @@ def build(archive, recipe, box_ids=None, build_id=None, command=None, keep=KEEP,
         m = M.Manifest(final, m.data)
         log(f"ground_classes {build_id}: {final} in {time.time() - t0:.0f} s")
         if is_whole:
-            have = M.builds(archive, PRODUCT)
-            for old in have[:-keep]:
-                if old == build_id:
-                    continue
-                d = M.export_dir(archive, PRODUCT, old)
-                os.remove(os.path.join(d, M.FILE))
-                shutil.rmtree(d)
-                log(f"  pruned {old}")
+            prune(archive, keep, protect=set(protect) | {build_id}, log=log)
     return m
 
 
@@ -796,7 +843,9 @@ def main(argv=None):
     p.add_argument("--box", action="append", help="one box (repeat); a partial build")
     p.add_argument("--archive", help="default $TVT_ARCHIVE")
     p.add_argument("--build", help="the build id (default: the UTC time)")
-    p.add_argument("--keep", type=int, default=KEEP)
+    p.add_argument("--keep", type=int, default=KEEP, help=f"whole builds kept after a whole build (default {KEEP})")
+    p.add_argument("--tiles", default=os.environ.get("TVT_TILES"),
+                   help="the map's tiles folder ($TVT_TILES): the class build its ground tiles name is never pruned")
     args = ap.parse_args(argv)
     signal.signal(signal.SIGTERM, _stopped)
     archive = args.archive or os.environ.get("TVT_ARCHIVE")
@@ -811,8 +860,13 @@ def main(argv=None):
     with open(args.recipe, encoding="utf-8") as f:
         recipe = json.load(f)
     try:
+        try:
+            protect = tiles_builds(args.tiles)
+        except (OSError, ValueError) as err:
+            raise ClassError(f"can't read the ground tiles' builds in {args.tiles}: {err}") from None
         m = build(archive, recipe, args.box, args.build,
-                  command="python basemap/ground/classes.py " + " ".join(argv or sys.argv[1:]), keep=args.keep)
+                  command="python basemap/ground/classes.py " + " ".join(argv or sys.argv[1:]), keep=args.keep,
+                  protect=protect)
     except (ClassError, M.ManifestError, inputs.InputError) as err:
         print(f"refused: {err}", file=sys.stderr)
         return 2
