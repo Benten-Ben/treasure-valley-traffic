@@ -135,14 +135,69 @@ def read_lidar(folder):
     return h, bad, LidarGrid(gt[0], gt[3], rows, cols, wkt)
 
 
-def check_box_grid(box, g):
-    """The lidar grid must be the box's window on the 0.5 m class grid (the spike's rasters are; spec.json)."""
+def box_offset(box, g):
+    """(row, col) of the lidar grid's corner in the box's window. The lidar grid must be on the 0.5 m class grid and
+    overlap the box: the spike's rasters are the box's window exactly (spec.json), except box h's, made later from
+    another survey, which sits half a metre inside it on each side."""
     w = box.window()
-    if (g.x0, g.y1, g.rows, g.cols) != (w.west, w.north, w.height, w.width):
-        raise ClassError(f"box {box.id}: the lidar grid is E {g.x0:g} N {g.y1:g}, {g.cols} x {g.rows}; the box's "
-                         f"window is E {w.west:g} N {w.north:g}, {w.width} x {w.height}")
+    c, r = (g.x0 - w.west) / CR.PX, (w.north - g.y1) / CR.PX
+    if abs(c - round(c)) > 1e-6 or abs(r - round(r)) > 1e-6:
+        raise ClassError(f"box {box.id}: the lidar grid (E {g.x0:g} N {g.y1:g}) isn't on the 0.5 m class grid")
+    c, r = int(round(c)), int(round(r))
+    if c >= w.width or r >= w.height or c + g.cols <= 0 or r + g.rows <= 0:
+        raise ClassError(f"box {box.id}: the lidar grid doesn't reach the box's window")
     if not grid.same_coordinates(osr.SpatialReference(wkt=g.wkt).GetAuthorityCode(None) or 0):
         raise ClassError(f"box {box.id}: the lidar's CRS isn't one the grid reads as its own (grid.NULL_SHIFT_EPSG)")
+    return r, c
+
+
+def check_box_grid(box, g):
+    """The lidar grid must be the box's window exactly (offset 0, same size)."""
+    if box_offset(box, g) != (0, 0) or g.shape != box.window().shape:
+        raise ClassError(f"box {box.id}: the lidar grid isn't the box's window")
+
+
+def embed(a, box, offset):
+    """A lidar-grid array placed in the box's window (0, no data, where the lidar has nothing)."""
+    w = box.window()
+    r, c = offset
+    if (r, c) == (0, 0) and a.shape == w.shape:
+        return a
+    out = np.zeros(w.shape, a.dtype)
+    rows, cols = a.shape
+    r0, c0 = max(r, 0), max(c, 0)
+    r1, c1 = min(r + rows, w.height), min(c + cols, w.width)
+    out[r0:r1, c0:c1] = a[r0 - r:r1 - r, c0 - c:c1 - c]
+    return out
+
+
+def preflight(recipe, boxes):
+    """Every box's inputs, checked before any heavy work: the files are there, the lidar grid is on the box's, the
+    mask and the shrub build's cue cache are on the lidar grid, the curve exists. Raises ClassError."""
+    with open(recipe["norm"], encoding="utf-8") as f:
+        norm = json.load(f)
+    for name in ("ndvi_median", "ndvi_max", "ndvi_min", "clear_count"):
+        if not os.path.isfile(os.path.join(recipe["july"], f"{name}.tif")):
+            raise ClassError(f"no {name}.tif in {recipe['july']}")
+    if not os.path.isfile(recipe["osm"]):
+        raise ClassError(f"no OSM cut at {recipe['osm']}")
+    for b in boxes:
+        spec = recipe["boxes"][b.id]
+        ds = gdal.Open(os.path.join(spec["lidar"], "dsm.tif"))
+        gt = ds.GetGeoTransform()
+        g = LidarGrid(gt[0], gt[3], ds.RasterYSize, ds.RasterXSize, ds.GetProjection())
+        box_offset(b, g)
+        shape = np.load(spec["mask"], mmap_mode="r").shape
+        if shape != g.shape:
+            raise ClassError(f"box {b.id}: the building mask is {shape}, the lidar {g.shape}")
+        with open(os.path.join(spec["shrubs"], "work", "cues.json"), encoding="utf-8") as f:
+            key = json.load(f)["key"]
+        if [float(v) for v in key["grid"][:3]] != [g.x0, g.y1, CR.PX] or key["grid"][3:] != [g.rows, g.cols]:
+            raise ClassError(f"box {b.id}: the shrub build's cue cache is for another grid")
+        for p in [spec["photo"], os.path.join(spec["shrubs"], "why.tif")] + list(spec["points"]):
+            if not os.path.isfile(p):
+                raise ClassError(f"box {b.id}: no file {p}")
+        curve_of(norm, spec["curve"])
 
 
 def read_tif_on(path, g, band=1):
@@ -504,7 +559,7 @@ def classify_box(box, spec, osm_lines, july_dir, norm, log=print):
     """(class, floor, report) for one box, in the photo's frame on the box's window."""
     t0 = time.time()
     h, bad, g = read_lidar(spec["lidar"])
-    check_box_grid(box, g)
+    offset = box_offset(box, g)
     bld = np.load(spec["mask"]).astype(bool)
     if bld.shape != g.shape:
         raise ClassError(f"box {box.id}: the building mask is {bld.shape}, the lidar {g.shape}")
@@ -526,8 +581,9 @@ def classify_box(box, spec, osm_lines, july_dir, norm, log=print):
          "plant": CR.plant_cue(sh["n_ag"], sh["scat"]), "kept": sh["kept"], "treecue": sh["treecue"],
          "field": sh["field"], "p": CR.to_s2(ndvi, curve), "dark": dark}
     cls, fl, st = CR.classify(f, cell, july, on_road, track_line, lum)
-    cls, fl = to_photo_frame(cls, shift), to_photo_frame(fl, shift)
+    cls, fl = embed(to_photo_frame(cls, shift), box, offset), embed(to_photo_frame(fl, shift), box, offset)
     report = {"box": box.id, "name": box.name, "shift_m": list(shift), "photo_cover": round(cover, 4),
+              "lidar_offset_cells": list(offset),
               "curve": spec["curve"], "shrub_build": sh["build"], "brightness": bst,
               "osm_lines": {"roads": len(roads), "tracks": len(tracks)}, "road_cells": int(on_road.sum()),
               "track_line_cells": int(track_line.sum()), **st, "seconds": round(time.time() - t0, 1)}
@@ -666,6 +722,7 @@ def build(archive, recipe, box_ids=None, build_id=None, command=None, keep=KEEP,
         os.makedirs(folder)
         t0 = time.time()
         try:
+            preflight(recipe, boxes)
             osm_lines = read_osm_lines(recipe["osm"], boxes, log=log)
             reports, shrubs, layers = [], [], []
             for b in boxes:

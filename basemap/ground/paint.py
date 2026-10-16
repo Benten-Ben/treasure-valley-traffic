@@ -161,7 +161,10 @@ def centres(win):
 
 
 def rows_stripe(win, bearing):
-    """0..1 stripes across crop rows running along bearing (degrees clockwise from grid north); NaN bearing: 0.5."""
+    """0..1 stripes across crop rows running along bearing (degrees clockwise from grid north); NaN bearing: 0.5. On a
+    level too coarse to draw them (under three cells a row), their average, 0.5, so they never alias."""
+    if win.res * 3 > ROW_PERIOD_M:
+        return np.full(win.shape, 0.5, np.float32)
     xs, ys = centres(win)
     th = np.radians(np.nan_to_num(bearing, nan=0.0))
     across = xs[None, :] * np.cos(th) - ys[:, None] * np.sin(th)

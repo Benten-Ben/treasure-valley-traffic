@@ -52,11 +52,21 @@ class TestFrames(unittest.TestCase):
         wide = CL.burn_lines([line], g, (0.0, 0.0), reach_m=2.0)
         self.assertEqual(np.flatnonzero(wide[10]).tolist(), list(range(16, 25)))
 
-    def test_box_grid_must_be_the_box_window(self):
+    def test_the_lidar_grid_in_the_box_window(self):
         w = BOX.window()
         CL.check_box_grid(BOX, lidar_grid(rows=w.height, cols=w.width))
+        g = lidar_grid(x0=w.west + 0.5, rows=w.height, cols=w.width - 2)          # box h's: half a metre inside
+        self.assertEqual(CL.box_offset(BOX, g), (0, 1))
         with self.assertRaises(CL.ClassError):
-            CL.check_box_grid(BOX, lidar_grid(x0=w.west + 0.5, rows=w.height, cols=w.width))
+            CL.check_box_grid(BOX, g)
+        a = np.ones(g.shape, np.uint8)
+        e = CL.embed(a, BOX, (0, 1))
+        self.assertEqual(e.shape, w.shape)
+        self.assertEqual((int(e[0, 0]), int(e[0, 1]), int(e[0, w.width - 2]), int(e[0, w.width - 1])), (0, 1, 1, 0))
+        with self.assertRaises(CL.ClassError):
+            CL.box_offset(BOX, lidar_grid(x0=w.west + 0.25))                     # off the 0.5 m grid
+        with self.assertRaises(CL.ClassError):
+            CL.box_offset(BOX, lidar_grid(x0=w.west - 5000))                     # nowhere near
 
 
 @unittest.skipIf(np is None, "needs the worker image (GDAL, PDAL, NumPy, SciPy)")

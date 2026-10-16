@@ -23,7 +23,7 @@ flat Valley colour (the painter's).
 """
 
 import argparse
-import hashlib
+import gzip
 import io
 import json
 import math
@@ -83,7 +83,7 @@ def _srs(epsg):
 
 def warp(rgb, win, z, x, y, n):
     """A painted window (rows, cols, 3) uint8 on the grid, warped onto tile z/x/y's Web Mercator square at n x SIZE
-    pixels a side (bilinear)."""
+    pixels a side: bilinear, or an average where the window is painted much finer than the tile's pixels."""
     rows, cols = rgb.shape[:2]
     src = gdal.GetDriverByName("MEM").Create("", cols, rows, 3, gdal.GDT_Byte)
     src.SetGeoTransform(win.transform)
@@ -91,8 +91,11 @@ def warp(rgb, win, z, x, y, n):
     for b in range(3):
         src.GetRasterBand(b + 1).WriteArray(rgb[..., b])
     w, s, e, nn = tiles.tile_mercator(z, x, y)
+    lat = (tiles.tile_lonlat(z, x, y)[1] + tiles.tile_lonlat(z, x, y)[3]) / 2
+    px = tiles.mpp(z + int(round(math.log2(n))), lat)         # the tile's pixel on the ground
+    resample = "average" if win.res * 1.5 < px else "bilinear"  # painted finer than the tile: average it down
     out = gdal.Warp("", src, format="MEM", dstSRS=_srs(3857), outputBounds=(w, s, e, nn), width=n * SIZE,
-                    height=n * SIZE, resampleAlg="bilinear", multithread=False)
+                    height=n * SIZE, resampleAlg=resample, multithread=False)
     arr = out.ReadAsArray().reshape(3, n * SIZE, n * SIZE)
     return np.ascontiguousarray(np.moveaxis(arr, 0, -1))
 
@@ -368,6 +371,48 @@ def readback(pmtiles_path, z, bounds_m, out_path):
     return found, missing
 
 
+def first_load(view_tiles, sizes, first_request=16384):
+    """The default view's first load from a full valley file, estimated from tile sizes (G1a paints only some of its
+    tiles): view_tiles [(z, x, y)] as the map library asked for them (app/scripts/ground-firstload.mjs), sizes
+    {(z, x, y): bytes} of the painted tiles. The full file's directory is laid out as pmtw writes it, with every valley
+    tile at the median size of the painted ones at its zoom, to find the leaf directories the view reads. Returns
+    {requests, bytes, tiles, tile_bytes, leaves, leaf_bytes, missing, ok, budget}."""
+    from basemap.landscape import pmtiles as PM
+    by_zoom = {}
+    for (z, _x, _y), n in sizes.items():
+        by_zoom.setdefault(z, []).append(n)
+    every = sorted(n for v in by_zoom.values() for n in v) or [40000]
+    med = {z: sorted(v)[len(v) // 2] for z, v in by_zoom.items()}
+    entries, off = [], 0
+    ids = sorted(PM.tile_id(z, x, y) for z in range(tiles.VALLEY_ZOOMS[0], tiles.VALLEY_ZOOMS[1] + 1)
+                 for x, y in tiles.valley_tiles(z))
+    for tid in ids:
+        z = PM.zxy(tid)[0]
+        n = med.get(z, every[len(every) // 2])
+        entries.append(PM.Entry(tid, off, n, 1))
+        off += n
+    root, leaves = pmtw.directories(entries)
+    leaf_bytes, touched = 0, set()
+    if leaves:
+        roots = PM.decode_directory(gzip.decompress(root))
+        for z, x, y in view_tiles:
+            tid = PM.tile_id(z, x, y)
+            leaf = max((e for e in roots if e.tile_id <= tid), key=lambda e: e.tile_id)
+            if leaf.tile_id not in touched:
+                touched.add(leaf.tile_id)
+                leaf_bytes += leaf.length
+    missing = [t for t in view_tiles if t not in sizes]
+    tile_bytes = sum(sizes.get(t, med.get(t[0], every[len(every) // 2])) for t in view_tiles)
+    head = first_request                       # the client's first read: the header and root directory, 16 KiB
+    total = head + leaf_bytes + tile_bytes
+    requests = 1 + len(touched) + len(view_tiles)
+    b = tiles.BUDGET["valleyDefault"]
+    return {"requests": requests, "bytes": total, "tiles": len(view_tiles), "tile_bytes": tile_bytes,
+            "first_request": head, "leaves": len(touched), "leaf_bytes": leaf_bytes, "root_bytes": len(root),
+            "missing": [list(t) for t in missing], "ok": total <= b["maxBytes"] and requests <= b["maxRequests"],
+            "budget": b}
+
+
 def _stopped(signum, _frame):
     raise SystemExit(128 + signum)
 
@@ -397,8 +442,17 @@ def main(argv=None):
     p.add_argument("--zoom", type=int, required=True)
     p.add_argument("--out", required=True, help="a folder: <box>-z<zoom>.tif")
     p.add_argument("--margin", type=float, default=100.0, help="metres around each box")
+    p = sub.add_parser("estimate", help="the default view's first load from a full valley file, from tile sizes")
+    p.add_argument("--pmtiles", required=True, help="a valley file holding (at least) the view's tiles")
+    p.add_argument("--view", required=True, help="app/scripts/ground-firstload.mjs's result (JSON, --out)")
     args = ap.parse_args(argv)
     signal.signal(signal.SIGTERM, _stopped)
+    if args.cmd == "estimate":
+        from basemap.landscape import pmtiles as PM
+        with open(args.view) as f:
+            view = [tuple(int(v) for v in t.split("/")) for t in json.load(f)["tiles"]]
+        print(json.dumps(first_load(view, PM.tile_sizes(args.pmtiles)), indent=1))
+        return 0
     if args.cmd == "readback":
         os.makedirs(args.out, exist_ok=True)
         for b in grid.boxes():

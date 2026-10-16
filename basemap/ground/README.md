@@ -1,4 +1,4 @@
-# basemap/ground: the ground's contract
+# basemap/ground: the ground
 
 The ground is the painted base of the Valley look: each soil type in its own colour and texture, measured from the
 aerial photo over that type's uncovered ground, the photo's own colour where the ground departs from its type,
@@ -6,7 +6,7 @@ crops from the farm fields, and the land-cover classes in the ten test boxes
 ([DECISIONS](../../docs/DECISIONS.md), Oct 8). It is core, part of the base map ([ch. 15
 §15.1](../../docs/15-plugins.md#151-whats-core)). Plugins feed it files, and it runs flat without them.
 
-This folder holds the contract every piece of the ground shares:
+This folder holds the contract every piece of the ground shares, and the ground itself:
 
 | Piece | File | Runs in |
 |---|---|---|
@@ -17,9 +17,13 @@ This folder holds the contract every piece of the ground shares:
 | The window-rasterising helper P2 and G1 share | [`rasterize.py`](rasterize.py) | the worker image |
 | Mask v0: what covers the ground, from raw inputs | [`mask.py`](mask.py) (the build, and reading it back), [`maskrules.py`](maskrules.py) (the rules), [`osmconf.ini`](osmconf.ini) | the worker image (the rules anywhere) |
 | The contract on the command line | [`ground.py`](ground.py) | anywhere |
+| The land-cover classes in the ten boxes: the rules, and the step that builds them | [`classrules.py`](classrules.py), [`classes.py`](classes.py) | the worker image |
+| The painter: the soil base, crops and the box classes on any window | [`paint.py`](paint.py), [`colour.py`](colour.py) | the worker image |
+| The tile writer and its PMTiles writer | [`tilewrite.py`](tilewrite.py), [`pmtw.py`](pmtw.py) (standard library) | the worker image |
 
-Built Oct 11 (sprint package S5a: the contract, then mask v0). Still to come: the painter and its tiles (G1a), and
-texture and photo variation (G1b). The base bake, which reads the same exports, is in
+Built Oct 11 (sprint package S5a: the contract, then mask v0) and Oct 15 (G1a: the box classes, the painter and the
+tiles). Still to come: texture and photo variation, and the valley-wide runs (G1b); the app's ground source on the
+first use of Valley (with S3a). The base bake, which reads the same exports, is in
 [`../landscape/`](../landscape/README.md) (S5b).
 Package names and C numbers refer to the landscape sprint plan (v3), which is kept with the private files.
 
@@ -236,10 +240,10 @@ reach the ground through it, however it's labelled.
 | `ground_mask` (mask v0) | FlatGeobuf, polygons: `roofs`, `roads`, `paving`, `water` and `covered` ([below](#mask-v0)) | every one of those layers | **the ground stays flat** | S5a-2 |
 | `ground_classes` | one GeoTIFF per box on the 0.5 m grid, named by the box's id (`a`, …, `downtown`, …), exactly on its window | | the boxes show the valley paint | G1a |
 
-The spike's classes can't go in as they are. Their road reference, and the rule that keeps cells within 2 m of a
-mapped road from turning green, read ACHD's segments (internal). They have to be rebuilt with OSM's roads only, or
-the owner has to accept them, before G1a uses them. RCMAP, which calibrates their bare cut, has no recorded origin
-and an unconfirmed version (v7 or v8) ⚠️.
+The spike's classes didn't go in as they were: their road reference, and the rule that keeps cells within 2 m of a
+mapped road from turning green, read ACHD's segments (internal). G1a rebuilt them with OpenStreetMap's roads only
+([below](#the-box-classes)). RCMAP calibrated the spike's bare cut once (0.16, now a constant); the build doesn't read
+it, and its copy's origin and version (v7 or v8) are still to be confirmed ⚠️.
 
 **Raw inputs**, read from files: what the products are made from, and what the painter reads directly.
 
@@ -399,6 +403,48 @@ Kept as separate buffers with round corners, `covered` alone was 342 MB, and the
 The share of each box that `covered` keeps out of sampling, burned at 0.5 m: c (North End) 81%, downtown 69%, d 47%,
 b 33% (water 19%), e 18%, h 9%, a 4%, j 4%, i 2% and f 0.3%.
 
+## The box classes
+
+The land-cover classes in the ten boxes are the ground's own product `ground_classes` (G1a): one GeoTIFF per box, on
+its exact 0.5 m window, with two bands, `class` (what covers each cell) and `floor` (the ground under it, which the
+painter paints). They're the land-cover spike's rules ([`classrules.py`](classrules.py); the owner's scheme and its
+season in [DECISIONS](../../docs/DECISIONS.md), Oct 8), as a worker step that reads raw public inputs only
+([`classes.py`](classes.py)):
+
+| Step | Spike | What |
+|---|---|---|
+| The scheme | exp26, variant B | Roof; tree (2.4 m and up, and a shrub-height crown's skirt or gap); shrub (the shrub rule's kept cells, [ch. 19 §19.8](../../docs/19-trees.md#198-shrubs)); crop (pieces the shrub rule gave to a crop field); the rest of the 0.3-2.4 m band is tall grass, green or dry, or a hard thing when it's neither green nor a plant to the lidar, or a wall or fence when that's a straight thin run; an even patch of the band is tall grass, not shrub; flat and green is short green grass |
+| Surfaced ground | exp28b | flat, not green and below the bare cut on the photo's NDVI (a 2.5 m median, 4 m^2 patches): dark to the lidar (asphalt) or pale (dirt, gravel, concrete); the rest is short dry grass |
+| As of July | exp31 | one green cut (0.45) and one bare cut (0.16) on Sentinel-2's NDVI scale for every box; per 10 m cell, July 2025's green share against the photo's, beyond a margin of 0.35, dries or greens that share of the cell's low cells; a cell never green in July dries all of them, one always green greens them. Roads (OpenStreetMap's, within 2 m) never green |
+| The floor | exp27 | under trees, shrubs, hard things and walls, the nearest ground cell's class; under closed canopy (85% of the 30 m around), forest floor |
+| Mapped tracks | new (owner, Oct 8) | short dry grass within 2 m of a mapped `highway=track` becomes pale surfaced ground where the photo is 4% brighter than the ground 6-20 m beside the track (box f's tracks, which the July rule's bare cut loses in its May photo) |
+
+Every number is the spike's (its experiments' records are on the server with the spike), kept in `classrules.py` as
+constants; nothing is re-fitted per box. Water isn't a class: it comes from map data.
+
+**Inputs** (a recipe file on the server names them, since they're files, not exports): per box, the spike's 0.5 m
+lidar products (DSM, DTM), the trees build's building mask (Overture's footprints aligned to the lidar), the shrub
+build's `why.tif`, cue cache and photo shift (plugins/trees, P11), the box's NAIP crop (2025 in a-f and downtown,
+2023 in h-j), its point cloud (each ground point's intensity over its flight line's median: dark ground), July 2025
+from Sentinel-2 and the same-day normalisation's NDVI curve, and S1's OpenStreetMap cut (roads and tracks). The
+manifest names them as RAW inputs only (`3dep`, `overture-buildings`, `naip`, `sentinel-2`, `osm`, and `csb` and
+`cdl` through the shrub builds' crop cover), so it's ODbL, republish yes.
+
+**Frames.** The rules run on the lidar's grid, the photo moved onto it, as the spike did; the classes are then moved
+into the photo's frame by the shrub build's photo shift (OpenStreetMap and the map are traced on the photo). Box b
+moves 2 m, h 1 m east and 0.5 m north, downtown 0.5 m; the rest not at all ⚠️ (box d's ground sits 2.3 m east of
+its photo, but the shift measured on its trees didn't earn its distance).
+
+```bash
+python basemap/ground/classes.py build --recipe /mnt/g1a/recipe.json [--box f --archive <another folder>]
+```
+
+It's a heavy worker job (4-6 GB, 2 CPUs): about 2-8 minutes a box, most of it reading the point cloud. It writes
+`<box>.tif` per box, `report.json` (each box's inputs, shift, the July rule's counts and the class shares) and
+`manifest.json` last, through a staging folder and one rename, and keeps the newest two whole builds.
+
+CLASSES_RESULTS
+
 ## The rasterising helper
 
 `rasterize.py` (worker image) burns vectors into one window at a time, so no step holds a valley-wide raster:
@@ -440,6 +486,39 @@ also **says so**:
 
 Clay is flat in v1 whatever the ground's state ([DECISIONS](../../docs/DECISIONS.md), Oct 8).
 
+## The painter
+
+[`paint.py`](paint.py) paints any window of the grid, at any of its levels (2 m for the valley file, 0.5 m for the
+detail file, 10-40 m for the low zooms), from what `inputs.resolve()` returns. Bottom to top:
+
+1. **The soil base.** Each soil polygon in its ground type's colour from soils' palette: the measured OKLab median
+   (`measured`), or the colour it borrowed (`series`, `texture`), as measured from NAIP 2025 over the type's
+   uncovered ground on the June 18 flight's scale, painted as it is (the photo's own colours). A type with no colour
+   (`none`: Dams, Mined land, Pits and dumps, NOTCOM) is a flat colour by its texture, which `paint.json` counts.
+   SSURGO's Water units yield to the water layer: they take the nearest soil's colour within 50 m, never a "water"
+   average. The types meet in a 20 m soft edge (a box blur in OKLab: a straight line between two types becomes a
+   linear ramp 20 m wide).
+2. **Crops** from farm's crop cover, inside farm's fields (their own edges) and in its edge band where the CDL agrees,
+   in their July state: green fields a crop green (corn, hay, small grains, roots and vegetables, specialty; natural
+   July colours, none darker than the ground band's lawn), growing ones green rows over the soil, bare or harvested
+   ones the soil with tillage rows, small grains straw. Rows run along the field's bearing, 8 m apart (a texture: the
+   real rows are 0.76 m). Never on mapped surfaces. Cropland clusters outside every field (the crop cover's confidence
+   3) wait for G1b, which confirms them in the photo. Without farm's export the painter refuses: C7's CSB and CDL
+   fallback isn't built, since the crop cover has landed.
+3. **The box classes**, each cell's `floor` as tokens over the soil base (plan §3.4's ground band): short dry grass
+   and roofs are the soil itself; pale surfaced ground the soil under 35% cream (the materials' gravel); dark surfaced
+   ground the asphalt token `#989088`; short green grass the band's lawn `#748357`, tall green grass a lawn green of
+   the same lightness; tall dry grass straw over the soil; forest floor the soil darkened. Where the crop cover says
+   crop and the cell's `class` may be one (grass, pale ground, a hard thing, the shrub rule's crop), it's the crop.
+   Painted at 0.5 m and averaged onto coarser cells, with the box's edge feathered over 75 m into the valley paint.
+4. **The 3 m band (C8).** Surfaced classes on mapped surfaces (mask v0's roads, paving and roofs, and water's mask or
+   mask v0's standing water) and within 3 m of them are painted from the soil base, so the photo's pavement doesn't
+   show beside a vector road; G1b's photo variation keeps out of the same band.
+5. Outside the grid, the flat Valley colour.
+
+Each window is painted 64 m bigger and cut back, so windows meet without a seam (`test_paint.py`). Texture and the
+photo's variation are G1b's: today the ground is flat colours, soft edges, rows and classes.
+
 ## The tiles
 
 What G1a's writer makes (`spec.json` "tiles", `tiles.py`):
@@ -449,7 +528,7 @@ What G1a's writer makes (`spec.json` "tiles", `tiles.py`):
 | Zooms | z8–z15 | z17 |
 | Where | the map box: 14,573 tiles (10,807 at z15) | the tiles touching the ten boxes: 612 |
 | Pixel at the valley's middle latitude | 1.73 m at z15, matching the 2 m painter | 0.43 m at z17, finer than the 0.5 m classes |
-| Made from | the painter grid: each z15 tile from its own window (`tiles.tile_window`), never a full mosaic; z14 to z8 each from its four children (2 x 2 average), as `basemap/imagery.py` does | the 0.5 m classes, with the valley paint resampled outside each box; the class edge feathers inside the box |
+| Made from | the painter grid, a z13 block at a time: the block's window (`tiles.tile_window`) painted at 2 m, warped onto its Web Mercator square at z15's pixel (2,048 px) and cut into 16 z15 tiles; its z14 and z13 tiles from 2 x 2 averages of those pixels; z12 to z8 each from its four children (kept losslessly), as `basemap/imagery.py` does. Never a full mosaic | the painter at 0.5 m, a z15 block at a time cut into 16 z17 tiles: the box classes inside each box, feathered in over 75 m, and the valley paint around them |
 | File | `ground-<digest>.pmtiles` | `ground-detail-<digest>.pmtiles` |
 
 - **All tiles:** 512 px, lossy WebP (quality 80 to start; G1a may lower it per zoom to meet the budget), opaque, XYZ
@@ -464,6 +543,11 @@ What G1a's writer makes (`spec.json` "tiles", `tiles.py`):
   included. A new OSM cut, NAIP release, CDL year, mask v0 or class build gives a new name, and the same inputs give
   the same name. Files are never overwritten (`/tiles/` is cached for an hour, and PMTiles clients keep the header),
   and the last two are kept.
+- **Blocks and resuming** ([`tilewrite.py`](tilewrite.py)): each finished block is a file of its WebP tiles with an
+  index, written atomically into the run's folder (`<out>/blocks/`), so a stopped run picks up where it was, and the
+  two PMTiles files are assembled from the blocks at the end ([`pmtw.py`](pmtw.py): clustered, identical tiles
+  stored once, the header and root directory in the first 16 KiB, leaf directories when the tiles need them).
+  Development runs go to the cold drive's ground folder, not the VM's disk.
 - **Switching in:** `tiles.painted_entry(...)` is written last with `tiles.update_manifest()`, atomically:
 
 ```json
@@ -483,8 +567,10 @@ harness's S1.
   total **at most 0.6 MB** (10^6 bytes, as `perf.mjs` counts) in **at most 14 requests**, inside the page's 6 MB.
 - **Clay:** the ground never loads (none).
 - `tiles.first_load(requests)` checks a run's request list. For scale, the whole map box is 20 tiles at z10 and 9 at
-  z9, so the default view needs about a dozen tiles plus the PMTiles header and directories. G1a measures it with the
-  app.
+  z9.
+- **Measured** with the map library itself (`app/scripts/ground-firstload.mjs`: a bare page with the app's MapLibre
+  and pmtiles, the ground as its only source, served by a local server that logs each range request): the default
+  view draws **12 z10 tiles** (x 179-182, y 372-374) and nothing at other zooms. FIRSTLOAD_RESULTS
 
 ## Commands and tests
 

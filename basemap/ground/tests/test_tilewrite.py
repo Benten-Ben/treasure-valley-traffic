@@ -131,6 +131,19 @@ class TestTiles(unittest.TestCase):
         T.check_entry(entry)
         self.assertEqual(entry["file"], T.file_names(digest)[0])
 
+    def test_first_load_from_tile_sizes(self):
+        view = [(10, x, y) for x in range(179, 183) for y in range(372, 375)]
+        sizes = {t: 40000 for t in view[:-1]}
+        sizes[(15, 5800, 11900)] = 30000
+        est = TW.first_load(view, sizes)
+        self.assertEqual(est["tiles"], 12)
+        self.assertEqual(est["missing"], [[10, 182, 374]])
+        self.assertEqual(est["tile_bytes"], 12 * 40000)                # a missing tile counts at its zoom's median
+        self.assertEqual(est["requests"], 1 + est["leaves"] + 12)
+        self.assertLessEqual(est["leaves"], 1)                         # z10's entries are all in the first leaf
+        self.assertEqual(est["bytes"], 16384 + est["leaf_bytes"] + 480000)
+        self.assertEqual(est["ok"], est["bytes"] <= 600000 and est["requests"] <= 14)
+
     def test_the_boxes_blocks_and_the_detail_blocks(self):
         near = TW.blocks_near_boxes(13)
         self.assertGreaterEqual(len(near), 10)
