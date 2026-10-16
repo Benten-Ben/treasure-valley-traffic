@@ -9,9 +9,11 @@ import type { Loop } from '#lib/map/loop.js';
  * - `start(target)` eases to the target, then keeps it at the centre of the
  *   view after every rendered frame (the render loop runs at least
  *   `FOLLOW_FPS` while following, so a slow bus is still tracked). Started
- *   with an `offset` (the bus card's Follow, while the inspect card is open:
- *   §14.3 "Regions"), it keeps the target that far from the centre instead,
- *   in the area the card leaves, for as long as it follows.
+ *   with an `offset` (the bus card's Follow: where the inspect card leaves
+ *   room, §14.3 "Regions"), it keeps the target that far from the centre
+ *   instead. Given as a function, the offset is read again on every frame:
+ *   when it changes (the card closes, or a resize brings another layout) the
+ *   view eases to the new place, and it holds from then on.
  * - Wheel and pinch zoom keep the view's centre still while following: the
  *   target, unless it's kept off centre (then the next frame puts it back).
  * - Any drag ends it, as do Esc (its place in the Esc order), leaving
@@ -31,6 +33,11 @@ export interface FollowTarget {
 	position(): [number, number] | null;
 }
 
+/** Where a target is kept from the middle of the map's padding (px); null or undefined: the middle. */
+export type FollowOffset = readonly [number, number] | null | undefined;
+
+const pair = (o: FollowOffset): [number, number] => (o ? [o[0], o[1]] : [0, 0]);
+
 /** Frames per second the loop is asked for while following. */
 export const FOLLOW_FPS = 4;
 /** Re-centre once the target is this far (px) from the centre. */
@@ -47,8 +54,10 @@ export class Follow {
 	#map: Map | null = null;
 	#loop: Pick<Loop, 'want'> | null = null;
 	#easing = false;
-	/** Where the target is kept, from the map's padded centre (px). */
+	/** Where the target is kept, from the map's padded centre (px): as last read... */
 	#offset: [number, number] = [0, 0];
+	/** ...from this (`start`'s offset). */
+	#offsetNow: () => [number, number] = () => [0, 0];
 	#zoomAround: { scroll: boolean; touch: boolean } | null = null;
 	#o: Required<FollowOptions>;
 
@@ -78,14 +87,17 @@ export class Follow {
 
 	/**
 	 * Follow a target (replacing any other), kept `offset` px from the middle
-	 * of the map's padding. Returns false when it can't start now.
+	 * of the map's padding: a fixed offset, or a function read on every frame
+	 * (null or undefined: the middle). Returns false when it can't start now.
 	 */
-	start(target: FollowTarget, o: { zoom?: number; offset?: [number, number] | null } = {}): boolean {
+	start(target: FollowTarget, o: { zoom?: number; offset?: FollowOffset | (() => FollowOffset) } = {}): boolean {
 		const map = this.#map;
 		if (!map || !this.#o.canFollow()) return false;
 		if (this.current) this.#unlisten(map);
 		this.current = target;
-		this.#offset = o.offset ? [o.offset[0], o.offset[1]] : [0, 0];
+		const off = o.offset;
+		this.#offsetNow = typeof off === 'function' ? () => pair(off()) : () => pair(off);
+		this.#offset = this.#offsetNow();
 		map.on('render', this.#onRender);
 		map.on('dragstart', this.#onDrag);
 		this.#centreZoom(map, true);
@@ -94,13 +106,16 @@ export class Follow {
 		if (at) {
 			const zoom = o.zoom !== undefined ? { zoom: o.zoom } : {};
 			if (this.#o.reducedMotion()) this.#place(map, at, zoom);
-			else {
-				this.#easing = true;
-				map.once('moveend', () => (this.#easing = false));
-				map.easeTo({ center: at, duration: FOLLOW_EASE_MS, ...zoom, ...this.#offsetOption() });
-			}
+			else this.#ease(map, at, zoom);
 		}
 		return true;
+	}
+
+	/** Ease the target to where it's kept; frames leave the view alone until it lands. */
+	#ease(map: Map, at: [number, number], o: { zoom?: number } = {}) {
+		this.#easing = true;
+		map.once('moveend', () => (this.#easing = false));
+		map.easeTo({ center: at, duration: FOLLOW_EASE_MS, ...o, ...this.#offsetOption() });
 	}
 
 	#offsetOption(): { offset?: [number, number] } {
@@ -153,9 +168,16 @@ export class Follow {
 		if (!this.#o.canFollow()) return this.stop();
 		const at = t.position();
 		if (!at) return;
+		// Where it's kept now: when that changed (the card closed), ease there rather than jump.
+		const [dx, dy] = this.#offsetNow();
+		if (Math.hypot(dx - this.#offset[0], dy - this.#offset[1]) > FOLLOW_SLACK_PX) {
+			this.#offset = [dx, dy];
+			if (this.#o.reducedMotion()) this.#place(map, at);
+			else this.#ease(map, at);
+			return;
+		}
 		const p = map.project(at);
 		const c = map.project(map.getCenter());
-		const [dx, dy] = this.#offset;
 		if (Math.hypot(p.x - c.x - dx, p.y - c.y - dy) > FOLLOW_SLACK_PX) this.#place(map, at);
 	};
 }

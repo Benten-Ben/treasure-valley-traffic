@@ -122,6 +122,45 @@ describe('follow', () => {
 		expect(g.map.jumpTo).not.toHaveBeenCalled();
 	});
 
+	it('an offset given as a function is read on each frame: when it changes (the card closes) the view eases there', () => {
+		const f = fakeMap();
+		f.map.easeTo.mockImplementation((o: { center: [number, number]; offset?: [number, number] }) => {
+			const [dx, dy] = o.offset ?? [0, 0];
+			f.setCenter({ lng: o.center[0] - dx / 10000, lat: o.center[1] + dy / 10000 });
+		});
+		const follow = new Follow({ reducedMotion: () => false });
+		follow.attach(f.map as unknown as Map, { want: vi.fn() });
+		let card: [number, number] | null = [-160, 0];
+		const pos: [number, number] = [-116.3, 43.65];
+		follow.start({ kind: 'bus', id: '7', label: 'bus 7', position: () => pos }, { offset: () => card });
+		expect(f.map.easeTo).toHaveBeenLastCalledWith(expect.objectContaining({ center: pos, offset: [-160, 0] }));
+		f.fire('moveend');
+		f.fire('render');
+		expect(f.map.easeTo).toHaveBeenCalledTimes(1);
+		// The card closes: an ease back to the middle, and frames wait for it.
+		card = null;
+		f.fire('render');
+		expect(f.map.easeTo).toHaveBeenCalledTimes(2);
+		expect(f.map.easeTo).toHaveBeenLastCalledWith({ center: pos, duration: 600 });
+		expect(f.center).toEqual({ lng: pos[0], lat: pos[1] });
+		f.fire('render');
+		expect(f.map.easeTo).toHaveBeenCalledTimes(2);
+		f.fire('moveend');
+		// Then it holds at the middle: no more moves while the target stays put.
+		f.fire('render');
+		expect(f.map.easeTo).toHaveBeenCalledTimes(2);
+		expect(f.map.jumpTo).not.toHaveBeenCalled();
+		// Under reduced motion the change is at once.
+		const g = fakeMap();
+		const still = new Follow({ reducedMotion: () => true });
+		still.attach(g.map as unknown as Map, null);
+		let off: [number, number] | undefined = [-160, 0];
+		still.start({ kind: 'bus', id: '8', label: 'bus 8', position: () => [-116.25, 43.6] }, { offset: () => off });
+		off = undefined;
+		g.fire('render');
+		expect(g.map.jumpTo).toHaveBeenLastCalledWith({ center: [-116.25, 43.6] });
+	});
+
 	it('stops when the map leaves Explore, and won’t start outside it', () => {
 		const f = fakeMap();
 		let explore = true;

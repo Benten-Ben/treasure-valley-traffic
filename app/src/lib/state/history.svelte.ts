@@ -177,8 +177,11 @@ export class ViewHistory {
 	}
 }
 
-/** A fly's jump under reduced motion: `jumpTo` takes no offset, so the map is then panned by it at once. */
-function jump(map: Map, options: FlyToOptions) {
+/**
+ * A fly's jump under reduced motion: `jumpTo` takes no offset, so the map is
+ * then panned by it at once. Also the keymap's, for H and O with no history.
+ */
+export function jump(map: Pick<Map, 'jumpTo' | 'panBy'>, options: FlyToOptions): void {
 	const { center, zoom, bearing, pitch, roll, padding, offset } = options;
 	map.jumpTo({ center, zoom, bearing, pitch, roll, ...(typeof padding === 'object' ? { padding } : {}) });
 	const [x, y] = offsetOf(offset);

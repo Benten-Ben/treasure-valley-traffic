@@ -1,6 +1,6 @@
 import type { CameraOptions, FlyToOptions, Map } from 'maplibre-gl';
 import type { AppCtx } from '#lib/app/context.js';
-import { historyOf } from '#lib/state/history.svelte.js';
+import { historyOf, jump } from '#lib/state/history.svelte.js';
 import { register, type KeyBinding } from './keys.js';
 import { fitPadding, type Landing } from './padding.js';
 
@@ -71,13 +71,13 @@ export function registerDefaultKeys(app: AppCtx, opts: { help: () => void }): ()
 	};
 	// H and O are programmatic flies: through the view history, so the view they leave goes on it
 	// (a jump under reduced motion, still pushed) and Backspace or the chip comes back. With the
-	// inspect card open they land in the area it leaves (`app.landing`).
+	// inspect card open they land in the area it leaves (`app.landing`), a jump's too.
 	const fly = (o: FlyToOptions) => {
 		const m = map();
 		if (!m) return;
 		const history = historyOf(app);
 		if (history.attached) history.fly({ duration: 1200, ...o });
-		else if (reducedMotion()) m.jumpTo({ center: o.center, zoom: o.zoom, bearing: o.bearing, pitch: o.pitch });
+		else if (reducedMotion()) jump(m, o);
 		else m.flyTo({ duration: 1200, ...o });
 	};
 	const pan = (dx: number, dy: number) => {

@@ -1,6 +1,8 @@
 import type { Map } from 'maplibre-gl';
-import { describe, expect, it, vi } from 'vitest';
-import { HOME, homeFlight, overviewBounds, overviewCamera, VALLEY } from './keymap.js';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { AppCtx } from '#lib/app/context.js';
+import { allBindings } from './keys.js';
+import { HOME, homeFlight, overviewBounds, overviewCamera, registerDefaultKeys, VALLEY } from './keymap.js';
 import { cardLanding, chromePadding } from './padding.js';
 
 describe('Overview frames the populated valley, not the tiles', () => {
@@ -38,5 +40,31 @@ describe('H and O land left of the open inspect card (§14.3 "Regions")', () => 
 		expect(cameraForBounds).toHaveBeenLastCalledWith(overviewBounds(), { padding: { top: 40, right: 40, bottom: 40, left: 40 }, bearing: 0, pitch: 0 });
 		overviewCamera(map, null, card);
 		expect(cameraForBounds).toHaveBeenLastCalledWith(overviewBounds(), { padding: { top: 40, right: 360, bottom: 40, left: 40 }, bearing: 0, pitch: 0 });
+	});
+});
+
+describe('with no view history, H under reduced motion still lands left of the card', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	it('jumps, then pans by the landing offset at once', () => {
+		vi.stubGlobal('matchMedia', (q: string) => ({ matches: q.includes('reduce'), addEventListener() {}, removeEventListener() {} }));
+		const stored = chromePadding({ layout: 'desktop', width: 1280, height: 800 });
+		const card = cardLanding({ layout: 'desktop', width: 1280, height: 800, stored });
+		const map = { jumpTo: vi.fn(), panBy: vi.fn(), flyTo: vi.fn() };
+		const app = { map, layers: { defs: [] }, modes: { current: 'explore' }, manifest: null, landing: () => card } as unknown as AppCtx;
+		const off = registerDefaultKeys(app, { help: () => {} });
+		try {
+			allBindings()
+				.find((b) => b.id === 'home')!
+				.run({} as KeyboardEvent);
+			expect(map.flyTo).not.toHaveBeenCalled();
+			expect(map.jumpTo).toHaveBeenCalledWith(expect.objectContaining({ center: HOME.center, zoom: HOME.zoom, pitch: HOME.pitch, bearing: HOME.bearing }));
+			expect(map.panBy).toHaveBeenCalledTimes(1);
+			const [by, how] = map.panBy.mock.calls[0] as [[number, number], unknown];
+			expect(by.map((v) => v + 0)).toEqual([160, 0]); // -0 from the history's negation
+			expect(how).toEqual({ animate: false });
+		} finally {
+			off();
+		}
 	});
 });

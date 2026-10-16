@@ -367,7 +367,8 @@ test.describe('transit', () => {
 		await expect(card).toContainText(/between reported positions|At its reported position|waiting for GPS/i);
 		await page.screenshot({ path: screenPath('transit-bus-card.png') });
 
-		// Follow: the view keeps the bus at its centre; a drag ends it.
+		// Follow: the view keeps the bus in the middle of the area the open card leaves, left of its 392 px
+		// column (§14.3 "Regions"; the map's own padding takes only the camera widget's); a drag ends it.
 		await card.getByRole('button', { name: 'Follow', exact: true }).click();
 		await expect(card.getByRole('button', { name: /Following/ })).toBeVisible();
 		await page.waitForTimeout(3000);
@@ -376,9 +377,10 @@ test.describe('transit', () => {
 			const b = (globalThis as any).__tvtTransit.buses().find((x: { id: string }) => x.id === id);
 			const p = map.project([b.lng, b.lat]);
 			const c = map.project(map.getCenter());
-			return Math.hypot(p.x - c.x, p.y - c.y);
+			const dx = (map.getPadding().right - 392) / 2;
+			return Math.hypot(p.x - c.x - dx, p.y - c.y);
 		}, bus.id);
-		expect(off, 'px between the bus and the centre while following').toBeLessThan(3);
+		expect(off, 'px between the bus and the middle of the area left of the card while following').toBeLessThan(3);
 		await page.screenshot({ path: screenPath('transit-follow.png') });
 		await page.mouse.move(700, 500);
 		await page.mouse.down();
