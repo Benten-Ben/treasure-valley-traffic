@@ -8,7 +8,8 @@ import tempfile
 import unittest
 
 from basemap.ground import grid as G, inputs as I, tiles as T
-from basemap.ground.tests.test_inputs import MASK_LAYERS, fgb_layer, write_classes, write_export, write_mask
+from basemap.ground.tests.test_inputs import (MASK_LAYERS, fgb_layer, write_classes, write_export, write_farm,
+                                              write_mask)
 from basemap.ground.tests.test_manifest import SSURGO
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -101,11 +102,12 @@ class EntryTest(unittest.TestCase):
             T.flat_entry("  ")
 
     def plan(self, versions=None):
-        return I.resolve(I.exports(self.dir), {"cdl": "2025", "csb": "2025"} if versions is None else versions)
+        return I.resolve(I.exports(self.dir), {"cdl": "2025", "naip": "2025"} if versions is None else versions)
 
     def test_painted_entry(self):
         write_export(self.dir, "soils", [fgb_layer("ground", ["ssurgo"])], [SSURGO])
         mask = write_mask(self.dir)
+        farm = write_farm(self.dir)
         plan = self.plan()
         d = T.digest(plan, painter="g1a-test")
         e = T.painted_entry(plan, d, built="2026-10-20")
@@ -117,30 +119,42 @@ class EntryTest(unittest.TestCase):
         self.assertEqual((e["licence"], e["republish"]), ("ODbL-1.0", "yes"))
         self.assertIn("© OpenStreetMap contributors", e["attribution"])
         self.assertIn(SSURGO["credit"], e["attribution"])
-        self.assertEqual(e["inputs"], ["soils/ground@20261012T031500Z"] +
-                         [f"ground_mask/{n}@{mask.build}" for n in MASK_LAYERS] + ["raw/cdl@2025", "raw/csb@2025"])
-        self.assertEqual(len(e["fallbacks"]), 5)
+        self.assertEqual(e["inputs"], ["soils/ground@20261012T031500Z", f"farm/crop_cover@{farm.build}",
+                                        f"farm/fields@{farm.build}"] +
+                         [f"ground_mask/{n}@{mask.build}" for n in MASK_LAYERS] + ["raw/cdl@2025", "raw/naip@2025"])
+        self.assertEqual([f.split(":")[0] for f in e["fallbacks"]], ["soils/palette", "water/mask", "ground_classes"])
+        noted = T.painted_entry(plan, d, built="2026-10-20", notes=["soils/palette: 4 ground types ... flat"])
+        T.check_entry(noted)
+        self.assertEqual(noted["fallbacks"], e["fallbacks"] + ["soils/palette: 4 ground types ... flat"])
         bad = dict(e, republish="internal")
         with self.assertRaises(ValueError):
             T.check_entry(bad)
         with self.assertRaises(ValueError):
             T.painted_entry(I.resolve({}), d)                          # nothing to paint
+        unversioned = I.Plan("painted", "", plan.choices + [I.Choice(I.Use(
+            "x", "y", "GeoTIFF", "x", "x", "x", fallback="CSB", fallback_reads=("csb",)))], {})
         with self.assertRaises(ValueError):
-            T.painted_entry(self.plan({}), d)                          # raw inputs read without versions
+            T.painted_entry(unversioned, d)                            # raw inputs read without versions
 
     def test_digest_follows_the_inputs(self):
         write_export(self.dir, "soils", [fgb_layer("ground", ["ssurgo"])], [SSURGO])
         write_mask(self.dir)
+        write_farm(self.dir)
         plan = self.plan()
         a = T.digest(plan, "v1")
         self.assertEqual(a, T.digest(self.plan(), "v1"))
         self.assertNotEqual(a, T.digest(plan, "v2"))
-        # a raw input's new release (CDL 2026 behind the crop fallback), or one more raw input the painter reads
-        self.assertNotEqual(a, T.digest(self.plan({"cdl": "2026", "csb": "2025"}), "v1"))
-        self.assertNotEqual(a, T.digest(self.plan({"cdl": "2025", "csb": "2025", "naip": "2025"}), "v1"))
-        with self.assertRaises(ValueError) as ctx:
-            T.digest(self.plan({"cdl": "2025"}), "v1")                 # csb is read without a version
+        # a raw input's new release (CDL 2026), or one more raw input the painter reads
+        self.assertNotEqual(a, T.digest(self.plan({"cdl": "2026", "naip": "2025"}), "v1"))
+        self.assertNotEqual(a, T.digest(self.plan({"cdl": "2025", "naip": "2025", "naip-2m": "abc"}), "v1"))
+        with self.assertRaises(ValueError) as ctx:                     # a fallback's raw input without a version
+            T.digest(I.Plan("painted", "", plan.choices + [I.Choice(I.Use(
+                "x", "y", "GeoTIFF", "x", "x", "x", fallback="CSB", fallback_reads=("csb",)))], plan.versions), "v1")
         self.assertIn("csb", str(ctx.exception))
+        write_farm(self.dir, build="20261012T040000Z")                 # farm exported again
+        b = T.digest(self.plan(), "v1")
+        self.assertNotEqual(a, b)
+        a = b
         # a rebuilt mask v0, and the classes arriving
         write_mask(self.dir, build="20261012T050000Z")
         b = T.digest(self.plan(), "v1")
@@ -166,6 +180,41 @@ class EntryTest(unittest.TestCase):
         self.assertEqual(sorted(os.listdir(tiles_dir)), ["manifest.json"])
         with self.assertRaises(ValueError):
             T.update_manifest(tiles_dir, {"status": "painted"})
+
+    def test_the_painters_code_is_named(self):
+        here = os.path.dirname(os.path.abspath(T.__file__))
+        files = {os.path.basename(p) for p in T.code_files(os.path.join(here, "tilewrite.py"))}
+        self.assertLessEqual({"tilewrite.py", "paint.py", "colour.py", "classrules.py", "grid.py", "tiles.py",
+                              "pmtw.py", "mask.py", "rasterize.py"}, files)
+        self.assertFalse({"classes.py", "ground.py"} & files)
+        pkg = os.path.join(self.dir, "pkg")
+        os.makedirs(pkg)
+        for name, src in (("a.py", "from basemap.ground import b, nothing_here\n"),
+                          ("b.py", "import basemap.ground.c as C\nX = 1\n"), ("c.py", "Y = 2\n"), ("d.py", "Z = 3\n")):
+            with open(os.path.join(pkg, name), "w", encoding="utf-8") as f:
+                f.write(src)
+        a = os.path.join(pkg, "a.py")
+        self.assertEqual([os.path.basename(p) for p in T.code_files(a, root=pkg)], ["a.py", "b.py", "c.py"])
+        before = T.code_digest(a, root=pkg)
+        self.assertEqual(before, T.code_digest(a, root=pkg))
+        with open(os.path.join(pkg, "d.py"), "w", encoding="utf-8") as f:
+            f.write("Z = 4\n")                                         # not read: the same
+        self.assertEqual(before, T.code_digest(a, root=pkg))
+        with open(os.path.join(pkg, "c.py"), "w", encoding="utf-8") as f:
+            f.write("Y = 3\n")                                         # read, through b
+        self.assertNotEqual(before, T.code_digest(a, root=pkg))
+
+    def test_entry_builds(self):
+        tiles_dir = os.path.join(self.dir, "tiles")
+        os.makedirs(tiles_dir)
+        self.assertEqual(T.entry_builds(tiles_dir, "ground_classes"), set())
+        with open(os.path.join(tiles_dir, "manifest.json"), "w", encoding="utf-8") as f:
+            json.dump({"ground": {"inputs": ["soils/ground@1", "ground_classes/a@20261016T002641Z",
+                                             "ground_classes/f@20261016T002641Z", "ground_mask/roofs@2",
+                                             "raw/osm@md5"]}}, f)
+        self.assertEqual(T.entry_builds(tiles_dir, "ground_classes"), {"20261016T002641Z"})
+        self.assertEqual(T.entry_builds(tiles_dir, "ground_mask"), {"2"})
+        self.assertEqual(T.entry_builds(None, "ground_mask"), set())
 
     def test_first_load(self):
         reqs = [{"url": "/tiles/terrain.pmtiles", "bytes": 3_000_000}] + \

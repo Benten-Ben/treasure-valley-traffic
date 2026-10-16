@@ -9,7 +9,7 @@ import tempfile
 import unittest
 
 from basemap.ground import ground, manifest as M
-from basemap.ground.tests.test_inputs import fgb_layer, write_export, write_mask
+from basemap.ground.tests.test_inputs import fgb_layer, write_export, write_farm, write_mask
 from basemap.ground.tests.test_manifest import ACHD, SSURGO
 
 
@@ -47,10 +47,16 @@ class CliTest(unittest.TestCase):
         m = write_export(self.archive, "soils", [fgb_layer("ground", ["ssurgo"])], [SSURGO])
         write_mask(self.archive)
         code, out, _ = run("status", "--archive", self.archive)
+        self.assertEqual(code, 3)
+        self.assertIn("needs the crop cover and the crop fields", out)    # no farm export: flat, never CSB and CDL
+        farm = write_farm(self.archive)
+        code, out, _ = run("status", "--archive", self.archive)
         self.assertEqual(code, 0)
         self.assertIn(f"soils/ground@{m.build}", out)
+        self.assertIn(f"farm/fields@{farm.build}", out)
         self.assertIn("ground_mask/roofs@", out)
-        self.assertIn("fallback: CSB 2025 fields plus CDL 2025 crop pixels (C7)", out)
+        self.assertIn("fallback: no classes: the boxes show the valley paint", out)
+        self.assertNotIn("CSB 2025", out)
         code, out, _ = run("check-export", m.folder)
         self.assertEqual(code, 0)
         self.assertIn("ground: ground.fgb (FlatGeobuf; MultiPolygon, 3 features)", out)
@@ -90,6 +96,7 @@ class CliTest(unittest.TestCase):
         self.assertEqual(code, 0)
         write_export(self.archive, "soils", [fgb_layer("ground", ["ssurgo"])], [SSURGO])
         write_mask(self.archive)
+        write_farm(self.archive)
         code, _, err = run("flat", "--tiles", self.tiles, "--archive", self.archive)
         self.assertEqual(code, 2)                                   # it could be painted: nothing to record
         self.assertTrue(M.find(self.archive))
