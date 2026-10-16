@@ -443,7 +443,33 @@ It's a heavy worker job (4-6 GB, 2 CPUs): about 2-8 minutes a box, most of it re
 `<box>.tif` per box, `report.json` (each box's inputs, shift, the July rule's counts and the class shares) and
 `manifest.json` last, through a staging folder and one rename, and keeps the newest two whole builds.
 
-CLASSES_RESULTS
+**The first build** (`20261016T002641Z`, Oct 15, on the scratch database's archive; 40 minutes for the ten boxes,
+under 6 GB; 18 MB). Each box's classes as a share of its cells with data, %:
+
+| Box | Roof | Tree | Shrub | Crop | Tall grass, green / dry | Short grass, green / dry | Surfaced, dark / pale | Hard thing | Track cells | Same as the spike's (central 500 m) |
+|---|---|---|---|---|---|---|---|---|---|---|
+| a | 0 | 5 | 5 | 0 | 1 / 1 | 3 / 74 | 0 / 2 | 8 | 0 | 94% |
+| b | 4 | 22 | 2 | 0 | 3 / 1 | 20 / 35 | 4 / 7 | 2 | 253 | 97% |
+| c | 24 | 35 | 1 | 0 | 1 / 0 | 12 / 16 | 4 / 6 | 2 | 0 | 98% |
+| d | 12 | 5 | 1 | 0 | 0 / 0 | 29 / 22 | 13 / 16 | 1 | 550 | 80% |
+| e | 3 | 3 | 0 | 10 | 3 / 0 | 30 / 19 | 7 / 21 | 4 | 343 | 69% |
+| f | 0 | 0 | 0 | 0 | 0 / 0 | 0 / 99 | 0 / 1 | 0 | 87,633 | 97% |
+| downtown | 20 | 22 | 1 | 0 | 0 / 0 | 10 / 22 | 9 / 13 | 3 | 194 | 96% |
+| h | 0 | 46 | 6 | 0 | 10 / 1 | 12 / 7 | 3 / 8 | 6 | 9,112 | 98% |
+| i | 0 | 0 | 0 | 0 | 0 / 0 | 0 / 70 | 7 / 22 | 1 | 13,756 | 97% |
+| j | 0 | 42 | 2 | 0 | 2 / 1 | 13 / 22 | 2 / 12 | 5 | 4,105 | 90% |
+
+- **Against the spike:** the last column compares each cell of the box's central 500 m with the spike's "as of July"
+  classes there, in the lidar's frame (a one-off check on the server, not committed). Where they differ: e's crop
+  (the spike took it from its own field rule, flat green fields included; here only the shrub rule's crop pieces are
+  crop, and the painter paints the rest of the crop cover's fields as crop anyway); d and e, whose photo the spike
+  moved 3 m onto the lidar where the shrub build measured no shift (a 0.7 m, j 0.5 m), so their green and dry edges
+  move; and the July tree level, which now comes from the whole box (e 0.56 against the pooled 0.70, j 0.62 against
+  0.50).
+- **Box f's tracks** are back: 87,633 cells (2.2 ha) of mapped track turn pale where the photo shows them, 1% of the
+  box, against none from the July rule; the rest of f stays short dry grass. Boxes h, i and j gain 4,000-14,000
+  track cells each.
+- Box i's dark surfaced ground (7%) is lidar-dark desert floor, not asphalt ⚠️ (the spike's central 500 m had 1%).
 
 ## The rasterising helper
 
@@ -580,6 +606,13 @@ python3 basemap/ground/ground.py check-export DIR                   # one export
 python3 basemap/ground/ground.py status --archive $TVT_ARCHIVE      # what the ground would read; exit 3 = flat
 python3 basemap/ground/ground.py flat --tiles DIR --archive $TVT_ARCHIVE
 python basemap/ground/mask.py build --roofs DIR/buildings.pmtiles   # mask v0 (worker image), into $TVT_ARCHIVE
+python basemap/ground/classes.py build --recipe R.json              # the box classes (worker image, heavy)
+python basemap/ground/tilewrite.py paint --out DIR --boxes --detail --view 8,9,10   # G1a's tiles, as blocks
+python basemap/ground/tilewrite.py paint --out DIR --valley --pyramid             # every block (G1b; resumable)
+python basemap/ground/tilewrite.py assemble --out DIR [--partial | --tiles TILES]  # the PMTiles files (and switch in)
+python basemap/ground/tilewrite.py readback --pmtiles F --zoom 15 --out DIR       # tiles around the boxes, for sheets
+node app/scripts/ground-firstload.mjs --pmtiles F --out view.json   # the default view's requests (laptop)
+python basemap/ground/tilewrite.py estimate --pmtiles F --view view.json         # ... from a full file's directory
 python3 -m unittest discover -s basemap/ground -t .                 # the worker tests skip here
 docker run --rm --memory 1g --cpus 1 --network none -v "$PWD":/repo -w /repo tvt-worker \
   python -m unittest discover -s basemap/ground -t .                # all of them; a skip here is a failure
@@ -594,3 +627,14 @@ raster in Albers, build the mask and burn it through the rasterising helper; the
 staging, a stopped (SIGTERM) and a killed build, the lock and pruning. `test_maskrules.py` checks the rules
 case by case, and against S1's partition (`ingest/osm_extract.py`) over a grid of tag sets and S1's own fixture. The
 source checks read the repository's real plugin.json files.
+
+G1a's: `test_classrules.py` checks each class from its cues, the sheet, wall and roof-sliver rules, the floor and
+closed canopy, the July rule's drying, greening and margin, and the track rule, on small arrays. `test_classes.py`
+moves classes into the photo's frame, places box h's narrower lidar grid in its window, maps cells onto July's 10 m
+cells, burns lines, measures ground brightness from a synthetic point cloud (two flight lines, noise points) and writes
+a box's GeoTIFF and manifest, which the ground's checks accept (and refuse with a non-raw input). `test_paint.py`
+paints a synthetic world: the 20 m ramp between two soil types, a Water unit taking the soil around it, a green corn
+field in rows, box f's classes feathering in, paved classes beside a road painted from the soil, the flat Valley
+outside the grid, seamless windows and coarse levels. `test_tilewrite.py` checks where a painted line lands in a
+Web Mercator tile, a block's 21 tiles, the pyramid, the assembled files and the first-load estimate; `test_pmtw.py`
+(standard library) the PMTiles writer against the bake's reader, deduplication and leaf directories.

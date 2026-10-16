@@ -442,6 +442,7 @@ def main(argv=None):
     p.add_argument("--zoom", type=int, required=True)
     p.add_argument("--out", required=True, help="a folder: <box>-z<zoom>.tif")
     p.add_argument("--margin", type=float, default=100.0, help="metres around each box")
+    p.add_argument("--all", action="store_true", help="one file of the whole map box (low zooms) instead")
     p = sub.add_parser("estimate", help="the default view's first load from a full valley file, from tile sizes")
     p.add_argument("--pmtiles", required=True, help="a valley file holding (at least) the view's tiles")
     p.add_argument("--view", required=True, help="app/scripts/ground-firstload.mjs's result (JSON, --out)")
@@ -455,6 +456,11 @@ def main(argv=None):
         return 0
     if args.cmd == "readback":
         os.makedirs(args.out, exist_ok=True)
+        if args.all:
+            path = os.path.join(args.out, f"valley-z{args.zoom}.tif")
+            found, missing = readback(args.pmtiles, args.zoom, grid.EXTENT, path)
+            print(f"  the map box: {found} tiles, {missing} missing -> {path}")
+            return 0
         for b in grid.boxes():
             w, s, e, n = b.utm
             m = args.margin

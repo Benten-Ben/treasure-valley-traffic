@@ -5,9 +5,9 @@ Two PMTiles files of 512 px lossy WebP tiles (XYZ, Web Mercator), opaque, Valley
 - valley: z8-z15 over the map box (1.73 m per pixel at z15, which matches the 2 m painter), made from the painter
   grid: z15 tile by tile, each from its own window of the grid (tile_window), never a full mosaic; z14 down to z8
   each from its four children (2 x 2 average), as basemap/imagery.py does. z16 overzooms z15, the boxes included;
-- detail: z17 in the tiles touching the ten class boxes (0.43 m per pixel), from the 0.5 m classes, with the valley
-  paint resampled outside each box (the class edge feathers inside the box), so detail tiles are opaque and the step
-  from the valley tiles is never a hole.
+- detail: z17 in the tiles touching the ten class boxes (0.43 m per pixel), painted at 0.5 m: the box classes inside
+  each box (their edge feathers inside the box) and the valley paint around them, so detail tiles are opaque and the
+  step from the valley tiles is never a hole.
 
 Pixels outside the grid are the flat Valley colour. Files are versioned by everything they're made from
 (ground-<digest>.pmtiles and ground-detail-<digest>.pmtiles, never overwritten) and switched in with
