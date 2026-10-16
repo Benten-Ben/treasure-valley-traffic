@@ -196,6 +196,32 @@ class SheetTest(unittest.TestCase):
         self.assertEqual(tuple(rgb[int((n - (y0 + 50)) / 2), int((x0 + 50 - w) / 2)]), c7)
         self.assertEqual(stats["features"], 3)
 
+    def test_an_rgb_raster_draws_as_it_is(self):
+        frame = P.select(["c"], res=2)[0]
+        path = os.path.join(self.tmp, "painted.tif")
+        ds = gdal.GetDriverByName("GTiff").Create(path, 100, 100, 3, gdal.GDT_Byte)
+        ds.SetGeoTransform((BOX.utm[0], 5, 0, BOX.utm[3], 0, -5))
+        ref = osr.SpatialReference()
+        ref.ImportFromEPSG(32611)
+        ds.SetProjection(ref.ExportToWkt())
+        for b, v in ((1, 116), (2, 131), (3, 87)):
+            ds.GetRasterBand(b).WriteArray(np.full((100, 100), v, np.uint8))
+        ds = None
+        ov = S.file_overlay(f"{path},kind=rgb,licence=ODbL-1.0", "raster", "#ffffff")
+        self.assertEqual(ov.alpha, 1.0)
+        img, st = S.draw_raster(ov, frame)
+        a = np.asarray(img)
+        self.assertEqual(tuple(a[5, 5]), (116, 131, 87, 255))
+        self.assertGreater(st["cells"], 0)
+        self.assertEqual(S.legend_rows([ov], {ov.ref: st})[0][0], "head")
+        one = os.path.join(self.tmp, "one.tif")
+        ds = gdal.GetDriverByName("GTiff").Create(one, 10, 10, 1, gdal.GDT_Byte)
+        ds.SetGeoTransform((BOX.utm[0], 5, 0, BOX.utm[3], 0, -5))
+        ds.SetProjection(ref.ExportToWkt())
+        ds = None
+        with self.assertRaises(S.SheetError):
+            S.draw_raster(S.file_overlay(f"{one},kind=rgb", "raster", "#ffffff"), frame)
+
     def test_raster_categories_ramp_and_nodata(self):
         frame = P.select(["c"], res=2)[0]
         ov = S.export_overlays("farm/crop_cover,alpha=1", self.archive, "#56B4E9")[0]

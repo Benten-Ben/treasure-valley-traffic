@@ -25,7 +25,7 @@ except ImportError:                                  # outside the worker image
     np = None
 
 from basemap.ground import grid as G, inputs as I, manifest as M, maskrules as MR
-from basemap.ground.tests.test_inputs import fgb_layer, write_export
+from basemap.ground.tests.test_inputs import fgb_layer, write_export, write_farm
 from basemap.ground.tests.test_manifest import SSURGO
 from ingest.utm import from_utm
 
@@ -309,6 +309,7 @@ class MaskTest(unittest.TestCase):
         archive = os.path.join(self.dir, "with-soils")
         shutil.copytree(self.archive, archive)
         write_export(archive, "soils", [fgb_layer("ground", ["ssurgo"])], [SSURGO])
+        write_farm(archive)
         plan = I.resolve(I.exports(archive))
         self.assertEqual(plan.status, "painted")
         self.assertEqual([lay.name for lay in plan.choice("ground_mask").layers], list(MR.LAYERS))

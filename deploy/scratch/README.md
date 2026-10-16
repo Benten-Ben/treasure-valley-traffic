@@ -149,7 +149,8 @@ deadline.
   pauses under 10.
 - Memory: at most 3 jobs at once. The caps of every scratch job going stay
   within 8 GB, counting 6 GB for a heavy job that holds `heavy.lock` without
-  going through `run.sh`; and each job needs its cap plus 3 GB available when
+  going through `run.sh` (a heavy scratch job's own `heavy` never counts: it
+  holds the lock for that job); and each job needs its cap plus 3 GB available when
   it starts. It waits up to 15 minutes, then gives up. `status` shows the caps
   going; a heavy job over 4 GB started with `heavy` directly should start only
   when they leave room (`heavy` doesn't count them yet).

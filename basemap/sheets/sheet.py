@@ -29,7 +29,8 @@ Style options follow a layer, comma-separated (`--layer roads/surfaces,by=materi
   label=FIELD  write a field's value on each feature (at most 300 a frame)
   where=SQL    an OGR attribute filter (no commas)      name=TEXT the legend's name
   layer=NAME   the layer of a multi-layer vector file   band=N    a raster's band (default 1)
-  kind=cat|ramp, min=, max=, clip=1 (clear outside min-max), alpha=0..1 (rasters; default 0.6)
+  kind=cat|ramp|rgb, min=, max=, clip=1 (clear outside min-max), alpha=0..1 (rasters; default 0.6, rgb 1):
+               rgb draws bands 1-3 as they are (a painted picture, such as the ground's tiles)
   credit=TEXT  the credit of a file outside an export
   licence=L    its licence class (basemap/ground/manifest.py's LICENCES; republish defaults to the loosest it allows,
                except none-stated)
@@ -444,11 +445,11 @@ class Overlay:
         self.fill = _float(style, "fill", 0.35 if "by" in style else 0.25, 0, 1)
         self.width = _float(style, "width", 2.0, 0, 40)
         self.size = _float(style, "size", 4.0, 0, 40)
-        self.alpha = _float(style, "alpha", 0.6, 0, 1)
+        self.alpha = _float(style, "alpha", 1.0 if style.get("kind") == "rgb" else 0.6, 0, 1)
         _float(style, "min", None)
         _float(style, "max", None)
-        if kind == "raster" and style.get("kind") not in (None, "cat", "ramp"):
-            raise SheetError(f"{ref}: kind must be cat or ramp")
+        if kind == "raster" and style.get("kind") not in (None, "cat", "ramp", "rgb"):
+            raise SheetError(f"{ref}: kind must be cat, ramp or rgb")
 
     def colour_of(self, value):
         if value not in self.categories:
@@ -714,8 +715,35 @@ def draw_labels(img, labels):
 
 # --- drawing rasters -----------------------------------------------------------------------------------------------
 
+def draw_rgb(ov, frame):
+    """(RGBA image at the frame's size, stats) for a kind=rgb raster: bands 1-3 as colours (bilinear), at the
+    overlay's alpha where the raster has data."""
+    w = frame.window
+    rgba = np.zeros((w.height, w.width, 4), np.uint8)
+    stats = {"cells": 0, "categories": {}}
+    for part in ov.parts:
+        ds = gdal.Open(part["path"])
+        if ds.RasterCount < 3 or gdal.GetDataTypeName(ds.GetRasterBand(1).DataType) != "Byte":
+            raise SheetError(f"{ov.ref}: kind=rgb needs three 8-bit bands; {part['path']} has {ds.RasterCount}")
+        src = gdal.Translate("", ds, format="VRT", bandList=[1, 2, 3])
+        out = gdal.Warp("", src, format="MEM", srcSRS=R.warp_srs(ds.GetProjection()), dstSRS=R.warp_srs(grid.CRS),
+                        outputBounds=w.bounds, width=w.width, height=w.height, resampleAlg="bilinear",
+                        dstAlpha=True, multithread=False)
+        arr = out.ReadAsArray()
+        valid = arr[3] > 0
+        if not valid.any():
+            continue
+        for b in range(3):
+            rgba[..., b][valid] = arr[b][valid]
+        rgba[..., 3][valid] = round(ov.alpha * 255)
+        stats["cells"] += int(valid.sum())
+    return Image.fromarray(rgba, "RGBA"), stats
+
+
 def draw_raster(ov, frame):
     """(RGBA image at the frame's size, stats) for a raster overlay."""
+    if ov.style.get("kind") == "rgb":
+        return draw_rgb(ov, frame)
     w = frame.window
     band = int(ov.style.get("band", 1))
     rgba = np.zeros((w.height, w.width, 4), np.uint8)

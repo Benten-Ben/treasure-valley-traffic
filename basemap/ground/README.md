@@ -1,4 +1,4 @@
-# basemap/ground: the ground's contract
+# basemap/ground: the ground
 
 The ground is the painted base of the Valley look: each soil type in its own colour and texture, measured from the
 aerial photo over that type's uncovered ground, the photo's own colour where the ground departs from its type,
@@ -6,7 +6,7 @@ crops from the farm fields, and the land-cover classes in the ten test boxes
 ([DECISIONS](../../docs/DECISIONS.md), Oct 8). It is core, part of the base map ([ch. 15
 §15.1](../../docs/15-plugins.md#151-whats-core)). Plugins feed it files, and it runs flat without them.
 
-This folder holds the contract every piece of the ground shares:
+This folder holds the contract every piece of the ground shares, and the ground itself:
 
 | Piece | File | Runs in |
 |---|---|---|
@@ -17,9 +17,13 @@ This folder holds the contract every piece of the ground shares:
 | The window-rasterising helper P2 and G1 share | [`rasterize.py`](rasterize.py) | the worker image |
 | Mask v0: what covers the ground, from raw inputs | [`mask.py`](mask.py) (the build, and reading it back), [`maskrules.py`](maskrules.py) (the rules), [`osmconf.ini`](osmconf.ini) | the worker image (the rules anywhere) |
 | The contract on the command line | [`ground.py`](ground.py) | anywhere |
+| The land-cover classes in the ten boxes: the rules, and the step that builds them | [`classrules.py`](classrules.py), [`classes.py`](classes.py) | the worker image |
+| The painter: the soil base, crops and the box classes on any window | [`paint.py`](paint.py), [`colour.py`](colour.py) | the worker image |
+| The tile writer and its PMTiles writer | [`tilewrite.py`](tilewrite.py), [`pmtw.py`](pmtw.py) (standard library) | the worker image |
 
-Built Oct 11 (sprint package S5a: the contract, then mask v0). Still to come: the painter and its tiles (G1a), and
-texture and photo variation (G1b). The base bake, which reads the same exports, is in
+Built Oct 11 (sprint package S5a: the contract, then mask v0) and Oct 15 (G1a: the box classes, the painter and the
+tiles). Still to come: texture and photo variation, and the valley-wide runs (G1b); the app's ground source on the
+first use of Valley (with S3a). The base bake, which reads the same exports, is in
 [`../landscape/`](../landscape/README.md) (S5b).
 Package names and C numbers refer to the landscape sprint plan (v3), which is kept with the private files.
 
@@ -222,8 +226,13 @@ one changes this table and `inputs.USES` in the same review.
 |---|---|---|---|---|
 | `soils/ground` | FlatGeobuf, polygons | integer `ground_type` | **the ground stays flat** | P1-data |
 | `soils/palette` | JSON `soils.palette/1` | per type `gid` (ground.fgb's `ground_type`): `status` (`measured`, or a fallback: `series`, `texture`, `albedo`; `none`), `lab_med`, `lab_cov`, `l_p10`, `l_p90`, `oct_l`, `oct_c` ([soils](../../plugins/soils/README.md#the-palette)) | flat colours per ground type, labelled | P2 |
-| `farm/crop_cover` | GeoTIFF, 10 m grid | bands group, state, confidence | CSB 2025 plus CDL 2025 (C7) | P3-data |
-| `farm/fields` | FlatGeobuf, polygons | numeric `bearing` (degrees from north) | CSB 2025, no row bearing | P3-data |
+| `farm/crop_cover` | GeoTIFF, 10 m grid | bands group, state, confidence | **the ground stays flat** | P3-data |
+| `farm/fields` | FlatGeobuf, polygons | numeric `bearing` (degrees from north) | **the ground stays flat** | P3-data |
+
+Farm's two layers had a fallback, CSB 2025 plus CDL 2025 (C7), for the weeks before farm's crop cover. It landed
+(P3-data) before the painter was built, and the painter was never built to read CSB and CDL itself, so the fallback
+was retired (fix round 1 of G1a): a Valley without its crops isn't painted, rather than painted with none under
+another label.
 | `water/mask` | FlatGeobuf, polygons | | mask v0's NHD and OSM water | P4-data |
 
 **The ground's own products** are written through the same export contract, under `$TVT_ARCHIVE/<product>/export/
@@ -236,10 +245,10 @@ reach the ground through it, however it's labelled.
 | `ground_mask` (mask v0) | FlatGeobuf, polygons: `roofs`, `roads`, `paving`, `water` and `covered` ([below](#mask-v0)) | every one of those layers | **the ground stays flat** | S5a-2 |
 | `ground_classes` | one GeoTIFF per box on the 0.5 m grid, named by the box's id (`a`, …, `downtown`, …), exactly on its window | | the boxes show the valley paint | G1a |
 
-The spike's classes can't go in as they are. Their road reference, and the rule that keeps cells within 2 m of a
-mapped road from turning green, read ACHD's segments (internal). They have to be rebuilt with OSM's roads only, or
-the owner has to accept them, before G1a uses them. RCMAP, which calibrates their bare cut, has no recorded origin
-and an unconfirmed version (v7 or v8) ⚠️.
+The spike's classes didn't go in as they were: their road reference, and the rule that keeps cells within 2 m of a
+mapped road from turning green, read ACHD's segments (internal). G1a rebuilt them with OpenStreetMap's roads only
+([below](#the-box-classes)). RCMAP calibrated the spike's bare cut once (0.16, now a constant); the build doesn't read
+it, and its copy's origin and version (v7 or v8) are still to be confirmed ⚠️.
 
 **Raw inputs**, read from files: what the products are made from, and what the painter reads directly.
 
@@ -248,7 +257,7 @@ and an unconfirmed version (v7 or v8) ⚠️.
 | `osm` | ODbL-1.0 | S1's cut of the held Idaho extract, through GDAL's OSM driver. The extract has no Oregon, so the box's Malheur slice has no OSM |
 | `overture-buildings` | ODbL-1.0 | roof footprints, as the map's `buildings.pmtiles` holds them at z15 (built by `basemap/buildings.py` from the Overture release it names) |
 | `nhd` | public domain | NHD HU4 1705, water until water's export lands |
-| `cdl`, `csb` | public domain | CDL 2025 (10 m) crop pixels and developed land; CSB 2025 fields, the crop fallback |
+| `cdl`, `csb` | public domain | CDL 2025 (10 m) crop pixels and developed land; CSB 2025 fields, behind farm's crop cover (the box classes name them through the shrub builds) |
 | `naip` | public domain | NAIP 2025 (0.3 m) for Ada and Canyon; NAIP 2023 (0.6 m) in boxes h–j |
 | `naip-2m` | Copernicus | the 2 m COG P2 makes from NAIP 2025 in its decode pass (`naip2025_2m.tif`: red, green and blue on the June 18 flight's scale through same-day Sentinel-2, and the NDVI on Sentinel-2's scale, on the 2 m grid, with `flights.fgb`; [soils](../../plugins/soils/README.md#the-photo-statistics)). Public-domain NAIP carried through Copernicus-derived curves, so it credits both; its version is the sidecar's sha256 |
 | `3dep` | public domain | the 2023–24 QL1 lidar products in the boxes; the DEM for slope and aspect |
@@ -256,15 +265,14 @@ and an unconfirmed version (v7 or v8) ⚠️.
 | `rcmap` | public domain | RCMAP fractional cover (30 m), which calibrates the classes' bare cut |
 
 The painter names the raw inputs it reads directly, each with its **version**: a checksum, release or year, such as
-the OSM cut's MD5, `"2025"` for CDL, or NAIP's release. A fallback's raw inputs (CSB and CDL behind the crop cover)
-need one too. `tiles.digest()` refuses a plan that reads a raw input without one, so a new release always gives a new
-tile name. The ground's attribution credits exactly what it reads: those raw inputs, then every export layer's
+the OSM cut's MD5, `"2025"` for CDL, or NAIP's release. A fallback that reads raw files (`Use.fallback_reads`; none
+does today) needs their versions too. `tiles.digest()` refuses a plan that reads a raw input without one, so a new
+release always gives a new tile name. The ground's attribution credits exactly what it reads: those raw inputs, then every export layer's
 credits.
 
 ```python
 from basemap.ground import inputs
-plan = inputs.resolve(inputs.exports(archive), versions={"cdl": "2025", "csb": "2025", "naip": "2025 county mosaics",
-                                                          "sentinel-2": "<the NDVI file's sha256>"})
+plan = inputs.resolve(inputs.exports(archive), versions={"naip-2m": "<the 2 m COG's sidecar sha256>"})
 ```
 
 `python3 basemap/ground/ground.py status --archive $TVT_ARCHIVE` shows what the ground would read today, each
@@ -399,6 +407,85 @@ Kept as separate buffers with round corners, `covered` alone was 342 MB, and the
 The share of each box that `covered` keeps out of sampling, burned at 0.5 m: c (North End) 81%, downtown 69%, d 47%,
 b 33% (water 19%), e 18%, h 9%, a 4%, j 4%, i 2% and f 0.3%.
 
+## The box classes
+
+The land-cover classes in the ten boxes are the ground's own product `ground_classes` (G1a): one GeoTIFF per box, on
+its exact 0.5 m window, with two bands, `class` (what covers each cell) and `floor` (the ground under it, which the
+painter paints). They're the land-cover spike's rules ([`classrules.py`](classrules.py); the owner's scheme and its
+season in [DECISIONS](../../docs/DECISIONS.md), Oct 8), as a worker step that reads raw public inputs only
+([`classes.py`](classes.py)):
+
+| Step | Spike | What |
+|---|---|---|
+| The scheme | exp26, variant B | Roof; tree (2.4 m and up, and a shrub-height crown's skirt or gap); shrub (the shrub rule's kept cells, [ch. 19 §19.8](../../docs/19-trees.md#198-shrubs)); crop (pieces the shrub rule gave to a crop field); the rest of the 0.3-2.4 m band is tall grass, green or dry, or a hard thing when it's neither green nor a plant to the lidar, or a wall or fence when that's a straight thin run; an even patch of the band is tall grass, not shrub; flat and green is short green grass |
+| Surfaced ground | exp28b | flat, not green and below the bare cut on the photo's NDVI (a 2.5 m median, 4 m^2 patches): dark to the lidar (asphalt) or pale (dirt, gravel, concrete); the rest is short dry grass |
+| As of July | exp31 | one green cut (0.45) and one bare cut (0.16) on Sentinel-2's NDVI scale for every box; per 10 m cell, July 2025's green share against the photo's, beyond a margin of 0.35, dries or greens that share of the cell's low cells; a cell never green in July dries all of them, one always green greens them. Roads (OpenStreetMap's, within 2 m) never green |
+| The floor | exp27 | under trees, shrubs, hard things and walls, the nearest ground cell's class; under closed canopy (85% of the 30 m around), forest floor |
+| Mapped tracks | new (owner, Oct 8) | short dry grass within 2 m of a mapped `highway=track` becomes pale surfaced ground where the photo is 4% brighter than the ground 6-20 m beside the track (box f's tracks, which the July rule's bare cut loses in its May photo) |
+
+Every number is the spike's (its experiments' records are on the server with the spike), kept in `classrules.py` as
+constants; nothing is re-fitted per box. Water isn't a class: it comes from map data.
+
+**Inputs** (a recipe file on the server names them, since they're files, not exports): per box, the spike's 0.5 m
+lidar products (DSM, DTM), the trees build's building mask (Overture's footprints aligned to the lidar), the shrub
+build's `why.tif`, cue cache and photo shift (plugins/trees, P11), the box's NAIP crop (2025 in a-f and downtown,
+2023 in h-j), its point cloud (each ground point's intensity over its flight line's median: dark ground), July 2025
+from Sentinel-2 and the same-day normalisation's NDVI curve, and S1's OpenStreetMap cut (roads and tracks). The
+manifest names them as RAW inputs only (`3dep`, `overture-buildings`, `naip`, `sentinel-2`, `osm`, and `csb` and
+`cdl` through the shrub builds' crop cover), so it's ODbL, republish yes.
+
+**Frames.** The rules run on the lidar's grid, the photo moved onto it, as the spike did; the classes are then placed
+in the box's window and moved into the photo's frame by the photo shift (OpenStreetMap and the map are traced on the
+photo). The shift is the shrub build's, measured on its trees, unless the recipe gives the box its own (`"shift":
+[east, north]`, metres, multiples of 0.5 m), which the report records (`shift_from`). In the first build, box b
+moves 2 m west, h 1 m east and 0.5 m north, downtown 0.5 m east; the rest not at all ⚠️ (box d's lidar sits about
+2.3 m east of its photo at ground level, but the shift measured on its trees didn't earn its distance: a recipe
+shift for d is the owner's call, review 1).
+
+```bash
+python basemap/ground/classes.py build --recipe recipe.json [--box f --archive <another folder>]
+```
+
+It's a heavy worker job (4-6 GB, 2 CPUs): about 2-8 minutes a box, most of it reading the point cloud. Every box's
+inputs are checked before the first box starts (the preflight), and one build runs at a time (a lock). It writes
+`<box>.tif` per box, `report.json` (each box's inputs, shift, the July rule's counts and the class shares) and
+`manifest.json` last, through a staging folder and one rename. After a whole build it keeps the newest two whole
+builds (`--keep`), and never prunes the build the switched-in ground tiles name (`--tiles`, default `$TVT_TILES`), so
+the inputs behind the live ground stay checkable.
+
+**The first build** (`20261016T002641Z`, Oct 15, on the scratch database's archive; 40 minutes for the ten boxes,
+under 6 GB; 18 MB). Each box's classes as a share of its cells with data, %:
+
+| Box | Roof | Tree | Shrub | Crop | Tall grass, green / dry | Short grass, green / dry | Surfaced, dark / pale | Hard thing | Track cells | Same as the spike's (central 500 m) |
+|---|---|---|---|---|---|---|---|---|---|---|
+| a | 0 | 5 | 5 | 0 | 1 / 1 | 3 / 74 | 0 / 2 | 8 | 0 | 94% |
+| b | 4 | 22 | 2 | 0 | 3 / 1 | 20 / 35 | 4 / 7 | 2 | 253 | 97% |
+| c | 24 | 35 | 1 | 0 | 1 / 0 | 12 / 16 | 4 / 6 | 2 | 0 | 98% |
+| d | 12 | 5 | 1 | 0 | 0 / 0 | 29 / 22 | 13 / 16 | 1 | 550 | 80% |
+| e | 3 | 3 | 0 | 10 | 3 / 0 | 30 / 19 | 7 / 21 | 4 | 343 | 69% |
+| f | 0 | 0 | 0 | 0 | 0 / 0 | 0 / 99 | 0 / 1 | 0 | 87,633 | 97% |
+| downtown | 20 | 22 | 1 | 0 | 0 / 0 | 10 / 22 | 9 / 13 | 3 | 194 | 96% |
+| h | 0 | 46 | 6 | 0 | 10 / 1 | 12 / 7 | 3 / 8 | 6 | 9,112 | 98% |
+| i | 0 | 0 | 0 | 0 | 0 / 0 | 0 / 70 | 7 / 22 | 1 | 13,756 | 97% |
+| j | 0 | 42 | 2 | 0 | 2 / 1 | 13 / 22 | 2 / 12 | 5 | 4,105 | 90% |
+
+- **Against the spike:** the last column compares each cell of the box's central 500 m with the spike's "as of July"
+  classes there, in the lidar's frame (a one-off check on the server, not committed). Where they differ: e's crop
+  (the spike took it from its own field rule, flat green fields included; here only the shrub rule's crop pieces are
+  crop, and the painter paints the rest of the crop cover's fields as crop anyway); d and e, whose photo the spike
+  moved 3 m onto the lidar where the shrub build measured no shift (a 0.7 m, j 0.5 m), so their green and dry edges
+  move; and the July tree level, which now comes from the whole box (e 0.56 against the pooled 0.70, j 0.62 against
+  0.50).
+- **Box d with a recipe shift** (a quick look, Oct 15, a partial build outside the archive): with `"shift": [-2.5,
+  0.0]`, the spike's ground-level offset (its lidar about 2.3 m east of the photo) rounded to the class grid, d
+  agrees with the spike in 91% of cells (80% without): short green grass 92% (81%), short dry grass 85% (66%), pale
+  surfaced ground 91% (73%), dark 97% (89%). Whether d's recipe takes it, and so whether the next class build moves d
+  2.5 m west, is for owner review 1.
+- **Box f's tracks** are back: 87,633 cells (2.2 ha) of mapped track turn pale where the photo shows them, 1% of the
+  box, against none from the July rule; the rest of f stays short dry grass. Boxes h, i and j gain 4,000-14,000
+  track cells each.
+- Box i's dark surfaced ground (7%) is lidar-dark desert floor, not asphalt ⚠️ (the spike's central 500 m had 1%).
+
 ## The rasterising helper
 
 `rasterize.py` (worker image) burns vectors into one window at a time, so no step holds a valley-wide raster:
@@ -440,6 +527,45 @@ also **says so**:
 
 Clay is flat in v1 whatever the ground's state ([DECISIONS](../../docs/DECISIONS.md), Oct 8).
 
+## The painter
+
+[`paint.py`](paint.py) paints any window of the grid, at any of its levels (2 m for the valley file, 0.5 m for the
+detail file, 10-40 m for the low zooms), from what `inputs.resolve()` returns. Bottom to top:
+
+1. **The soil base.** Each soil polygon in its ground type's colour from soils' palette: the measured OKLab median
+   (`measured`), or the colour it borrowed (`series`, `texture`), as measured from NAIP 2025 over the type's
+   uncovered ground on the June 18 flight's scale, painted as it is (the photo's own colours). A type with no colour
+   (`none`: Dams, Mined land, Pits and dumps, NOTCOM) is a flat colour by its texture. The run's `run.json` counts and
+   names them, and the PMTiles metadata and the tiles entry's `fallbacks` label them ("soils/palette: 4 ground types
+   without a measured or borrowed colour, painted a flat colour by texture (Dams, Mined land, NOTCOM, Pits and
+   Dumps)").
+   SSURGO's Water units yield to the water layer: they take the nearest soil's colour within 50 m, never a "water"
+   average. The types meet in a 20 m soft edge (a box blur in OKLab: a straight line between two types becomes a
+   linear ramp 20 m wide).
+2. **Crops**: farm's crop fields to their own edges (the field's 2025 group), and the crop cover's edge band where the
+   CDL agrees, in the July state of the crop cover's 10 m cells (the nearest within 30 m where a field reaches past
+   them): green fields a crop green (corn, hay, small grains, roots and vegetables, specialty; natural July colours,
+   none darker than the ground band's lawn), growing ones 45% green over the soil, bare or harvested ones the soil,
+   small grains straw. The states blend over 12 m inside the crop, and a field's edge softens over 12 m: the crop
+   cover's 10 m cells, and CSB's edges (stepped on CDL's 30 m grid, 5-15 m off the photo), would otherwise show as
+   blocks. Rows, a light and dark stripe along the field's bearing 8 m apart, give the direction (a texture: the real
+   rows are 0.76 m), on levels fine enough to draw them. Never on mapped surfaces. Cropland clusters outside every
+   field (the crop cover's confidence 3) wait for G1b, which confirms them in the photo. Without farm's export the
+   ground stays flat ([above](#what-the-ground-reads)).
+3. **The box classes**, each cell's `floor` as tokens over the soil base (plan §3.4's ground band): short dry grass
+   and roofs are the soil itself; pale surfaced ground the soil under 35% cream (the materials' gravel); dark surfaced
+   ground the asphalt token `#989088`; short green grass the band's lawn `#748357`, tall green grass a lawn green of
+   the same lightness; tall dry grass straw over the soil; forest floor the soil darkened. Where the crop cover says
+   crop and the cell's `class` may be one (grass, pale ground, a hard thing, the shrub rule's crop), it's the crop.
+   Painted at 0.5 m and averaged onto coarser cells, with the box's edge feathered over 75 m into the valley paint.
+4. **The 3 m band (C8).** Surfaced classes on mapped surfaces (mask v0's roads, paving and roofs, and water's mask or
+   mask v0's standing water) and within 3 m of them are painted from the soil base, so the photo's pavement doesn't
+   show beside a vector road; G1b's photo variation keeps out of the same band.
+5. Outside the grid, the flat Valley colour.
+
+Each window is painted 64 m bigger and cut back, so windows meet without a seam (`test_paint.py`). Texture and the
+photo's variation are G1b's: today the ground is flat colours, soft edges, rows and classes.
+
 ## The tiles
 
 What G1a's writer makes (`spec.json` "tiles", `tiles.py`):
@@ -449,7 +575,7 @@ What G1a's writer makes (`spec.json` "tiles", `tiles.py`):
 | Zooms | z8–z15 | z17 |
 | Where | the map box: 14,573 tiles (10,807 at z15) | the tiles touching the ten boxes: 612 |
 | Pixel at the valley's middle latitude | 1.73 m at z15, matching the 2 m painter | 0.43 m at z17, finer than the 0.5 m classes |
-| Made from | the painter grid: each z15 tile from its own window (`tiles.tile_window`), never a full mosaic; z14 to z8 each from its four children (2 x 2 average), as `basemap/imagery.py` does | the 0.5 m classes, with the valley paint resampled outside each box; the class edge feathers inside the box |
+| Made from | the painter grid, a z13 block at a time: the block's window (`tiles.tile_window`) painted at 2 m, warped onto its Web Mercator square at z15's pixel (2,048 px) and cut into 16 z15 tiles; its z14 and z13 tiles from 2 x 2 averages of those pixels; z12 to z8 each from its four children (kept losslessly), as `basemap/imagery.py` does. Never a full mosaic | the painter at 0.5 m, a z15 block at a time cut into 16 z17 tiles: the box classes inside each box, feathered in over 75 m, and the valley paint around them |
 | File | `ground-<digest>.pmtiles` | `ground-detail-<digest>.pmtiles` |
 
 - **All tiles:** 512 px, lossy WebP (quality 80 to start; G1a may lower it per zoom to meet the budget), opaque, XYZ
@@ -458,12 +584,36 @@ What G1a's writer makes (`spec.json` "tiles", `tiles.py`):
 - **z16** overzooms z15 everywhere, the boxes included, as the plan's §3.5 has it. If the boxes' step from
   overzoomed z15 to the z17 classes looks abrupt, adding z16 to the detail file is 185 more tiles and one number in
   `spec.json` (`tiles.detail.minzoom`).
-- **Size:** about 0.6 GB valley-wide, about 40 KB a tile, and tens of MB for the detail file.
-- **Versions:** `<digest>` is `tiles.digest(plan, painter_version)`. It covers the spec, the painter's version, the
-  version of every raw input the plan reads, and the sha256 of every export layer, mask v0 and the classes
-  included. A new OSM cut, NAIP release, CDL year, mask v0 or class build gives a new name, and the same inputs give
-  the same name. Files are never overwritten (`/tiles/` is cached for an hour, and PMTiles clients keep the header),
-  and the last two are kept.
+- **Size:** planned at about 0.6 GB valley-wide, about 40 KB a tile, and tens of MB for the detail file. G1a's flat
+  paint is far smaller: the 558 valley tiles painted around the boxes and at the default view average 3.7 KB (2.1 MB),
+  the 612 detail tiles 12 KB (7.4 MB). G1b's texture and photo variation set the real size.
+- **Versions:** `<digest>` is `tiles.digest(plan, painter)`, where the writer's `painter` is `PAINTER_VERSION` and the
+  sha256 of the painter's and writer's code (`tiles.code_digest`: `tilewrite.py` and every module of this folder it
+  reads, in turn). It covers the spec, the painter and its code, the version of every raw input the plan reads, and
+  the sha256 of every export layer, mask v0 and the classes included. A new OSM cut, NAIP release, CDL year, mask v0,
+  class build or an edit to the painter gives a new name, and the same inputs and code give the same name. Files are
+  never overwritten (`/tiles/` is cached for an hour, and PMTiles clients keep the header: switching in refuses a
+  file of the same name with other bytes), and the last two are kept.
+- **Blocks and resuming** ([`tilewrite.py`](tilewrite.py)): each finished block is a file of its WebP tiles with an
+  index, written atomically into the run's folder (`<out>/blocks/`), so a stopped run picks up where it was, and the
+  two PMTiles files are assembled from the blocks at the end, a block at a time ([`pmtw.py`](pmtw.py): clustered,
+  identical tiles stored once, the header and root directory in the first 16 KiB, leaf directories when the tiles
+  need them, with the tiles up to z12 kept in the root so a low-zoom first load reads no leaf). `--limit N` paints N
+  more blocks and stops, for a run spread over several heavy windows.
+- **One run, one digest.** The run's `run.json` records what it paints from: the digest, the inputs by name, the
+  painter's version and code, and the painter's report (the soil types' colour sources). Every block records the
+  digest too. A run resumes only while the archive's inputs and the code still give that digest; otherwise `paint`
+  refuses and asks for a new folder, so a folder never mixes paint from two sets of inputs (a soils, farm, water,
+  mask or class export made between two heavy windows, say). `assemble` refuses blocks painted for any other digest
+  than the inputs give when it runs, so a file's name never claims inputs its tiles weren't painted from.
+- **Whole or partial.** A whole pair of files (the one the manifest may switch in) must hold every tile of the spec:
+  `assemble` without `--partial` refuses while any of the 14,573 valley tiles or 612 detail tiles is missing (it lists
+  them by zoom), or while the pyramid was made before every z13 block was painted (each pyramid block records the
+  children it lacked). The view tiles painted for the first-load estimate are left out of a whole file: its low
+  zooms are the pyramid's. `--partial` takes whatever is painted, view tiles included, names the files `-partial`
+  and gets no manifest entry; `--tiles` refuses it.
+  Development runs go to the cold drive's ground folder, not the VM's disk, and their heavy jobs pass `heavy --cold`,
+  so they don't start unless the drive is mounted with its room kept free.
 - **Switching in:** `tiles.painted_entry(...)` is written last with `tiles.update_manifest()`, atomically:
 
 ```json
@@ -483,8 +633,22 @@ harness's S1.
   total **at most 0.6 MB** (10^6 bytes, as `perf.mjs` counts) in **at most 14 requests**, inside the page's 6 MB.
 - **Clay:** the ground never loads (none).
 - `tiles.first_load(requests)` checks a run's request list. For scale, the whole map box is 20 tiles at z10 and 9 at
-  z9, so the default view needs about a dozen tiles plus the PMTiles header and directories. G1a measures it with the
-  app.
+  z9.
+- **Measured** with the map library itself (`app/scripts/ground-firstload.mjs`: a bare page with the app's MapLibre
+  and pmtiles, the ground as its only source, served by a local server that logs each range request): the default view
+  draws **12 z10 tiles** (x 179-182, y 372-374) and nothing at other zooms. Their bytes come from G1a's paint
+  (`tilewrite.py paint --view 10`: the default view's z10 tiles painted straight from the 10 m level and averaged onto
+  the tile, as the pyramid's 2 x 2 averages of the 2 m paint would), and the full file's directory is laid out by
+  `pmtw` with every valley tile (`tilewrite.py estimate`). On Oct 15 (painter g1a-3, scratch exports): **13 requests
+  and 202,920 bytes** (the 16 KiB header and root directory, then 12 tiles of 1.0-54.6 KB, 186,536 bytes in all),
+  against the budget's 14 and 600,000. G1b's texture and photo variation will add bytes to every tile: that leaves
+  about 33 KB a tile of headroom on average. `tilewrite.py estimate --budget` exits 1 over the budget, so the same
+  estimate is a check once G1b's tiles exist.
+- **Still to do**, tracked for the app wiring (S3a's follow-up, wave 2) and after G1b's texture: the page's total at
+  the default view (at most 6 MB) isn't measured with the ground in it yet, since the app doesn't load the ground
+  until it's wired (the ground source on first Valley use, hidden under Aerial; Clay flat). Then the first load
+  becomes a `perf.mjs` scenario with a budget that fails (the ground's 0.6 MB and 14 requests through
+  `tiles.first_load`, and the page's 6 MB), measured on textured tiles rather than G1a's flat ones.
 
 ## Commands and tests
 
@@ -494,13 +658,20 @@ python3 basemap/ground/ground.py check-export DIR                   # one export
 python3 basemap/ground/ground.py status --archive $TVT_ARCHIVE      # what the ground would read; exit 3 = flat
 python3 basemap/ground/ground.py flat --tiles DIR --archive $TVT_ARCHIVE
 python basemap/ground/mask.py build --roofs DIR/buildings.pmtiles   # mask v0 (worker image), into $TVT_ARCHIVE
+python basemap/ground/classes.py build --recipe R.json              # the box classes (worker image, heavy)
+python basemap/ground/tilewrite.py paint --out DIR --boxes --detail --view 8,9,10   # G1a's tiles, as blocks
+python basemap/ground/tilewrite.py paint --out DIR --valley --pyramid --detail    # every block (G1b; resumable)
+python basemap/ground/tilewrite.py assemble --out DIR [--partial | --tiles TILES]  # the PMTiles files (and switch in)
+python basemap/ground/tilewrite.py readback --pmtiles F --zoom 15 --out DIR       # tiles around the boxes, for sheets
+node app/scripts/ground-firstload.mjs --pmtiles F --out view.json   # the default view's requests (laptop)
+python basemap/ground/tilewrite.py estimate --pmtiles F --view view.json [--budget]   # ... from a full file's directory
 python3 -m unittest discover -s basemap/ground -t .                 # the worker tests skip here
 docker run --rm --memory 1g --cpus 1 --network none -v "$PWD":/repo -w /repo tvt-worker \
   python -m unittest discover -s basemap/ground -t .                # all of them; a skip here is a failure
 ```
 
-The fixtures are synthetic. `tests/fixtures/squares.fgb` and `lines-no-index.fgb` were written by PostGIS's
-`ST_AsFlatGeobuf`, the exports' real writer. `tests/tiffs.py` writes small GeoTIFFs with the standard library, and
+The fixtures are synthetic. `tests/fixtures/squares.fgb`, `lines-no-index.fgb` and `fields.fgb` (farm's fields, with
+`crop_group` and `bearing`) were written by PostGIS's `ST_AsFlatGeobuf`, the exports' real writer. `tests/tiffs.py` writes small GeoTIFFs with the standard library, and
 the worker tests check that `tif.py` reads GDAL's own (plain, COG, BigTIFF, big-endian, PixelIsPoint) the same way.
 The worker tests make their own vectors with GDAL. Mask v0's (`test_mask.py`) make an OpenStreetMap file, an NHD
 GeoPackage in NAD83, roofs in Web Mercator (also as a PMTiles file, with a roof across a z15 tile's edge) and a CDL
@@ -508,3 +679,21 @@ raster in Albers, build the mask and burn it through the rasterising helper; the
 staging, a stopped (SIGTERM) and a killed build, the lock and pruning. `test_maskrules.py` checks the rules
 case by case, and against S1's partition (`ingest/osm_extract.py`) over a grid of tag sets and S1's own fixture. The
 source checks read the repository's real plugin.json files.
+
+G1a's: `test_classrules.py` checks each class from its cues, the sheet, wall and roof-sliver rules, the floor and
+closed canopy, the July rule's drying, greening and margin, and the track rule, on small arrays. `test_classes.py`
+moves classes into the photo's frame, places box h's narrower lidar grid in its window, maps cells onto July's 10 m
+cells, burns lines, measures ground brightness from a synthetic point cloud (two flight lines, noise points) and writes
+a box's GeoTIFF and manifest, which the ground's checks accept (and refuse with a non-raw input). It also runs the
+build itself on a synthetic recipe for the ten boxes (a 20 m lidar grid in each, with a tree, a street and a mapped
+track): the staging folder and the manifest's raw inputs, a partial build and the recipe's photo shift, the preflight
+refusing before any box, a stopped build leaving nothing, the lock, pruning that spares the tiles' build, and the
+command line refusing a partial build in `$TVT_ARCHIVE`. `test_paint.py`
+paints a synthetic world: the 20 m ramp between two soil types, a Water unit taking the soil around it, a green corn
+field in rows, box f's classes feathering in, paved classes beside a road painted from the soil, the flat Valley
+outside the grid, seamless windows and coarse levels. `test_tilewrite.py` checks where a painted line lands in a
+Web Mercator tile, a block's 21 tiles, the pyramid and its gaps, the assembled files (the run's digest and the flat
+soil types in their metadata), a whole pair refused until every tile of the spec is there and then switched in, one
+run per digest (a resume or an assemble after the inputs changed is refused, as are blocks of unknown origin), and
+the first-load estimate; `test_tiles.py` the code digest and the builds the live tiles name; `test_pmtw.py`
+(standard library) the PMTiles writer against the bake's reader, deduplication and leaf directories.

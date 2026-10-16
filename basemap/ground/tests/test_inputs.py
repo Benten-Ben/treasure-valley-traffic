@@ -66,6 +66,16 @@ def write_mask(archive, inputs=None, build="20261011T040000Z", layers=MASK_LAYER
                         build)
 
 
+def write_farm(archive, build="20261012T031500Z"):
+    """Farm's export (P3-data): fields.fgb (the fields fixture, written by PostGIS like farm's own, with crop_group and
+    bearing) and a header-only crop_cover on the 10 m grid, from CSB."""
+    with open(os.path.join(FIXTURES, "fields.fgb"), "rb") as f:
+        fields = f.read()
+    g = {"res": 10, "west": 495920, "north": 4855750, "width": 4, "height": 4}
+    return write_export(archive, "farm", [fgb_layer("fields", ["csb"]), tif_layer("crop_cover", ["csb"], g)], [CSB],
+                        build, extra_files=(("fields.fgb", fields),))
+
+
 def box_grid(box_id):
     w = G.box(box_id).window()
     return {"res": w.res, "west": w.west, "north": w.north, "width": w.width, "height": w.height}
@@ -103,7 +113,8 @@ class RawInputsTest(unittest.TestCase):
         self.assertEqual(I.GROUND_LICENCE, "ODbL-1.0")
 
     def test_what_has_no_fallback(self):
-        self.assertEqual([u.ref for u in I.USES if u.fallback is None], ["soils/ground", "ground_mask"])
+        self.assertEqual([u.ref for u in I.USES if u.fallback is None],
+                         ["soils/ground", "farm/crop_cover", "farm/fields", "ground_mask"])
 
     def test_products_are_not_plugins(self):
         self.assertEqual(I.PRODUCTS, ("ground_mask", "ground_classes"))
@@ -131,38 +142,63 @@ class ResolveTest(unittest.TestCase):
     def test_nothing_exported_is_flat_and_says_so(self):
         plan = self.plan()
         self.assertEqual(plan.status, "flat")
-        self.assertEqual(plan.reason, "Flat ground: the painted ground needs the soil survey's ground types and "
-                                      "mask v0, which aren't built yet.")
+        self.assertEqual(plan.reason, "Flat ground: the painted ground needs the soil survey's ground types, the crop "
+                                      "cover, the crop fields and mask v0, which aren't built yet.")
         self.assertTrue(all(c.fallback for c in plan.choices))
         self.assertEqual(plan.choice("soils/ground").reason, "no soils export yet (P1-data)")
         write_mask(self.archive)
+        write_farm(self.archive)
         self.assertEqual(self.plan().reason, "Flat ground: the painted ground needs the soil survey's ground types, "
                                              "which isn't built yet.")
 
-    def test_soils_ground_and_mask_paint_with_fallbacks(self):
+    def test_no_crops_is_flat(self):
+        # C7's CSB and CDL fallback was retired when farm's crop cover landed: a Valley without crops isn't painted.
+        write_export(self.archive, "soils", [fgb_layer("ground", ["ssurgo"])], [SSURGO])
+        write_mask(self.archive)
+        plan = self.plan()
+        self.assertEqual(plan.status, "flat")
+        self.assertEqual(plan.reason, "Flat ground: the painted ground needs the crop cover and the crop fields, which "
+                                      "aren't built yet.")
+        self.assertEqual(plan.choice("farm/crop_cover").reason, "no farm export yet (P3-data)")
+        write_farm(self.archive)
+        self.assertEqual(self.plan().status, "painted")
+
+    def test_soils_ground_farm_and_mask_paint_with_fallbacks(self):
         write_export(self.archive, "soils", [fgb_layer("ground", ["ssurgo"])], [SSURGO])
         mask = write_mask(self.archive)
+        farm = write_farm(self.archive)
         plan = self.plan()
         self.assertEqual(plan.status, "painted")
         self.assertFalse(plan.choice("soils/ground").fallback)
         self.assertEqual(plan.choice("ground_mask").layers[0].ref, f"ground_mask/roofs@{mask.build}")
-        for ref in ("soils/palette", "farm/crop_cover", "farm/fields", "water/mask", "ground_classes"):
+        self.assertEqual(plan.choice("farm/fields").layer.ref, f"farm/fields@{farm.build}")
+        for ref in ("soils/palette", "water/mask", "ground_classes"):
             self.assertTrue(plan.choice(ref).fallback, ref)
         self.assertEqual(plan.choice("soils/palette").reason,
                          "soils@20261012T031500Z has no 'palette' layer (P2)")
         self.assertEqual(plan.republish, "yes")
         self.assertEqual(plan.licence, "ODbL-1.0")
-        self.assertEqual(plan.raw_names, ["cdl", "csb"])              # the crop fallbacks read them
-        self.assertEqual(plan.missing_versions, ["cdl", "csb"])
+        self.assertEqual(plan.raw_names, [])                          # the fallbacks left read no raw input
+        self.assertEqual(plan.missing_versions, [])
         self.assertIn(SSURGO["credit"], plan.credits)
         self.assertIn("© OpenStreetMap contributors", plan.credits)  # through mask v0
-        self.assertIn("USDA NASS Cropland Data Layer", plan.credits)
-        self.assertEqual(plan.refs, ["soils/ground@20261012T031500Z"] +
+        self.assertIn(CSB["credit"], plan.credits)                   # through farm's export
+        self.assertEqual(plan.refs, ["soils/ground@20261012T031500Z", f"farm/crop_cover@{farm.build}",
+                                     f"farm/fields@{farm.build}"] +
                          [f"ground_mask/{n}@{mask.build}" for n in MASK_LAYERS])
-        plan = self.plan({"cdl": "2025", "csb": "2025", "naip": "2025 county mosaics"})
+        plan = self.plan({"cdl": "2025", "naip": "2025 county mosaics"})
         self.assertEqual(plan.missing_versions, [])
-        self.assertEqual(plan.raw_names, ["cdl", "csb", "naip"])
+        self.assertEqual(plan.raw_names, ["cdl", "naip"])
         self.assertIn("USDA NAIP", plan.credits)
+
+    def test_a_fallbacks_raw_inputs_need_versions(self):
+        # A fallback that reads raw files names them, so their versions go into the tiles' digest (tiles.digest).
+        use = I.Use("farm", "fields", "FlatGeobuf", "the crop fields", "fields", "P3-data", fallback="CSB polygons",
+                    fallback_reads=("csb",))
+        plan = I.Plan("painted", "", [I.Choice(use, reason="no farm export yet")], {"naip": "2025"})
+        self.assertEqual(plan.raw_names, ["csb", "naip"])
+        self.assertEqual(plan.missing_versions, ["csb"])
+        self.assertEqual(I.Plan("painted", "", plan.choices, {"naip": "2025", "csb": "2025"}).missing_versions, [])
 
     def test_versions_name_raw_inputs(self):
         with self.assertRaises(I.InputError):
@@ -188,6 +224,7 @@ class ResolveTest(unittest.TestCase):
                  "source": "hazards/nifc_wfigs_perimeters", "credit": "National Interagency Fire Center (WFIGS)"}
         write_export(self.archive, "soils", [fgb_layer("ground", ["ssurgo", "wfigs"])], [SSURGO, wfigs])
         write_mask(self.archive)
+        write_farm(self.archive)
         plan = self.plan()
         self.assertEqual(plan.status, "painted")
         self.assertEqual(plan.choice("soils/ground").layer["licence"], "none-stated")
@@ -210,6 +247,7 @@ class ResolveTest(unittest.TestCase):
         # A box's quick look is skipped as the newest, and refused if it's handed in.
         write_export(self.archive, "soils", [fgb_layer("ground", ["ssurgo"])], [SSURGO])
         whole = write_mask(self.archive)
+        write_farm(self.archive)
         part = write_mask(self.archive, build="20261011T050000Z-box-d-part")
         self.assertEqual(I.exports(self.archive)["ground_mask"].build, whole.build)
         self.assertEqual(self.plan().status, "painted")
@@ -331,7 +369,8 @@ class ResolveTest(unittest.TestCase):
             f.write(b"x")
         write_export(self.archive, "soils", [fgb_layer("ground", ["ssurgo"])], [SSURGO])
         write_mask(self.archive)
-        self.assertEqual(sorted(I.exports(self.archive)), ["ground_mask", "soils"])
+        write_farm(self.archive)
+        self.assertEqual(sorted(I.exports(self.archive)), ["farm", "ground_mask", "soils"])
         self.assertEqual(self.plan().status, "painted")
         with self.assertRaises(M.ManifestError):
             M.find(self.archive)                                        # the bake's view: every export

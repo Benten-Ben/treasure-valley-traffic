@@ -3,7 +3,7 @@
 The ground is an ODbL produced work built from public inputs only, so every tile of it may be republished. It reads
 three kinds of input:
 - USES, plugin export layers (manifest.py): soils' ground and palette, farm's crop cover and fields, water's mask,
-  each with a fallback for when the plugin hasn't exported yet;
+  most with a fallback for when the plugin hasn't exported yet;
 - PRODUCTS, the ground's own products, written through the same export contract so that their inputs, licences and
   sha256 are declared and checked: mask v0 (S5a-2) and the 0.5 m land-cover classes in the ten boxes;
 - RAW, source files: the only sources a product may be made from, and the ones the painter reads directly, which it
@@ -13,8 +13,10 @@ Every one must be republish "yes": resolve() refuses an export layer (or any inp
 than quietly making the ground internal, and refuses a product made from anything outside RAW. The roads build is
 never read, because its widths come from ACHD and ITD (internal); the ground keeps OSM's class widths instead (C6).
 
-Without soils' `ground` layer or mask v0 there is nothing to paint on: the ground stays today's flat Valley and Clay
-ground and says so (tiles.flat_entry). Every other input has a fallback, named in the plan resolve() returns.
+Without soils' `ground` layer, farm's crop cover and fields, or mask v0 there is nothing to paint on: the ground stays
+today's flat Valley and Clay ground and says so (tiles.flat_entry). Every other input has a fallback, named in the
+plan resolve() returns. (Farm's had one, CSB 2025 plus CDL 2025 (C7), for the weeks before farm's crop cover; it
+landed (P3-data), and the painter was never built to read CSB and CDL itself, so a Valley without crops is flat.)
 
     python3 basemap/ground/ground.py status --archive $TVT_ARCHIVE    # what the ground would read today
 """
@@ -57,7 +59,7 @@ RAW = (
     Raw("cdl", "public-domain", "yes", "USDA NASS Cropland Data Layer",
         "CDL 2025 (10 m): crop pixels, and developed land (classes 123-124) for mask v0"),
     Raw("csb", "public-domain", "yes", "USDA NASS Crop Sequence Boundaries",
-        "CSB 2025 field polygons, the crop fallback until farm's crop_cover lands (C7)"),
+        "CSB 2025 field polygons, behind farm's crop cover (the box classes name it through the shrub builds)"),
     Raw("naip", "public-domain", "yes", "USDA NAIP",
         "NAIP 2025 county mosaics (0.3 m) for Ada and Canyon; NAIP 2023 (0.6 m) in boxes h-j"),
     Raw("naip-2m", "Copernicus", "yes", "USDA NAIP 2025; Contains modified Copernicus Sentinel data 2025",
@@ -119,12 +121,10 @@ USES = (
         "P2", fallback="flat colours per ground type, labelled as such", schema="soils.palette/1"),
     Use("farm", "crop_cover", "GeoTIFF", "the crop cover",
         "crop group, July state and confidence per 10 m cell (bands group, state, confidence)",
-        "P3-data", fallback="CSB 2025 fields plus CDL 2025 crop pixels (C7)", fallback_reads=("csb", "cdl"), res=10.0,
-        bands=("group", "state", "confidence")),
+        "P3-data", res=10.0, bands=("group", "state", "confidence")),
     Use("farm", "fields", "FlatGeobuf", "the crop fields",
         "crop fields with their row bearing (degrees from north), for the texture's direction",
-        "P3-data", fallback="CSB 2025 polygons, with no row bearing", fallback_reads=("csb",), geometry=_AREAS,
-        fields=(("bearing", _REAL + _INT),)),
+        "P3-data", geometry=_AREAS, fields=(("bearing", _REAL + _INT),)),
     Use("water", "mask", "FlatGeobuf", "the water mask",
         "confident water: bodies, and reaches buffered to their widths (piped and dry intermittent channels left out)",
         "P4-data", fallback="mask v0's NHD and OSM water", geometry=_AREAS),
@@ -331,7 +331,8 @@ def resolve(manifests, versions=None):
         choices.append(Choice(use, layers))
     missing = [c for c in choices if c.fallback and c.use.fallback is None]
     if missing:
-        needs = " and ".join(c.use.label for c in missing)
+        labels = [c.use.label for c in missing]
+        needs = labels[0] if len(labels) == 1 else ", ".join(labels[:-1]) + " and " + labels[-1]
         verb = "isn't" if len(missing) == 1 else "aren't"
         return Plan("flat", f"Flat ground: the painted ground needs {needs}, which {verb} built yet.", choices,
                     versions)

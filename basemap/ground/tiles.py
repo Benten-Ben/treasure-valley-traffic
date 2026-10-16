@@ -5,9 +5,9 @@ Two PMTiles files of 512 px lossy WebP tiles (XYZ, Web Mercator), opaque, Valley
 - valley: z8-z15 over the map box (1.73 m per pixel at z15, which matches the 2 m painter), made from the painter
   grid: z15 tile by tile, each from its own window of the grid (tile_window), never a full mosaic; z14 down to z8
   each from its four children (2 x 2 average), as basemap/imagery.py does. z16 overzooms z15, the boxes included;
-- detail: z17 in the tiles touching the ten class boxes (0.43 m per pixel), from the 0.5 m classes, with the valley
-  paint resampled outside each box (the class edge feathers inside the box), so detail tiles are opaque and the step
-  from the valley tiles is never a hole.
+- detail: z17 in the tiles touching the ten class boxes (0.43 m per pixel), painted at 0.5 m: the box classes inside
+  each box (their edge feathers inside the box) and the valley paint around them, so detail tiles are opaque and the
+  step from the valley tiles is never a hole.
 
 Pixels outside the grid are the flat Valley colour. Files are versioned by everything they're made from
 (ground-<digest>.pmtiles and ground-detail-<digest>.pmtiles, never overwritten) and switched in with
@@ -18,6 +18,7 @@ flat_entry(reason) (or absent: not built yet), and the app keeps today's flat Va
 PMTiles header, directories and tiles) add up to at most 0.6 MB and 14 requests; in Clay, none.
 """
 
+import ast
 import datetime as dt
 import hashlib
 import json
@@ -107,11 +108,49 @@ def counts():
             "detail": {z: len(detail_tiles(z)) for z in range(DETAIL_ZOOMS[0], DETAIL_ZOOMS[1] + 1)}}
 
 
+def code_files(*paths, root=None):
+    """The given modules and every basemap.ground module they import, in turn (modules in `root`, by default this
+    folder), sorted."""
+    here = root or os.path.dirname(os.path.abspath(__file__))
+    seen, todo = set(), [os.path.abspath(p) for p in paths]
+    while todo:
+        path = todo.pop()
+        if path in seen:
+            continue
+        seen.add(path)
+        with open(path, "rb") as f:
+            tree = ast.parse(f.read())
+        for node in ast.walk(tree):
+            names = []
+            if isinstance(node, ast.ImportFrom) and node.module == "basemap.ground":
+                names = [a.name for a in node.names]
+            elif isinstance(node, ast.ImportFrom) and (node.module or "").startswith("basemap.ground."):
+                names = [node.module.split(".")[2]]
+            elif isinstance(node, ast.Import):
+                names = [a.name.split(".")[2] for a in node.names if a.name.startswith("basemap.ground.")]
+            todo.extend(os.path.join(here, n + ".py") for n in names if os.path.isfile(os.path.join(here, n + ".py")))
+    return sorted(seen)
+
+
+def code_digest(*paths, root=None):
+    """sha256 over the source of code_files(*paths): the painter's and the tile writer's code, which the tile writer
+    puts into the painter's version (digest's `painter`), so any change to that code gives a new name, and a stopped
+    run never resumes on other code."""
+    here = root or os.path.dirname(os.path.abspath(__file__))
+    h = hashlib.sha256()
+    for path in code_files(*paths, root=here):
+        h.update(os.path.relpath(path, here).encode("utf-8") + b"\0")
+        with open(path, "rb") as f:
+            h.update(f.read())
+    return h.hexdigest()
+
+
 def digest(plan, painter="", spec_text=None):
-    """The build's version: sha256 over the tile spec, the painter's version, the version of every RAW input the plan
-    reads (the painter's own, and its fallbacks') and the sha256 of every export layer it reads, the ground's products
-    (mask v0, the classes) included. A new OSM cut, NAIP release, CDL year, mask v0 or class build gives a new name;
-    the same inputs give the same name. Raises ValueError when a raw input the plan reads has no version."""
+    """The build's version: sha256 over the tile spec, the painter's version (the tile writer's names its code too,
+    code_digest), the version of every RAW input the plan reads (the painter's own, and its fallbacks') and the sha256
+    of every export layer it reads, the ground's products (mask v0, the classes) included. A new OSM cut, NAIP release,
+    CDL year, mask v0, class build or painter gives a new name; the same inputs give the same name. Raises ValueError
+    when a raw input the plan reads has no version."""
     if missing := plan.missing_versions:
         raise ValueError(f"the plan reads {', '.join(missing)} without a version: give each one's checksum, release "
                          "or year (inputs.resolve(..., versions=))")
@@ -137,8 +176,10 @@ def file_names(digest_hex):
     return f"ground-{d}.pmtiles", f"ground-detail-{d}.pmtiles"
 
 
-def painted_entry(plan, digest_hex, built=None, boxes=None):
-    """tiles/manifest.json's "ground" entry for a painted ground."""
+def painted_entry(plan, digest_hex, built=None, boxes=None, notes=()):
+    """tiles/manifest.json's "ground" entry for a painted ground. notes: what the painter itself fell back on, in the
+    same "<input>: <what>" form as the plan's fallbacks (e.g. the soil types painted a flat colour), listed after
+    them."""
     if plan.status != "painted":
         raise ValueError(f"the plan is {plan.status}: {plan.reason}")
     if missing := plan.missing_versions:
@@ -157,7 +198,7 @@ def painted_entry(plan, digest_hex, built=None, boxes=None):
         "licence": plan.licence,
         "republish": plan.republish,
         "inputs": plan.refs + [f"raw/{n}@{plan.versions[n]}" for n in plan.raw_names],
-        "fallbacks": [f"{c.use.ref}: {c.use.fallback}" for c in plan.choices if c.fallback],
+        "fallbacks": [f"{c.use.ref}: {c.use.fallback}" for c in plan.choices if c.fallback] + list(notes),
         "built": built or dt.date.today().isoformat(),
         "spec": SPEC_VERSION,
     }
@@ -191,6 +232,22 @@ def check_entry(e):
     d = e["detail"]
     if (d.get("minzoom"), d.get("maxzoom")) != DETAIL_ZOOMS or not d.get("file"):
         raise ValueError("the detail file doesn't match the tile spec")
+
+
+def entry_builds(tiles_dir, product):
+    """The builds of one of the ground's products (mask v0, the box classes) that the switched-in ground tiles were
+    painted from (tiles/manifest.json's ground entry), as a set of ids: their builds must never be pruned."""
+    path = os.path.join(tiles_dir, "manifest.json") if tiles_dir else None
+    if not path or not os.path.isfile(path):
+        return set()
+    with open(path, encoding="utf-8") as f:
+        entry = json.load(f).get(ENTRY) or {}
+    out = set()
+    for ref in entry.get("inputs", []):
+        name, _, build_id = ref.partition("@")
+        if name.split("/")[0] == product and build_id:
+            out.add(build_id)
+    return out
 
 
 def update_manifest(tiles_dir, entry):
