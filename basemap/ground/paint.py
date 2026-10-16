@@ -9,8 +9,9 @@ What it paints, bottom to top (plan G1a, C7, C8; the soils, farm and osm-landsca
 
 1. **The soil base.** Each soil polygon (soils' `ground.fgb`) in its ground type's colour: the palette's measured
    OKLab median (soils' `palette.json`, from NAIP 2025 over the type's uncovered ground), or a flat colour by texture
-   where a type has none (status `none`) or there's no palette yet, which the build's report lists and the tiles
-   manifest's fallbacks name. SSURGO's Water units yield to the water layer: they take the nearest soil's colour within
+   where a type has none (status `none`) or there's no palette yet. report() lists those types, and notes() names
+   them in the tiles entry's fallbacks and the PMTiles metadata (tilewrite.py). SSURGO's Water units yield to the
+   water layer: they take the nearest soil's colour within
    WATER_FILL_M (never a "water" soil average; the soils and water designs). The types meet in a FEATHER_M soft edge
    (a box blur in OKLab: a straight edge between two types becomes a linear ramp FEATHER_M wide, 0.5 on the line),
    because SSURGO's lines are interpretive and often 10-30 m off the photo.
@@ -105,6 +106,7 @@ class Palette:
         self.lab = np.zeros((n, 3), np.float32)
         self.how = np.zeros(n, np.uint8)
         self.counts = {"measured": 0, "borrowed": 0, "flat": 0, "water": 0}
+        self.flat = []                   # the types painted a flat colour: [{"gid", "id", "series"}]
         pal = {int(t["gid"]): t for t in (palette or {}).get("types", [])}
         measured = [np.asarray(t["lab_med"], np.float32) for t in pal.values()
                     if t.get("status") == "measured" and t.get("lab_med") and not t.get("misc")]
@@ -124,6 +126,8 @@ class Palette:
             else:
                 self.lab[gid], self.how[gid] = flat_lab(t.get("id") or p.get("id"), misc), self.FLAT
                 self.counts["flat"] += 1
+                self.flat.append({"gid": gid, "id": t.get("id") or p.get("id"),
+                                  "series": t.get("series") or p.get("series") or t.get("id") or p.get("id")})
         self.lab[0], self.how[0] = self.valley, self.FLAT
 
     @classmethod
@@ -226,11 +230,8 @@ class Painter:
         palette = Palette.from_files(types_path, pal.path if pal else None)
         cc = plan.choice("farm/crop_cover").layer
         fields = plan.choice("farm/fields").layer
-        if cc is None or fields is None:
-            # C7's fallback (CSB 2025 plus CDL 2025) was for the weeks before farm's crop cover; it has landed (P3-data),
-            # so the painter isn't built to read CSB and CDL itself. Refuse rather than paint no crops under that label.
-            raise PaintError("farm's export (crop_cover and fields) is needed: the painter doesn't read C7's CSB and "
-                             "CDL fallback; run farm-export")
+        if cc is None or fields is None:             # resolve() makes farm's export required: the plan is flat then
+            raise PaintError("farm's export (crop_cover and fields) is needed; run farm-export")
         water = plan.choice("water/mask").layer
         mask_layers = plan.choice("ground_mask").layers
         mask_m = _ManifestOf(mask_layers)
@@ -454,8 +455,10 @@ def versions(**given):
 
 
 def report(painter, plan):
-    """What the painter used, for the build's report and the tiles entry: per-type colour sources, fallbacks."""
+    """What the painter used, for the run's record (tilewrite.py's run.json) and the files' metadata: per-type colour
+    sources (the flat types by name), fallbacks."""
     return {"painter": PAINTER_VERSION, "types": painter.palette.counts,
+            "flat_types": painter.palette.flat,
             "flat_types_note": "types without a measured or borrowed colour are a flat colour by texture, labelled",
             "crop_cover": bool(painter.crop_cover), "fields": painter.fields is not None,
             "water": "water/mask" if painter.water is not None else "mask v0's water (intermittent = 0)",
@@ -465,4 +468,14 @@ def report(painter, plan):
                       "band_m": BAND_M, "crop_edge_m": CROP_EDGE_M, "row_period_m": ROW_PERIOD_M}}
 
 
-__all__ = ["Painter", "Palette", "PaintError", "versions", "report", "PAINTER_VERSION"]
+def notes(rep):
+    """What the painter fell back on, from report(), for the tiles entry's fallbacks ("<input>: <what>")."""
+    flat = rep.get("flat_types") or []
+    if not flat:
+        return []
+    names = sorted({str(t["series"]) for t in flat})
+    return [f"soils/palette: {len(flat)} ground type{'s' if len(flat) != 1 else ''} without a measured or borrowed "
+            f"colour, painted a flat colour by texture ({', '.join(names)})"]
+
+
+__all__ = ["Painter", "Palette", "PaintError", "versions", "report", "notes", "PAINTER_VERSION"]

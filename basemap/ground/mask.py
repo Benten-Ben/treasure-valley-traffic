@@ -607,17 +607,7 @@ def sweep(archive, log=print):
 
 def tiles_builds(tiles_dir):
     """The mask builds the ground tiles were painted from (tiles/manifest.json's ground entry), as a set of ids."""
-    path = os.path.join(tiles_dir, "manifest.json") if tiles_dir else None
-    if not path or not os.path.isfile(path):
-        return set()
-    with open(path, encoding="utf-8") as f:
-        entry = json.load(f).get(tiles.ENTRY) or {}
-    out = set()
-    for ref in entry.get("inputs", []):
-        plugin, _, build_id = ref.partition("@")
-        if plugin.split("/")[0] == PRODUCT and build_id:
-            out.add(build_id)
-    return out
+    return tiles.entry_builds(tiles_dir, PRODUCT)
 
 
 def prune(archive, keep=KEEP, protect=(), log=print):

@@ -3,7 +3,7 @@ full mosaic. Runs in the worker image (GDAL, NumPy, SciPy, Pillow).
 
     python basemap/ground/tilewrite.py paint --out DIR [--archive $TVT_ARCHIVE] (--boxes | --valley [--bounds ...])
         [--detail] [--view z8,z9,z10]          # paint blocks into DIR/blocks/ (resumable: a finished block is kept)
-    python basemap/ground/tilewrite.py assemble --out DIR [--tiles TILES]   # blocks -> ground-<digest>.pmtiles, ...
+    python basemap/ground/tilewrite.py assemble --out DIR [--partial | --tiles TILES]   # -> ground-<digest>.pmtiles
 
 **Blocks.** The valley file is painted a z13 tile at a time: its window of the 2 m painter grid
 (tiles.tile_window) is painted with the painter's halo, warped onto the z13 tile's Web Mercator square at z15's
@@ -13,10 +13,16 @@ a time (`pyramid`). The detail file is painted a z15 tile at a time at 0.5 m (th
 z17 tiles. Each finished block is a file in DIR/blocks/ (its tiles, WebP, with an index), written atomically, so a
 stopped run picks up where it was, and the PMTiles files are assembled from the blocks at the end (`assemble`).
 
+**One run, one digest.** DIR/run.json records what the run paints from: the digest (tiles.digest over the spec, the
+inputs, PAINTER_VERSION and the code, painter_id()), the inputs by name and the painter's report. A run resumes only
+when the archive's inputs and the code still give that digest, and every block records it too, so a folder never
+mixes paint from two sets of inputs; `assemble` refuses blocks painted for another digest than the inputs give now,
+and refuses to make a whole pair of files (one the manifest may switch in) unless every tile of the spec is there.
+
 **What G1a paints** (valley-wide runs are G1b's): --boxes, the z13 blocks touching the ten boxes; --detail, the
 detail file's z17 tiles; --view, given zooms painted straight from a coarser level of the painter grid (z10 from
 10 m, z9 from 20 m, z8 from 40 m), which is what a first load at the default view fetches, for the first-load
-estimate (`firstload`). A file assembled from these is partial: its name says `-partial` and nothing switches it in.
+estimate (`first_load`). A file assembled from these is partial: its name says `-partial` and nothing switches it in.
 
 Tiles: tiles.TILE_SIZE px, lossy WebP at tiles.QUALITY (Pillow, method 6), opaque. Pixels outside the grid are the
 flat Valley colour (the painter's).
@@ -119,20 +125,83 @@ def cut(rgb, z, x, y, n):
 
 # ---- blocks ---------------------------------------------------------------------------------------------------------
 
+CODE = tiles.code_digest(__file__)   # this module's code and every basemap.ground module it reads (paint.py, ...)
+RUN = "run.json"
+
+
+def painter_id():
+    """The painter's version as the tiles' digest names it: PAINTER_VERSION and the code's sha256 (tiles.code_digest),
+    so an edit to the painter or the writer gives a new name even when PAINTER_VERSION stays."""
+    return f"{paint.PAINTER_VERSION} code {CODE}"
+
+
+def run_digest(plan):
+    """The digest the plan and this code give (tiles.digest)."""
+    return tiles.digest(plan, painter=painter_id())
+
+
 class Blocks:
     """DIR/blocks/: one file per finished block (<name>.blk: its tiles' WebP bytes back to back, <name>.json: the
-    index), written atomically; and DIR/z13/ the lossless z13 tiles (PNG) for the pyramid."""
+    index and the digest it was painted for), written atomically; DIR/png/ the lossless z13 and pyramid tiles; and
+    DIR/run.json, what the run paints from: the digest (inputs, painter and code), the inputs by name and the
+    painter's report. One folder holds one digest's blocks: begin() refuses a folder painted from anything else, and
+    assemble() refuses blocks that don't carry the digest the archive's inputs give now."""
 
-    def __init__(self, out):
+    def __init__(self, out, digest=None):
+        self.out = out
         self.dir = os.path.join(out, "blocks")
         self.png = os.path.join(out, "png")
+        self.digest = digest
         os.makedirs(self.dir, exist_ok=True)
         os.makedirs(self.png, exist_ok=True)
 
-    def done(self, name):
-        return os.path.exists(os.path.join(self.dir, name + ".json"))
+    def run(self):
+        """run.json, or None."""
+        path = os.path.join(self.out, RUN)
+        if not os.path.exists(path):
+            return None
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
 
-    def write(self, name, tiles_bytes, file="valley"):
+    def names(self):
+        return sorted(n[:-5] for n in os.listdir(self.dir) if n.endswith(".json"))
+
+    def begin(self, stamp):
+        """Start or resume a run painting from stamp (run_stamp()): its digest must be the folder's, and a folder of
+        blocks with no run.json (of unknown origin) is refused. Raises TileError."""
+        have = self.run()
+        if have is not None and have.get("digest") != stamp["digest"]:
+            raise TileError(f"{self.out} holds blocks painted from {str(have.get('digest'))[:12]} (painter "
+                            f"{have.get('painter')}, inputs {', '.join(have.get('inputs') or [])}); the archive's "
+                            f"inputs and this painter give {stamp['digest'][:12]} (inputs "
+                            f"{', '.join(stamp['inputs'])}). Paint into a new folder: a run never mixes the two")
+        if have is None and self.names():
+            raise TileError(f"{self.out} holds blocks with no {RUN}: what painted them is unknown. Paint into a new "
+                            "folder")
+        self.digest = stamp["digest"]
+        if have is None:
+            path = os.path.join(self.out, RUN)
+            with open(path + ".part", "w", encoding="utf-8") as f:
+                json.dump(dict(stamp, started=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())), f, indent=1)
+            os.replace(path + ".part", path)
+
+    def done(self, name):
+        """Whether a block is finished, for this run's digest (a block with another one is refused, never kept)."""
+        path = os.path.join(self.dir, name + ".json")
+        if not os.path.exists(path):
+            return False
+        with open(path, encoding="utf-8") as f:
+            got = json.load(f).get("digest")
+        if got != self.digest:
+            raise TileError(f"block {name} in {self.out} was painted for {str(got)[:12]}, this run is for "
+                            f"{str(self.digest)[:12]}")
+        return True
+
+    def write(self, name, tiles_bytes, file="valley", gaps=0):
+        """A finished block: its tiles {(z, x, y): bytes}, which file they go to, and (the pyramid's) how many children
+        it lacked."""
+        if not self.digest:
+            raise TileError("a block is written for a digest: begin() the run first")
         data, index = bytearray(), []
         for (z, x, y), b in sorted(tiles_bytes.items()):
             index.append([z, x, y, len(data), len(b)])
@@ -143,7 +212,7 @@ class Blocks:
         os.replace(tmp, os.path.join(self.dir, name + ".blk"))
         tmp = os.path.join(self.dir, name + ".json.part")
         with open(tmp, "w") as f:
-            json.dump({"file": file, "tiles": index}, f)
+            json.dump({"file": file, "digest": self.digest, "gaps": int(gaps), "tiles": index}, f)
         os.replace(tmp, os.path.join(self.dir, name + ".json"))
 
     def keep_png(self, z, x, y, rgb):
@@ -160,19 +229,35 @@ class Blocks:
         with open(path, "rb") as f:
             return decode(f.read())
 
-    def all(self):
-        """[(file, z, x, y, bytes)] of every finished block's tiles."""
-        out = []
-        for name in sorted(os.listdir(self.dir)):
-            if not name.endswith(".json"):
-                continue
-            with open(os.path.join(self.dir, name)) as f:
+    def index(self):
+        """{name: {"file", "digest", "gaps", "tiles": [(z, x, y)]}} of every finished block, without its tiles' bytes."""
+        out = {}
+        for name in self.names():
+            with open(os.path.join(self.dir, name + ".json")) as f:
                 idx = json.load(f)
-            with open(os.path.join(self.dir, name[:-5] + ".blk"), "rb") as f:
+            out[name] = {"file": idx["file"], "digest": idx.get("digest"), "gaps": idx.get("gaps", 0),
+                         "tiles": [tuple(t[:3]) for t in idx["tiles"]]}
+        return out
+
+    def all(self, names=None):
+        """Yield (file, z, x, y, bytes) of every finished block's tiles (or those of `names`), a block at a time, so
+        only one block's bytes are in memory."""
+        for name in (self.names() if names is None else names):
+            with open(os.path.join(self.dir, name + ".json")) as f:
+                idx = json.load(f)
+            with open(os.path.join(self.dir, name + ".blk"), "rb") as f:
                 data = f.read()
             for z, x, y, off, ln in idx["tiles"]:
-                out.append((idx["file"], z, x, y, data[off:off + ln]))
-        return out
+                yield idx["file"], z, x, y, data[off:off + ln]
+            del data
+
+
+def run_stamp(plan, painter=None):
+    """What a run paints from, for run.json: the digest, the painter's version and code, the inputs by name, and the
+    painter's report (paint.report: the flat soil types among it), which the files' metadata and entry carry."""
+    return {"digest": run_digest(plan), "painter": paint.PAINTER_VERSION, "code": CODE, "spec": tiles.SPEC_VERSION,
+            "inputs": plan.refs + [f"raw/{n}@{plan.versions[n]}" for n in plan.raw_names],
+            "paint": paint.report(painter, plan) if painter is not None else None}
 
 
 def valley_set(z):
@@ -212,27 +297,31 @@ def paint_valley_block(painter, blocks, x, y, quality, keep=True):
 
 def pyramid(blocks, quality, lowest=None, log=print):
     """z12 down to z8 (or lowest) from the kept lossless tiles, four children at a time; missing children are the
-    flat Valley colour. Returns the tiles written."""
+    flat Valley colour. Each zoom's block records its gaps: children inside the map box that weren't painted yet (a
+    whole file refuses a pyramid with any: run it again once every z13 block is painted). Returns the tiles written."""
     lowest = tiles.VALLEY_ZOOMS[0] if lowest is None else lowest
     flat = np.array([int(tiles.FLAT["valley"][i:i + 2], 16) for i in (1, 3, 5)], np.uint8)
     n = 0
     for z in range(BLOCK_Z - 1, lowest - 1, -1):
         xs, ys = valley_set(z)
-        out = {}
+        cxs, cys = valley_set(z + 1)
+        out, gaps = {}, 0
         for ty in ys:
             for tx in xs:
-                kids = [blocks.read_png(z + 1, 2 * tx + i, 2 * ty + j) for j in (0, 1) for i in (0, 1)]
+                at = [(2 * tx + i, 2 * ty + j) for j in (0, 1) for i in (0, 1)]
+                kids = [blocks.read_png(z + 1, cx, cy) for cx, cy in at]
                 if all(k is None for k in kids):
                     continue
+                gaps += sum(1 for (cx, cy), k in zip(at, kids) if k is None and cx in cxs and cy in cys)
                 kids = [k if k is not None else np.broadcast_to(flat, (SIZE, SIZE, 3)) for k in kids]
                 big = np.concatenate([np.concatenate(kids[0:2], axis=1), np.concatenate(kids[2:4], axis=1)], axis=0)
                 t = halve(np.ascontiguousarray(big))
                 blocks.keep_png(z, tx, ty, t)
                 out[(z, tx, ty)] = webp(t, quality)
         if out:
-            blocks.write(f"p{z}", out)
+            blocks.write(f"p{z}", out, gaps=gaps)
             n += len(out)
-            log(f"  pyramid z{z}: {len(out)} tiles")
+            log(f"  pyramid z{z}: {len(out)} tiles" + (f" ({gaps} children not painted yet)" if gaps else ""))
     return n
 
 
@@ -293,25 +382,78 @@ def plan_of(archive):
     return plan
 
 
+def expected():
+    """{"valley": {(z, x, y)}, "detail": {(z, x, y)}}: every tile a whole pair of files holds (tiles.counts())."""
+    return {"valley": {(z, x, y) for z in range(tiles.VALLEY_ZOOMS[0], tiles.VALLEY_ZOOMS[1] + 1)
+                       for x, y in tiles.valley_tiles(z)},
+            "detail": {(z, x, y) for z in range(tiles.DETAIL_ZOOMS[0], tiles.DETAIL_ZOOMS[1] + 1)
+                       for x, y in tiles.detail_tiles(z)}}
+
+
+def _by_zoom(keys):
+    zs = {}
+    for z, _x, _y in keys:
+        zs[z] = zs.get(z, 0) + 1
+    return ", ".join(f"z{z} {n}" for z, n in sorted(zs.items()))
+
+
 def assemble(out, plan, partial, log=print):
-    """The PMTiles files from DIR/blocks/: (valley path, detail path, entry). Names carry the plan's digest; a
-    partial set of blocks says so in its names and gets no tiles-manifest entry."""
+    """The PMTiles files from DIR/blocks/: (valley path, detail path, entry, digest). The blocks must all have been
+    painted for the digest the plan and this code give now (run.json and each block say which), so a file's name never
+    claims inputs its tiles weren't painted from. A whole pair (partial false) must hold every tile of the spec
+    (expected()): the valley file's z8-z15 from the z13 blocks and the pyramid (view tiles, painted for the first-load
+    estimate, are left out), the detail file's z17. Names carry the digest; a partial set says so in its names, keeps
+    the view tiles and gets no tiles-manifest entry. Raises TileError."""
     blocks = Blocks(out)
-    digest = tiles.digest(plan, painter=paint.PAINTER_VERSION)
+    digest = run_digest(plan)
+    run = blocks.run()
+    if run is None:
+        raise TileError(f"{out} has no {RUN}: what painted its blocks is unknown")
+    if run.get("digest") != digest:
+        raise TileError(f"{out}'s blocks were painted from {str(run.get('digest'))[:12]} (painter {run.get('painter')}, "
+                        f"inputs {', '.join(run.get('inputs') or [])}); the archive's inputs and this painter give "
+                        f"{digest[:12]} (inputs {', '.join(plan.refs)}). Paint them again into a new folder")
+    index = blocks.index()
+    stale = sorted(n for n, b in index.items() if b["digest"] != digest)
+    if stale:
+        raise TileError(f"{len(stale)} block(s) in {out} weren't painted for {digest[:12]} ({', '.join(stale[:5])}"
+                        f"{', ...' if len(stale) > 5 else ''})")
+    names = [n for n, b in index.items() if partial or b["file"] != "view"]
+    if not partial:
+        want = expected()
+        have = {"valley": set(), "detail": set()}
+        for n in names:
+            have["detail" if index[n]["file"] == "detail" else "valley"].update(index[n]["tiles"])
+        gaps = {k: want[k] - have[k] for k in want}
+        if gaps["valley"] or gaps["detail"]:
+            raise TileError("a whole pair of files holds every tile of the spec, and these blocks lack "
+                            + "; ".join(f"{len(g):,} {k} tiles ({_by_zoom(g)})" for k, g in gaps.items() if g)
+                            + ": paint the rest (paint --valley --pyramid --detail, resumable), or assemble --partial")
+        early = sorted(n for n in names if index[n]["gaps"])
+        if early:
+            raise TileError(f"the pyramid ({', '.join(early)}) was built before every z13 block was painted: run "
+                            "paint --valley --pyramid again")
+        skipped = len(index) - len(names)
+        if skipped:
+            log(f"  left out {skipped} view block(s): the whole file's low zooms are the pyramid's")
     valley_name, detail_name = tiles.file_names(digest)
     if partial:
         valley_name = valley_name.replace(".pmtiles", "-partial.pmtiles")
         detail_name = detail_name.replace(".pmtiles", "-partial.pmtiles")
+    rep = run.get("paint") or {}
+    notes = paint.notes(rep)
     meta = {"name": "ground", "attribution": "; ".join(plan.credits), "licence": plan.licence,
             "republish": plan.republish, "inputs": plan.refs + [f"raw/{n}@{plan.versions[n]}" for n in plan.raw_names],
-            "painter": paint.PAINTER_VERSION, "spec": tiles.SPEC_VERSION, "partial": bool(partial),
+            "fallbacks": [f"{c.use.ref}: {c.use.fallback}" for c in plan.choices if c.fallback] + notes,
+            "painter": paint.PAINTER_VERSION, "code": CODE, "digest": digest, "spec": tiles.SPEC_VERSION,
+            "partial": bool(partial), "paint": rep,
             "about": "The painted Valley ground (basemap/ground). ODbL produced work built from public inputs."}
     w_v = pmtw.Writer(os.path.join(out, valley_name), 4, dict(meta, file="valley"))
     w_d = pmtw.Writer(os.path.join(out, detail_name), 4, dict(meta, file="detail"))
     seen = set()
     counts = {"valley": 0, "detail": 0}
     try:
-        for file, z, x, y, data in blocks.all():
+        for file, z, x, y, data in blocks.all(names):
             target = w_d if file == "detail" else w_v
             key = ("d" if file == "detail" else "v", z, x, y)
             if key in seen:
@@ -334,7 +476,7 @@ def assemble(out, plan, partial, log=print):
         w_d.abort()
         raise
     log(f"assembled: valley {counts['valley']} tiles, detail {counts['detail']} tiles ({digest[:12]})")
-    entry = None if partial else tiles.painted_entry(plan, digest)
+    entry = None if partial else tiles.painted_entry(plan, digest, notes=notes)
     return paths[0], paths[1], entry, digest
 
 
@@ -435,7 +577,8 @@ def main(argv=None):
     p.add_argument("--view", help="zooms painted straight from a coarser level, e.g. 8,9,10")
     p.add_argument("--view-tiles", help="a JSON list of [z, x, y] to paint with --view (default: every valley tile)")
     p.add_argument("--quality", type=int, default=tiles.QUALITY)
-    p.add_argument("--limit", type=int, help="stop after this many blocks (a chunk at a time)")
+    p.add_argument("--limit", type=int, help="stop after painting this many blocks (a chunk at a time; blocks done "
+                                             "before are kept and don't count)")
     p.add_argument("--pyramid", action="store_true", help="z12-z8 from the kept z13 tiles, after --valley")
     p = sub.add_parser("assemble", help="the PMTiles files from DIR/blocks/")
     p.add_argument("--out", required=True)
@@ -451,13 +594,19 @@ def main(argv=None):
     p = sub.add_parser("estimate", help="the default view's first load from a full valley file, from tile sizes")
     p.add_argument("--pmtiles", required=True, help="a valley file holding (at least) the view's tiles")
     p.add_argument("--view", required=True, help="app/scripts/ground-firstload.mjs's result (JSON, --out)")
+    p.add_argument("--budget", action="store_true", help="exit 1 when the estimate is over the budget (a check)")
     args = ap.parse_args(argv)
     signal.signal(signal.SIGTERM, _stopped)
     if args.cmd == "estimate":
         from basemap.landscape import pmtiles as PM
         with open(args.view) as f:
             view = [tuple(int(v) for v in t.split("/")) for t in json.load(f)["tiles"]]
-        print(json.dumps(first_load(view, PM.tile_sizes(args.pmtiles)), indent=1))
+        est = first_load(view, PM.tile_sizes(args.pmtiles))
+        print(json.dumps(est, indent=1))
+        if args.budget and not est["ok"]:
+            print(f"over the budget: {est['bytes']:,} bytes in {est['requests']} requests (at most "
+                  f"{est['budget']['maxBytes']:,} and {est['budget']['maxRequests']})", file=sys.stderr)
+            return 1
         return 0
     if args.cmd == "readback":
         os.makedirs(args.out, exist_ok=True)
@@ -484,27 +633,34 @@ def main(argv=None):
         if args.tiles and args.partial:
             print("refused: a partial set of tiles is never switched in", file=sys.stderr)
             return 2
-        v, d, entry, digest = assemble(args.out, plan, args.partial)
-        if args.tiles:
-            for p in (v, d):
-                shutil.copy2(p, os.path.join(args.tiles, os.path.basename(p) + ".part"))
-                os.replace(os.path.join(args.tiles, os.path.basename(p) + ".part"),
-                           os.path.join(args.tiles, os.path.basename(p)))
-            tiles.update_manifest(args.tiles, entry)
+        try:
+            v, d, entry, digest = assemble(args.out, plan, args.partial)
+            if args.tiles:
+                switch_in(args.tiles, (v, d), entry)
+        except TileError as err:
+            print(f"refused: {err}", file=sys.stderr)
+            return 2
         print(json.dumps({"valley": v, "detail": d, "digest": digest}))
         return 0
-    painter = paint.Painter.from_plan(plan)
-    blocks = Blocks(args.out)
-    with open(os.path.join(args.out, "paint.json"), "w") as f:
-        json.dump(paint.report(painter, plan), f, indent=1)
-    t0, n_blocks, n_tiles = time.time(), 0, 0
+    try:
+        painter = paint.Painter.from_plan(plan)
+        blocks = Blocks(args.out)
+        blocks.begin(run_stamp(plan, painter))
+    except (TileError, paint.PaintError) as err:
+        print(f"refused: {err}", file=sys.stderr)
+        return 2
+    t0, n_blocks, n_tiles, n_kept = time.time(), 0, 0, 0
 
     def tick(label, k):
-        nonlocal n_blocks, n_tiles
+        """One block visited: k tiles painted, or 0 when it was already done (kept). --limit counts painted blocks,
+        so each run of a chunked job paints that many more."""
+        nonlocal n_blocks, n_tiles, n_kept
+        if not k:
+            n_kept += 1
+            return
         n_blocks += 1
         n_tiles += k
-        if n_blocks % 10 == 0 or k:
-            print(f"  {label}: {k} tiles ({n_blocks} blocks, {n_tiles} tiles, {time.time() - t0:.0f} s)", flush=True)
+        print(f"  {label}: {k} tiles ({n_blocks} blocks, {n_tiles} tiles, {time.time() - t0:.0f} s)", flush=True)
         if args.limit and n_blocks >= args.limit:
             raise StopIteration
 
@@ -530,8 +686,38 @@ def main(argv=None):
                         tick(f"view z{z} {x}/{y}", paint_view_tile(painter, blocks, z, x, y, args.quality))
     except StopIteration:
         print(f"stopped at --limit {args.limit}; run again to go on", flush=True)
-    print(f"painted {n_tiles} tiles in {n_blocks} blocks, {time.time() - t0:.0f} s", flush=True)
+    except TileError as err:
+        print(f"refused: {err}", file=sys.stderr)
+        return 2
+    print(f"painted {n_tiles} tiles in {n_blocks} blocks ({n_kept} done before, kept), {time.time() - t0:.0f} s",
+          flush=True)
     return 0
+
+
+def switch_in(tiles_dir, paths, entry):
+    """Copy a whole pair of files into the tiles folder and switch the manifest's ground entry to them, last. A file
+    of the same name already there must be the same bytes (names are versions: never overwritten)."""
+    for p in paths:
+        dest = os.path.join(tiles_dir, os.path.basename(p))
+        if os.path.exists(dest):
+            if not _same_file(p, dest):
+                raise TileError(f"{dest} exists with other bytes: a name is a version, never overwritten")
+            continue
+        shutil.copy2(p, dest + ".part")
+        os.replace(dest + ".part", dest)
+    tiles.update_manifest(tiles_dir, entry)
+
+
+def _same_file(a, b):
+    if os.path.getsize(a) != os.path.getsize(b):
+        return False
+    with open(a, "rb") as fa, open(b, "rb") as fb:
+        while True:
+            x, y = fa.read(1 << 20), fb.read(1 << 20)
+            if x != y:
+                return False
+            if not x:
+                return True
 
 
 def _valley_blocks(bounds):
