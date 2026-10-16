@@ -98,6 +98,8 @@ Credit: USDA NAIP (public domain).
   values (at most 300 a frame, no overlaps).
 - Rasters with value labels in their manifest (`bands[].values`), or of an integer type, are categorical; others get a
   viridis ramp from `min` to `max` (default: the frame's 2nd to 98th percentile), `clip=1` clears values outside it.
+  `kind=rgb` draws a picture as it is: bands 1-3 (8-bit) as red, green and blue, fully opaque unless `alpha=` says
+  otherwise (the painted ground's tiles, read back into a GeoTIFF; G1a).
   Nodata, and NaN whether it's declared or not, stays clear.
 - Colours: Okabe-Ito first, never red against green alone, and every colour is named in the legend.
 
