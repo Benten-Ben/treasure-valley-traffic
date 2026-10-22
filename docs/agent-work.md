@@ -27,6 +27,10 @@ xhigh.
 | **deep** | migrations and builds run on the scratch database; the ground painter and land-cover classes; the scene engine and picking; the tile server; layer order | Sonnet medium | Sonnet high | Sonnet medium |
 | **critical** | anything that fetches from the network (robots.txt, terms, off-limits hosts, API keys); licence and republish flags; private data (the City's tree inventory, internal agency tables); the public check; deploy, Compose, systemd and the runbook; production migrations and loads; changes on the home server | Sonnet high | whole-PR critical review: 3 Opus-high lenses (data and licences, privacy and the public repo, operations and the server) plus 1 Opus-high skeptic | Sonnet high |
 
+- **Licence values copied from approved sources** (an export or manifest that only restates the licence and republish
+  already recorded for its sources) run as **deep** with one Opus-high data-and-licences reviewer, not the full
+  critical review (coordinator, Oct 22). Anything that decides a new licence or republish value, or guards what may
+  be published, stays critical.
 - **Precheck:** Haiku low on every agent-written work order. It corrects stale quotes and values in the issue itself, and
   stops the unit on real design questions. The coordinator or the owner answers those on the issue.
 - **Planning a chunk of the sprint:** Opus (medium or high) writes the work orders, with disjoint file ownership, order,
@@ -79,5 +83,7 @@ xhigh.
 
 - **Through Oct 15, every agent ran on the coordinator's model at its effort.** That's about 250k tokens per agent. For
   example, chunk A was 14 agents and 3.4M tokens, and the UI v2 padding change was 3 agents and 1.0M.
+- **The board sweep (Oct 22):** 8 agents (5 Sonnet-medium gatherers, 2 Opus-high planners, 1 Opus-high cross-review),
+  about 2.0M tokens, 316 issues planned (315 filed).
 - From the landscape sprint's chunk B on, agents follow the tiers above. Record agents, tokens and accepted changes per
   chunk here, to compare.
