@@ -124,6 +124,21 @@ class CheckPublicTest(unittest.TestCase):
         self.add_commit()
         self.assertTrue(self.problems(since="base"))
 
+    def test_text_mode(self):
+        pats = tempfile.mktemp()
+        with open(pats, "w") as f:
+            f.write("# private\n\\bexample-host\\b\n")
+        try:
+            loaded = check_public.load_patterns(pats)
+            self.assertEqual(len(loaded), 1)
+            clean = check_public.check_text("Goal: draw the trails layer.\nAcceptance: npm test passes.\n", loaded)
+            self.assertEqual(clean, [])
+            found = check_public.check_text("ssh to example-host\nor host1" + TS + "\n", loaded)
+            self.assertEqual([n for n, _ in found], [2, 1])
+            self.assertEqual(check_public.load_patterns(pats + ".missing"), [])
+        finally:
+            os.remove(pats)
+
     def test_main_exit_status(self):
         self.assertEqual(check_public.main(["--root", self.root]), 0)
         self.write("data/x.csv", "1")

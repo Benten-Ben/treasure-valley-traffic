@@ -23,6 +23,13 @@ Usage:
   python3 tools/check_public.py --staged     only files with staged changes (for a pre-commit hook)
   python3 tools/check_public.py --since REV  only files changed since REV (a branch's diff)
   python3 tools/check_public.py --root DIR   check another checkout
+  python3 tools/check_public.py --text FILE  check text about to go public instead (an issue or PR body,
+                                             a review comment; - reads stdin)
+
+With --text, the checks also use the private pattern list (--patterns, by default data/dev/private-patterns.txt
+when it exists: one regular expression per line, # comments; it stays out of the repository because it names
+what it guards), so a body that quotes a server address, host, user or path from the private files is refused
+before it's posted.
 
 Exits 1 and lists each problem (matches partly masked), or 0 when clean.
 Standard library only.
@@ -103,6 +110,30 @@ def check_path(path):
     name = os.path.basename(path)
     if name == ".env" or (name.startswith(".env.") and not name.endswith(".example")):
         problems.append("an .env file (server settings and secrets stay on the server)")
+    return problems
+
+
+def load_patterns(path):
+    """The private pattern list: one regular expression per line, blank lines and # comments skipped."""
+    if not path or not os.path.exists(path):
+        return []
+    out = []
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line and not line.startswith("#"):
+                out.append(re.compile(line, re.I))
+    return out
+
+
+def check_text(text, patterns=()):
+    """Problems in text about to be posted (an issue or PR body): the content checks plus the private patterns."""
+    problems = [(n, p) for n, p in check_content("text.md", text.encode()) if n]
+    for n, line in enumerate(text.splitlines(), 1):
+        for rx in patterns:
+            m = rx.search(line)
+            if m:
+                problems.append((n, f"a private value ({mask(m.group(0))}) from the private pattern list"))
     return problems
 
 
@@ -190,7 +221,21 @@ def main(argv=None):
     g = ap.add_mutually_exclusive_group()
     g.add_argument("--staged", action="store_true", help="only files with staged changes")
     g.add_argument("--since", metavar="REV", help="only files changed since REV")
+    g.add_argument("--text", metavar="FILE", help="check text about to go public (- for stdin) instead of the repository")
+    ap.add_argument("--patterns", help="the private pattern list for --text (default data/dev/private-patterns.txt)")
     args = ap.parse_args(argv)
+    if args.text:
+        text = sys.stdin.read() if args.text == "-" else open(args.text, encoding="utf-8").read()
+        pats = load_patterns(args.patterns or os.path.join(args.root, "data", "dev", "private-patterns.txt"))
+        problems = check_text(text, pats)
+        if problems:
+            print(f"check_public: {len(problems)} problem(s) in the text:")
+            for n, p in problems:
+                print(f"  line {n}: {p}")
+            print("Take them out before posting (CLAUDE.md, \"This repository is public\").")
+            return 1
+        print(f"check_public: the text is clean ({len(pats)} private pattern(s) checked).")
+        return 0
     n, problems = check(args.root, args)
     if problems:
         print(f"check_public: {len(problems)} problem(s) in {n} file(s) checked:")

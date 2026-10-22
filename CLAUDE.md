@@ -33,6 +33,12 @@ our own base map with live and historical data layers.
   project: code, docs, git, deploys and the home server
   ([HANDOFF.md](HANDOFF.md)). A cloud session is used only for a bounded
   task the owner starts.
+- **Agent work** (owner, Oct 22) follows [docs/agent-work.md](docs/agent-work.md), the project's
+  adaptation of the owner's agent-dev-kit: small things inline; everything else through cheap
+  build units with an explicit `model` and `effort` on every agent, by tier; launch workflows
+  only from turns the session started itself. **Outstanding work lives on the project's GitHub
+  board** as work-order issues; issue and PR text is public, so check every body with
+  `python3 tools/check_public.py --text <file>` before posting.
 - **The project's VM** has the owner's standing OK (Oct 7): deploy,
   restart, clean up and edit its configuration. **Everything else on the
   home server** needs the owner's explicit approval for that specific
@@ -154,6 +160,7 @@ python3 -m unittest discover -s ingest/tests -t .   # ingest core (set TVT_TEST_
 python3 -m unittest discover -s plugins -t .        # every plugin's tests
 python3 -m unittest discover -s basemap/ground -t . # the ground's contract (worker tests skip; run them in tvt-worker)
 python3 tools/check_public.py              # nothing private in what would be pushed
+python3 tools/check_public.py --text <file>   # nothing private in an issue, PR or comment body (- for stdin)
 /srv/tvt/work/bin/heavy --deadline HH:MM --runtime MIN --peak GB "<label>" <command>   # a heavy job on the VM (deploy/README.md)
 /srv/tvt/work/bin/worker-test -C <checkout> discover -s <dir> -t .   # worker-image tests on the VM; a skip fails
 python3 -m basemap.sheets.places          # the review places: ten boxes, 34 key cameras, Eagle and Chinden, three spots
