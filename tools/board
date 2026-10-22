@@ -1,0 +1,181 @@
+#!/usr/bin/env bash
+# board: a small, project-agnostic helper for running work through a GitHub Project (v2) board.
+# From the github-project-board skill. Needs `gh` logged in with the `project` scope (`gh auth refresh -s project`).
+#
+# Config (environment, or a .board.env file in the repo root with the same NAME=value lines):
+#   BOARD_OWNER    the project's owner login (user or organization)          required
+#   BOARD_NUMBER   the project number (from its URL: .../projects/<n>)       required
+#   BOARD_REPO     owner/name of the issue repo (default: the current repo)
+#   BOARD_STATUS   the single-select status field's name (default: Status)
+#   BOARD_SKIP     labels `next` never hands out (default: blocked,decision-needed,needs-design)
+#   BOARD_TEMPLATE issue body template for `new` (default: .github/ISSUE_TEMPLATE/task.md if it exists)
+#
+# Commands (add --dry-run anywhere to print the writes instead of doing them; reads always run):
+#   board ls [Status]                 open board items (optionally one status column): #, status, assignee, title
+#   board next [label]                the next unassigned, unblocked item: Ready first, then Backlog, oldest first
+#   board new "<title>" [labels…]     create an issue (from the template), add it to the board as Backlog
+#   board claim <n> [--take]          assign yourself + status "In progress" (refuses someone else's issue unless --take)
+#   board unclaim <n>                 unassign yourself + status "Ready"
+#   board status <n> <Status>         set the status column, e.g. "In review" or "Done"
+#   board block <n> <blocker…>        add "blocked by" links (GitHub issue dependencies) and the `blocked` label
+#   board unblock <n> <blocker…>      remove those links; drops `blocked` when no open blocker remains
+#   board blockers <n>                list the issue's blockers and their state
+#   board sync-blocked                drop `blocked` from issues whose blockers are all closed
+#   board help
+set -uo pipefail
+
+DRY=0; ARGS=()
+for a in "$@"; do [ "$a" = "--dry-run" ] && DRY=1 || ARGS+=("$a"); done
+set -- "${ARGS[@]+"${ARGS[@]}"}"
+
+die() { echo "board: $*" >&2; exit 2; }
+note() { echo "board: $*" >&2; }
+# Run a write, or print it in dry-run mode.
+w() { if [ "$DRY" = 1 ]; then { printf 'DRY-RUN:'; printf ' %q' "$@"; printf '\n'; } >&2; else "$@"; fi; }   # to stderr: callers silence stdout
+
+# .board.env (data only: NAME=value lines; never sourced, so nothing in it runs)
+root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+if [ -f "$root/.board.env" ]; then
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in ''|\#*) continue;; esac
+    k=${line%%=*}; v=${line#*=}; v=${v%\"}; v=${v#\"}
+    case "$k" in BOARD_OWNER|BOARD_NUMBER|BOARD_REPO|BOARD_STATUS|BOARD_SKIP|BOARD_TEMPLATE)
+      [ -z "${!k:-}" ] && export "$k=$v";; esac
+  done < "$root/.board.env"
+fi
+cmd="${1:-help}"; shift || true
+if [ "$cmd" = help ] || [ "$cmd" = -h ] || [ "$cmd" = --help ]; then sed -n '2,/^set -uo/p' "$0" | sed '$d; s/^# \{0,1\}//'; exit 0; fi
+: "${BOARD_OWNER:?set BOARD_OWNER (or put it in .board.env)}"; : "${BOARD_NUMBER:?set BOARD_NUMBER (or put it in .board.env)}"
+BOARD_REPO=${BOARD_REPO:-$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null)} || true
+[ -n "$BOARD_REPO" ] || die "set BOARD_REPO=owner/name (not inside a GitHub repo)"
+STATUS=${BOARD_STATUS:-Status}; SKIP=${BOARD_SKIP:-blocked,decision-needed,needs-design}
+R_OWNER=${BOARD_REPO%%/*}; R_NAME=${BOARD_REPO#*/}
+
+project_id() { gh project view "$BOARD_NUMBER" --owner "$BOARD_OWNER" --format json -q .id; }
+# status field id and the option id for a status name
+status_ids() { # <status name> → "<field id> <option id>"
+  gh project field-list "$BOARD_NUMBER" --owner "$BOARD_OWNER" --format json \
+    -q ".fields[] | select(.name==\"$STATUS\") | \"\(.id) \((.options[] | select(.name==\"$1\") | .id) // \"\")\""; }
+issue_node() { gh api graphql -f query="query{repository(owner:\"$R_OWNER\",name:\"$R_NAME\"){issue(number:$1){id}}}" -q .data.repository.issue.id; }
+# the issue's item id on this board ("" if it isn't on it)
+item_id() {
+  gh api graphql -f query="query{repository(owner:\"$R_OWNER\",name:\"$R_NAME\"){issue(number:$1){projectItems(first:50){nodes{id project{number owner{... on User{login} ... on Organization{login}}}}}}}}" \
+    -q ".data.repository.issue.projectItems.nodes[] | select(.project.number==$BOARD_NUMBER and .project.owner.login==\"$BOARD_OWNER\") | .id"; }
+add_item() { # <issue number> → item id
+  local url="https://github.com/$BOARD_REPO/issues/$1"
+  if [ "$DRY" = 1 ]; then w gh project item-add "$BOARD_NUMBER" --owner "$BOARD_OWNER" --url "$url"; echo "DRY-ITEM"; return; fi
+  gh project item-add "$BOARD_NUMBER" --owner "$BOARD_OWNER" --url "$url" --format json -q .id; }
+set_status() { # <issue number> <status name>
+  local n=$1 s=$2 ids fid oid item pid
+  ids=$(status_ids "$s"); fid=${ids%% *}; oid=${ids#* }
+  [ -n "$fid" ] || die "no single-select field named \"$STATUS\" on project $BOARD_OWNER/$BOARD_NUMBER"
+  [ -n "$oid" ] && [ "$oid" != "$fid" ] || die "the $STATUS field has no option \"$s\""
+  item=$(item_id "$n"); [ -n "$item" ] || item=$(add_item "$n")
+  pid=$(project_id)
+  w gh project item-edit --id "$item" --project-id "$pid" --field-id "$fid" --single-select-option-id "$oid" >/dev/null
+  echo "#$n → $s"; }
+items_json() { gh project item-list "$BOARD_NUMBER" --owner "$BOARD_OWNER" --format json --limit "${BOARD_LIMIT:-3000}"; }
+# open issues of this repo on the board: number<TAB>status<TAB>assignees<TAB>labels<TAB>title (oldest number first)
+open_rows() {
+  local key; key=$(printf '%s' "$STATUS" | tr '[:upper:]' '[:lower:]')
+  items_json >"${TMPDIR:-/tmp}/board-items.$$.json"
+  gh issue list -R "$BOARD_REPO" --state open --limit 2000 --json number,assignees,labels,title \
+    -q '.[] | "\(.number)\t\([.assignees[].login]|join(","))\t\([.labels[].name]|join(","))\t\(.title)"' > "${TMPDIR:-/tmp}/board-open.$$.tsv"
+  python3 - "${TMPDIR:-/tmp}/board-items.$$.json" "${TMPDIR:-/tmp}/board-open.$$.tsv" "$key" "$BOARD_REPO" <<'PY'
+import json, sys
+items, opn, key, repo = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4].lower()
+status = {}
+data = json.load(open(items)).get("items", [])
+lim = int(__import__("os").environ.get("BOARD_LIMIT", "3000"))
+if len(data) >= lim:
+    print(f"board: the project has {len(data)}+ items, the read limit; raise BOARD_LIMIT", file=sys.stderr)
+for it in data:
+    c = it.get("content") or {}
+    if c.get("type") == "Issue" and str(c.get("repository", "")).lower() == repo:
+        status[c.get("number")] = it.get(key) or ""
+rows = []
+for line in open(opn):
+    n, assignees, labels, title = line.rstrip("\n").split("\t", 3)
+    n = int(n)
+    if n in status:
+        # "-" for empty fields: bash `read` collapses consecutive tabs, which would shift the columns
+        rows.append((n, status[n] or "-", assignees or "-", labels or "-", title))
+for r in sorted(rows):
+    print("\t".join(str(x) for x in r))
+PY
+  rm -f "${TMPDIR:-/tmp}/board-items.$$.json" "${TMPDIR:-/tmp}/board-open.$$.tsv"; }
+
+case "$cmd" in
+  ls)
+    want="${1:-}"
+    open_rows | while IFS=$'\t' read -r n s a l t; do
+      [ -n "$want" ] && [ "$s" != "$want" ] && continue
+        printf '#%-6s %-12s %-14s %s\n' "$n" "$s" "$a" "$t"; done ;;
+  next)
+    label="${1:-}"
+    pick=$(open_rows | python3 -c '
+import sys
+skip=set(x for x in sys.argv[1].split(",") if x); label=sys.argv[2]
+rows=[l.rstrip("\n").split("\t",4) for l in sys.stdin if l.strip()]
+def ok(r):
+    n,s,a,l,t=r; ls=set(x for x in l.split(",") if x and x!="-")
+    return a=="-" and not (ls & skip) and (not label or label in ls) and s in ("Ready","Backlog")
+for want in ("Ready","Backlog"):
+    for r in rows:
+        if r[1]==want and ok(r): print("#%s %s  [%s]" % (r[0], r[4], r[1])); sys.exit(0)
+sys.exit(1)' "$SKIP" "$label") && echo "$pick" || { echo "board: nothing to pull"; exit 1; } ;;
+  new)
+    title="${1:-}"; [ -n "$title" ] || die 'usage: board new "<title>" [labels…]'; shift
+    case "$title" in -*) die "a title can't start with '-'";; esac
+    tpl=${BOARD_TEMPLATE:-$root/.github/ISSUE_TEMPLATE/task.md}
+    body="${TMPDIR:-/tmp}/board-body.$$.md"
+    if [ -f "$tpl" ]; then awk 'BEGIN{fm=0} NR==1&&/^---$/{fm=1;next} fm&&/^---$/{fm=0;next} !fm' "$tpl" > "$body"
+    else printf '**Goal:** \n\n**Acceptance:** \n\n**Owns:** \n\n**Depends on:** nothing\n\n**Context:** \n' > "$body"; fi
+    largs=(); for l in "$@"; do largs+=(--label "$l"); done
+    if [ "$DRY" = 1 ]; then w gh issue create -R "$BOARD_REPO" --title "$title" --body-file "$body" "${largs[@]+"${largs[@]}"}"; n=0
+    else url=$(gh issue create -R "$BOARD_REPO" --title "$title" --body-file "$body" "${largs[@]+"${largs[@]}"}") || die "issue create failed"
+      n=${url##*/}; echo "$url"; fi
+    rm -f "$body"
+    [ "$n" != 0 ] && set_status "$n" Backlog >/dev/null && echo "#$n added to the board as Backlog" || note "dry run: would add the new issue as Backlog" ;;
+  claim)
+    n="${1:?usage: board claim <n> [--take]}"; take="${2:-}"
+    me=$(gh api user -q .login); cur=$(gh issue view "$n" -R "$BOARD_REPO" --json assignees -q '[.assignees[].login]|join(",")')
+    if [ -n "$cur" ] && [ "$cur" != "$me" ] && [ "$take" != "--take" ]; then echo "board: #$n is held by $cur (use --take to take it over)" >&2; exit 1; fi
+    [ -n "$cur" ] && [ "$cur" != "$me" ] && w gh issue edit "$n" -R "$BOARD_REPO" --remove-assignee "$cur" >/dev/null
+    [ "$cur" = "$me" ] || w gh issue edit "$n" -R "$BOARD_REPO" --add-assignee @me >/dev/null
+    set_status "$n" "In progress" ;;
+  unclaim)
+    n="${1:?usage: board unclaim <n>}"
+    w gh issue edit "$n" -R "$BOARD_REPO" --remove-assignee @me >/dev/null; set_status "$n" Ready ;;
+  status)
+    n="${1:?usage: board status <n> <Status>}"; s="${2:?usage: board status <n> <Status>}"; set_status "$n" "$s" ;;
+  block|unblock)
+    n="${1:?usage: board $cmd <n> <blocker…>}"; shift; [ $# -gt 0 ] || die "name at least one blocker"
+    me_id=$(issue_node "$n"); [ -n "$me_id" ] || die "no issue #$n in $BOARD_REPO"
+    mut=$([ "$cmd" = block ] && echo addBlockedBy || echo removeBlockedBy)
+    for b in "$@"; do b=${b#\#}; bid=$(issue_node "$b"); [ -n "$bid" ] || die "no issue #$b"
+      w gh api graphql -f query="mutation{$mut(input:{issueId:\"$me_id\",blockingIssueId:\"$bid\"}){issue{number}}}" >/dev/null \
+        && echo "#$n $([ "$cmd" = block ] && echo 'blocked by' || echo 'no longer blocked by') #$b"; done
+    if [ "$cmd" = block ]; then w gh issue edit "$n" -R "$BOARD_REPO" --add-label blocked >/dev/null
+    else
+      open=$(gh api graphql -f query="query{repository(owner:\"$R_OWNER\",name:\"$R_NAME\"){issue(number:$n){blockedBy(first:100){nodes{state}}}}}" \
+        -q '[.data.repository.issue.blockedBy.nodes[]|select(.state=="OPEN")]|length')
+      [ "$DRY" = 1 ] && note "dry run: open blockers now (before the removal): $open"
+      [ "${open:-1}" = 0 ] && w gh issue edit "$n" -R "$BOARD_REPO" --remove-label blocked >/dev/null && echo "#$n: no open blockers left, label removed"
+    fi ;;
+  blockers)
+    n="${1:?usage: board blockers <n>}"
+    gh api graphql -f query="query{repository(owner:\"$R_OWNER\",name:\"$R_NAME\"){issue(number:$n){blockedBy(first:100){nodes{number state title}}}}}" \
+      -q '.data.repository.issue.blockedBy.nodes[] | "#\(.number) \(.state) \(.title)"' ;;
+  sync-blocked)
+    for n in $(gh issue list -R "$BOARD_REPO" --state open --label blocked --limit 500 --json number -q '.[].number'); do
+      # "total open": drop the label only when blockers are LINKED and all closed. No links means the issue waits on
+      # something outside GitHub (a person, a purchase), so its label stays.
+      counts=$(gh api graphql -f query="query{repository(owner:\"$R_OWNER\",name:\"$R_NAME\"){issue(number:$n){blockedBy(first:100){totalCount nodes{state}}}}}" \
+        -q '.data.repository.issue.blockedBy | "\(.totalCount) \([.nodes[]|select(.state=="OPEN")]|length)"')
+      total=${counts%% *}; open=${counts#* }
+      if [ "$total" = 0 ]; then note "#$n: blocked with no linked blockers (waiting on something outside GitHub): left as is"; continue; fi
+      [ "$open" = 0 ] && w gh issue edit "$n" -R "$BOARD_REPO" --remove-label blocked >/dev/null && echo "#$n: all $total blockers closed, label removed"
+    done; true ;;
+  *) die "unknown command '$cmd' (board help)" ;;
+esac
