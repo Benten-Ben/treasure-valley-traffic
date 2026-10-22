@@ -62,6 +62,10 @@ xhigh.
 
 ## The board
 
+- **The board** is the GitHub Project "Treasure Valley Traffic" (number and owner in `.board.env`). Its Status runs
+  Backlog, Ready, In progress, In review, Done, and it has Phase, Area and Size fields. Labels are `area:*`, `phase:*`,
+  `size:*`, `review:<tier>`, and the states `blocked`, `decision-needed` and `needs-design`. The kit's `board` CLI
+  (`~/.claude/skills/github-project-board/scripts/board ls|next|new|claim|status|block`) reads `.board.env`.
 - **Outstanding work lives on the project's GitHub board.** Each issue is a work order: Goal, Steps, Acceptance, Owns,
   Depends on, Context (`.github/ISSUE_TEMPLATE/task.md`). Decisions go on the issue they decide, as "Decided (who,
   date):", and lasting ones also go in [DECISIONS.md](DECISIONS.md).
