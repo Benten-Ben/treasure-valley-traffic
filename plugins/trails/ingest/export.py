@@ -7,11 +7,11 @@ manifest.json last, from trails.osm_path and trails.osm_area, read in one snapsh
 | Layer | File | Base | What |
 |---|---|---|---|
 | `paved_paths` | paved_paths.fgb | yes | every active, public, paved way, EPSG:32611: `id` (the OSM way id), `kind`, `material` (asphalt, concrete, paving_stones, or paved when the tag names no other), `w` (the tagged width in metres, else the estimate by kind and surface ⚠️) |
-| `paved_areas` | paved_areas.fgb | yes | the pedestrian and footway areas that are not tagged gravel or dirt: `id` (2 x the OSM id, +1 for a relation), `kind`, `material` |
+| `paved_areas` | paved_areas.fgb | yes | the pedestrian and footway areas tagged paved, or not tagged at all (a tag we cannot place, such as woodchips, is left out): `id` (2 x the OSM id, +1 for a relation), `kind`, `material` (as the paths', `unknown` when the area names no surface) |
 
 Both layers are baked from z15 (`minzoom` 15, an integer for the manifest; the Trails layer's style shows them from
 z15.5, which is the app's concern). Left out: ways closed to the public (`no_access`, plan C18: access=private or no
-unless foot, bicycle or horse is opened), sidewalks and crossings (paving's), and anything not paved (C9: unpaved
+unless foot, bicycle or horse is opened), informal ways (the Trails layer's own rules hide them near closures, which the base may not read), sidewalks and crossings (paving's), and anything not paved (C9: unpaved
 ways are never in the base; they come from the plugin's own tiles).
 
 Inputs: trails/osm_paths only (ODbL, republish yes, credited "© OpenStreetMap contributors"), the licence and
@@ -33,6 +33,7 @@ import sys
 
 from basemap.ground import manifest as M
 from basemap.landscape import plan as bake_plan
+from ingest import osm_extract
 
 from .sources import osm_paths
 
@@ -47,6 +48,7 @@ MATERIAL = """case
     when left(lower(btrim(surface_tag)), 8) = 'concrete' then 'concrete'
     when lower(btrim(surface_tag)) in ('paving_stones', 'bricks', 'sett') then 'paving_stones'
     else 'paved' end"""
+AREA_MATERIAL = MATERIAL.replace("else 'paved' end", "when surface_tag is null then 'unknown'\n    else 'paved' end")
 
 # ROWS_* are the rows, so a test can check them.
 PATHS_ROWS = f"""
@@ -55,17 +57,21 @@ PATHS_ROWS = f"""
          ST_Transform(geom, 32611) as geom
   from trails.osm_path
   where active and surface = 'paved' and not no_access
+    and not informal                         -- the Trails layer draws these, under its own rules
     and coalesce(tags->>'footway', '') not in ('sidewalk', 'crossing', 'access_aisle', 'traffic_island')
   order by osm_id"""
 AREAS_ROWS = f"""
-  select (osm_id * 2 + (osm_type = 'r')::int) as id, kind, {MATERIAL} as material,
-         ST_Multi(ST_CollectionExtract(ST_MakeValid(ST_Transform(geom, 32611)), 3)) as geom
-  from trails.osm_area
-  where active and surface in ('paved', 'unknown') and not no_access
-    and not ST_IsEmpty(geom)
+  select * from (
+    select (osm_id * 2 + (osm_type = 'r')::int) as id, kind, {AREA_MATERIAL} as material,
+           ST_Multi(ST_CollectionExtract(ST_MakeValid(ST_Transform(geom, 32611)), 3)) as geom,
+           osm_type, osm_id
+    from trails.osm_area
+    where active and not no_access and not ST_IsEmpty(geom)
+      and (surface = 'paved' or (surface = 'unknown' and surface_tag is null))) a
+  where not ST_IsEmpty(geom)
   order by osm_type, osm_id"""
 PATHS_SQL = f"select ST_AsFlatGeobuf(q, true, 'geom') from ({PATHS_ROWS}) q"
-AREAS_SQL = f"select ST_AsFlatGeobuf(q, true, 'geom') from ({AREAS_ROWS}) q where not ST_IsEmpty(q.geom)"
+AREAS_SQL = f"select ST_AsFlatGeobuf(q, true, 'geom') from (select id, kind, material, geom from ({AREAS_ROWS}) r) q"
 
 
 class ExportError(ValueError):
@@ -95,7 +101,7 @@ def export(conn, archive, build=None, min_features=None):
              "paved_areas": conn.execute(AREAS_SQL).fetchone()[0]}
     counts = {"paved_paths": conn.execute(f"select count(*) from ({PATHS_ROWS}) q").fetchone()[0],
               "paved_areas": conn.execute(f"select count(*) from ({AREAS_ROWS}) q").fetchone()[0]}
-    row = conn.execute("select build from core.layer_version_current where layer = 'trails.paths'").fetchone()
+    state = osm_extract.db_state(conn, "trails.osm_paths")
     if own:
         conn.rollback()
     for name, least in (MIN_FEATURES if min_features is None else min_features).items():
@@ -105,7 +111,8 @@ def export(conn, archive, build=None, min_features=None):
         raise ExportError("no paved paths (load an OpenStreetMap extract first: python3 -m ingest osm-load)")
     if not counts["paved_areas"]:
         blobs.pop("paved_areas")                 # a base layer without features is not built; leave it out
-    load = (row[0] if row else None) or "unknown load"
+    load = (f"extract {state.get('extract_file') or '?'} (md5 {state.get('md5') or '?'})" if state
+            else "unknown extract")
     folder = M.export_dir(archive, "trails", build or M.build_id())
     os.makedirs(folder)
     try:
@@ -122,8 +129,8 @@ def export(conn, archive, build=None, min_features=None):
             layers.append({"name": "paved_areas", "file": "paved_areas.fgb", "format": "FlatGeobuf",
                            "geometry": "MultiPolygon", "inputs": ["osm"], "base": True, "minzoom": MINZOOM,
                            "maxzoom": 16, "title": "Pedestrian and footway areas",
-                           "note": "id: 2 x the OSM id, +1 for a relation; areas tagged gravel or dirt and areas "
-                                   "closed to the public left out"})
+                           "note": "id: 2 x the OSM id, +1 for a relation; areas whose surface tag is not paved and areas "
+                                   "closed to the public left out; material unknown: no surface tagged"})
         m = M.write(folder, "trails", inputs=[input_entry(load)], layers=layers, command=COMMAND,
                     note=f"trails.osm_path and trails.osm_area ({load}): "
                          + ", ".join(f"{k} {v}" for k, v in counts.items()))

@@ -22,6 +22,13 @@ PLUGIN = os.path.dirname(HERE)
 BASE = 9_500_000_000
 
 
+def flat_area(osm_id, **tags):
+    """A ring with no area (one point repeated): ST_MakeValid leaves no polygon of it."""
+    a = area(osm_id, **tags)
+    a["geom"]["coordinates"] = [[[[-116.2, 43.7]] * 4]]
+    return a
+
+
 def seg(n):
     """Two points on their own, 100 m or so apart in longitude/latitude, so ways never share geometry."""
     return [[-116.2 + n * 0.001, 43.7], [-116.2 + n * 0.001, 43.701]]
@@ -98,6 +105,9 @@ class DatabaseTest(unittest.TestCase):
             area(b + 20, "r", highway="pedestrian", area="yes"),                         # untagged, same id
             area(b + 21, highway="footway", area="yes", surface="gravel"),
             area(b + 22, highway="pedestrian", area="yes", surface="asphalt", access="private"),
+            area(b + 23, highway="pedestrian", area="yes", surface="woodchips"),         # tagged, unplaceable
+            flat_area(b + 24, highway="pedestrian", area="yes", surface="asphalt"),     # empty once made valid
+            way(b + 12, seg(12), highway="path", surface="asphalt", informal="yes"),     # the Trails layer's
         ]))
 
     def tearDown(self):
@@ -112,7 +122,7 @@ class DatabaseTest(unittest.TestCase):
     def test_paths_and_their_filters(self):
         from plugins.trails.ingest import export
         rows = self.mine(export.PATHS_ROWS)
-        self.assertEqual(sorted(i - BASE for i in rows), [1, 2, 3, 4, 10, 11])
+        self.assertEqual(sorted(i - BASE for i in rows), [1, 2, 3, 4, 10, 11])      # not 12: informal
         self.assertEqual({i - BASE: (r["kind"], r["material"]) for i, r in rows.items()},
                          {1: ("path", "asphalt"), 2: ("cycleway", "paved"), 3: ("footway", "concrete"),
                           4: ("footway", "paving_stones"), 10: ("footway", "asphalt"), 11: ("steps", "concrete")})
@@ -126,7 +136,7 @@ class DatabaseTest(unittest.TestCase):
         # the way's id doubled; the relation's with the same OSM id doubled plus one; gravel and private left out
         self.assertEqual(sorted(rows), [2 * (BASE + 20), 2 * (BASE + 20) + 1])
         self.assertEqual(rows[2 * (BASE + 20)]["material"], "paving_stones")
-        self.assertEqual(rows[2 * (BASE + 20) + 1]["material"], "paved")
+        self.assertEqual(rows[2 * (BASE + 20) + 1]["material"], "unknown")      # untagged, kept; woodchips and the empty ring out
 
     def test_no_nulls(self):
         # PostGIS's ST_AsFlatGeobuf shifts the column after a NULL into the NULL's place.
@@ -152,7 +162,20 @@ class DatabaseTest(unittest.TestCase):
                 self.assertEqual(lay["fields"]["id"], "long")
             self.assertEqual(set(layers["paved_paths"]["fields"]), {"id", "kind", "material", "w"})
             self.assertEqual(m.inputs["osm"]["source"], "trails/osm_paths")
+            self.assertEqual(m.inputs["osm"]["version"], "unknown extract")        # no osm_consumer row here
             self.assertEqual(M.read(m.folder).build, "20261022T120000Z")      # the files check against the manifest
+
+    def test_the_input_version_is_the_extract_not_a_build(self):
+        from plugins.trails.ingest import export
+        self.conn.execute("""insert into ops.source (name, title, url, access) values ('osm_paths', 't', 'u', 'open')
+                             on conflict do nothing""")
+        self.conn.execute("""insert into ops.osm_consumer (consumer, source, md5, extract_file, loaded_at, objects, counts)
+                             values ('trails.osm_paths', 'osm_paths', '0123456789abcdef0123456789abcdef', 'idaho.osm.pbf', now(), 1, '{}'::jsonb)
+                             on conflict (consumer) do update set md5 = excluded.md5, extract_file = excluded.extract_file""")
+        with tempfile.TemporaryDirectory() as archive:
+            m, load = export.export(self.conn, archive, build="20261022T120002Z", min_features={})
+            self.assertEqual(m.inputs["osm"]["version"], "extract idaho.osm.pbf (md5 0123456789abcdef0123456789abcdef)")
+            self.assertNotIn("trails-match", load)
 
     def test_too_few_paths_is_a_broken_load(self):
         from plugins.trails.ingest import export
