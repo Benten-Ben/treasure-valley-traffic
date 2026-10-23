@@ -110,7 +110,9 @@ our User-Agent, approved sources only); `--offline` drops that.
 `--mount SRC:DST[:ro]` adds a folder (resolved, symlinks included, before it's
 checked):
 - read-write: a folder inside one of `/srv/tvt/work/`'s folders, or inside
-  the cold drive's `vm/`;
+  the cold drive's `vm/`; of `landcover/` (the land-cover spike's folder, whose
+  trees runs and experiments were matched against the City's inventory) only
+  `lidar/`, `naip2025/` and `naip2023/`, as `deploy/bin/sheets` allows;
 - read-only: also production's archive (not its `trees/`, nor the archive's
   root, which holds it), the downloaded sources, the cold drive and the scratch
   archives;
