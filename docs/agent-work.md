@@ -172,3 +172,21 @@ comments and issue edits show as the App's bot, and they spend the App's own API
   about 2.0M tokens, 316 issues planned (315 filed).
 - From the landscape sprint's chunk B on, agents follow the tiers above. Record agents, tokens and accepted changes per
   chunk here, to compare.
+- **Chunk B, Oct 22-23 (tiered agents):** 21 workflow runs, 266 agents, about 27.6M tokens: about 104k per agent, against
+  about 250k before tiers. They gave 41 merged PRs (#319-#370), so about 670k tokens per merged PR, all review and fix
+  rounds included. By kind of run:
+  - **Build batches** (precheck, build, one review, skeptic fix; critical units add the whole-PR review): 14 runs, 203
+    agents, about 22.2M. The largest were the layer apps (53 agents, 5.3M; 33 agents, 5.1M).
+  - **Fix rounds with verification** (a fixer, then Opus verifiers and a skeptic, up to two rounds): 7 runs, 46
+    agents, about 4.7M. Every critical PR that had a second fix round still had confirmed findings at its next
+    verification. Running one, and not merging on the fixer's word, paid off every time: the GitHub App wrapper
+    (#327), the City-derived trees (#349), the board's public gate (#344), water's credits (#361).
+  - **Prechecks** stopped about half of each batch's units with questions. Nearly all were settled by the
+    coordinator in one comment per issue; a precheck that says "none" now goes on.
+- **Escaped defects** (on main after merge, caught by the coordinator's post-merge browser specs): 2. The top bar's
+  clock covering the stat chips after the status chip moved in (#355, fixed), and specs waiting on layers that
+  aren't built here (fixed the same day). One more is open and not reproduced (#368, with diagnostics). Lesson: run
+  the older map specs on main after each layer merge, not only the new layer's own.
+- **Limits that set the pace:** the laptop (8 GB; map specs one at a time, only under load 12; the VM's runner can't
+  draw maps, #272), the initial-bundle line (a trim, #329, made room for the layer apps), and sequential rebases of
+  PRs that touch shared files (the base registry, the palettes).
