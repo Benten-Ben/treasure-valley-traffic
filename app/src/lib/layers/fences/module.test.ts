@@ -152,6 +152,21 @@ describe('the Fences module (plan P10)', () => {
 		expect(scene.calls.setStatic[1].map((s) => s.id)).toEqual(['osm:w2:0', 'osm:w2:1']);
 	});
 
+	it('rebuilds the walls for the new place when switched back on after a move', async () => {
+		map.moveTo({ zoom: 16, center: C });
+		await settle();
+		expect(scene.calls.setStatic).toHaveLength(1);
+		fences.setVisible(false);
+		map.moveTo({ zoom: 16, center: [C[0] + 0.1, C[1]] });
+		await settle();
+		expect(scene.calls.setStatic).toHaveLength(1);
+		fences.setVisible(true);
+		expect(scene.calls.setStatic).toHaveLength(2);
+		fences.setVisible(false);
+		fences.setVisible(true);
+		expect(scene.calls.setStatic).toHaveLength(2);
+	});
+
 	it('hides the walls when switched off, and frees the batch when destroyed', async () => {
 		map.moveTo({ zoom: 16, center: C });
 		await settle();

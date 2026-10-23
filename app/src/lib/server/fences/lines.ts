@@ -24,6 +24,8 @@ const gunzip = promisify(gunzipCb);
 export const CONTENT_TYPE = 'application/geo+json';
 /** Answered while there is no version to name: ask again soon. */
 export const UNVERSIONED_CACHE = 'no-cache';
+/** How long an answer with no version is reused, so a burst of requests does not re-read and re-gzip (as /api/meta's TTL). */
+export const UNVERSIONED_KEEP_MS = 15_000;
 
 /** A postgres.js tagged template, or a test's stand-in. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -111,6 +113,8 @@ export interface LinesDeps {
 	sql(): Sql;
 	/** The current `fences.lines` version (`versions.layers['fences.lines']` of /api/meta), null when there is none. */
 	version(): Promise<string | null>;
+	/** The clock in ms (tests). */
+	now?(): number;
 }
 
 export interface LinesServer {
@@ -136,7 +140,9 @@ const acceptsGzip = (h: string | null) =>
 export function fenceLinesServer(deps: LinesDeps): LinesServer {
 	let kept: { version: string; built: Built } | null = null;
 	let inflight: { version: string | null; p: Promise<Built> } | null = null;
+	let keptNone: { until: number; built: Built } | null = null;
 	let reads = 0;
+	const now = deps.now ?? Date.now;
 
 	async function build(): Promise<Built> {
 		reads++;
@@ -147,12 +153,14 @@ export function fenceLinesServer(deps: LinesDeps): LinesServer {
 		};
 	}
 
-	/** The answer for `version`: kept per version, one read for concurrent callers; never kept without a version. */
+	/** The answer for `version`: kept per version (without one, for UNVERSIONED_KEEP_MS), one read for concurrent callers. */
 	function builtFor(version: string | null): Promise<Built> {
 		if (version && kept?.version === version) return Promise.resolve(kept.built);
+		if (!version && keptNone && now() < keptNone.until) return Promise.resolve(keptNone.built);
 		if (inflight && inflight.version === version) return inflight.p;
 		const p = build().then((built) => {
 			if (version) kept = { version, built };
+			else keptNone = { until: now() + UNVERSIONED_KEEP_MS, built };
 			return built;
 		});
 		const entry = { version, p };

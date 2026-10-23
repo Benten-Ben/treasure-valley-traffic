@@ -111,8 +111,11 @@ export class FencesModule implements LayerModule {
 		const map = this.#scope?.map;
 		if (!map) return;
 		for (const id of LAYER_IDS) if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', on ? 'visible' : 'none');
-		if (on) this.#onZoom();
-		else {
+		if (on) {
+			this.#onZoom();
+			// Walls built before it was switched off may be for another place; #rebuild skips when the view is still there.
+			if (this.#view3d()) this.#rebuild();
+		} else {
 			clearTimeout(this.#timer);
 			this.#showWalls(false);
 			this.#setHover(null);
@@ -152,6 +155,11 @@ export class FencesModule implements LayerModule {
 		this.#showWalls(walls);
 		if (walls && !this.#builtAt) this.#rebuild();
 		if (walls !== this.view.walls) this.view = { ...this.view, walls };
+	}
+
+	#view3d(): boolean {
+		const map = this.#scope?.map;
+		return !!map && this.#sceneState === 'ready' && map.getZoom() >= WALLS_FROM_ZOOM;
 	}
 
 	#showWalls(on: boolean) {

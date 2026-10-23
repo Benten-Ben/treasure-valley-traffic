@@ -1,7 +1,7 @@
 import { gunzipSync } from 'node:zlib';
 import { describe, expect, it, vi } from 'vitest';
 import { IMMUTABLE } from '../cache-headers.js';
-import { fenceFeature, fenceLinesServer, readFenceLines, type Sql } from './lines.js';
+import { fenceFeature, fenceLinesServer, readFenceLines, type Sql, UNVERSIONED_KEEP_MS } from './lines.js';
 
 /** Made-up rows (no real records): a fence, a wall with a tagged height, and a hedge the query leaves out. */
 const ROWS = [
@@ -23,8 +23,9 @@ function fakeSql(o: { table?: boolean; rows?: Record<string, unknown>[] } = {}) 
 function server(o: { table?: boolean; rows?: Record<string, unknown>[]; version?: string | null } = {}) {
 	const db = fakeSql(o);
 	let version = o.version === undefined ? 'v1' : o.version;
-	const s = fenceLinesServer({ sql: () => db.sql, version: async () => version });
-	return { s, db, setVersion: (v: string | null) => (version = v) };
+	let clock = 1_000_000;
+	const s = fenceLinesServer({ sql: () => db.sql, version: async () => version, now: () => clock });
+	return { s, db, setVersion: (v: string | null) => (version = v), advance: (ms: number) => (clock += ms) };
 }
 
 const json = async (res: Response) => JSON.parse(gunzipSync(Buffer.from(await res.arrayBuffer())).toString());
@@ -104,9 +105,12 @@ describe('the fences lines route (plan P10)', () => {
 		expect((await s.respond('v9', 'gzip')).headers.get('cache-control')).toBe('no-cache');
 	});
 
-	it('is empty when the table has no rows yet, and does not keep an answer it has no version for', async () => {
-		const { s } = server({ rows: [], version: null });
+	it('is empty when the table has no rows yet, and keeps an answer it has no version for only briefly', async () => {
+		const { s, advance } = server({ rows: [], version: null });
 		expect((await json(await s.respond(null, 'gzip'))).features).toEqual([]);
+		await s.respond(null, 'gzip');
+		expect(s.reads).toBe(1);
+		advance(UNVERSIONED_KEEP_MS + 1);
 		await s.respond(null, 'gzip');
 		expect(s.reads).toBe(2);
 	});
