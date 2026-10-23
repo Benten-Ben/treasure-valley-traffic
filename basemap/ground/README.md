@@ -260,7 +260,7 @@ it, and its copy's origin and version (v7 or v8) are still to be confirmed ⚠�
 | `cdl`, `csb` | public domain | CDL 2025 (10 m) crop pixels and developed land; CSB 2025 fields, behind farm's crop cover (the box classes name them through the shrub builds) |
 | `naip` | public domain | NAIP 2025 (0.3 m) for Ada and Canyon; NAIP 2023 (0.6 m) in boxes h–j |
 | `naip-2m` | Copernicus | the 2 m COG P2 makes from NAIP 2025 in its decode pass (`naip2025_2m.tif`: red, green and blue on the June 18 flight's scale through same-day Sentinel-2, and the NDVI on Sentinel-2's scale, on the 2 m grid, with `flights.fgb`; [soils](../../plugins/soils/README.md#the-photo-statistics)). Public-domain NAIP carried through Copernicus-derived curves, so it credits both; its version is the sidecar's sha256 |
-| `3dep` | public domain | the 2023–24 QL1 lidar products in the boxes; the DEM for slope and aspect |
+| `3dep` | public domain | the lidar products in the boxes, by vintage: 2023–24 QL1 in boxes b, c, d, downtown, f and h; 2019–20 QL2 in boxes a, e, i and j (e is on the 2019–20 QL2 survey, 2+ points/m²; [docs/09](../../docs/09-base-map-data.md)). Fits that need one vintage use the six 2023 boxes; a, e, i and j are held-out checks. The DEM for slope and aspect |
 | `sentinel-2` | Copernicus | the July 2025 NDVI median, on the 10 m grid |
 | `rcmap` | public domain | RCMAP fractional cover (30 m), which calibrates the classes' bare cut |
 
