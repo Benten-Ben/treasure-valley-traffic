@@ -14,8 +14,8 @@
  *
  * The numbers are the real tiles of the scratch database's soils build `20261011T1228Z-3dc4b3` (1,038 map
  * units, 21,999 polygons), cut by the SQL `#lib/server/soils/tiles.ts` makes and gzipped at level 9, as the tile
- * server does (Oct 23, 2026). Candidate tiles were every tile over the polygons' extent; the busiest by raw size
- * is the one listed.
+ * server does (Oct 23, 2026). Candidate tiles were every tile over the polygons' extent (z9: all 20; z10 to z14: the 40 largest by raw size); each
+ * was gzipped at level 9 and the one with the most gzip bytes is listed (Oct 23, re-measured: only z13 moved).
  */
 export const BUDGET = {
 	/** The busiest tile of any zoom band, gzip. */
@@ -39,7 +39,7 @@ export const BANDS: readonly BandMeasure[] = [
 	{ band: 'z10', tile: '10/180/373', raw: 172_634, gzip: 140_891 },
 	{ band: 'z11', tile: '11/360/746', raw: 71_896, gzip: 62_362 },
 	{ band: 'z12', tile: '12/720/1492', raw: 59_640, gzip: 44_290 },
-	{ band: 'z13', tile: '13/1445/2984', raw: 21_131, gzip: 15_754 },
+	{ band: 'z13', tile: '13/1440/2984', raw: 21_067, gzip: 15_938 },
 	{ band: 'z14 (polygons and labels)', tile: '14/2889/5967', raw: 16_398, gzip: 12_715 }
 ];
 
@@ -49,8 +49,10 @@ export const Z8_WITH_WASH: BandMeasure = { band: 'z8 with the wash (not served)'
 /**
  * The first toggle at the default view (the manifest's centre -116.4, 43.6, z10, pitch 45; defaultView() in
  * `#lib/state/view.svelte.ts`): the 25 z10 tiles around the centre tile 10/180/373 (an upper bound on what a
- * 1280 x 800 view asks for), all non-empty, and the 9 nearest to it. Gzip bytes. (At pitch, distant tiles may
- * load a zoom lower: the z9 tiles are a little smaller each, so this stays an upper bound.)
+ * 1280 x 800 view asks for), all non-empty, and the 9 nearest to it. Gzip bytes. This is a tile count times the
+ * measured tiles, not a recording of the real requests at the default view with the layer toggled (not done). A z9 tile
+ * (busiest 140,571) is about as large as a z10 one, so distant tiles at pitch are not smaller; they are fewer, as one
+ * z9 tile covers four z10 ones.
  */
 export const FIRST_TOGGLE = { tiles: 25, raw: 1_156_480, gzip: 942_082, nearest9: { tiles: 9, gzip: 727_713 } } as const;
 

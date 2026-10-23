@@ -47,7 +47,7 @@
 {/if}
 {#if def.note}<p class="note">{def.note}</p>{/if}
 <p class="note"><b>{REGULATORY}.</b></p>
-<p class="note">Gray steps run from palest to darkest. The wash shows from zoom 9, outlines from 12, map-unit symbols from 14 and names from 16. {NOT_SURVEYED}</p>
+<p class="note">Gray steps run from palest to darkest. The wash shows from zoom 9, hatches and dots from 11, outlines from 12, map-unit symbols from 14 and names from 16. {NOT_SURVEYED}</p>
 <p class="credit">{soils.credit ?? CREDIT}.</p>
 
 <style>

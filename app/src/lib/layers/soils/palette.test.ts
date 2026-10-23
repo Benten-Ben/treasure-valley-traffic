@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { CLAY_SURFACE, contrast, deltaE, oklch } from '#lib/map/color.js';
+import { CLAY_SURFACE, contrast, deltaE, mixOklab, oklch } from '#lib/map/color.js';
+import { GROUND } from '#lib/map/flavors.js';
 import { ROUTES_FOR_TEST } from './palette.test-util.js';
-import palette, { gaps, HALO, LABEL, onClay, OUTLINE, PATTERN_INK, STEPS, SURVEY_LINE } from './palette.js';
+import palette, { FILL_OPACITY, gaps, HALO, LABEL, onClay, OUTLINE, PATTERN_INK, STEPS, SURVEY_LINE } from './palette.js';
 
 describe('the Soils palette', () => {
 	it('is a hue-free wash: five steps, every one a true gray, palest first', () => {
@@ -19,6 +20,12 @@ describe('the Soils palette', () => {
 		for (const d of g.between) expect(d).toBeGreaterThanOrEqual(6);
 		expect(g.fromSurface).toBeGreaterThanOrEqual(4);
 		expect(onClay(4)).not.toBe(onClay(3));
+	});
+
+	it('keeps the steps apart in Valley too (the wash draws in either look): ΔE 6 between steps, ΔE 4 from the Valley ground', () => {
+		const seen = STEPS.map((c) => mixOklab(GROUND.valley, c, FILL_OPACITY));
+		for (let i = 1; i < seen.length; i++) expect(deltaE(seen[i - 1], seen[i]), `step ${i}`).toBeGreaterThanOrEqual(6);
+		expect(deltaE(GROUND.valley, seen[0])).toBeGreaterThanOrEqual(4);
 	});
 
 	it('keeps every colour at least ΔE 10 from the route colours (the colour budget), the wash too', () => {
