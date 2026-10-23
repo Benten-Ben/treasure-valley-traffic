@@ -339,8 +339,9 @@ AEROWAY_WIDTH = {"runway": 45.0, "taxiway": 23.0}    # ⚠️ (150 and 75 ft, co
 
 def other_line(tags):
     """For an OSM line, (what, kind, width m) when it covers the ground for sampling only: a railway track's bed
-    ('rail', 5 m per track by its `tracks` tag, one if missing; sidings and yards too, not trams, which run in streets), or a runway or taxiway drawn as a line
-    ('aeroway', its width tag else AEROWAY_WIDTH). Else None. Not painted: the map doesn't draw them as surfaces."""
+    ('rail', 5 m per track by its `tracks` tag, one if missing; sidings and yards too, not trams, which run in
+    streets), or a runway or taxiway drawn as a line ('aeroway', its width tag else AEROWAY_WIDTH). Else None. Not
+    painted: the map doesn't draw them as surfaces."""
     if below_ground(tags) or tags.get("area") == "yes":
         return None
     if tags.get("railway") in RAILWAYS:
