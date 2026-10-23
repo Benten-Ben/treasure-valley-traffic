@@ -678,6 +678,11 @@ docker run --rm --memory 1g --cpus 1 --network none -v "$PWD":/repo -w /repo tvt
   python -m unittest discover -s basemap/ground -t .                # all of them; a skip here is a failure
 ```
 
+`assemble --tiles` switches in under the manifest lock (`basemap/lock.py`). In a worker container on the VM, add
+`-e TVT_TILES_LOCK_DIR=/srv/tvt/work/locks -v /srv/tvt/work/locks:/srv/tvt/work/locks` to the `docker run` (the same
+path inside and out, so a host run locks the same files; [deploy/README.md](../../deploy/README.md#the-tiles-folders-locks)).
+The paint and a `--partial` assemble write only under `--out` and take no tiles lock.
+
 The fixtures are synthetic. `tests/fixtures/squares.fgb`, `lines-no-index.fgb` and `fields.fgb` (farm's fields, with
 `crop_group` and `bearing`) were written by PostGIS's `ST_AsFlatGeobuf`, the exports' real writer. `tests/tiffs.py` writes small GeoTIFFs with the standard library, and
 the worker tests check that `tif.py` reads GDAL's own (plain, COG, BigTIFF, big-endian, PixelIsPoint) the same way.

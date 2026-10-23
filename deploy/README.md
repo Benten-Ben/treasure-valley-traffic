@@ -268,6 +268,46 @@ does.
 The job table (each job's caps and window this sprint) and the work area's
 disk notes are in the VM's `/srv/tvt/work/README.md`.
 
+### The tiles folder's locks
+
+These commands take a lock before they rewrite the served tiles folder or its `manifest.json` (`basemap/lock.py`; #291):
+the landscape bake and its rollback (`bake.py rollback --tiles`), the ground's switch-in (`tilewrite.py assemble
+--tiles`), the ground's flat entry (`ground.py flat --tiles`; both ground commands go through `tiles.py`'s manifest
+update) and `basemap/build.sh`. The older layer scripts (`imagery.py`, `imagery_county.py`, `buildings.py`,
+`terrain.py`) take no lock, so they are not run against the served folder. The lock files live in one folder of their
+own, never in the served tiles folder:
+
+- **The folder** is `/srv/tvt/work/locks`, made group-writable with the setgid bit (mode 2775) so every job user can
+  create files in it. `landscape.lock` and `manifest.lock` are made in it ahead of time with mode 664, because
+  `basemap/lock.py` creates a missing file with 644, which a second user could not open for writing.
+- **`TVT_TILES_LOCK_DIR=/srv/tvt/work/locks`** is set by each caller, not by `heavy` (which only adds its label). A
+  worker container that writes the tiles or the manifest gets `-e TVT_TILES_LOCK_DIR=/srv/tvt/work/locks -v
+  /srv/tvt/work/locks:/srv/tvt/work/locks`: the checkout is mounted read-only there, so without the variable the job
+  stops at the start (`lock.ensure()` says which folder is not usable). The landscape bake's command
+  ([basemap/landscape/README.md](../basemap/landscape/README.md#commands)) and the ground's switch-in carry both; so
+  does the G1a job script (`w.sh`, in the VM's work area, outside this repository).
+- **The path is the same inside and out** because a container and a host run must lock the same files, and they do
+  only when the folder is one bind mount seen at one path.
+- **A host-side run** sets the variable in its environment. That covers `bake.py rollback --tiles` and `ground.py flat
+  --tiles` as much as the build: without it the lock lands in the checkout's `data/locks`, where a running bake does
+  not see it and both can rewrite the landscape entry. For example `TVT_TILES_LOCK_DIR=/srv/tvt/work/locks
+  TILES_DIR=/srv/tvt/tiles basemap/build.sh`, or from the server's checkout `TVT_TILES_LOCK_DIR=/srv/tvt/work/locks
+  python3 -m basemap.lock manifest.lock -- COMMAND`.
+- **Compose** sets nothing: its only mount of the tiles folder is the app's, read-only (`docker-compose.yml`), and no
+  service rewrites the manifest.
+- **Checking it** (light, but it goes through `heavy`, so it needs an open window and waits behind any running heavy
+  job; out of window `heavy` refuses at once): a worker run through `heavy` with the folder mounted, then `ls` of both
+  folders.
+
+  ```bash
+  /srv/tvt/work/bin/heavy --deadline HH:MM --runtime 2 --peak 1 "tiles lock check" \
+    docker run --rm --memory 512m --memory-swap 512m --cpus 1 --network none --user 1001:1001 \
+      -e HOME=/tmp -e PYTHONDONTWRITEBYTECODE=1 -e TVT_TILES_LOCK_DIR=/srv/tvt/work/locks \
+      -v /srv/tvt/repo:/repo:ro -v /srv/tvt/work/locks:/srv/tvt/work/locks -w /repo \
+      tvt-worker python -m basemap.lock check.lock -- true
+  ls -ln /srv/tvt/work/locks /srv/tvt/tiles     # check.lock is in the first; no *.lock in the second (numeric ids: paste no names)
+  ```
+
 ## Review sheets on the VM
 
 **`sheets`** ([`bin/sheets`](bin/sheets), installed beside `heavy`) draws
