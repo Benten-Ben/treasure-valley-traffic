@@ -45,6 +45,7 @@ describe.skipIf(!URL)('the water APIs (database)', () => {
 				                                   confirmed, canal_id, length_m, geom, build_id)
 				         values (${B + 1}, 'river', 'Example River', 'osm', 'perennial', false, 14, 'order', 7, 9, 'osm', true, null, 5200, ST_GeomFromEWKT(${LINE(-116.3)}), ${build}),
 				                (${B + 2}, 'canal', 'Example Canal', 'hydroshare', 'unknown', false, 8, 'kind', null, 10, 'osm', true, ${B + 2}, 4100, ST_GeomFromEWKT(${LINE(-116.2)}), ${build}),
+				                (${B + 4}, 'lateral', 'Example Lateral', 'osm', 'unknown', false, 3, 'kind', null, 14, 'osm', true, ${B + 4}, 900, ST_GeomFromEWKT(${LINE(-116.05)}), ${build}),
 				                (${B + 3}, 'lateral', null, null, 'intermittent', true, 2.5, 'kind', null, 16, 'nhd', false, null, 300, ST_GeomFromEWKT(${LINE(-116.1)}), ${build})`;
 				await tx`insert into water.reach_evidence (reach_id, source, source_id, role, share, distance_m)
 				         values (${B + 2}, 'osm_waterways', 'w900', 'geometry', 1, null),
@@ -59,6 +60,10 @@ describe.skipIf(!URL)('the water APIs (database)', () => {
 				                                   gauge_lid, sources, build_id)
 				         values (${B + 2}, 'Example Canal', 'main_canal', 23100, 800, 12, ${B + 2}, ${B + 10}, 'river', ${B + 1}, 'XTEST1',
 				                 ${tx.array(['osm_waterways', 'nhd_hr', 'hydroshare_canals'])}, ${build})`;
+				// An OSM-named lateral that leaves the HydroShare-named canal: its card says "Leaves Example Canal". It also records the
+				// reach it leaves (named by HydroShare), but the name shown is the canal's, so that reach's name source isn't carried.
+				await tx`insert into water.canal (id, name, kind, length_m, piped_m, reaches, head_reach_id, source_kind, source_canal_id, source_reach_id, sources, build_id)
+				         values (${B + 4}, 'Example Lateral', 'lateral', 900, 0, 1, ${B + 4}, 'canal', ${B + 2}, ${B + 2}, ${tx.array(['osm_waterways'])}, ${build})`;
 				await tx`insert into water.gauge (lid, name, reach_id, body_id, canal_id, method, distance_m, geom, build_id)
 				         values ('XTEST1', 'Example Canal Diversion', ${B + 2}, null, ${B + 2}, 'name', 12.4, ST_GeomFromEWKT('SRID=4326;POINT(-116.19 43.6)'), ${build}),
 				                ('XTEST2', 'Example River at Nowhere', ${B + 1}, null, null, 'nearest', 140, ST_GeomFromEWKT('SRID=4326;POINT(-116.29 43.6)'), ${build})`;
@@ -122,6 +127,12 @@ describe.skipIf(!URL)('the water APIs (database)', () => {
 					]
 				});
 				expect(reach.gauge).toBeNull();
+				// A lateral named by OSM, leaving that canal: it credits where the canal's name came from.
+				const lateral = (await reachDetail(db, String(B + 4)))!;
+				expect(lateral.canal).toMatchObject({ source: { kind: 'canal', name: 'Example Canal', sources: ['osm_waterways', 'nhd_hr', 'hydroshare_canals'], name_from: null } });
+				expect(lateral.credit).toEqual([CREDITS.osm, CREDITS.nhd, CREDITS.hydroshare]);
+				// A river's name source comes with it, and a canal's own name_from is not mixed in.
+				expect(reach.canal?.source).toMatchObject({ kind: 'river', name: 'Example River', sources: [], name_from: 'osm' });
 				expect(reach.credit).toEqual(expect.arrayContaining(['© OpenStreetMap contributors', 'USGS National Hydrography Dataset']));
 				expect(reach.credit.some((c) => c.includes('HydroShare'))).toBe(true);
 				expect(reach.credit.some((c) => c.includes('Idaho Department of Water Resources'))).toBe(true);

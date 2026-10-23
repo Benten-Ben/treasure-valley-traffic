@@ -137,6 +137,25 @@ describe('canals and their service areas', () => {
 		expect(reachCredits({ ...base, canal: { service_areas: [], gauge: null, sources: ['osm_waterways', 'hydroshare_canals'] } })).toEqual([CREDITS.osm, CREDITS.nhd, CREDITS.hydroshare]);
 	});
 
+	it('credits where the name of the canal a head leaves came from', () => {
+		const base = { geometry_from: 'osm' as const, name_from: 'osm' as const, evidence: [] as Evidence[] };
+		const canal = (source: { sources?: string[]; name_from?: 'osm' | 'nhd' | 'hydroshare' | null }) => ({
+			service_areas: [],
+			gauge: null,
+			sources: ['osm_waterways'],
+			source
+		});
+		// A lateral OSM names, leaving a canal HydroShare names: "Leaves <canal>" credits HydroShare.
+		expect(reachCredits({ ...base, canal: canal({ sources: ['hydroshare_canals'] }) })).toEqual([CREDITS.osm, CREDITS.nhd, CREDITS.hydroshare]);
+		// Leaving a canal OSM names, or a river whose name came from OSM: no HydroShare credit.
+		expect(reachCredits({ ...base, canal: canal({ sources: ['osm_waterways'] }) })).toEqual([CREDITS.osm, CREDITS.nhd]);
+		expect(reachCredits({ ...base, canal: canal({ name_from: 'osm' }) })).toEqual([CREDITS.osm, CREDITS.nhd]);
+		// Leaving a river HydroShare names, or one only NHD names.
+		expect(reachCredits({ ...base, canal: canal({ name_from: 'hydroshare' }) })).toContain(CREDITS.hydroshare);
+		expect(reachCredits({ ...base, geometry_from: 'nhd', canal: { ...canal({ name_from: 'nhd' }), sources: ['nhd_hr'] } })).toEqual([CREDITS.nhd]);
+		expect(reachCredits({ ...base, canal: { ...canal({ name_from: 'nhd' }), sources: ['osm_waterways'] } })).toEqual([CREDITS.osm, CREDITS.nhd]);
+	});
+
 	it('credits the sources behind the records a card shows, in a fixed order', () => {
 		expect(sourceCredits(['hydroshare_canals', 'nhd_hr', 'osm_waterways', 'nwps_gauges', null, ''])).toEqual([CREDITS.osm, CREDITS.nhd, CREDITS.hydroshare]);
 		expect(sourceCredits([])).toEqual([]);

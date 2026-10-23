@@ -37,7 +37,8 @@ async function canalDetail(sql: Sql, id: number, orgs: boolean): Promise<CanalDe
 	const [c] = await sql`
 		select c.id, c.name, c.kind, c.length_m, c.piped_m, c.reaches, c.source_kind, c.sources, c.gauge_lid,
 		       c.head_structure_id, hs.kind as head_kind, hs.name as head_name,
-		       coalesce(sc.name, sr.name) as source_name
+		       coalesce(sc.name, sr.name) as source_name, sc.sources as source_sources,
+		       case when sc.id is null then sr.name_from end as source_name_from
 		from water.canal c
 		left join water.structure hs on hs.id = c.head_structure_id
 		left join water.canal sc on sc.id = c.source_canal_id
@@ -59,7 +60,13 @@ async function canalDetail(sql: Sql, id: number, orgs: boolean): Promise<CanalDe
 		length_m: round(Number(c.length_m), 0),
 		piped_m: round(Number(c.piped_m ?? 0), 0),
 		reaches: Number(c.reaches),
-		source: { kind: c.source_kind, name: str(c.source_name) },
+		source: {
+			kind: c.source_kind,
+			name: str(c.source_name),
+			// What the name "Leaves <name>" rests on: the source canal's sources, or the source reach's name source.
+			sources: (c.source_sources ?? []).map(String),
+			name_from: c.source_name_from ?? null
+		},
 		head_structure: c.head_structure_id === null || c.head_structure_id === undefined ? null : { id: Number(c.head_structure_id), kind: c.head_kind, name: str(c.head_name) },
 		sources: (c.sources ?? []).map(String),
 		gauge: lid ? await gaugeSummary(sql, lid) : null,

@@ -78,7 +78,13 @@ export interface CanalDetail {
 	piped_m: number;
 	reaches: number;
 	/** What the head leaves: a river, a reservoir or another canal, by name when we know it. */
-	source: { kind: 'river' | 'canal' | 'reservoir' | 'unknown'; name: string | null };
+	source: {
+		kind: 'river' | 'canal' | 'reservoir' | 'unknown';
+		name: string | null;
+		/** Where that name came from: the source canal's sources, and the source reach's name source. Credited with the card. */
+		sources?: string[];
+		name_from?: ReachDetail['name_from'];
+	};
 	head_structure: { id: number; kind: StructureKind; name: string | null } | null;
 	sources: string[];
 	gauge: GaugeSummary | null;
@@ -387,7 +393,12 @@ export function sourceCredits(sources: Iterable<string | null | undefined>, alwa
 /** The credits a reach's card shows. The gauge's own credit applies (USGS only where its record names a site). */
 export function reachCredits(
 	d: Pick<ReachDetail, 'geometry_from' | 'name_from' | 'evidence'> & {
-		canal: { service_areas: readonly unknown[]; gauge: { usgs: boolean } | null; sources?: readonly string[] } | null;
+		canal: {
+			service_areas: readonly unknown[];
+			gauge: { usgs: boolean } | null;
+			sources?: readonly string[];
+			source?: { sources?: readonly string[]; name_from?: string | null };
+		} | null;
 		gauge?: { usgs: boolean } | null;
 	}
 ): string[] {
@@ -397,7 +408,10 @@ export function reachCredits(
 			d.geometry_from === 'osm' ? 'osm_waterways' : 'nhd_hr',
 			d.name_from === 'hydroshare' ? 'hydroshare_canals' : null,
 			...d.evidence.map((e) => e.source),
-			...(d.canal?.sources ?? [])
+			...(d.canal?.sources ?? []),
+			// "Leaves <name>" names a source canal or reach: credit wherever that name came from.
+			...(d.canal?.source?.sources ?? []),
+			d.canal?.source?.name_from === 'hydroshare' ? 'hydroshare_canals' : d.canal?.source?.name_from === 'osm' ? 'osm_waterways' : d.canal?.source?.name_from === 'nhd' ? 'nhd_hr' : null
 		],
 		['nhd_hr']
 	);
