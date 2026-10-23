@@ -14,8 +14,10 @@
 -- sheet's rows). Both are rebuilt by each water-build.
 --
 -- A wetland drawn from NWI alone is geometry_from 'nwi'; where OSM also outlines it, OSM's outline is drawn
--- (geometry_from 'osm') with NWI's class and regime. NWI is not a legal (regulatory) wetland boundary, and the card
--- says so.
+-- (geometry_from 'osm') with the class and regime of its largest-overlap NWI polygon, and is confirmed when the NWI
+-- polygons together cover half of it (NWI splits one wetland into several polygons by class and regime). An NWI
+-- polygon draws minus every OSM wetland it overlaps, and what is left only if it is a real piece (water-build's
+-- WETLANDS). NWI is not a legal (regulatory) wetland boundary, and the card says so.
 
 create table water.nwi_project (
   id           bigint generated always as identity primary key,
@@ -64,10 +66,12 @@ create table water.nwi_presence (
 alter table water.body drop constraint body_geometry_from_check;
 alter table water.body add constraint body_geometry_from_check check (geometry_from in ('osm', 'nhd', 'nwi'));
 alter table water.body
-  add column wetland_class  text,            -- the Cowardin code of the NWI polygon behind it, if any
+  add column wetland_class  text,            -- the Cowardin code of the NWI polygon behind it (an OSM wetland: its
+                                             -- largest-overlap NWI polygon), if any
   add column water_regime   text,            -- the code's water regime letter
   add column modifiers      text,            -- the code's special modifiers (h, x, d, f, b, r, s)
-  add column nwi_key        text,
+  add column nwi_key        text,            -- that polygon's key (an NWI polygon whose leftover draws beside an
+                                             -- OSM body can share a key with it)
   add column image_year     smallint,        -- NWI's mapping year
   add column thin           boolean not null default false,    -- the thinned tuft: older mapping (1981-83, interim,
                                                                -- or NHD's topo-era marsh alone)
@@ -87,7 +91,7 @@ create table water.wetland_check (
   cultivated       real,
   hay_pasture      real,
   cdl_wetland      real,
-  support          text[] not null default '{}',   -- 'cdl', 'osm', 'nhd': what stood for a wetland here
+  support          text[] not null default '{}',   -- evidence on the card: 'cdl', 'osm', 'nhd'; only 'cdl' counts as support
   primary key (build_id, key)
 );
 
@@ -98,4 +102,4 @@ comment on table water.nwi_project is
 comment on table water.nwi_presence is
   'The presence check''s shares for old-mapped NWI polygons: derived from public inputs (mask v0, CDL, CSB); republish: yes';
 comment on table water.wetland_check is
-  'Every NWI polygon''s outcome in each water-build, retired ones included (the QA sheet''s rows). ODbL where OSM''s support counts; republish: yes';
+  'Every NWI polygon''s outcome in each water-build, retired ones included (the QA sheet''s rows); body_id is the body that draws it (an absorbed or dropped-leftover polygon: the OSM wetland it overlaps most). OSM and NHD overlap is listed as evidence only, never as support; republish: yes';

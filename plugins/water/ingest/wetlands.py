@@ -65,9 +65,10 @@ CDL_SUPPORT = 0.25             # CDL wetland classes over this share of the poly
 SUPPORT_OVERLAP = 0.1          # an OSM wetland or NHD marsh overlapping this share is listed as evidence (not support)
 
 ERA_OLD_BEFORE = 1999          # a project whose imagery is older than this is "old"
-OVERLAP_SHARE = 0.5            # OSM and NWI outline one wetland when they overlap this much of the smaller of the two
-PAIR_LARGER_SHARE = 0.25       # ... and this much of the larger (a small wetland inside a big one is not the same one)
-REMAINDER_SHARE = 0.25         # a paired NWI polygon still draws what OSM's outline leaves, if that is this much of it
+OVERLAP_SHARE = 0.5            # an NWI polygon is absorbed into an OSM wetland when this much of it lies inside; an OSM
+                               # wetland is confirmed, and takes NWI's class, when NWI polygons cover this much of it
+REMAINDER_MIN_M2 = 2000.0      # what OSM's outline leaves of an NWI polygon draws if it is at least this large ...
+REMAINDER_INSET_M = 3.0        # ... and something is left of it after this inward buffer (not a sliver or a frame)
 
 PRESENCES = ("kept", "flagged", "retired", "unchecked")
 REASONS = ("built", "farmed", "farmed_supported", "hay_pasture")

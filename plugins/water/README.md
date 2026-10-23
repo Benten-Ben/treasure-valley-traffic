@@ -371,12 +371,18 @@ It is **not a legal (regulatory) wetland boundary**; every card says so.
   polygon; an OSM wetland or NHD marsh overlapping it is listed on the card as evidence but does not rescue it. CDL class 121 counts for nothing. The thresholds are the
   review's first guesses, to be tuned on the ten boxes (the Greenbelt strip's roof share first). **An old polygon with
   no shares yet is `unchecked` and not drawn.**
-- **Conflation** (water-build, [`ingest/build.py`](ingest/build.py) `WETLANDS`): where OSM and NWI outline one wetland
-  (they overlap half or more of the smaller and a quarter of the larger) OSM's outline is drawn with NWI's class and regime
-  (`geometry_from` `osm`, confirmed); NWI alone is drawn from its own outline (`geometry_from` `nwi`), minus every OSM
-  wetland (a paired polygon still draws what OSM's outline leaves, if that is a quarter of it); NHD's marshes are evidence where an NWI polygon (retired or unchecked too) or OSM wetland covers half of them; NWI wetlands never hide an NHD lake, pond, river or canal, and
-  draw alone otherwise. `thin` marks the older mapping (the 1981-83 and interim polygons that passed, and NHD's marsh
-  alone): thinned tufts from z15, where the rest are tufts from z14.
+- **Conflation** (water-build, [`ingest/build.py`](ingest/build.py) `WETLANDS`): NWI splits one wetland into several
+  polygons by Cowardin class and water regime, so OSM and NWI are paired through coverage. An NWI polygon is absorbed
+  into an OSM wetland when half or more of the polygon lies inside it. An OSM wetland takes the class and regime of its
+  largest-overlap NWI polygon, and is confirmed, when the NWI polygons together cover half or more of it; a small NWI
+  polygon that is neither absorbed nor part of that cover lends nothing to a large OSM wetland. OSM's outline is drawn
+  (`geometry_from` `osm`). Every NWI polygon draws from its own outline (`geometry_from` `nwi`, simplified) minus every
+  OSM wetland it overlaps; what is left of an overlapped polygon draws only if it is a real piece, at least 2,000 m²
+  with something left after a 3 m inward buffer (never a share alone), and otherwise is dropped, its check row pointing
+  at the OSM wetland. NHD's marshes are evidence where an NWI polygon (retired or unchecked too) or OSM wetland covers
+  half of them; NWI wetlands never hide an NHD lake, pond, river or canal, and draw alone otherwise. `thin` marks the
+  older mapping (the 1981-83 and interim polygons that passed, and NHD's marsh alone): thinned tufts from z15, where
+  the rest are tufts from z14.
 - **Generalisation, per zoom, for the bake's byte budget:** NWI outlines are simplified to 1 m, NWI-only polygons under
   60 m² are dropped, and a wetland draws from the first zoom at which it covers about 20 pixels (z14 or z15 at the
   earliest, z16 at the latest). Measured on the Oct 23 cut: the 12,178 recent polygons, simplified, are about 6 MB as

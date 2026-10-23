@@ -232,6 +232,15 @@ def gj_square(x, y, size):
     return json.dumps({"type": "Polygon", "coordinates": [[list(p) for p in S.box_square(x, y, size)[0]]]})
 
 
+def gj_rect(x, y, w, h):
+    return json.dumps({"type": "Polygon", "coordinates": [[list(S.at(*p)) for p in
+                                                           ((x, y), (x + w, y), (x + w, y + h), (x, y + h), (x, y))]]})
+
+
+def gj_poly(points):
+    return json.dumps({"type": "Polygon", "coordinates": [[list(S.at(*p)) for p in points]]})
+
+
 @need_db
 class LoadTest(unittest.TestCase):
     """nwi-load and nwi-presence, with real Albers coordinates from PostGIS. nwi-load commits, so this cleans up."""
@@ -356,10 +365,11 @@ class ConflationTest(unittest.TestCase):
                          values (%s, 'waterbody', 466, 'Swamp/Marsh', ST_Multi(ST_SetSRID(ST_GeomFromGeoJSON(%s), 4326)),
                                  %s)""", (pid, geom, nhd_load))
 
-        # A: OSM and NWI outline one wetland; B: NWI alone, 2017; C: 1981, mostly roofs and paving; D: 1981, in a
-        # field but with wetland on the land cover; E: 1981, not checked yet; F: 1981 hay; G: 1981, nothing against
-        # it; H: NWI's marsh with an NHD marsh on it; I: NWI too small to draw; J: NWI overlapping an OSM wetland
-        # a little; K: NHD's marsh alone
+        # A: OSM and NWI outline one wetland (NWI's 10 m off: 19% of it is left, under 2,000 m2); B: NWI alone,
+        # 2017; C: 1981, mostly roofs and paving; D: 1981, in a field but with wetland on the land cover; E: 1981,
+        # not checked yet; F: 1981 hay; G: 1981, nothing against it; H: NWI's marsh with an NHD marsh on it; I: NWI
+        # too small to draw; J: NWI overlapping an OSM wetland a little (30%: not absorbed, so it draws what OSM's
+        # outline leaves); K: NHD's marsh alone
         osm(BASE + 1, gj_square(0, 0, 100), natural="wetland")
         nwi_poly("A", "PEM1Ch", "recent", gj_square(10, 10, 100), 2017)
         nwi_poly("B", "PSS1A", "recent", gj_square(500, 0, 80), 2017)
@@ -390,6 +400,24 @@ class ConflationTest(unittest.TestCase):
                      values ('{P-N}', 'waterbody', 390, 'Lake/Pond',
                              ST_Multi(ST_SetSRID(ST_GeomFromGeoJSON(%s), 4326)), %s)""",
                   (gj_square(8000, 0, 100), nhd_load))
+        # S1-S5: one OSM wetland (250 x 200 m) tiled by five NWI class polygons; P: a 60 m OSM wetland and NWI's
+        # outline of it 15 m off; Q: a 50 m OSM wetland inside NWI's 66 m outline; R: a 400 m NWI polygon with a
+        # 310 x 400 m OSM wetland on it (16 ha, 3.6 ha left); V: NWI's outline 3 m wider along one side of a 1 km
+        # OSM wetland; T: an OSM wetland drawn as a bow tie (self-intersecting), with NWI over it
+        osm(BASE + 5, gj_rect(9000, 0, 250, 200), natural="wetland")
+        for key, code, x, w in (("S1", "PEM1C", 9000, 40), ("S2", "PSS1C", 9040, 40), ("S3", "PEM1A", 9080, 80),
+                                ("S4", "PFO1A", 9160, 40), ("S5", "PEM1F", 9200, 50)):
+            nwi_poly(key, code, "recent", gj_rect(x, 0, w, 200), 2017)
+        osm(BASE + 6, gj_square(10000, 0, 60), natural="wetland")
+        nwi_poly("P", "PEM1C", "recent", gj_square(10015, 15, 60), 2017)
+        osm(BASE + 7, gj_square(11008, 8, 50), natural="wetland")
+        nwi_poly("Q", "PEM1C", "recent", gj_square(11000, 0, 66), 2017)
+        osm(BASE + 8, gj_rect(12000, 0, 310, 400), natural="wetland")
+        nwi_poly("R", "PEM1C", "recent", gj_rect(12000, 0, 400, 400), 2017)
+        osm(BASE + 9, gj_rect(13000, 0, 1000, 100), natural="wetland")
+        nwi_poly("V", "PEM1C", "recent", gj_rect(13000, -3, 1000, 103), 2017)
+        osm(BASE + 10, gj_poly(((16000, 0), (16100, 100), (16100, 0), (16000, 100), (16000, 0))), natural="wetland")
+        nwi_poly("T", "PSS1C", "recent", gj_square(16000, 0, 100), 2017)
         c.execute("""insert into water.osm_feature (osm_type, osm_id, shape, kind, name, tags, geom, first_seen,
                        last_seen) values ('w', %s, 'line', 'canal', null, '{}'::jsonb,
                          ST_SetSRID(ST_GeomFromGeoJSON(%s), 4326), %s, %s)""",
@@ -408,7 +436,7 @@ class ConflationTest(unittest.TestCase):
     def body(self, key):
         return self.q("""select geometry_from, wetland_class, water_regime, modifiers, confirmed, thin, presence,
                                 presence_reason, minzoom, image_year, round(area_m2::numeric)
-                         from water.body where nwi_key = %s""", key)
+                         from water.body where nwi_key = %s order by geometry_from desc""", key)
 
     def test_osm_outline_with_nwi_class(self):
         row = self.body("A")
@@ -444,7 +472,7 @@ class ConflationTest(unittest.TestCase):
         self.assertEqual(rows["E"], ("unchecked", None, False))
         self.assertEqual(rows["G"], ("kept", None, True))
         self.assertEqual(rows["A"], ("kept", None, True))
-        self.assertEqual(len(rows), 13)
+        self.assertEqual(len(rows), 23)
         shares = self.q("select built, developed, support from water.wetland_check where key = 'C' and build_id = %s",
                         self.build_id)
         self.assertEqual((round(shares[0][0], 1), round(shares[0][1], 1)), (0.6, 0.7))
@@ -465,10 +493,65 @@ class ConflationTest(unittest.TestCase):
         self.assertEqual(self.q("select count(*) from water.body where nhd_pid = '{M-L}'"), [(0,)])
 
     def test_small_osm_wetland_inside_a_big_nwi_polygon(self):
-        m = self.body("M")[0]
-        self.assertEqual(m[0], "nwi")
+        # the OSM wetland lies wholly in NWI's polygon, so it takes the class and is confirmed; the polygon, less
+        # than half inside it, is not absorbed and still draws everything but OSM's outline
+        m = [r for r in self.body("M") if r[0] == "nwi"][0]
         self.assertAlmostEqual(float(m[10]), 90000 - 1600, delta=500)
-        self.assertEqual(self.q("select wetland_class from water.body where osm_id = %s", BASE + 4), [(None,)])
+        self.assertEqual(self.q("select wetland_class, confirmed from water.body where osm_id = %s", BASE + 4),
+                         [("PEM1C", True)])
+
+    def check_row(self, key):
+        return self.q("select body_id, drawn from water.wetland_check where key = %s and build_id = %s",
+                      key, self.build_id)[0]
+
+    def osm_body(self, n):
+        return self.q("select id, wetland_class, confirmed, nwi_key from water.body where osm_id = %s", BASE + n)[0]
+
+    def test_nwi_class_parts_under_one_osm_wetland(self):
+        # NWI splits a wetland by class and regime: the OSM wetland takes the largest part's class, is confirmed, and
+        # every part's check row points at it
+        oid, cls, confirmed, key = self.osm_body(5)
+        self.assertEqual((cls, confirmed, key), ("PEM1A", True, "S3"))
+        self.assertEqual(self.q("select count(*) from water.body where geometry_from = 'nwi' and nwi_key ~ '^S[1-5]$'"),
+                         [(0,)])
+        for k in ("S1", "S2", "S3", "S4", "S5"):
+            self.assertEqual(self.check_row(k), (oid, True), k)
+
+    def test_shifted_outline_leaves_no_strip(self):
+        oid, cls, confirmed, _ = self.osm_body(6)
+        self.assertEqual((cls, confirmed), ("PEM1C", True))
+        self.assertEqual(self.q("select count(*) from water.body where nwi_key = 'P'"), [(1,)])
+        self.assertEqual(self.check_row("P"), (oid, True))
+
+    def test_wider_outline_leaves_no_frame(self):
+        oid, cls, confirmed, _ = self.osm_body(7)
+        self.assertEqual((cls, confirmed), ("PEM1C", True))
+        self.assertEqual(self.q("select count(*) from water.body where nwi_key = 'Q'"), [(1,)])
+        self.assertEqual(self.check_row("Q"), (oid, True))
+
+    def test_thin_leftover_is_dropped_however_large(self):
+        # 3,000 m2 of leftover, but only 3 m wide
+        oid = self.osm_body(9)[0]
+        self.assertEqual(self.q("select count(*) from water.body where nwi_key = 'V'"), [(1,)])
+        self.assertEqual(self.check_row("V"), (oid, True))
+
+    def test_a_large_leftover_draws_even_when_a_small_share(self):
+        oid, cls, confirmed, _ = self.osm_body(8)
+        self.assertEqual((cls, confirmed), ("PEM1C", True))
+        r = [x for x in self.body("R") if x[0] == "nwi"]
+        self.assertEqual(len(r), 1)
+        self.assertAlmostEqual(float(r[0][10]), 36000, delta=300)       # 22% of the polygon
+        drawn = self.q("select id from water.body where nwi_key = 'R' and geometry_from = 'nwi'")[0][0]
+        self.assertEqual(self.check_row("R"), (drawn, True))
+
+    def test_self_intersecting_osm_wetland(self):
+        # a bow tie is valid once repaired: its two triangles are wetland (half of NWI's square, so it is confirmed),
+        # and NWI's polygon draws the other two
+        oid, cls, confirmed, _ = self.osm_body(10)
+        self.assertEqual((cls, confirmed), ("PSS1C", True))
+        self.assertAlmostEqual(self.q("select area_m2 from water.body where id = %s", oid)[0][0], 5000, delta=100)
+        t = [r for r in self.body("T") if r[0] == "nwi"]
+        self.assertAlmostEqual(float(t[0][10]), 5000, delta=100)
 
     def test_nwi_wetland_does_not_suppress_an_nhd_pond(self):
         self.assertEqual(self.q("select kind, geometry_from from water.body where nhd_pid = '{P-N}'"),
@@ -485,9 +568,10 @@ class ConflationTest(unittest.TestCase):
     def test_counts(self):
         c = self.counts
         self.assertEqual((c["nwi_polygons"], c["nwi_retired"], c["nwi_unchecked"], c["nwi_flagged"], c["nwi_kept"]),
-                         (13, 2, 1, 2, 8))
-        self.assertEqual(c["wetlands_nwi"], 9)               # A, B, D, F, G, H, J
-        self.assertEqual(c["wetlands"], 12)                  
+                         (23, 2, 1, 2, 18))
+        # by polygon: A, B, D, F, G, H, J, M, N, then S3 (the strips' class), P, Q, R, V, T
+        self.assertEqual(c["wetlands_nwi"], 15)
+        self.assertEqual(c["wetlands"], 20)                  # 9 OSM, 10 NWI (R and T draw a leftover too), NHD's K
         self.assertEqual(c["wetlands_thin"], 4)              # D, F, G and NHD's marsh K
 
     def test_export_rows_have_the_wetland_columns(self):
@@ -525,6 +609,9 @@ class ConflationTest(unittest.TestCase):
             self.assertEqual(bodies["republish"], "yes")
             self.assertIn("U.S. Fish and Wildlife Service, National Wetlands Inventory", " ".join(bodies["credit"]))
             self.assertIn("nwi", m.inputs)
+            layers = {lay.name: lay for lay in m.layers}
+            self.assertNotIn("nwi", layers["reaches"]["inputs"])      # NWI is in the bodies layer only
+            self.assertNotIn("nwi", layers["mask"]["inputs"])
 
 
 if __name__ == "__main__":
