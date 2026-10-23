@@ -120,6 +120,28 @@ and per tag, and writes them to `data/dev/<wp>/e2e-summary.json`.
   browser has started (Back, Forward, a link) and for a mode being entered,
   so it's safe to call right after `goBack()` or a click.
 
+## Known limits under load
+
+A timing miss under load is a documented known limit, not a red run. On a
+busy laptop or the e2e runner, these steps can time out with nothing wrong
+(SwiftShader starves animation frames, and the map settles late):
+
+- `windows.spec.ts`, the padding poll after the inspect card (about line 449):
+  the poll allows 30 s for the chrome padding to settle.
+- `windows.spec.ts`, reduced-motion H and O (under reduced motion H and O still
+  go on the view history): the Back chip hides 8 s after a push, so the test
+  clicks it when it is there and otherwise takes the same step back with
+  Backspace. The history and view checks are unchanged.
+- `persistent.spec.ts`, the reload and the fresh-browser hash load: the view
+  is polled for up to 30 s before it is read.
+- `layers.spec.ts`, Streets off and on (about lines 405 to 490): a known limit
+  under load, listed here until chunk B's work orders B-S3a and B-S3b change
+  that spec. The spec itself is left alone.
+
+If one of these still fails on a busy runner with its functional result right,
+record it here as a known limit; a failure that reproduces on a quiet laptop is
+a bug.
+
 ## Other tools
 
 - `node scripts/perf.mjs --budget` (S1–S3, S6; `--runs`, `--scenarios`) and

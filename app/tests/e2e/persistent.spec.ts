@@ -190,6 +190,7 @@ test.describe('persistent', () => {
 		const hash = await page.evaluate(() => location.hash);
 		await page.reload();
 		await mapReady(page);
+		await expect.poll(() => currentView(page), { timeout: 30_000 }).not.toBeNull();
 		const after = (await currentView(page))!;
 		expect(Math.abs(after.lng - want.lng)).toBeLessThan(1e-6);
 		expect(Math.abs(after.lat - want.lat)).toBeLessThan(1e-6);
@@ -202,6 +203,7 @@ test.describe('persistent', () => {
 		const p2 = await other.newPage();
 		await p2.goto(`/${hash}`);
 		await mapReady(p2);
+		await expect.poll(() => currentView(p2), { timeout: 30_000 }).not.toBeNull();
 		const shared = (await currentView(p2))!;
 		expect(Math.abs(shared.lng - want.lng)).toBeLessThan(1e-4);
 		expect(Math.abs(shared.lat - want.lat)).toBeLessThan(1e-4);
