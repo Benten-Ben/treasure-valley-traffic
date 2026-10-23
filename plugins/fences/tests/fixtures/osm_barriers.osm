@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Synthetic OpenStreetMap-format fixture for the fences plugin's consumer (osm_barriers). Everything here is
+     made up: ids and coordinates are invented, not copied from OpenStreetMap. Objects stand near (-116.30, 43.60),
+     inside the valley box, sorted by type and id as osmium extract requires. -->
+<osm version="0.6" generator="hand-written">
+  <node id="9101" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6000000" lon="-116.3000000"/>
+  <node id="9102" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6000000" lon="-116.2990000"/>
+  <node id="9103" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6010000" lon="-116.2990000"/>
+  <node id="9104" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6010000" lon="-116.3000000"/>
+  <node id="9111" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6020000" lon="-116.3000000"/>
+  <node id="9112" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6020000" lon="-116.2990000"/>
+  <node id="9121" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6030000" lon="-116.3000000"/>
+  <node id="9122" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6030000" lon="-116.2990000"/>
+  <node id="9131" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6040000" lon="-116.3000000"/>
+  <node id="9132" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6040000" lon="-116.2990000"/>
+  <node id="9201" version="2" timestamp="2026-09-01T00:00:00Z" lat="43.6050000" lon="-116.3000000">
+    <tag k="barrier" v="gate"/>
+    <tag k="access" v="private"/>
+  </node>
+  <node id="9202" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6050000" lon="-116.2990000">
+    <tag k="barrier" v="bollard"/>
+  </node>
+  <node id="9203" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6050000" lon="-116.2980000">
+    <tag k="barrier" v="fence"/>
+  </node>
+  <node id="9204" version="1" timestamp="2026-09-01T00:00:00Z" lat="43.6050000" lon="-116.2970000">
+    <tag k="highway" v="crossing"/>
+  </node>
+  <way id="9301" version="3" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="9101"/><nd ref="9102"/><nd ref="9103"/><nd ref="9104"/><nd ref="9101"/>
+    <tag k="barrier" v="hedge"/>
+  </way>
+  <way id="9302" version="1" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="9111"/><nd ref="9112"/>
+    <tag k="barrier" v="fence"/>
+    <tag k="fence_type" v="wood"/>
+    <tag k="height" v="6 ft"/>
+  </way>
+  <way id="9303" version="1" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="9121"/><nd ref="9122"/>
+    <tag k="barrier" v="retaining_wall"/>
+  </way>
+  <way id="9304" version="1" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="9131"/><nd ref="9132"/>
+    <tag k="barrier" v="kerb"/>
+  </way>
+  <way id="9305" version="1" timestamp="2026-09-02T00:00:00Z">
+    <nd ref="9101"/><nd ref="9111"/>
+    <tag k="highway" v="service"/>
+  </way>
+</osm>
