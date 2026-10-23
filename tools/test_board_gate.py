@@ -47,7 +47,7 @@ class BoardPublicGateTest(unittest.TestCase):
         self.tmp = os.path.join(self.dir, "tmp")
         os.mkdir(self.tmp)
 
-    def board(self, *args, env=None):
+    def board(self, *args, env=None, script=BOARD, cwd=None, patterns=True):
         env = {**{
             "PATH": self.bin + os.pathsep + "/usr/bin:/bin",
             "HOME": self.dir,
@@ -56,9 +56,8 @@ class BoardPublicGateTest(unittest.TestCase):
             "BOARD_OWNER": "o",
             "BOARD_NUMBER": "1",
             "BOARD_REPO": "o/r",
-            "TVT_PRIVATE_PATTERNS": self.patterns,
-        }, **(env or {})}
-        return subprocess.run(["/bin/bash", BOARD, *args], capture_output=True, text=True, env=env, cwd=self.cwd, timeout=60)
+        }, **({"TVT_PRIVATE_PATTERNS": self.patterns} if patterns else {}), **(env or {})}
+        return subprocess.run(["/bin/bash", script, *args], capture_output=True, text=True, env=env, cwd=cwd or self.cwd, timeout=60)
 
     def calls(self):
         with open(self.log) as f:
@@ -98,6 +97,69 @@ class BoardPublicGateTest(unittest.TestCase):
         self.assertEqual(ok.returncode, 0, ok.stderr)
         bad = self.board("new", f"Check the box at {ADDR}", env={"TVT_PRIVATE_PATTERNS": "none"})
         self.assertEqual(bad.returncode, 2, bad.stderr)
+
+    # --- the default lookup: no TVT_PRIVATE_PATTERNS, so the list comes from the script's own checkout ---
+
+    def checkout(self, name, with_list):
+        """A git checkout holding copies of tools/board and tools/check_public.py (and the list, when with_list)."""
+        top = os.path.join(self.dir, name)
+        os.makedirs(os.path.join(top, "tools"))
+        for f in ("board", "check_public.py"):
+            shutil.copy(os.path.join(HERE, f), os.path.join(top, "tools", f))
+        if with_list:
+            os.makedirs(os.path.join(top, "data", "dev"))
+            shutil.copy(self.patterns, os.path.join(top, "data", "dev", "private-patterns.txt"))
+        git = ["git", "-C", top, "-c", "user.name=t", "-c", "user.email=t@example.com"]
+        subprocess.run([*git, "init", "-q"], check=True)
+        subprocess.run([*git, "add", "tools"], check=True)
+        subprocess.run([*git, "commit", "-q", "-m", "x"], check=True)
+        return top
+
+    def worktree(self, main):
+        wt = os.path.join(self.dir, "wt")
+        subprocess.run(["git", "-C", main, "worktree", "add", "-q", "-b", "side", wt], check=True)
+        return wt
+
+    def default_board(self, top, *args, cwd=None, env=None):
+        return self.board(*args, script=os.path.join(top, "tools", "board"), cwd=cwd, patterns=False, env=env)
+
+    def test_the_default_list_in_the_scripts_checkout_applies_from_any_cwd(self):
+        top = self.checkout("main", with_list=True)
+        other = self.checkout("other", with_list=False)  # a different checkout as the cwd
+        for cwd in (self.cwd, other, top):
+            out = self.default_board(top, "new", "Fix the secret-host-name setup", cwd=cwd)
+            self.assertEqual(out.returncode, 2, (cwd, out.stderr))
+            self.assertIn("refusing to post", out.stderr)
+            self.assertEqual(self.calls(), [])
+
+    def test_a_linked_worktree_uses_the_main_checkouts_list_from_any_cwd(self):
+        main = self.checkout("main", with_list=True)
+        wt = self.worktree(main)
+        self.assertFalse(os.path.exists(os.path.join(wt, "data")))
+        for cwd in (self.cwd, main, wt):
+            out = self.default_board(wt, "new", "Fix the secret-host-name setup", cwd=cwd)
+            self.assertEqual(out.returncode, 2, (cwd, out.stderr))
+            self.assertIn("refusing to post", out.stderr)
+            self.assertEqual(self.calls(), [])
+        ok = self.default_board(wt, "new", "Document the quoting rules", cwd=self.cwd)
+        self.assertEqual(ok.returncode, 0, ok.stderr)
+
+    def test_no_list_anywhere_refuses_instead_of_posting_on_the_mechanical_checks_alone(self):
+        top = self.checkout("main", with_list=False)
+        wt = self.worktree(top)
+        for script_top in (top, wt):
+            for cwd in (self.cwd, top):
+                out = self.default_board(script_top, "new", "Document the quoting rules", cwd=cwd)
+                self.assertEqual(out.returncode, 2, out.stderr)
+                self.assertIn("no private pattern list found", out.stderr)
+                self.assertEqual(self.calls(), [], "gh must not be called at all")
+
+    def test_none_skips_the_default_list_too(self):
+        top = self.checkout("main", with_list=True)
+        out = self.default_board(top, "new", "Fix the secret-host-name setup", env={"TVT_PRIVATE_PATTERNS": "none"})
+        self.assertEqual(out.returncode, 0, out.stderr)  # the list is not applied
+        bad = self.default_board(top, "new", f"Check the box at {ADDR}", env={"TVT_PRIVATE_PATTERNS": "none"})
+        self.assertEqual(bad.returncode, 2, bad.stderr)  # the mechanical checks still are
 
     def test_a_label_is_checked_too(self):
         self.assertRefused(self.board("new", "Fine title", "area:docs", "secret-host-name"))
