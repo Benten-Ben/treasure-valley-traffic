@@ -96,6 +96,30 @@ describe('ground', () => {
 		expect(queries).toBe(2);
 	});
 
+	it('a lazy sample keeps the height of a still object when only the camera moved, and reads again when anything else changed', () => {
+		const g = new GroundTracker();
+		let queries = 0;
+		const q = (v: number) => () => (queries++, v);
+		g.begin();
+		g.sample('a', -116, 43, q(1300), 1.3, 0, false, 1, 1);
+		// The camera moved (a new epoch): lazy keeps 1000 m and reads nothing; the next, not lazy, reads and eases.
+		g.begin();
+		expect(g.sample('a', -116, 43, q(1313), 1.3, 16, false, 2, 1, true)).toBeCloseTo(1000, 9);
+		expect(queries).toBe(1);
+		g.begin();
+		g.sample('a', -116, 43, q(1313), 1.3, 32, false, 2, 1, false);
+		expect(queries).toBe(2);
+		expect(g.tweening).toBe(true);
+		// New terrain data, a move or a changed exaggeration are never put off.
+		g.begin();
+		g.sample('a', -116, 43, q(1313), 1.3, 48, false, 3, 2, true);
+		g.begin();
+		g.sample('a', -116.001, 43, q(1313), 1.3, 64, false, 4, 2, true);
+		g.begin();
+		g.sample('a', -116.001, 43, q(1000), 1, 80, false, 5, 2, true);
+		expect(queries).toBe(5);
+	});
+
 	it('under reduced motion heights jump', () => {
 		const g = new GroundTracker();
 		g.begin();

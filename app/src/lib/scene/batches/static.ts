@@ -75,11 +75,11 @@ export class StaticData {
 	/** The terrain epoch it was last grounded in (-1: not yet) and the exaggeration it is built for. */
 	groundedEpoch = -1;
 	exag = 0;
-	/** performance.now() of the last grounding (the scene throttles on it). */
+	/** performance.now() of the last completed grounding. */
 	groundedAt = -Infinity;
 	/** Bumped whenever `f32` changes: the GPU copy is stale until it has uploaded this version. */
 	version = 0;
-	/** Counters for tests: how often the boxes were built, and the ground read. */
+	/** Counters for tests: how often every box was built (at the start and when the exaggeration changed), and how many passes read the ground. */
 	builds = 0;
 	grounds = 0;
 	boxes = 0;
@@ -92,6 +92,10 @@ export class StaticData {
 	readonly #colors: [number, number, number][];
 	#keys: string[] | null = null;
 	#hover = -1;
+	#pass: { epoch: number; cursor: number } | null = null;
+	#zeroed = false;
+	/** East and north metres from the origin of each segment's ends: e0, n0, e1, n1. */
+	readonly ends: Float64Array;
 
 	constructor(segments: StaticSegment[]) {
 		this.segments = segments;
@@ -123,40 +127,83 @@ export class StaticData {
 			this.origin = { lng, lat, mx: mercatorX(lng), my: mercatorY(lat), k: 1 / circumferenceAt(lat) };
 		}
 		this.#colors = segments.map((g) => rgb(g.color));
+		this.ends = new Float64Array(4 * n);
+		const { mx, my, k } = this.origin;
+		for (let i = 0; i < n; i++) {
+			const g = segments[i];
+			this.ends[4 * i] = (mercatorX(g.from[0]) - mx) / k;
+			this.ends[4 * i + 1] = -(mercatorY(g.from[1]) - my) / k;
+			this.ends[4 * i + 2] = (mercatorX(g.to[0]) - mx) / k;
+			this.ends[4 * i + 3] = -(mercatorY(g.to[1]) - my) / k;
+		}
 		this.rebuild(0);
 	}
 
-	/** Read the ground at every segment end (`query` gives the true ground in metres at a point) and build again. */
-	ground(query: (lng: number, lat: number) => number, exag: number, epoch: number, now = 0): void {
+	/**
+	 * Read the ground again, a slice at a time, for this terrain `epoch` (`query` gives the true ground in metres at a
+	 * point): starts a pass when the epoch differs from the one last completed, then reads segments' ends and writes
+	 * their boxes again until `stop()` says the frame's time is spent (checked every few segments; at least one is
+	 * done). The batch stays drawable throughout, each segment on the ground it was last read with. True when
+	 * the batch is grounded for `epoch`.
+	 */
+	step(query: (lng: number, lat: number) => number, exag: number, epoch: number, now = 0, stop: () => boolean = () => false): boolean {
+		if (this.groundedEpoch === epoch && !this.#pass) return true;
+		if (exag !== this.exag) this.rebuild(exag);
+		const pass = (this.#pass ??= { epoch, cursor: 0 });
+		const n = this.segments.length;
+		const from = pass.cursor;
+		let i = from;
 		let sum = 0;
-		for (let i = 0; i < this.segments.length; i++) {
+		while (i < n) {
 			const g = this.segments[i];
 			this.groundTrue[2 * i] = query(g.from[0], g.from[1]);
 			this.groundTrue[2 * i + 1] = query(g.to[0], g.to[1]);
 			sum += this.groundTrue[2 * i] + this.groundTrue[2 * i + 1];
+			i++;
+			if (i % 8 === 0 && stop()) break;
 		}
-		this.gOrigin = this.segments.length ? sum / (2 * this.segments.length) : 0;
+		// The first slice sets the zero of the batch's heights: the ground there, kept from then on.
+		if (!this.#zeroed && i > from) {
+			this.gOrigin = sum / (2 * (i - from));
+			this.#zeroed = true;
+			this.rebuildRange(0, n);
+		} else this.rebuildRange(from, i);
+		this.version++;
+		pass.cursor = i;
+		if (i < n) return false;
+		this.#pass = null;
 		this.grounds++;
-		this.groundedEpoch = epoch;
+		this.groundedEpoch = pass.epoch;
 		this.groundedAt = now;
-		this.rebuild(exag);
+		return this.groundedEpoch === epoch;
+	}
+
+	/** Ground the whole batch at once (tests, and a batch of a few segments). */
+	ground(query: (lng: number, lat: number) => number, exag: number, epoch: number, now = 0): void {
+		while (!this.step(query, exag, epoch, now));
 	}
 
 	/** Write every box again for this terrain exaggeration (0: flat ground), from the ground last read. */
 	rebuild(exag: number): void {
 		this.builds++;
 		this.exag = exag;
-		const { mx: ox, my: oy, k } = this.origin;
+		this.rebuildRange(0, this.segments.length);
+		this.version++;
+	}
+
+	/** Write the boxes of segments [i0, i1) from the ends and ground held. */
+	rebuildRange(i0: number, i1: number): void {
+		const exag = this.exag;
 		const a = this.f32;
 		const u = this.u32;
 		const hoverIdx = this.#hover;
-		for (let i = 0; i < this.segments.length; i++) {
+		for (let i = i0; i < i1; i++) {
 			const g = this.segments[i];
 			const [r, gr, b] = this.#colors[i];
-			const e0 = (mercatorX(g.from[0]) - ox) / k;
-			const n0 = -(mercatorY(g.from[1]) - oy) / k;
-			const e1 = (mercatorX(g.to[0]) - ox) / k;
-			const n1 = -(mercatorY(g.to[1]) - oy) / k;
+			const e0 = this.ends[4 * i];
+			const n0 = this.ends[4 * i + 1];
+			const e1 = this.ends[4 * i + 2];
+			const n1 = this.ends[4 * i + 3];
 			const z0 = exag * (this.groundTrue[2 * i] - this.gOrigin);
 			const z1 = exag * (this.groundTrue[2 * i + 1] - this.gOrigin);
 			const de = e1 - e0;
@@ -206,7 +253,6 @@ export class StaticData {
 			put((e0 + e1) / 2, (n0 + n1) / 2, mid + g.height - rail, across(Math.min(th, 0.1)), whole, rail);
 			put((e0 + e1) / 2, (n0 + n1) / 2, mid + g.height - rail - panel, across(th * 0.5), whole, panel);
 		}
-		this.version++;
 	}
 
 	/** The batch's matrix: metres from its origin → clip space, for the map's `mainMatrix` and the exaggeration it was built for. */

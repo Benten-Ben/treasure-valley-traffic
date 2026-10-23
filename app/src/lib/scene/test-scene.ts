@@ -45,6 +45,8 @@ export interface SceneTestHandle {
 	 * spread round the view's centre. Replaces any earlier one.
 	 */
 	budget(o?: { trees?: number; posts?: number; segments?: number }): { trees: number; posts: number; segments: number };
+	/** A second photo plane drawn over everything (look-through): the second photo draw call. Needs the showcase. */
+	overPhoto(on: boolean): void;
 	/** Turn the view round the map's centre a little every frame (the budget case's load). */
 	rotate(on: boolean): void;
 }
@@ -213,6 +215,17 @@ export function startSceneTest(app: AppCtx, scene: Scene, count = 1000): SceneTe
 	};
 
 	let spinning = false;
+	const overPhoto = (on: boolean) => {
+		if (!on) {
+			scene.remove('scene-test-over');
+			return;
+		}
+		const c = app.map!.getCenter();
+		const [right, down, fwd] = axes(150, 24, 0);
+		const [lng, lat] = move(c.lng, c.lat, -18, 14);
+		const apex: LngLatAlt = [lng, lat, 12];
+		scene.setPhotos('scene-test-over', [{ id: 'over-photo', apex, right, down, forward: fwd, tx: 0.9, ty: 0.5, texture: 'scene-test-pattern', widthPx: 90, depthTest: false }]);
+	};
 	const budgetGroups = ['scene-test-trees', 'scene-test-posts', 'scene-test-fences'];
 
 	const budget = (o: { trees?: number; posts?: number; segments?: number } = {}) => {
@@ -272,8 +285,8 @@ export function startSceneTest(app: AppCtx, scene: Scene, count = 1000): SceneTe
 				pick: { kind: 'sprite', id: `bf${i}`, layer: 'scene-test', title: `Test fence ${i}` }
 			});
 		}
-		scene.set('scene-test-trees', forest, { cap: 4000, capPhone: 1000 });
-		scene.set('scene-test-posts', poles, { cap: 1500, capPhone: 0, radiusM: 300 });
+		scene.set('scene-test-trees', forest, { cap: 4000, capPhone: 1000, scenery: true });
+		scene.set('scene-test-posts', poles, { cap: 1500, capPhone: 0, radiusM: 300, scenery: true });
 		scene.setStatic('scene-test-fences', fences);
 		return { trees, posts, segments };
 	};
@@ -311,8 +324,10 @@ export function startSceneTest(app: AppCtx, scene: Scene, count = 1000): SceneTe
 			scene.set(GROUP, instances);
 			spinning = false;
 			for (const g of budgetGroups) scene.remove(g);
+			scene.remove('scene-test-over');
 		},
 		budget,
+		overPhoto,
 		rotate
 	};
 }

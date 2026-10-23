@@ -30,9 +30,10 @@ import { PhotoTextures } from './textures.js';
  *   or at a true height (ground.ts), so it lands where `map.project` says;
  * - draws one instanced call per mesh type (and per low-detail mesh in use), one per static
  *   group, then blob shadows, cones and lines, then photo planes. The count is reported, not
- *   capped, in `SceneStats.drawCalls`: 14 are possible with the built-in meshes alone (nine mesh
- *   kinds, shadows, cones, lines and two photo calls), and each registered kind, low-detail mesh
- *   and static group adds one. MEASURED_MAX_DRAWS;
+ *   capped, in `SceneStats.drawCalls`. Measured with every built-in kind in use at once (the nine
+ *   mesh kinds with a selected bus's ring, shadows, cones, lines and both photo calls: the
+ *   @scene-budget spec counts the GL draws itself): 14. Each registered kind, low-detail mesh in use
+ *   and static group adds one (16 with one of each of the last two);
  * - picks on the CPU through the central picker, and shows hover (a cream
  *   tint) and selection (lifted 2 m, 1.2×, an ink-and-cream ground ring and
  *   one 1.2 s pulse; a `grounded` instance only gets the ring) for whatever
@@ -53,6 +54,13 @@ import { PhotoTextures } from './textures.js';
  * scene.setPhotos('cameras-3d', [{ apex, right, down, forward, tx, ty, texture: viewKey, label: name }]);
  * scene.show('transit-buses-3d', false);        // the owner's layer was turned off
  * ```
+ *
+ * Budgets (plan v3 S7): a plugin adds a mesh kind with `registerMeshKind(kind, build, budget, lod?)`
+ * (meshes.ts; an optional low-detail mesh of 24 triangles or fewer, used under `belowPx` on screen);
+ * `set(group, list, { cap, capPhone, radiusM })` keeps the nearest `cap` of a group within `radiusM`
+ * of the view's ground centre (`capPhone` under 600 px wide, 0 turns it off) and reports the rest in
+ * `stats().dropped`; `setStatic(group, segments)` draws fences and walls, which never move, from one
+ * buffer (batches/static.ts).
  */
 export type { MeshKind } from './meshes.js';
 export { renderedZ, slopePitch } from './ground.js';
@@ -187,6 +195,12 @@ export interface GroupOptions {
 	capPhone?: number;
 	/** Only instances within this many metres of the view's ground centre are kept (before `cap`). */
 	radiusM?: number;
+	/**
+	 * Scenery (trees, shrubs): it never moves, and while the camera moves it may read the ground under a share
+	 * of its instances each frame (a group over 400), so each is read again within a few frames instead of all
+	 * of them every frame. Without it every instance is read whenever the camera has moved.
+	 */
+	scenery?: boolean;
 }
 
 interface Group {
@@ -210,6 +224,9 @@ export interface SceneStats {
 	lastFrameMs: number;
 	/** p95 of the last 120 frames' JS time, ms. */
 	p95Ms: number;
+	/** The part of that before the first draw call (updates, caps, placement, static grounding), last frame and p95 of the last 120, ms. */
+	placeMs: number;
+	placeP95Ms: number;
 	/** Terrain queries in the last frame (things that moved, or everything after the camera moved). */
 	groundQueries: number;
 	/** Instances left out of the last frame by a group's `cap`, `capPhone` or `radiusM`, in all and by group. */
@@ -217,6 +234,8 @@ export interface SceneStats {
 	droppedByGroup: Record<string, number>;
 	/** Segments in the static batches that were drawn. */
 	staticSegments: number;
+	/** Instances drawn with their kind's low-detail mesh in the last frame. */
+	lodInstances: number;
 }
 
 /** One probed instance: where the GPU put its anchor, and where `map.project` says. */
@@ -257,8 +276,10 @@ const CREAM = '#fffbf4';
 
 /** The shell's phone breakpoint (ChromeShell.svelte). */
 const PHONE_QUERY = '(max-width: 599px)';
-/** The least time between two re-groundings of a static batch while DEM tiles keep arriving, ms. */
-const STATIC_REGROUND_MS = 250;
+/** A scenery group bigger than this reads the ground under a share of its instances per frame while the camera moves. */
+const STALE_READS = 400;
+/** The most a frame spends re-grounding static batches, ms (a slice of segments; the rest follow in the next frames). */
+const STATIC_SLICE_MS = 1;
 
 const reduced = () => typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -352,10 +373,11 @@ export class Scene implements HitSource {
 	#selectedAt = 0;
 	#cleanup: (() => void)[] = [];
 	#times: number[] = [];
+	#placeTimes: number[] = [];
 	#probe: { kind: MeshKind; local: Vec3; resolve: (rows: ProbeRow[]) => void; reject: (e: Error) => void } | null = null;
 	/** Ids per mesh kind in the order they were written this frame (for the probe). */
 	#order = new globalThis.Map<MeshKind, { id: string; lng: number; lat: number; z: number }[]>();
-	#stats: SceneStats = { frames: 0, drawCalls: 0, instances: 0, lastFrameMs: 0, p95Ms: 0, groundQueries: 0, dropped: 0, droppedByGroup: {}, staticSegments: 0 };
+	#stats: SceneStats = { frames: 0, drawCalls: 0, instances: 0, lastFrameMs: 0, p95Ms: 0, placeMs: 0, placeP95Ms: 0, groundQueries: 0, dropped: 0, droppedByGroup: {}, staticSegments: 0, lodInstances: 0 };
 	#m64 = new Float64Array(16);
 	#m32 = new Float32Array(16);
 	#tmp: Vec3 = [0, 0, 0];
@@ -628,16 +650,26 @@ export class Scene implements HitSource {
 		return (this.#phoneQuery ??= matchMedia(PHONE_QUERY)).matches;
 	}
 
-	/** Work out a static batch's heights again when the terrain data changed (throttled), or its exaggeration did. */
+	/**
+	 * Work out a static batch's heights again when the terrain data changed (DEM tiles arrived), a slice of its segments
+	 * per frame so no frame pays for all of them, or its exaggeration did.
+	 */
 	#groundStatic(name: string, d: StaticData, map: Map, terrain: boolean, exag: number, now: number) {
 		const want = terrain ? exag : 0;
 		const key = `scene:static:${name}`;
-		if (d.groundedEpoch !== this.#dataEpoch) {
-			if (d.groundedEpoch < 0 || now - d.groundedAt >= STATIC_REGROUND_MS) {
-				d.ground((lng, lat) => (want > 0 ? (map.queryTerrainElevation([lng, lat]) ?? 0) / want : 0), want, this.#dataEpoch, now);
-				this.#deps.loop.want(key, null);
-			} else this.#deps.loop.want(key, 8);
-		} else if (d.exag !== want) d.rebuild(want);
+		if (d.groundedEpoch === this.#dataEpoch) {
+			if (d.exag !== want) d.rebuild(want);
+			return;
+		}
+		const t0 = performance.now();
+		const done = d.step(
+			(lng, lat) => (want > 0 ? (map.queryTerrainElevation([lng, lat]) ?? 0) / want : 0),
+			want,
+			this.#dataEpoch,
+			now,
+			() => performance.now() - t0 > STATIC_SLICE_MS
+		);
+		this.#deps.loop.want(key, done ? null : 30);
 	}
 
 	#fail(e: unknown) {
@@ -725,6 +757,7 @@ export class Scene implements HitSource {
 		for (const k of Object.keys(dropped)) delete dropped[k];
 		let droppedTotal = 0;
 		let staticSegments = 0;
+		let lodTotal = 0;
 		const statics: StaticData[] = [];
 		this.#shadows.reset();
 		this.#cones.reset();
@@ -737,9 +770,11 @@ export class Scene implements HitSource {
 		/** True ground under a point (eased), and the drawn base height for a true height (or the ground). */
 		const epoch = this.#epoch;
 		const data = this.#dataEpoch;
+		let lazy = false;
+		const query = (lng: number, lat: number) => map.queryTerrainElevation([lng, lat]) ?? 0;
 		const groundAt = (id: string, lng: number, lat: number, groundAlt: number | undefined, fallback: number) => {
 			if (!terrain) return groundAlt ?? fallback;
-			return this.#ground.sample(id, lng, lat, () => map.queryTerrainElevation([lng, lat]) ?? 0, exag, now, still, epoch, data);
+			return this.#ground.sample(id, lng, lat, query, exag, now, still, epoch, data, lazy);
 		};
 		const zAt = (id: string, lng: number, lat: number, alt: number | undefined, groundAlt: number | undefined) => {
 			const g = groundAt(id, lng, lat, groundAlt, alt ?? 0);
@@ -760,7 +795,11 @@ export class Scene implements HitSource {
 				dropped[name] = g.instances.length - list.length;
 				droppedTotal += dropped[name];
 			}
-			for (const inst of list) {
+			// A big group reads the ground under a share of its still instances each frame (ground.ts, `lazy`).
+			const share = g.opts.scenery && list.length > STALE_READS ? Math.ceil(list.length / STALE_READS) : 1;
+			for (let li = 0; li < list.length; li++) {
+				const inst = list[li];
+				lazy = share > 1 && (li + this.#stats.frames) % share !== 0;
 				const kind = inst.mesh ?? 'bus';
 				const mesh = this.#meshes[kind];
 				if (!mesh) continue;
@@ -808,6 +847,7 @@ export class Scene implements HitSource {
 				// Small on screen: the kind's low-detail mesh, if it has one.
 				const lod = visible ? this.#lods[kind] : undefined;
 				const drawKind = lod && 2 * rPx < lod.belowPx ? lodKey(kind) : kind;
+				if (drawKind !== kind) lodTotal++;
 				const d = this.#dataOf(drawKind);
 				const o = d.push();
 				const a = d.f32;
@@ -830,7 +870,7 @@ export class Scene implements HitSource {
 				a[o + 20] = hover ? 1 : 0;
 				let order = this.#order.get(drawKind);
 				if (!order) this.#order.set(drawKind, (order = []));
-				order.push({ id: inst.id, lng: inst.lng, lat: inst.lat, z });
+				if (this.#probe) order.push({ id: inst.id, lng: inst.lng, lat: inst.lat, z });
 				total++;
 
 				if (inst.shadow || selected) {
@@ -869,22 +909,38 @@ export class Scene implements HitSource {
 					}
 				}
 				if (inst.pick && visible) {
+					const slot = this.#pick.slot();
 					let hitPx = rPx;
-					let seg: [number, number, number, number] | undefined;
 					if (inst.pickRadius !== undefined) {
 						// A vertical capsule from trunk to top, as wide as the crown (on screen at the centre's depth).
 						const rM = inst.pickRadius * s;
 						hitPx = (rM * f.pxPerMetreW) / pt.w;
-						const [z0, z1] = pickSpan(mesh.min[2] * sv[2] * s, mesh.max[2] * sv[2] * s, rM);
+						// pickSpan(), inline: the span's ends, one radius in from the base and the top.
+						const zLo = mesh.min[2] * sv[2] * s;
+						const zHi = mesh.max[2] * sv[2] * s;
+						const zMid = (zLo + zHi) / 2;
+						const z0 = Math.min(zLo + rM, zMid);
+						const z1 = Math.max(zHi - rM, zMid);
 						const ux = axes[2][0] * c;
 						const uy = axes[2][1] * c;
 						const uz = axes[2][2];
-						if (projectLocal(f, local[0] + ux * z0, local[1] + uy * z0, local[2] + uz * z0, end0) && projectLocal(f, local[0] + ux * z1, local[1] + uy * z1, local[2] + uz * z1, end1))
-							seg = [end0.x, end0.y, end1.x, end1.y];
+						if (projectLocal(f, local[0] + ux * z0, local[1] + uy * z0, local[2] + uz * z0, end0) && projectLocal(f, local[0] + ux * z1, local[1] + uy * z1, local[2] + uz * z1, end1)) {
+							slot.own[0] = end0.x;
+							slot.own[1] = end0.y;
+							slot.own[2] = end1.x;
+							slot.own[3] = end1.y;
+							slot.seg = slot.own;
+						}
 					}
-					this.#pick.add({ x: pt.x, y: pt.y, r: Math.max(hitPx, inst.radius ?? 0), w: pt.w, seg, pick: inst.pick, priority: priorityOf(inst.pick, g.opts.priority) });
+					slot.x = pt.x;
+					slot.y = pt.y;
+					slot.r = Math.max(hitPx, inst.radius ?? 0);
+					slot.w = pt.w;
+					slot.pick = inst.pick;
+					slot.priority = priorityOf(inst.pick, g.opts.priority);
 				}
 			}
+			lazy = false;
 			for (const cone of g.cones) this.#cone(cone, f, zAt);
 			for (const line of g.lines) this.#line(line, f, zAt);
 			for (const photo of g.photos) (photo.depthTest === false ? over : tested).push(photo);
@@ -900,6 +956,7 @@ export class Scene implements HitSource {
 		for (const p of over) this.#writePhoto(p, f, zAt, cosC);
 
 		// Draw: opaque models → blob shadows → cones and lines → photo planes.
+		const placeMs = performance.now() - t0;
 		let calls = 0;
 		const light = this.#light(map);
 		gl.enable(gl.DEPTH_TEST);
@@ -949,9 +1006,14 @@ export class Scene implements HitSource {
 		this.#stats.instances = total;
 		this.#stats.lastFrameMs = ms;
 		this.#stats.p95Ms = p95(this.#times);
+		this.#placeTimes.push(placeMs);
+		if (this.#placeTimes.length > 120) this.#placeTimes.shift();
+		this.#stats.placeMs = placeMs;
+		this.#stats.placeP95Ms = p95(this.#placeTimes);
 		this.#stats.groundQueries = this.#ground.queries;
 		this.#stats.dropped = droppedTotal;
 		this.#stats.staticSegments = staticSegments;
+		this.#stats.lodInstances = lodTotal;
 		// Keep frames coming while heights ease or the selection pulses.
 		deps.loop.want('scene:ease', this.#ground.tweening ? 60 : null);
 	}

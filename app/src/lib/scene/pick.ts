@@ -43,34 +43,50 @@ export const priorityOf = (s: Selection, override?: number) => override ?? PRIOR
 export const selectionKey = (s: Selection | null | undefined) => (s ? `${s.kind}\u0000${s.layer}\u0000${s.id}` : '');
 
 export class PickIndex implements HitSource {
-	#placed: Placed[] = [];
-	#next: Placed[] = [];
+	/** Two frames' placements, reused from frame to frame: one being collected, one being hit-tested. */
+	#bufs: [Placed[], Placed[]] = [[], []];
+	#counts: [number, number] = [0, 0];
+	/** Which buffer is committed (hit-tested) and which is collected into. */
+	#r = 0;
+	#w = 1;
 
 	/** Start collecting a frame's placements. */
 	begin(): void {
-		this.#next = [];
+		this.#counts[this.#w] = 0;
 	}
 
 	add(p: Placed): void {
-		this.#next.push(p);
+		this.#bufs[this.#w][this.#counts[this.#w]++] = p;
+	}
+
+	/**
+	 * The next placement of this frame, to fill in (reused from the frame before: a scene with thousands of
+	 * pickable instances allocates nothing). Set `seg` from `own`: `p.own.set([...]); p.seg = p.own`.
+	 */
+	slot(): Placed & { own: [number, number, number, number] } {
+		const b = this.#bufs[this.#w];
+		const n = this.#counts[this.#w]++;
+		let p = b[n] as (Placed & { own?: [number, number, number, number] }) | undefined;
+		if (!p?.own) b[n] = p = { x: 0, y: 0, r: 0, w: 0, pick: undefined as never, priority: 0, own: [0, 0, 0, 0] };
+		p.seg = undefined;
+		return p as Placed & { own: [number, number, number, number] };
 	}
 
 	/** The frame is drawn: its placements are what hits test. */
 	commit(): void {
-		this.#placed = this.#next;
+		[this.#r, this.#w] = [this.#w, this.#r];
 	}
 
 	clear(): void {
-		this.#placed = [];
-		this.#next = [];
+		this.#counts = [0, 0];
 	}
 
 	get size(): number {
-		return this.#placed.length;
+		return this.#counts[this.#r];
 	}
 
 	placed(): readonly Placed[] {
-		return this.#placed;
+		return this.#bufs[this.#r].slice(0, this.#counts[this.#r]);
 	}
 
 	/**
@@ -80,7 +96,9 @@ export class PickIndex implements HitSource {
 	hits(x: number, y: number, minRadius: number): Hit[] {
 		const out: Hit[] = [];
 		let front: Placed | null = null;
-		for (const p of this.#placed) {
+		const list = this.#bufs[this.#r];
+		for (let i = 0, n = this.#counts[this.#r]; i < n; i++) {
+			const p = list[i];
 			const d = p.seg ? segmentDistance(x, y, p.seg) : Math.hypot(p.x - x, p.y - y);
 			if (d > Math.max(p.r, minRadius)) continue;
 			if (p.seg && d <= p.r) {

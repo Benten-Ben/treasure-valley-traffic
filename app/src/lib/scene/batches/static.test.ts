@@ -120,6 +120,8 @@ describe('static batch: the ground', () => {
 		d.ground((lng) => (queries++, slope(lng)), 1.3, 7);
 		expect(queries).toBe(4);
 		expect(d.groundedEpoch).toBe(7);
+		expect(d.grounds).toBe(1);
+		// Built flat at the start, and again for the terrain's exaggeration; the ground itself rewrites boxes in place.
 		expect(d.builds).toBe(2);
 		const v = d.version;
 		// First post (west end) is lower than the last (east end) by 1.3 × 2 m; the rail slopes the same.
@@ -137,7 +139,7 @@ describe('static batch: the ground', () => {
 		expect(m64[14]).toBeCloseTo(1.3 * d.gOrigin * d.origin.k, 9);
 		// The DEM refines (new tiles): a second grounding moves the boxes, one more build, one version more.
 		d.ground((lng) => slope(lng) + 3, 1.3, 8);
-		expect(d.builds).toBe(3);
+		expect(d.grounds).toBe(2);
 		expect(d.version).toBeGreaterThan(v);
 		expect(d.groundedEpoch).toBe(8);
 		expect(box(d, 4).offset[2] - box(d, 0).offset[2]).toBeCloseTo(1.3 * 2, 2);
@@ -150,6 +152,41 @@ describe('static batch: the ground', () => {
 		d.rebuild(0);
 		expect(box(d, 4).offset[2]).toBeCloseTo(0, 6);
 		expect(box(d, 0).bz[2]).toBeCloseTo(1.5, 6);
+	});
+});
+
+describe('static batch: grounding in slices', () => {
+	it('reads a slice of the segments per call and finishes the pass over the next calls, grounding the same boxes as one go', () => {
+		const segs = Array.from({ length: 20 }, (_, i) => seg(`s${i}`, 0, i * 5, 10));
+		const ground = (_lng: number, lat: number) => 800 + (lat - LAT) / DLAT / 10;
+		const sliced = new StaticData(segs);
+		let queries = 0;
+		let calls = 0;
+		// Stop at the first check of each call: 8 segments (16 reads).
+		const stopAlways = () => true;
+		const q = (lng: number, lat: number) => (queries++, ground(lng, lat));
+		while (!sliced.step(q, 1, 4, 0, stopAlways)) {
+			calls++;
+			expect(sliced.groundedEpoch).toBe(-1);
+		}
+		expect(calls).toBe(2);
+		expect(queries).toBe(40);
+		expect(sliced.groundedEpoch).toBe(4);
+		expect(sliced.grounds).toBe(1);
+		// Done and current: asking again for the same epoch reads nothing.
+		expect(sliced.step(q, 1, 4, 0, stopAlways)).toBe(true);
+		expect(queries).toBe(40);
+		const whole = new StaticData(segs);
+		whole.ground(ground, 1, 4);
+		// The slices zeroed the heights on the first 8 segments' ground; the boxes then differ from the whole pass's only by that zero.
+		const shift = whole.gOrigin - sliced.gOrigin;
+		for (let i = 0; i < whole.boxes; i++) expect(box(sliced, i).offset[2] - box(whole, i).offset[2]).toBeCloseTo(shift, 3);
+		// A new epoch starts a new pass; a slice of it leaves the earlier heights drawn for the rest.
+		const before = box(sliced, 19).offset[2];
+		expect(sliced.step((lng, lat) => ground(lng, lat) + 5, 1, 5, 0, stopAlways)).toBe(false);
+		expect(sliced.groundedEpoch).toBe(4);
+		expect(box(sliced, 0).offset[2]).toBeGreaterThan(box(whole, 0).offset[2] - shift + 4);
+		expect(box(sliced, 19).offset[2]).toBe(before);
 	});
 });
 

@@ -81,21 +81,26 @@ export class GroundTracker {
 
 	/**
 	 * True ground under `id` at (lng, lat): the drawn ground (exaggerated, a
-	 * number or a function that queries it) divided by `exag`. A still object
+	 * number or a function of the point that queries it) divided by `exag`. A still object
 	 * eases to a changed value; one that moved, or wasn't drawn in the last
 	 * frame, takes it at once. With the same `epoch` (≥ 0), terrain-data epoch
 	 * `data`, exaggeration and position as last time, the ground isn't queried
 	 * again.
+	 *
+	 * `lazy` lets an object that hasn't moved keep the height it has when only the camera moved (the epoch
+	 * differs, the terrain data and exaggeration don't): the drawn surface under it can differ by the tile
+	 * level drawn, hardly ever by more. The scene asks for it of a different share of a big group each frame,
+	 * so every object is read again within a few frames instead of all of them every frame.
 	 */
-	sample(id: string, lng: number, lat: number, drawn: number | (() => number), exag: number, now: number, reducedMotion = false, epoch = -1, data = -1): number {
+	sample(id: string, lng: number, lat: number, drawn: number | ((lng: number, lat: number) => number), exag: number, now: number, reducedMotion = false, epoch = -1, data = -1, lazy = false): number {
 		const t = this.#tracks.get(id);
 		const frame = this.#frame;
-		if (t && epoch >= 0 && t.epoch === epoch && t.data === data && t.exag === exag && t.lng === lng && t.lat === lat && frame - t.seen <= 1) {
+		if (t && epoch >= 0 && (t.epoch === epoch || lazy) && t.data === data && t.exag === exag && t.lng === lng && t.lat === lat && frame - t.seen <= 1) {
 			t.seen = frame;
 			return this.#advance(t, now);
 		}
 		this.queries++;
-		const d = typeof drawn === 'number' ? drawn : drawn();
+		const d = typeof drawn === 'number' ? drawn : drawn(lng, lat);
 		const target = exag > 0 ? d / exag : 0;
 		if (!t) {
 			this.#tracks.set(id, { lng, lat, shown: target, from: target, to: target, t0: now, seen: frame, epoch, exag, data });
