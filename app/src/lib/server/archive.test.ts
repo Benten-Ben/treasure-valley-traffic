@@ -26,10 +26,6 @@ function hasPsycopg(interpreter: string): boolean {
 	}
 }
 
-// Without a configured interpreter, skip (with a reason) when python3 lacks psycopg. A configured one never skips.
-const skipReason =
-	!pythonConfigured && !hasPsycopg(python) ? 'needs a python3 with psycopg: set TVT_PYTHON' : '';
-
 // 12:00 MDT on Oct 6, 2026: local day 2026-10-06, yesterday 2026-10-05.
 const NOW = Date.parse('2026-10-06T18:00:00Z');
 let root: string;
@@ -174,7 +170,9 @@ describe('Archive.services', () => {
 	});
 
 	it("reads the file ingest's capture stream writes", async (ctx) => {
-		if (skipReason) ctx.skip(skipReason);
+		// Without a configured interpreter, skip (with a reason) when python3 lacks psycopg. A configured one never skips.
+		// Probed here, not at module load, so other tests in this file don't spawn python.
+		if (!pythonConfigured && !hasPsycopg(python)) ctx.skip('needs a python3 with psycopg: set TVT_PYTHON');
 		// ingest/sources/idaho511_frames.py's own writer, so the two sides can't drift apart.
 		const repo = join(import.meta.dirname, '..', '..', '..', '..');
 		const py =
