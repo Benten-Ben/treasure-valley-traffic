@@ -144,6 +144,7 @@ def _record(src, dst):
 
 os.replace = _record
 g.mint = lambda conf: (time.sleep(0.3), {"token": "stub-token", "expires_at": "2099-01-01T00:00:00Z"})[1]
+open(os.path.join(d, "ready." + str(os.getpid())), "w").close()
 while not os.path.exists(os.path.join(d, "go")):
     time.sleep(0.005)
 g.main()
@@ -163,13 +164,15 @@ class ConcurrentMintTest(unittest.TestCase):
         for rnd in range(10):
             shutil.rmtree(cache_dir, ignore_errors=True)
             for name in os.listdir(d):
-                if name.startswith("tmp-used."):
+                if name.startswith(("tmp-used.", "ready.")):
                     os.unlink(os.path.join(d, name))
             if os.path.exists(go):
                 os.unlink(go)
             procs = [subprocess.Popen([sys.executable, "-I", driver, os.path.join(HERE, "lib"), d], stdout=subprocess.PIPE,
                                       stderr=subprocess.PIPE, text=True) for _ in range(6)]
-            time.sleep(0.5)
+            deadline = time.time() + 30
+            while sum(n.startswith("ready.") for n in os.listdir(d)) < 6 and time.time() < deadline:
+                time.sleep(0.01)
             open(go, "w").close()
             for p in procs:
                 out, err = p.communicate(timeout=30)
