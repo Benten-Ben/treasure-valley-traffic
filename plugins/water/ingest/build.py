@@ -316,10 +316,12 @@ on conflict do nothing"""),
 #    when the NWI polygons together cover half or more of it; a small NWI polygon that is neither absorbed nor part
 #    of that half-cover lends nothing to a large OSM wetland.
 # OSM's outline is what draws. Every NWI polygon draws minus every OSM wetland it overlaps (so a small OSM wetland
-# inside a big NWI polygon leaves the rest of it), simplified; what is left of an overlapped polygon draws only if it
-# is a real piece of wetland and not a sliver or a frame from an outline drawn a few metres off: at least
-# REMAINDER_MIN_M2 and something left after a REMAINDER_INSET_M inward buffer (never a share alone). A remainder
-# that fails is dropped, and the polygon's check row points at the OSM body it overlaps most. NHD's marshes are
+# inside a big NWI polygon leaves the rest of it), simplified. A polygon at least half inside OSM's wetlands (an
+# absorbed one, taken together) draws only what is left of it if that is a real piece of wetland and not a sliver or
+# a frame from an outline drawn a few metres off: at least REMAINDER_MIN_M2, and something left after a
+# REMAINDER_INSET_M inward buffer (never a share alone). A polygon less than half inside draws its whole leftover,
+# however little OSM overlaps it. A dropped remainder's check row points at the OSM body it overlaps most; a
+# remainder that draws is the polygon's own body, and its check row points there. NHD's marshes are
 # evidence, and draw only where neither an OSM wetland nor any NWI polygon (retired or unchecked too) covers half
 # of them (below), as thinned tufts. Retired polygons are not drawn; they stay in water.wetland_check.
 WETLANDS = f"""
@@ -360,16 +362,17 @@ insert into b (id, kind, intermittent, geometry_from, geom, g, area_m2, wetland_
 select {NWI_BASE} + {h48("'wetland:' || x.key")}, 'wetland', false, 'nwi', ST_Multi(ST_Transform(x.g, 4326)), x.g,
        ST_Area(x.g), x.attribute, x.regime, x.modifiers, x.key, x.image_year, x.thin, nullif(x.presence, 'kept'),
        x.reason
-from (select k.key, k.attribute, k.image_year, k.thin, k.presence, k.reason, k.regime, k.modifiers, r.overlapped,
+from (select k.key, k.attribute, k.image_year, k.thin, k.presence, k.reason, k.regime, k.modifiers, r.mostly_inside,
              ST_Multi(ST_CollectionExtract(ST_MakeValid(ST_SimplifyPreserveTopology(r.g, {wetlands.SIMPLIFY_M})), 3)) g
       from w_nwi k
       cross join lateral (select exists (select 1 from w_ov where w_ov.key = k.key) overlapped) o
-      cross join lateral (select o.overlapped,
-                                 case when o.overlapped then ST_Difference(k.g, (select g from w_osm)) else k.g end g
+      cross join lateral (select case when o.overlapped then ST_Difference(k.g, (select g from w_osm)) else k.g end g,
+                                 o.overlapped and ST_Area(ST_Intersection(k.g, (select g from w_osm)))
+                                                  >= {wetlands.OVERLAP_SHARE} * k.area_m2 mostly_inside
                          ) r) x
 where not ST_IsEmpty(x.g) and ST_Area(x.g) >= {wetlands.MIN_AREA_M2}
-  and (not x.overlapped or (ST_Area(x.g) >= {wetlands.REMAINDER_MIN_M2}
-                            and not ST_IsEmpty(ST_Buffer(x.g, -{wetlands.REMAINDER_INSET_M}))))"""
+  and (not x.mostly_inside or (ST_Area(x.g) >= {wetlands.REMAINDER_MIN_M2}
+                               and not ST_IsEmpty(ST_Buffer(x.g, -{wetlands.REMAINDER_INSET_M}))))"""
 
 BODIES = f"""
 create temp table b on commit drop as

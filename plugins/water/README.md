@@ -377,9 +377,11 @@ It is **not a legal (regulatory) wetland boundary**; every card says so.
   largest-overlap NWI polygon, and is confirmed, when the NWI polygons together cover half or more of it; a small NWI
   polygon that is neither absorbed nor part of that cover lends nothing to a large OSM wetland. OSM's outline is drawn
   (`geometry_from` `osm`). Every NWI polygon draws from its own outline (`geometry_from` `nwi`, simplified) minus every
-  OSM wetland it overlaps; what is left of an overlapped polygon draws only if it is a real piece, at least 2,000 m²
-  with something left after a 3 m inward buffer (never a share alone), and otherwise is dropped, its check row pointing
-  at the OSM wetland. NHD's marshes are evidence where an NWI polygon (retired or unchecked too) or OSM wetland covers
+  OSM wetland it overlaps. A polygon at least half inside OSM wetlands draws what is left only if that is a real
+  piece, at least 2,000 m² with something left after a 10 m inward buffer (never a share alone: a strip or frame under
+  20 m wide is an outline drawn off); otherwise it is dropped, and its check row points at the OSM wetland. A polygon
+  less than half inside draws its whole leftover, however little OSM touches it. A check row points at the body that
+  draws it. NHD's marshes are evidence where an NWI polygon (retired or unchecked too) or OSM wetland covers
   half of them; NWI wetlands never hide an NHD lake, pond, river or canal, and draw alone otherwise. `thin` marks the
   older mapping (the 1981-83 and interim polygons that passed, and NHD's marsh alone): thinned tufts from z15, where
   the rest are tufts from z14.

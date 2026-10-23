@@ -102,4 +102,4 @@ comment on table water.nwi_project is
 comment on table water.nwi_presence is
   'The presence check''s shares for old-mapped NWI polygons: derived from public inputs (mask v0, CDL, CSB); republish: yes';
 comment on table water.wetland_check is
-  'Every NWI polygon''s outcome in each water-build, retired ones included (the QA sheet''s rows); body_id is the body that draws it (an absorbed or dropped-leftover polygon: the OSM wetland it overlaps most). OSM and NHD overlap is listed as evidence only, never as support; republish: yes';
+  'Every NWI polygon''s outcome in each water-build, retired ones included (the QA sheet''s rows); body_id is the body that draws it: its own NWI body, or the OSM wetland that absorbed it (the one it overlaps most) when nothing of it draws. OSM and NHD overlap is listed as evidence only, never as support; republish: yes';
