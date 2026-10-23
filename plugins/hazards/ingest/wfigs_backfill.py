@@ -4,14 +4,16 @@ owner, Oct 8, 2026) and Jul 25-31, 2025 (owner, Oct 22, 2026): `python3 -m inges
 The perimeter poller (nifc_wfigs_perimeters) started on Oct 7, 2026, and its first run read what had changed in
 2026. A fire from the second half of 2025 is in raw.record only if its record changed in 2026, but the burn scars
 (burn_scars.py) draw every fire after the ground's photo, last flown on Jul 24, 2025. The owner approved one small
-read of the same service for Aug-Dec 2025. This is that read, in two steps, so that one read can be loaded into more
-than one database (the scratch copy now, production at deploy) without asking NIFC twice. **The read was made on
-Oct 11, 2026 at 12:02 UTC** and is kept on the server (plugins/hazards/README.md, "The 2025 backfill"); every
-database loads that folder with `--load`, and `--fetch` refuses to read the window again (see WINDOWS).
+read of the same service for Aug-Dec 2025, and later (Oct 22) one for Jul 25-31, 2025. Each is a read in two steps, so
+that one read can be loaded into more than one database (the scratch copy now, production at deploy) without asking
+NIFC twice. **The Aug-Dec read was made on Oct 11, 2026 at 12:02 UTC** and the Jul 25-31 read on Oct 23, 2026 at
+03:57 UTC; both are kept on the server (plugins/hazards/README.md, "The 2025 backfill"); every database loads each
+kept folder with `--load`, and `--fetch` refuses to read a window again (see WINDOWS).
 
-1. `--fetch --one-off --out DIR`: one count, then one read of the all-years perimeter service (a few more by ID
+1. `--fetch --one-off --out DIR --window FIRST..LAST`: one count, then one read of the all-years perimeter service (a few more by ID
    only if the answer is cut at the server's page size): every perimeter touching the ring whose fire was
-   discovered from Aug 1 through Dec 31, 2025, Boise time (or, with no discovery time, whose polygon is from then),
+   discovered in the window (Aug 1 - Dec 31, 2025 or Jul 25 - 31, 2025), Boise time (or, with no discovery time,
+   whose polygon is from then),
    geometry at the poller's precision. Every request goes through ingest/http.py: robots.txt first
    (services3.arcgis.com answers 403, so no rules), our User-Agent, and at least 2 s between requests. Over CAP
    features it stops before reading them (the read is meant to be small). It writes DIR/<UTC time>/features.json
@@ -304,13 +306,13 @@ def main(argv=None):
     step = ap.add_mutually_exclusive_group(required=True)
     step.add_argument("--fetch", action="store_true",
                       help="read the service once for an approved window not yet read (needs --one-off, --out and "
-                           "--window; the Aug-Dec 2025 read is done)")
+                           "--window; both approved reads are done)")
     step.add_argument("--load", metavar="DIR", help="load a read's folder (DIR/<UTC time>) into raw.record")
     ap.add_argument("--one-off", action="store_true",
                     help="confirm this is the one approved read, run by hand (required with --fetch)")
     ap.add_argument("--out", metavar="DIR", help="where --fetch writes its folder")
     ap.add_argument("--window", metavar="FIRST..LAST", help="with --fetch: the approved window to read "
-                    f"(default: the only one; approved: {', '.join(window_name(w) for w in WINDOWS)})")
+                    f"(required while more than one is approved: {', '.join(window_name(w) for w in WINDOWS)})")
     ap.add_argument("--read-again", action="store_true",
                     help="with --fetch: read a window whose read is already made (only with the owner's OK)")
     ap.add_argument("--dry-run", action="store_true", help="with --load: check and report, then roll back")

@@ -213,9 +213,9 @@ kept folder with `--load`. It's done in two steps, so that one read can be
 loaded into the scratch database now and production at deploy without asking
 NIFC again:
 
-1. `--fetch --one-off --out DIR`: a count, then one read of the perimeters
-   touching the ring whose fire was discovered from Aug 1 through Dec 31, 2025
-   (Boise time), through `ingest/http.py` (robots.txt first; services3.arcgis.com
+1. `--fetch --one-off --out DIR --window FIRST..LAST`: a count, then one read of the perimeters
+   touching the ring whose fire was discovered in the window (Aug 1 through Dec 31, 2025, or
+   Jul 25 through 31, 2025; Boise time), through `ingest/http.py` (robots.txt first; services3.arcgis.com
    answers 403, so no rules; our User-Agent; 2 s between requests). Over 400
    features it stops before reading them. It writes `features.json` and
    `provenance.json` (the service, filter, window, box, User-Agent, robots
@@ -253,11 +253,12 @@ The reads' folders are kept on the server with the other downloaded sources
 (`/srv/tvt/work/sources/nifc-wfigs-backfill/`), outside this repository.
 
 **Deploying.** The ingest service applies `0001` at start. The deploy
-runbook adds one step after the grants: load the read into production as
-`tvt_build`, in a capped container with the read's folder mounted read-only
-(`wfigs-backfill --load <folder>`, which marks the build), then run the build
+runbook adds one step after the grants: load each kept read (the Aug–Dec
+folder and the Jul 25–31 folder) into production as `tvt_build`, in a capped
+container with the read's folder mounted read-only
+(`wfigs-backfill --load <folder>`, once per folder; it marks the build), then run the build
 the same way (`burn-scars --list`, light: a 1 GB container, a few seconds),
 which logs its run and shows the scars. After that, run it whenever
 `bin/status` shows `burn-scars` marked. A scratch refresh replaces the scratch
-copy's `raw.record`, so the read is loaded there again after each refresh,
+copy's `raw.record`, so both reads are loaded there again after each refresh,
 and the build run after it.
