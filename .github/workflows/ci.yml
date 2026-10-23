@@ -24,9 +24,10 @@ on:
 permissions:
   contents: read
 
-# A new push to a PR cancels its older run; pushes to main always finish.
+# A new push to a PR cancels its older run. Every other run (a push to main, a manual run) gets a group of its own,
+# because a shared group keeps only one pending run and would cancel the middle one of several quick pushes.
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.event_name == 'pull_request' && format('ci-pr-{0}', github.event.pull_request.number) || format('ci-run-{0}', github.run_id) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
@@ -47,11 +48,16 @@ jobs:
           persist-credentials: false
       # A pull request is checked out as a merge commit, whose first parent is the base branch, so
       # HEAD^1..HEAD is exactly what the PR changes. Any doubt (a push, a manual run, a failed diff) runs everything.
+      # --no-renames lists both paths of a move, so a file moved out of code into docs/ still counts as code.
+      # Docs that tests read count as code: the front end's specs parse docs/14-ui-v2.md (palette, flavors, ramp),
+      # so a PR that edits it runs the app job. Add a doc here when a test starts reading it.
       - id: scope
         run: |
           docs_only=false
-          if [ "$GITHUB_EVENT_NAME" = pull_request ] && files=$(git diff --name-only HEAD^1 HEAD) && [ -n "$files" ]; then
-            if ! printf '%s\n' "$files" | grep -qvE '^(docs/|\.github/ISSUE_TEMPLATE/|LICENSE$|[^/]+\.md$)'; then
+          read_by_tests='^docs/14-ui-v2\.md$'
+          if [ "$GITHUB_EVENT_NAME" = pull_request ] && files=$(git diff --name-only --no-renames HEAD^1 HEAD) && [ -n "$files" ]; then
+            if ! printf '%s\n' "$files" | grep -vE '^(docs/|\.github/ISSUE_TEMPLATE/|LICENSE$|[^/]+\.md$)' > /dev/null \
+               && ! printf '%s\n' "$files" | grep -E "$read_by_tests" > /dev/null; then
               docs_only=true
             fi
           fi
