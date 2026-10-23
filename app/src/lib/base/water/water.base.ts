@@ -141,6 +141,8 @@ const contribution: BaseContribution = {
 	layers,
 	suppresses: { groups: ['water'] },
 	cardsWhen: 'water',
+	// The canal season (feature-state, drawn from the API) adds its own credits to the map's attribution while it
+	// draws (`seasonLive`): NWPS's gauges, the districts' dates, IDWR's season of use.
 	credit: '© OpenStreetMap contributors · USGS National Hydrography Dataset',
 	live: seasonLive
 };

@@ -72,7 +72,7 @@
 			<svg viewBox="0 0 40 12" width="40" height="12" aria-hidden="true">
 				<line x1="1" y1="6" x2="39" y2="6" stroke={t.line} stroke-width={HAIRLINE_PX} />
 			</svg>
-			<span><b>Canal, thin centre line: season unknown</b> <span class="how">(no reading for 48 hours, or no rule)</span></span>
+			<span><b>Canal, thin centre line: season unknown</b> <span class="how">(no reading for 48 hours, the season job behind, or no rule)</span></span>
 		</li>
 	</ul>
 	<p class="hint">{SEASON_ZOOM_NOTE} A canal on IDWR’s legal season of use says so on its card: the legal window is not delivery dates.</p>
@@ -120,7 +120,7 @@
 		{#if notices.polled.boise_ecoli}E. coli results checked {ageText(notices.polled.boise_ecoli)}.{/if}
 	</p>
 {/if}
-<p class="credit">{credits.join(' · ')} · {CREDITS.nwps}; {STRUCTURE_WORD.gauge.toLowerCase()} observations courtesy of USGS where NWPS names a USGS site · {CREDITS.boiseHazards}; {CREDITS.boiseEcoli}</p>
+<p class="credit">{credits.join(' · ')} · {CREDITS.nwps}{#if water.baked} · {CREDITS.idwrSeason}{/if}; {STRUCTURE_WORD.gauge.toLowerCase()} observations courtesy of USGS where NWPS names a USGS site · {CREDITS.boiseHazards}; {CREDITS.boiseEcoli}</p>
 
 <style>
 	li {

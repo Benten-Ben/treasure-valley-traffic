@@ -256,6 +256,8 @@ export const CREDITS = {
 	nwps: 'NOAA National Weather Service (National Water Prediction Service)',
 	usgs: 'observations courtesy of the U.S. Geological Survey',
 	idwr: 'Irrigation service areas: Idaho Department of Water Resources (internal use)',
+	// The canal season's legal window (plugins/water: idwr_season_of_use), drawn on the map's canals.
+	idwrSeason: 'Irrigation season of use: Idaho Department of Water Resources (internal use)',
 	boiseHazards: 'Boise Fire Department and City of Boise (Float the Boise)',
 	boiseEcoli: 'City of Boise Parks and Recreation'
 } as const;

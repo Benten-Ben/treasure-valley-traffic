@@ -224,6 +224,12 @@ test.describe('canal season: the drawing', () => {
 		expect(await featureState(page, 7004)).toEqual({ season: 'on' });
 		expect(await featureState(page, 7003)).toEqual({});
 		expect(await featureState(page, 2251799813686239)).toEqual({});
+		// The map credits what the drawn states rest on, with Water off: IDWR's season of use and NWPS, in the
+		// source's attribution and in the attribution control the viewer opens.
+		await expect.poll(() => page.evaluate(() => (globalThis as any).__tvt.map.getSource('landscape')?.attribution ?? ''), { timeout: 30_000 }).toContain(LEGAL_CREDIT);
+		const attribution = await page.evaluate(() => (globalThis as any).__tvt.map.getSource('landscape').attribution as string);
+		expect(attribution).toContain('National Weather Service');
+		await expect.poll(() => page.evaluate(() => document.querySelector('.maplibregl-ctrl-attrib')?.textContent ?? ''), { timeout: 30_000 }).toContain(LEGAL_CREDIT);
 
 		// K5: a gap only on the solid layer, no offset, no casing, and none under another line's features.
 		const layers = await page.evaluate(() => (globalThis as any).__tvt.map.getStyle().layers.filter((l: any) => l.id.startsWith('water.network.')).map((l: any) => ({ id: l.id, type: l.type, paint: l.paint ?? {} })));

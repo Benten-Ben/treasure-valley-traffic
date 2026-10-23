@@ -29,15 +29,23 @@ const TEXT = 300;
 
 export const emptySeason = (): Season => ({ canals: [], reaches: { on: [], off: [], unknown: [] }, credits: [], updated: null, republish: 'yes', license: LICENSE });
 
+/** Why a gauge canal reads unknown while the season job is behind. */
+export const BEHIND_WHY = 'the hourly season job is behind, so the gauge’s last reading may be out of date';
+/** The states of ops.source_status that mean the run is past its schedule. */
+const BEHIND_STATES = ['late', 'stale'];
+
 const text = (v: unknown) => str(v)?.slice(0, TEXT) ?? null;
 
 /** One lifecycle row as a canal's season (a basis or state it doesn't know reads unknown, never on). */
-export function canalFromRow(row: Record<string, unknown>, credits: (c: string) => number): SeasonCanal | null {
+export function canalFromRow(row: Record<string, unknown>, credits: (c: string) => number, behind = false): SeasonCanal | null {
 	const a = (row.attributes ?? {}) as Record<string, unknown>;
 	const id = num(a.canal_id);
 	if (id === null || !Number.isSafeInteger(id)) return null;
 	const basis = (BASES as readonly unknown[]).includes(a.basis) ? (a.basis as SeasonBasis) : 'none';
-	const state: SeasonState = basis === 'none' ? 'unknown' : asState(row.severity);
+	let state: SeasonState = basis === 'none' ? 'unknown' : asState(row.severity);
+	// A gauge's open span ends only when the hourly run sees the silence: with the run behind, it is not vouched for.
+	const unvouched = behind && basis === 'gauge' && state !== 'unknown' && (row.until === null || row.until === undefined);
+	if (unvouched) state = 'unknown';
 	const republish = REPUBLISH.includes(a.republish as never) ? String(a.republish) : 'internal';
 	return {
 		id,
@@ -46,7 +54,8 @@ export function canalFromRow(row: Record<string, unknown>, credits: (c: string) 
 		basis,
 		since: iso(row.since),
 		until: row.until === null || row.until === undefined ? null : iso(row.until),
-		why: text(a.why),
+		why: unvouched ? BEHIND_WHY : text(a.why),
+		...(unvouched ? { behind: true } : {}),
 		gauge: text(a.gauge),
 		gauge_name: text(a.gauge_name),
 		district: text(a.district),
@@ -65,17 +74,20 @@ export function canalFromRow(row: Record<string, unknown>, credits: (c: string) 
 export async function season(sql: Sql): Promise<Season> {
 	const [ready] = await sql`
 		select to_regclass('water.reach') is not null and to_regclass('water.canal_date') is not null
-		       and to_regclass('evt.event') is not null as ok`;
+		       and to_regclass('evt.event') is not null as ok,
+		       to_regclass('ops.source_status') is not null as has_status`;
 	if (!ready?.ok) return emptySeason();
 
-	const [lifecycles, reaches] = await Promise.all([
+	const [lifecycles, reaches, run] = await Promise.all([
 		sql`
 			select attributes, severity, lower(declared) as since, upper(declared) as until, updated_at
 			from evt.event
 			where source = 'canal_season' and kind = 'canal_season' and active and declared @> now()
 			order by lower(declared) desc, source_id`,
-		sql`select id, canal_id from water.reach where canal_id is not null order by canal_id, id`
+		sql`select id, canal_id from water.reach where canal_id is not null order by canal_id, id`,
+		ready.has_status ? sql`select state from ops.source_status where source = 'canal_season'` : Promise.resolve([])
 	]);
+	const behind = BEHIND_STATES.includes(String(run[0]?.state));
 
 	const credits: string[] = [];
 	const credit = (c: string) => {
@@ -87,7 +99,7 @@ export async function season(sql: Sql): Promise<Season> {
 	const byCanal = new Map<number, SeasonCanal>();
 	let updated: string | null = null;
 	for (const row of lifecycles) {
-		const c = canalFromRow(row, credit);
+		const c = canalFromRow(row, credit, behind);
 		if (!c || byCanal.has(c.id)) continue;
 		byCanal.set(c.id, c);
 		const at = iso(row.updated_at);

@@ -17,6 +17,7 @@ import {
 	SEASON_SOURCE_LAYER,
 	SEASON_URL,
 	seasonLive,
+	withCredits,
 	seasonPaint,
 	seasonWords,
 	windowText,
@@ -197,6 +198,12 @@ describe('the card’s words', () => {
 		expect(words).not.toMatch(/\bon\b|\boff\b/);
 	});
 
+	it('says the season job is behind, not that the gauge is silent, when that is why a gauge canal reads unknown', () => {
+		const words = seasonWords(canal({ state: 'unknown', behind: true }));
+		expect(words).toBe('unknown: the season job is behind, so the last reading may be out of date (gauge XTEST1)');
+		expect(words).not.toContain('48 hours');
+	});
+
 	it('labels a legal-window state as the legal window, not delivery dates', () => {
 		const inside = canal({ basis: 'legal', gauge: null, gauge_name: null, state: 'on', season: '3/1 - 11/15', republish: 'internal' });
 		const outside = canal({ basis: 'legal', gauge: null, gauge_name: null, state: 'off', season: '3/1 - 11/15', republish: 'internal' });
@@ -262,8 +269,14 @@ function fakeMap(opts: { source?: boolean } = {}) {
 	const calls = { set: 0, remove: 0 };
 	const handlers = new Map<string, Set<() => void>>();
 	const hasSource = { value: opts.source ?? true };
+	// The landscape source as MapLibre keeps it: its attribution is what the attribution control reads.
+	const source = { attribution: 'Base credit' as string | undefined };
+	const fired: Array<{ type: string; data: Record<string, unknown> }> = [];
 	const map = {
-		getSource: (id: string) => (id === SEASON_SOURCE && hasSource.value ? {} : undefined),
+		getSource: (id: string) => (id === SEASON_SOURCE && hasSource.value ? source : undefined),
+		fire(type: string, data: Record<string, unknown>) {
+			fired.push({ type, data });
+		},
 		setFeatureState(t: { source: string; sourceLayer: string; id: number }, s: { season: SeasonState }) {
 			expect(t.source).toBe(SEASON_SOURCE);
 			expect(t.sourceLayer).toBe(SEASON_SOURCE_LAYER);
@@ -283,7 +296,7 @@ function fakeMap(opts: { source?: boolean } = {}) {
 			handlers.get(type)?.delete(f);
 		}
 	};
-	return { map: map as SeasonMap, state, calls, emit: (t: string) => handlers.get(t)?.forEach((f) => f()), handlers, hasSource };
+	return { map: map as SeasonMap, source, fired, state, calls, emit: (t: string) => handlers.get(t)?.forEach((f) => f()), handlers, hasSource };
 }
 
 const ok = (body: unknown) => Promise.resolve({ ok: true, status: 200, json: async () => body });
@@ -397,6 +410,68 @@ describe('the live hook', () => {
 		f.emit('styledata');
 		expect([...f.state]).toEqual([[1, 'on'], [2, 'off']]);
 		stop();
+	});
+});
+
+describe('the map’s credit for the season', () => {
+	beforeEach(() => {
+		vi.useFakeTimers();
+		forgetSeason();
+	});
+	afterEach(() => {
+		vi.useRealTimers();
+		forgetSeason();
+	});
+	const live = (f: ReturnType<typeof fakeMap>) => ({ map: f.map, app: {}, layerIds: [] }) as unknown as BaseLive;
+	const IDWR = 'Idaho Department of Water Resources (Season of Use)';
+	const body = (o: Partial<Season> = {}) => answer({ reaches: { on: [1], off: [2], unknown: [] }, credits: ['NOAA National Weather Service (NWPS), gauge XTEST1', IDWR], ...o });
+
+	it('adds each credit once to a source’s own, skipping what it already says', () => {
+		expect(withCredits('A; B', ['B', 'C', 'C', ' '])).toBe('A; B; C');
+		expect(withCredits(undefined, ['C'])).toBe('C');
+		expect(withCredits('A', [])).toBe('A');
+	});
+
+	it('adds the answer’s credits (IDWR’s season of use among them) to the landscape source while a state is drawn, and tells the attribution control', async () => {
+		const f = fakeMap();
+		const stop = seasonLive(live(f), { fetch: () => ok(body()) });
+		expect(f.source.attribution).toBe('Base credit');
+		await vi.advanceTimersByTimeAsync(0);
+		expect(f.source.attribution).toBe(`Base credit; NOAA National Weather Service (NWPS), gauge XTEST1; ${IDWR}`);
+		expect(f.fired).toEqual([{ type: 'sourcedata', data: { dataType: 'source', sourceDataType: 'metadata', sourceId: SEASON_SOURCE } }]);
+		// A second poll with the same answer changes nothing and tells no one.
+		await vi.advanceTimersByTimeAsync(POLL_MS);
+		expect(f.fired).toHaveLength(1);
+		stop();
+		// Cleanup gives the source its own credit back.
+		expect(f.source.attribution).toBe('Base credit');
+		expect(f.fired).toHaveLength(2);
+	});
+
+	it('adds nothing when the answer draws no state, and nothing it did not read', async () => {
+		const f = fakeMap();
+		const stop = seasonLive(live(f), { fetch: () => ok(body({ reaches: { on: [], off: [], unknown: [] } })) });
+		await vi.advanceTimersByTimeAsync(0);
+		expect(f.source.attribution).toBe('Base credit');
+		stop();
+		const g = fakeMap();
+		const stop2 = seasonLive(live(g), { fetch: () => Promise.resolve({ ok: false, status: 500, json: async () => ({}) }) });
+		await vi.advanceTimersByTimeAsync(0);
+		expect(g.source.attribution).toBe('Base credit');
+		stop2();
+	});
+
+	it('credits again when a style change rebuilds the source with its own attribution', async () => {
+		const f = fakeMap();
+		const stop = seasonLive(live(f), { fetch: () => ok(body()) });
+		await vi.advanceTimersByTimeAsync(0);
+		// The rebuilt source has lost both the feature-state and the added credit.
+		f.state.clear();
+		f.source.attribution = 'Rebuilt credit';
+		f.emit('styledata');
+		expect(f.source.attribution).toBe(`Rebuilt credit; NOAA National Weather Service (NWPS), gauge XTEST1; ${IDWR}`);
+		stop();
+		expect(f.source.attribution).toBe('Rebuilt credit');
 	});
 });
 

@@ -44,6 +44,8 @@ export interface SeasonCanal {
 	until: string | null;
 	/** Why, in the lifecycle's own words (the gauge's rule, the district's dates, a drain). */
 	why: string | null;
+	/** `basis` gauge, read unknown because the hourly season job is behind (not because the gauge is silent). */
+	behind?: boolean;
 	/** `basis` gauge: the gauge and its name. */
 	gauge: string | null;
 	gauge_name: string | null;
@@ -191,6 +193,7 @@ export function seasonWords(c: SeasonCanal | null): string {
 	switch (c.basis) {
 		case 'gauge': {
 			const gauge = [c.gauge, c.gauge_name].filter(Boolean).join(', ');
+			if (c.state === 'unknown' && c.behind) return `unknown: the season job is behind, so the last reading may be out of date${c.gauge ? ` (gauge ${c.gauge})` : ''}`;
 			if (c.state === 'unknown') return `unknown: no reading for ${GAUGE_SILENT_HOURS} hours${c.gauge ? ` (gauge ${c.gauge})` : ''}`;
 			return `${c.state}${gauge ? ` (gauge ${gauge})` : ''}`;
 		}
@@ -268,8 +271,26 @@ export interface SeasonMap {
 	setFeatureState(target: { source: string; sourceLayer: string; id: number }, state: { season: SeasonState }): void;
 	removeFeatureState(target: { source: string; sourceLayer: string; id: number }, key?: string): void;
 	getFeatureState(target: { source: string; sourceLayer: string; id: number }): { season?: SeasonState } | undefined;
+	/** Tells the attribution control the source's credit changed (MapLibre's own `fire`). */
+	fire?(type: string, data: Record<string, unknown>): unknown;
 	on(type: string, listener: () => void): unknown;
 	off(type: string, listener: () => void): unknown;
+}
+
+/** What the hook reads of the landscape source: its credit, which MapLibre's attribution control shows. */
+interface AttributedSource {
+	attribution?: string;
+}
+
+/**
+ * The source's credit with the season's own added (each once): the NWPS gauges, the districts' dates and IDWR's
+ * season of use that a drawn state rests on. The map shows it while the landscape source draws, whether or not
+ * the Water layer is on.
+ */
+export function withCredits(base: string | undefined, credits: readonly string[]): string {
+	const have = base ?? '';
+	const extra = [...new Set(credits.map((c) => c.trim()).filter((c) => c && !have.includes(c)))];
+	return [have, ...extra].filter(Boolean).join('; ');
 }
 
 const target = (id: number) => ({ source: SEASON_SOURCE, sourceLayer: SEASON_SOURCE_LAYER, id });
@@ -296,11 +317,29 @@ export function seasonLive({ map }: BaseLive, o: { fetch?: Fetch; pollMs?: numbe
 	let wanted: Map<number, SeasonState> | null = null;
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	let stopped = false;
+	// The credit: the source's own attribution (`base`), the season's credits while a state is drawn, and the text
+	// this hook last set (`credited`), by which it knows the source was rebuilt with its own attribution again.
+	let credits: string[] = [];
+	let base: string | undefined;
+	let credited: string | null = null;
+
+	const syncCredit = (restore = false) => {
+		const src = m.getSource(SEASON_SOURCE) as AttributedSource | undefined;
+		if (!src) return;
+		if (credited === null || src.attribution !== credited) base = src.attribution;
+		const next = restore ? (base ?? '') : withCredits(base, wanted?.size ? credits : []);
+		if (src.attribution !== next) {
+			src.attribution = next;
+			m.fire?.('sourcedata', { dataType: 'source', sourceDataType: 'metadata', sourceId: SEASON_SOURCE });
+		}
+		credited = restore ? null : next;
+	};
 
 	const draw = (next: Map<number, SeasonState>) => {
 		wanted = next;
 		try {
 			drawn = applySeason(m, next, drawn);
+			syncCredit();
 		} catch {
 			// The map may be torn down already; the reaches then simply draw as today.
 		}
@@ -319,6 +358,12 @@ export function seasonLive({ map }: BaseLive, o: { fetch?: Fetch; pollMs?: numbe
 		if (now !== state) {
 			drawn = new Map();
 			draw(wanted);
+		} else {
+			try {
+				syncCredit();
+			} catch {
+				// The map may be torn down already.
+			}
 		}
 	};
 
@@ -328,6 +373,7 @@ export function seasonLive({ map }: BaseLive, o: { fetch?: Fetch; pollMs?: numbe
 		try {
 			const season = await loadSeason({ fetch: o.fetch, fresh: true });
 			if (stopped) return;
+			credits = season.credits;
 			draw(reachStates(season));
 		} catch {
 			// Keep what is drawn; the next poll comes sooner.
@@ -347,6 +393,11 @@ export function seasonLive({ map }: BaseLive, o: { fetch?: Fetch; pollMs?: numbe
 			for (const id of drawn.keys()) m.removeFeatureState(target(id), 'season');
 		} catch {
 			// The map may be torn down already; there is then no state left to remove.
+		}
+		try {
+			syncCredit(true);
+		} catch {
+			// As above.
 		}
 		drawn = new Map();
 		wanted = null;

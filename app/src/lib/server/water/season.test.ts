@@ -13,11 +13,12 @@ interface Seen {
 	values: unknown[];
 }
 
-function fakeSql(o: { ready?: boolean; lifecycles?: unknown[]; reaches?: unknown[] } = {}, seen: Seen[] = []): Sql {
+function fakeSql(o: { ready?: boolean; lifecycles?: unknown[]; reaches?: unknown[]; status?: string | null; noView?: boolean } = {}, seen: Seen[] = []): Sql {
 	return (async (strings: TemplateStringsArray, ...values: unknown[]) => {
 		const text = strings.join('$').replace(/\s+/g, ' ').trim();
 		seen.push({ text, values });
-		if (text.includes('to_regclass')) return [{ ok: o.ready ?? true }];
+		if (text.includes('to_regclass')) return [{ ok: o.ready ?? true, has_status: !o.noView }];
+		if (text.includes('from ops.source_status')) return o.status ? [{ state: o.status }] : [];
 		if (text.includes('from evt.event')) return o.lifecycles ?? [];
 		if (text.includes('from water.reach')) return o.reaches ?? [];
 		return [];
@@ -88,6 +89,50 @@ describe('the season', () => {
 		const s = await season(fakeSql({ lifecycles: [row(1, 'unknown', gauge)], reaches: [{ id: 101, canal_id: 1 }] }));
 		expect(s.reaches).toEqual({ on: [], off: [], unknown: [101] });
 		expect(s.canals[0]).toMatchObject({ state: 'unknown', basis: 'gauge', gauge: 'XTEST1' });
+	});
+
+	describe('when the hourly season job is behind', () => {
+		const open = { until: null };
+		const lifecycles = () => [row(1, 'off', gauge), row(2, 'on', gauge), row(3, 'on', legal), row(4, 'on', always), row(5, 'unknown', gauge)];
+		const reaches = [1, 2, 3, 4, 5].map((c) => ({ id: 100 + c, canal_id: c }));
+
+		for (const status of ['late', 'stale']) {
+			it(`serves an open gauge span as unknown, saying why, when the source is ${status}`, async () => {
+				const s = await season(fakeSql({ lifecycles: lifecycles(), reaches, status }));
+				expect(s.canals.map((c) => [c.id, c.state, c.behind ?? false])).toEqual([[1, 'unknown', true], [2, 'unknown', true], [3, 'on', false], [4, 'on', false], [5, 'unknown', false]]);
+				expect(s.canals[0].why).toContain('season job is behind');
+				// The reaches are sorted by the state served, so the map draws the thin line, not the hollow one.
+				expect(s.reaches).toEqual({ on: [103, 104], off: [], unknown: [101, 102, 105] });
+				expect(s.canals[0]).toMatchObject({ basis: 'gauge', gauge: 'XTEST1', ...open });
+			});
+		}
+
+		it('serves the readings as they are when the source is fresh, never ran (run by hand), or has no view yet', async () => {
+			for (const o of [{ status: 'fresh' }, { status: 'never' }, { status: null }, { noView: true, status: 'stale' }]) {
+				const s = await season(fakeSql({ lifecycles: lifecycles(), reaches, ...o }));
+				expect(s.canals.map((c) => c.state), JSON.stringify(o)).toEqual(['off', 'on', 'on', 'on', 'unknown']);
+				expect(s.canals.some((c) => c.behind)).toBe(false);
+			}
+		});
+
+		it('keys on the run, not on the span’s age: a months-old off span stays off while the run is fresh', async () => {
+			const s = await season(fakeSql({ lifecycles: [row(1, 'off', gauge, { since: '2030-01-01T00:00:00Z' })], reaches: [{ id: 1, canal_id: 1 }], status: 'fresh' }));
+			expect(s.canals[0]).toMatchObject({ state: 'off', since: '2030-01-01T00:00:00.000Z' });
+		});
+
+		it('leaves a gauge span that has an end alone (a closed span carries its own end)', () => {
+			const c = canalFromRow(row(1, 'off', gauge, { until: '2030-04-01T00:00:00Z' }), () => 0, true)!;
+			expect(c).toMatchObject({ state: 'off' });
+			expect(c.behind).toBeUndefined();
+		});
+
+		it('asks for the source’s status without any input of the caller’s', async () => {
+			const seen: Seen[] = [];
+			await season(fakeSql({ status: 'fresh' }, seen));
+			const q = seen.find((x) => x.text.includes('from ops.source_status'))!;
+			expect(q.text).toContain("source = 'canal_season'");
+			expect(seen.every((x) => x.values.length === 0)).toBe(true);
+		});
 	});
 
 	it('reads a canal with no current lifecycle as unknown, with nothing to say beyond that', async () => {
