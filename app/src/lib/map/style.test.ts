@@ -304,7 +304,11 @@ describe('the landscape slots', () => {
 		expect(positions.every((i) => i >= 0), JSON.stringify(order.filter((id) => at(id) < 0))).toBe(true);
 		expect([...positions].sort((a, b) => a - b)).toEqual(positions);
 		// Every landuse fill is under the areas anchor, every water layer under the water one, every road line over the surfaces.
-		for (const id of PROTOMAPS_GROUPS.landcover) expect(at(id), id).toBeLessThan(at(ANCHORS.areas));
+		const overWater = ['landuse_runway', 'landuse_pedestrian', 'landuse_pier'];
+		for (const id of PROTOMAPS_GROUPS.landcover.filter((i) => !overWater.includes(i))) expect(at(id), id).toBeLessThan(at(ANCHORS.areas));
+		// Protomaps draws these over the water (and the runway fill over its lines): they keep that order.
+		for (const id of overWater) expect(at(id), id).toBeGreaterThan(at('water_river'));
+		expect(at('landuse_runway')).toBeGreaterThan(at('roads_taxiway'));
 		for (const id of PROTOMAPS_GROUPS.water) expect(at(id), id).toBeGreaterThan(at(ANCHORS.areas));
 		for (const id of PROTOMAPS_GROUPS.water) expect(at(id), id).toBeLessThan(at(ANCHORS.water));
 		for (const id of PROTOMAPS_GROUPS.roads) expect(at(id), id).toBeGreaterThan(at(ANCHORS.surfaces));
@@ -389,6 +393,15 @@ describe('base contributions', () => {
 		// Valley-only layers are in the style, hidden, so the flavors build the same layers.
 		expect(visibility(clay as never, 'water-fill')).toBe('none');
 		expect(clay.layers.map((l) => l.id)).toEqual(buildStyle(built, 'http://x', false, 'valley', { contributions: ALL }).layers.map((l) => l.id));
+	});
+
+	it('never adds a ground contribution in a Clay first load, whatever its looks says', () => {
+		const both = [{ ...GROUND, looks: 'both' as const }];
+		const style = buildStyle(built, 'http://x', false, 'clay', { contributions: both });
+		const map = syncMap(style);
+		syncContributions(map, built, 'http://x', null, state('clay'), both);
+		expect(map.getLayer('ground-paint')).toBeUndefined();
+		expect(map.sources.ground).toBeUndefined();
 	});
 
 	it('adds the painted ground on the first use of Valley, under the ground anchor, once', () => {

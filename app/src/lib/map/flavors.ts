@@ -493,7 +493,7 @@ export function contributionSources(
 
 /** Whether a contribution's layer draws in this state (it is built; the manager's pass applies this). */
 export function layerShown(c: BaseContribution, l: BaseLayer, state: BaseState): boolean {
-	if (c.looks === 'valley' && state.flavor !== 'valley') return false;
+	if ((c.looks === 'valley' || c.source.kind === 'ground') && state.flavor !== 'valley') return false;
 	if (l.aerial === 'only' && !state.aerial) return false;
 	if (l.aerial === 'hide' && state.aerial) return false;
 	return l.show ? l.show(state) : true;
@@ -616,7 +616,7 @@ export function syncContributions(
 		if (c.layers.length && !map.getLayer(c.layers[0].id)) {
 			// Joins the running map: the ground (first use of Valley) and a toggled layer's tiles.
 			if (c.source.kind === 'landscape') continue;
-			if (c.looks === 'valley' && state.flavor !== 'valley') continue;
+			if ((c.looks === 'valley' || c.source.kind === 'ground') && state.flavor !== 'valley') continue;
 			for (const [id, src] of Object.entries(contributionSources(c, m, origin, meta))) if (!map.getSource(id)) map.addSource(id, src);
 			if (!added) runtimeLayers.set(map, (added = new Map()));
 			for (const l of c.layers) {

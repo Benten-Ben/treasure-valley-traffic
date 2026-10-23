@@ -306,7 +306,10 @@ export const PROTOMAPS_GROUPS = {
 
 export type ProtomapsGroup = keyof typeof PROTOMAPS_GROUPS;
 
-const LAND_IDS: ReadonlySet<string> = new Set(PROTOMAPS_GROUPS.landcover);
+// Protomaps draws these three after its water (or over the runway lines), so they stay in the 'rest' run
+// in its own order; they are in the landcover group only so a landscape layer can suppress them.
+const OVER_WATER_IDS: ReadonlySet<string> = new Set(['landuse_runway', 'landuse_pedestrian', 'landuse_pier']);
+const LAND_IDS: ReadonlySet<string> = new Set(PROTOMAPS_GROUPS.landcover.filter((id) => !OVER_WATER_IDS.has(id)));
 const WATER_IDS: ReadonlySet<string> = new Set(PROTOMAPS_GROUPS.water);
 
 /**
