@@ -22,9 +22,22 @@
 #   board blockers <n>                list the issue's blockers and their state
 #   board sync-blocked                drop `blocked` from issues whose blockers are all closed
 #   board help
-# The board is a Project on a personal account, which the agents' App can't reach: always use the login.
-export TVT_GH_AS_USER=1
 set -uo pipefail
+
+# The board is a Project on a personal account, which the agents' App can't reach: always call the real gh on the
+# login. An App token a wrapped gh left in GH_TOKEN is dropped, and every */agent-bin directory leaves PATH (a
+# wrapper from another project may be on it and doesn't know TVT_GH_AS_USER). tools/test_gh_app_token.py runs this block.
+# >>> login-only
+export TVT_GH_AS_USER=1
+if [ "${TVT_GH_APP_TOKEN:-}" = 1 ]; then unset GH_TOKEN TVT_GH_APP_TOKEN; fi
+_keep=""; _rest=$PATH
+while :; do
+  _d=${_rest%%:*}
+  case "$_d" in ''|agent-bin|agent-bin/|*/agent-bin|*/agent-bin/) ;; *) _keep=${_keep:+$_keep:}$_d ;; esac
+  case "$_rest" in *:*) _rest=${_rest#*:} ;; *) break ;; esac
+done
+PATH=$_keep; unset _keep _rest _d
+# <<< login-only
 
 DRY=0; ARGS=()
 for a in "$@"; do [ "$a" = "--dry-run" ] && DRY=1 || ARGS+=("$a"); done

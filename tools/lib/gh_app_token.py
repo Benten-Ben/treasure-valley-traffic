@@ -11,10 +11,11 @@ Config: ~/.config/tvt/gh-app.env (never in the repo), lines KEY=VALUE:
   TVT_GH_APP_REPOS=treasure-valley-traffic   (optional; the default. Each token is scoped to these repositories,
                                 comma-separated, even when the app is installed on more of them)
 Cache: ~/.cache/tvt/gh-app-token.json (mode 600), reused until 10 minutes before expiry.
-Prints the token on stdout. Exit 1 when it isn't configured (the shim then uses the login), 2 on error.
+Prints the token on stdout. Exit 1 when it isn't configured (the wrapper then uses the login silently), 2 on any
+error (it prints one line "gh-app-token: <ExceptionType>: <message>" to stderr, never the token).
 Needs python3 and the openssl CLI (both on macOS and the project's VM).
 """
-import base64, json, os, subprocess, sys, time, urllib.request, urllib.error
+import base64, json, os, subprocess, sys, tempfile, time, urllib.request, urllib.error
 from datetime import datetime, timezone
 
 CONF = os.path.expanduser("~/.config/tvt/gh-app.env")
@@ -51,9 +52,9 @@ def cached(conf: dict) -> str:
         if c.get("repos") != conf.get("TVT_GH_APP_REPOS", "treasure-valley-traffic"):
             return ""
         exp = datetime.strptime(c["expires_at"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).timestamp()
-        if exp - time.time() > MARGIN_S:
+        if exp - time.time() > MARGIN_S and isinstance(c["token"], str) and c["token"]:
             return c["token"]
-    except (OSError, ValueError, KeyError):
+    except Exception:  # a missing or malformed cache ([], null, a non-string field, ...) means: mint anew
         pass
     return ""
 
@@ -78,7 +79,27 @@ def mint(conf: dict) -> dict:
         return json.load(r)
 
 
-def main() -> None:
+def store(conf: dict, res: dict) -> None:
+    """Best-effort cache write: a temp file of our own (mkstemp: mode 600, a unique name, so concurrent mints
+    never share one), then an atomic replace. Any failure (OSError included) removes the temp file and leaves the cache as it was; the token is still printed."""
+    tmp = ""
+    try:
+        d = os.path.dirname(CACHE)
+        os.makedirs(d, mode=0o700, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=d, prefix=".gh-app-token.", suffix=".tmp")
+        with os.fdopen(fd, "w") as f:
+            json.dump({"token": res["token"], "expires_at": res["expires_at"],
+                       "repos": conf.get("TVT_GH_APP_REPOS", "treasure-valley-traffic")}, f)
+        os.replace(tmp, CACHE)
+    except Exception:
+        if tmp:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+
+
+def run() -> None:
     conf = load_conf()
     tok = cached(conf)
     if tok:
@@ -89,13 +110,16 @@ def main() -> None:
     except (urllib.error.URLError, subprocess.CalledProcessError, OSError, ValueError) as e:
         print(f"gh-app-token: could not mint a token: {e}", file=sys.stderr)
         sys.exit(2)
-    os.makedirs(os.path.dirname(CACHE), mode=0o700, exist_ok=True)
-    fd = os.open(CACHE + ".tmp", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w") as f:
-        json.dump({"token": res["token"], "expires_at": res["expires_at"],
-                   "repos": conf.get("TVT_GH_APP_REPOS", "treasure-valley-traffic")}, f)
-    os.replace(CACHE + ".tmp", CACHE)
+    store(conf, res)
     print(res["token"])
+
+
+def main() -> None:
+    try:
+        run()
+    except Exception as e:  # SystemExit (exit 1: not configured, exit 2: configured but failing) passes through
+        print(f"gh-app-token: {type(e).__name__}: {e}", file=sys.stderr)
+        sys.exit(2)
 
 
 if __name__ == "__main__":
