@@ -203,7 +203,9 @@ class RulesTest(unittest.TestCase):
     def test_markings(self):
         for tags, want in [({"crossing": "marked"}, True), ({"crossing": "zebra"}, True),
                            ({"crossing": "uncontrolled"}, True), ({"crossing": "unmarked"}, False),
-                           ({"crossing": "no"}, False), ({"crossing": "traffic_signals"}, None), ({}, None),
+                           ({"crossing": "no"}, False), ({"crossing": "traffic_signals"}, True), ({}, None),
+                           ({"crossing": "traffic_signals", "crossing:markings": "no"}, False),
+                           ({"highway": "traffic_signals", "crossing": "unmarked"}, False),
                            ({"crossing:markings": "ladder"}, True), ({"crossing:markings": "yes"}, True),
                            ({"crossing:markings": "no", "crossing": "uncontrolled"}, False),
                            ({"crossing:markings": "zebra", "crossing": "unmarked"}, True),
@@ -212,6 +214,7 @@ class RulesTest(unittest.TestCase):
                            ({"railway": "level_crossing", "crossing:markings": "zebra"}, None),
                            ({"railway": "tram_crossing", "crossing": "marked"}, None),
                            ({"railway": "abandoned", "crossing": "marked"}, True),      # a rail trail
+                           ({"railway": "crossing", "highway": "traffic_signals"}, None),   # a rail crossing at signals
                            ({"railway": "disused", "crossing": "unmarked"}, False)]:
             with self.subTest(tags):
                 self.assertIs(pv.marked(tags), want)
@@ -294,14 +297,14 @@ class RowsTest(unittest.TestCase):
             way(4, highway="footway", footway="sidewalk")])
         self.assertEqual((ways[1]["marked"], ways[1]["marked_from"]), (False, "node"))
         self.assertEqual((ways[2]["marked"], ways[2]["marked_from"], ways[2]["crossing_markings"]), (False, "way", "no"))
-        self.assertEqual((ways[3]["marked"], ways[3]["marked_from"]), (None, None))       # at signals: not known
+        self.assertEqual((ways[3]["marked"], ways[3]["marked_from"]), (True, "node"))      # at signals: a stated exception, painted from its node
         self.assertEqual((ways[4]["marked"], ways[4]["crossing"]), (None, None))            # not a crossing
         self.assertEqual(nodes[11]["ways"], [1])
         self.assertEqual(nodes[19]["ways"], [1])
         self.assertEqual(nodes[21]["ways"], [2])
         self.assertEqual(nodes[41]["ways"], [4])
         self.assertTrue(nodes[21]["marked"])
-        self.assertEqual((nodes[31]["marked"], nodes[31]["signals"]), (None, True))
+        self.assertEqual((nodes[31]["marked"], nodes[31]["signals"]), (True, True))
         self.assertEqual((nodes[19]["kind"], nodes[19]["kerb"], nodes[19]["marked"], nodes[19]["signals"]),
                          ("kerb", "lowered", None, False))
 
