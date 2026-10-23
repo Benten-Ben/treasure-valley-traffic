@@ -7,8 +7,7 @@
 		DISC_EDGE,
 		fmtCount,
 		KIND_WORD,
-		legendCredit,
-		legendKinds,
+		legendFor,
 		TREE_GREENS,
 		TREE_TONES,
 		type TreeKind
@@ -31,9 +30,9 @@
 		placed: 'found in the lidar; crown placed'
 	};
 	const LOOK: Record<TreeKind, string> = { catalogued: 'full green', placed: 'lighter' };
-	/** Catalogued shows only once the catalogue answered: a catalogued tree is in view. */
-	const kinds = $derived(legendKinds(view.kinds));
-	const catalogued = $derived(kinds.includes('catalogued'));
+	/** Catalogued shows once the catalogue answered (the API's flag) or a catalogued tree is in view. */
+	const legend = $derived(legendFor(view.kinds, view.catalogue));
+	const kinds = $derived(legend.kinds);
 </script>
 
 <p class="legend-title">Trees</p>
@@ -93,7 +92,7 @@
 		{/each}
 	</div>
 {/if}
-<p class="credit">{legendCredit(catalogued)}</p>
+<p class="credit">{legend.credit}</p>
 
 <style>
 	li {

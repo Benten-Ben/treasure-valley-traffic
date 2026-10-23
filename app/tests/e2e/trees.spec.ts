@@ -86,8 +86,10 @@ test.describe('trees', () => {
 		expect(i.inScene).toBe(i.fetched);
 		await mapReady(page);
 		await page.screenshot({ path: screenPath('trees-3d-z17.png') });
-		// The models are drawn without a disc in sight: the attribution still credits the trees.
-		await expect.poll(() => attribution(page)).toContain('Trees: USGS 3DEP lidar, City of Boise, US Forest Service');
+		// The models are drawn without a disc in sight: the attribution still credits the trees. The (fake) catalogue
+		// answers here, so the City is named; the US Forest Service never is (no estimated trees remain).
+		await expect.poll(() => attribution(page)).toContain('Trees: USGS 3DEP lidar, City of Boise; contains modified Copernicus');
+		expect(await attribution(page)).not.toContain('Forest Service');
 
 		// The tallest catalogued tree (given a fake catalogue row when the private table isn't here).
 		const all = await placed(page);

@@ -42,6 +42,8 @@ export interface TreesInView {
 	trees: TreeRow[];
 	/** More trees are in the box than `limit`: these are the tallest. */
 	truncated: boolean;
+	/** The private catalogue's tables answer here (the owner's site only): catalogued trees, and the City's credit, can appear. */
+	catalogue: boolean;
 }
 
 /** Where trees are built (GET /api/trees/areas). */
@@ -104,8 +106,14 @@ export const DISCS = 'trees-discs';
  * discs stop at z15 once the models take over.
  */
 export const CREDIT_LAYER = 'trees-credit';
-/** The map's attribution while Trees is on (the conifer cue's Sentinel-2 images are Copernicus data, §19.3). */
-export const CREDIT = 'Trees: USGS 3DEP lidar, City of Boise, US Forest Service; contains modified Copernicus Sentinel data 2025';
+/**
+ * The map's attribution while Trees is on (the conifer cue's Sentinel-2 images are Copernicus data, §19.3). The City
+ * of Boise is named only once the catalogue answered (`TreesInView.catalogue`); the public table holds lidar-found
+ * trees alone.
+ */
+export function treeCredit(catalogue = false): string {
+	return `Trees: USGS 3DEP lidar${catalogue ? ', City of Boise' : ''}; contains modified Copernicus Sentinel data 2025`;
+}
 /** The credit Copernicus asks for, on a tree the spring Sentinel-2 image typed. */
 export const SENTINEL2_CREDIT = 'Contains modified Copernicus Sentinel data 2025';
 /** The scene's group of tree models. */
@@ -546,4 +554,10 @@ export function legendKinds(counts: Partial<Record<TreeKind, number>>, catalogue
 /** The legend's credit line; the City's inventory is named only when the catalogue answered. */
 export function legendCredit(catalogued: boolean): string {
 	return `Our own trees: heights from USGS 3DEP lidar (2023); ${catalogued ? "catalogued trees from the City of Boise's inventory; " : ''}conifers over the mountains' April snow from a spring Sentinel-2 image (contains modified Copernicus Sentinel data 2025).`;
+}
+
+/** What the legend shows for a view: the kinds listed and the credit line, from the view's counts and the API's catalogue flag. */
+export function legendFor(counts: Partial<Record<TreeKind, number>>, catalogue: boolean): { kinds: TreeKind[]; credit: string } {
+	const kinds = legendKinds(counts, catalogue);
+	return { kinds, credit: legendCredit(kinds.includes('catalogued')) };
 }

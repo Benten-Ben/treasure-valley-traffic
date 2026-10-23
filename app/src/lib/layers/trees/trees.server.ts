@@ -70,9 +70,13 @@ export async function schema(sql: Sql): Promise<Schema> {
 const num = (v: unknown): number | null => (v === null || v === undefined ? null : Number(v));
 const round = (v: number, d: number) => Math.round(v * 10 ** d) / 10 ** d;
 
-/** The trees in a box, tallest first; `truncated` when more were there than `limit`. */
+/**
+ * The trees in a box, tallest first; `truncated` when more were there than `limit`; `catalogue` when the private
+ * catalogue's tables answer (the legend lists Catalogued and the credit names the City only then).
+ */
 export async function treesInBox(sql: Sql, box: Box, limit: number): Promise<TreesInView> {
-	if (!(await schema(sql)).trees) return { trees: [], truncated: false };
+	const has = await schema(sql);
+	if (!has.trees) return { trees: [], truncated: false, catalogue: false };
 	const [w, s, e, n] = box;
 	const rows = await sql`
 		select tree_id as id, kind, type, ST_X(geom) as lng, ST_Y(geom) as lat,
@@ -93,7 +97,7 @@ export async function treesInBox(sql: Sql, box: Box, limit: number): Promise<Tre
 		a: r.a === null ? null : round(Number(r.a), 3),
 		n: r.n === null ? null : round(Number(r.n), 3)
 	}));
-	return { trees, truncated };
+	return { trees, truncated, catalogue: has.catalogue };
 }
 
 /** Where trees are built: each area's box, count and when its current build was made. */

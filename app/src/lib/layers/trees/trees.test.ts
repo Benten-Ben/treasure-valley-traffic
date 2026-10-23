@@ -9,12 +9,12 @@ import { TREE } from './icons.js';
 import {
 	builtText,
 	contains,
-	CREDIT,
 	CREDIT_LAYER,
 	credits,
 	CROWN_NOTE,
 	heightNote,
 	legendCredit,
+	legendFor,
 	legendKinds,
 	dateText,
 	discCollection,
@@ -41,6 +41,7 @@ import {
 	treeColor,
 	treeGreen,
 	treeInstance,
+	treeCredit,
 	treeLayers,
 	treeSelection,
 	treesUrl,
@@ -201,7 +202,14 @@ describe('crown discs (farther out, or without the scene)', () => {
 		expect((credit.layer as { maxzoom?: number }).maxzoom).toBeUndefined();
 		expect((credit.layer as { filter?: unknown }).filter).toEqual(['==', ['get', 'kind'], '']);
 		expect((credit.layer.paint as Record<string, unknown>)['circle-radius']).toBe(0);
-		expect(CREDIT).toBe('Trees: USGS 3DEP lidar, City of Boise, US Forest Service; contains modified Copernicus Sentinel data 2025');
+		expect(treeCredit(false)).toBe('Trees: USGS 3DEP lidar; contains modified Copernicus Sentinel data 2025');
+	});
+
+	it('names the City in the attribution only when the catalogue answered, and never the US Forest Service', () => {
+		expect(treeCredit()).toBe(treeCredit(false));
+		expect(treeCredit(true)).toBe('Trees: USGS 3DEP lidar, City of Boise; contains modified Copernicus Sentinel data 2025');
+		expect(treeCredit(false)).not.toContain('City of Boise');
+		for (const c of [true, false]) expect(treeCredit(c)).not.toContain('Forest Service');
 	});
 });
 
@@ -355,6 +363,18 @@ describe('what the public card and legend say (a lidar-only table, #351)', () =>
 		expect(legendKinds({ placed: 5 }, true)).toEqual(['catalogued', 'placed']);
 		expect(legendCredit(false)).not.toContain("City of Boise's inventory");
 		expect(legendCredit(true)).toContain("catalogued trees from the City of Boise's inventory");
+	});
+
+	it('wires the API’s catalogue flag to the legend: the entry and the City’s credit appear with it, on no tree in view', () => {
+		const withFlag = legendFor({ catalogued: 0, placed: 5 }, true);
+		expect(withFlag.kinds).toEqual(['catalogued', 'placed']);
+		expect(withFlag.credit).toContain("catalogued trees from the City of Boise's inventory");
+		const pub = legendFor({ catalogued: 0, placed: 5 }, false);
+		expect(pub.kinds).toEqual(['placed']);
+		expect(pub.credit).not.toContain('City of Boise');
+		// A catalogued tree in view also lists the entry and credits the City.
+		expect(legendFor({ catalogued: 2, placed: 0 }, false).kinds).toContain('catalogued');
+		expect(legendFor({ catalogued: 2, placed: 0 }, false).credit).toContain('City of Boise');
 	});
 });
 

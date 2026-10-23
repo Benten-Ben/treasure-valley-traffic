@@ -10,7 +10,6 @@ import Card from './Card.svelte';
 import def, { AREAS_URL } from './def.js';
 import Legend from './Legend.svelte';
 import {
-	CREDIT,
 	CREDIT_LAYER,
 	discCollection,
 	discOpacity,
@@ -29,6 +28,7 @@ import {
 	SOURCE,
 	stillServes,
 	TREE_PREFIX,
+	treeCredit,
 	treeInstance,
 	treeLayers,
 	TREES_3D,
@@ -65,6 +65,8 @@ export interface TreesView {
 	here: boolean;
 	/** The fetch failed: why. */
 	problem: string | null;
+	/** The private catalogue answered with the last trees (legend entry and the City's credit). */
+	catalogue: boolean;
 }
 
 const metresPerPx = (zoom: number, lat: number) => (40_075_016.686 * Math.cos((lat * Math.PI) / 180)) / (512 * 2 ** zoom);
@@ -92,7 +94,7 @@ export class TreesModule implements LayerModule {
 	error = $state<string | null>(null);
 	updatedAt = $state<number | null>(null);
 	areas = $state.raw<TreeArea[]>([]);
-	view = $state.raw<TreesView>({ mode: 'far', kinds: { catalogued: 0, placed: 0 }, shown: 0, truncated: false, capped: false, cap: SCENE_CAP, here: true, problem: null });
+	view = $state.raw<TreesView>({ mode: 'far', kinds: { catalogued: 0, placed: 0 }, shown: 0, truncated: false, capped: false, cap: SCENE_CAP, here: true, problem: null, catalogue: false });
 	Legend = Legend;
 	Card = Card;
 	interactive: Interactive[] = [
@@ -148,7 +150,7 @@ export class TreesModule implements LayerModule {
 		const map = await ctx.styleReady;
 		if (this.#destroyed) return;
 		const scope = (this.#scope = new MapScope(map));
-		scope.addSource(SOURCE, { type: 'geojson', data: EMPTY, promoteId: 'id', attribution: CREDIT });
+		scope.addSource(SOURCE, { type: 'geojson', data: EMPTY, promoteId: 'id', attribution: treeCredit(false) });
 		addSlotted(map, treeLayers(), def.order, (l, before) => scope.addLayer(l, before));
 		scope.on('moveend', () => this.#schedule());
 		scope.on('resize', () => this.#schedule());
@@ -219,7 +221,7 @@ export class TreesModule implements LayerModule {
 		const limit = zoom >= SCENE_FROM_ZOOM ? this.#limit3d : LIMIT_DISCS;
 		if (!here) {
 			this.#cancel();
-			if (this.#rows.length) this.#setTrees({ trees: [], truncated: false }, want, limit);
+			if (this.#rows.length) this.#setTrees({ trees: [], truncated: false, catalogue: this.view.catalogue }, want, limit);
 			return;
 		}
 		if (!force && stillServes(this.#fetched, want, limit)) {
@@ -258,12 +260,16 @@ export class TreesModule implements LayerModule {
 		// Models for trees no longer here are let go.
 		for (const id of this.#instById.keys()) if (!this.#byId.has(id)) this.#instById.delete(id);
 		const map = this.#scope?.map;
-		(map?.getSource(SOURCE) as GeoJSONSource | undefined)?.setData(discCollection(data.trees));
+		const catalogue = data.catalogue === true;
+		const src = map?.getSource(SOURCE) as GeoJSONSource | undefined;
+		// The attribution is read again when the data lands (a metadata event follows setData).
+		if (src) src.attribution = treeCredit(catalogue);
+		src?.setData(discCollection(data.trees));
 		this.#syncScene();
 		const kinds: Record<TreeKind, number> = { catalogued: 0, placed: 0 };
 		for (const t of data.trees) kinds[t.kind]++;
 		this.updatedAt = Date.now();
-		this.view = { ...this.view, kinds, shown: data.trees.length, truncated: data.truncated, capped: this.#capped };
+		this.view = { ...this.view, kinds, shown: data.trees.length, truncated: data.truncated, capped: this.#capped, catalogue };
 	}
 
 	#setMode(zoom: number, here: boolean) {
