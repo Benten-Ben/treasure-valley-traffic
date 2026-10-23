@@ -71,13 +71,22 @@ xhigh.
   `size:*`, `review:<tier>`, and the states `blocked`, `decision-needed`, `needs-design` and `owner-action`. The kit's
   `board` CLI is copied to `tools/board` (`tools/board ls|next|new|claim|status|block|sync-blocked`; it reads
   `.board.env`).
-- **Board automations** (set in the web UI; no API): item added → Backlog; item reopened (issues) → Ready; PR linked
+- **Board automations** (set in the web UI; no API): item added → Ready; item reopened (issues) → Ready; PR linked
   to an issue → In review; changes requested → In progress; item closed or PR merged → Done; Done closes the issue;
   closed issues archive after two weeks; open issues in this repository and sub-issues are added automatically.
   "Code review approved" stays off, so a card stays In review until its PR merges. Replacing the Status options clears
   these, so set them again after any change. **Views:** All, Board, Ready queue, In flight, Decisions for Ben, Waiting
   on Ben, Chunk B, Chunk C, Backlog by area (grouped by Area) and Stale. A view's grouping saves only through "Save
   view" and its dialog's Save. A "Waiting on" field (nobody, Ben, an agency) marks what waits on someone.
+- **What each status means** (owner, Oct 22): **Backlog** is only what is blocked, by an open "blocked by" link or by
+  open sub-issues (the tracking issues). **Ready** is every other open issue not started yet, including decision-needed
+  and owner-action ones (their labels keep `board next` from handing them to agents). **In progress** means claimed:
+  a builder runs `tools/board claim <n>` first. **In review** follows on its own when a PR with `Closes #n` opens.
+  **Done** follows when the issue closes: a merged PR closes it; work finished without a PR (an issue that no longer
+  reproduces, an owner action) is closed by hand with a comment saying why; a tracking issue is closed with a summary
+  once its sub-issues are closed. After merges and after adding or removing blockers, the coordinator runs
+  `python3 tools/board_status_sync.py`, which moves issues between Backlog and Ready and keeps the `blocked` label in
+  step.
 - **Outstanding work lives on the project's GitHub board.** Each issue is a work order: Goal, Steps, Acceptance, Owns,
   Depends on, Context (`.github/ISSUE_TEMPLATE/task.md`). Decisions go on the issue they decide, as "Decided (who,
   date):", and lasting ones also go in [DECISIONS.md](DECISIONS.md).
