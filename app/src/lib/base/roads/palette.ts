@@ -62,17 +62,17 @@ export const LINE_START = MARKINGS.onAsphalt.color;
 export const ROADS_PALETTE: Palette = {
 	id: 'roads',
 	colors: [
-		{ name: 'asphalt', valley: ASPHALT.valley, clay: ASPHALT.clay, use: 'road surfaces and the piece lines by z15.5 (against slate: a form exemption)' },
-		{ name: 'concrete', valley: CONCRETE.valley, clay: CONCRETE.clay, use: 'concrete surfaces' },
-		{ name: 'line start', valley: LINE_START, clay: LINE_START, use: 'piece lines at z14, before they take the surface tone' },
-		{ name: 'curb', valley: CURB, clay: CLAY_KERB, use: 'curb edges and island outlines' },
-		{ name: 'shoulder', valley: EDGE, clay: CLAY_KERB, use: 'shoulder edges' },
-		{ name: 'dirt', valley: UNPAVED.dirt.color, use: 'unpaved surfaces, as a tint over the ground (18%)' },
-		{ name: 'gravel', valley: UNPAVED.gravel.color, use: 'gravel surfaces, as a tint over the ground (35%)' },
-		{ name: 'marking on asphalt', valley: MARKINGS.onAsphalt.color, use: 'lane, centre and edge lines, stop bars and crosswalks' },
-		{ name: 'marking on concrete', valley: MARKINGS.onConcrete.color, use: 'ink at 70% on concrete' },
-		{ name: 'marking in Clay', valley: MARKINGS.clay.color, clay: MARKINGS.clay.color, use: 'ink at 60%, Clay with Lanes on only' },
-		{ name: 'deck casing', valley: DECK_CASING, clay: DECK_CASING, use: 'ink outline of a draped deck' }
+		{ name: 'asphalt', valley: ASPHALT.valley, clay: ASPHALT.clay, use: 'surface: road surfaces and the piece lines by z15.5 (against slate: a form exemption)' },
+		{ name: 'concrete', valley: CONCRETE.valley, clay: CONCRETE.clay, use: 'surface: concrete surfaces' },
+		{ name: 'line start', valley: LINE_START, clay: LINE_START, use: 'line: piece lines at z14, before they take the surface tone' },
+		{ name: 'curb', valley: CURB, clay: CLAY_KERB, use: 'line: curb edges and island outlines' },
+		{ name: 'shoulder', valley: EDGE, clay: CLAY_KERB, use: 'line: shoulder edges' },
+		{ name: 'dirt', valley: UNPAVED.dirt.color, use: 'surface: unpaved surfaces, as a tint over the ground (18%)' },
+		{ name: 'gravel', valley: UNPAVED.gravel.color, use: 'surface: gravel surfaces, as a tint over the ground (35%)' },
+		{ name: 'marking on asphalt', valley: MARKINGS.onAsphalt.color, use: 'line: lane, centre and edge lines, stop bars and crosswalks' },
+		{ name: 'marking on concrete', valley: MARKINGS.onConcrete.color, use: 'line: ink at 70% on concrete' },
+		{ name: 'marking in Clay', valley: MARKINGS.clay.color, clay: MARKINGS.clay.color, use: 'line: ink at 60%, Clay with Lanes on only' },
+		{ name: 'deck casing', valley: DECK_CASING, clay: DECK_CASING, use: 'line: ink outline of a draped deck' }
 	]
 };
 

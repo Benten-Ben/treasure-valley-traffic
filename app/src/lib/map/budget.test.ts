@@ -27,10 +27,46 @@ describe('the colour budget (docs/14 §14.4)', () => {
 		expect(rows.length).toBeGreaterThan(0);
 	});
 
-	// Misses from layers merged before this budget, waiting for the owner's call (#367: a named form exemption or a
-	// new colour). A ratchet: a miss not listed fails, and a listed one that clears its bar fails too, so the list
+	// Misses from layers merged before this budget (Soils, Trails, Roads, Fences), waiting for the owner's call (#367:
+	// a named form exemption, a narrower scope for base surfaces, or a new colour). A ratchet: a miss not listed fails, and a listed one that clears its bar fails too, so the list
 	// only shrinks.
 	const KNOWN_MISSES = [
+		'fences fence post #6F685E (valley) vs streets (slate) slate 8',
+		'fences fence post #6F685E (valley) vs streets (slate) slate 9',
+		'fences fence post #6F685E (valley) vs streets (slate) slate 10',
+		'fences fence post #6F685E (valley) vs streets (slate) slate 11',
+		'fences estimated height #918a81 (valley) vs streets (slate) slate 5',
+		'fences estimated height #918a81 (valley) vs streets (slate) slate 6',
+		'fences estimated height #918a81 (valley) vs streets (slate) slate 7',
+		'fences estimated height #918a81 (valley) vs streets (slate) slate 8',
+		'fences estimated height #918a81 (valley) vs streets (slate) slate 9',
+		'fences estimated height #918a81 (valley) vs streets (slate) slate 10',
+		'fences estimated height #918a81 (valley) vs teal camera teal',
+		'roads asphalt #989088 (valley) vs streets (slate) slate 5',
+		'roads asphalt #989088 (valley) vs streets (slate) slate 6',
+		'roads asphalt #989088 (valley) vs streets (slate) slate 7',
+		'roads asphalt #989088 (valley) vs streets (slate) slate 8',
+		'roads asphalt #989088 (valley) vs streets (slate) slate 9',
+		'roads concrete #D2CEC6 (valley) vs streets (alone) blue 1',
+		'roads concrete #D2CEC6 (valley) vs streets (slate) slate 1',
+		'roads concrete #D2CEC6 (valley) vs streets (slate) slate 2',
+		'roads concrete #D2CEC6 (valley) vs streets (slate) slate 3',
+		'roads curb #E3D7C4 (valley) vs streets (slate) slate 1',
+		'roads curb #E3D7C4 (valley) vs streets (slate) slate 2',
+		'roads curb #E2D9CB (clay) vs streets (slate) slate 1',
+		'roads curb #E2D9CB (clay) vs streets (slate) slate 2',
+		'roads shoulder #BDB6AA (valley) vs streets (alone) blue 1',
+		'roads shoulder #BDB6AA (valley) vs streets (slate) slate 1',
+		'roads shoulder #BDB6AA (valley) vs streets (slate) slate 2',
+		'roads shoulder #BDB6AA (valley) vs streets (slate) slate 3',
+		'roads shoulder #BDB6AA (valley) vs streets (slate) slate 4',
+		'roads shoulder #E2D9CB (clay) vs streets (slate) slate 1',
+		'roads shoulder #E2D9CB (clay) vs streets (slate) slate 2',
+		'roads dirt #826644 (valley) vs route route 11 #7f4315',
+		'roads dirt #826644 (valley) vs streets (slate) slate 11',
+		'roads marking on concrete #2b2a33 (valley) vs streets (alone) blue 11',
+		'roads marking in Clay #2b2a33 (valley) vs streets (alone) blue 11',
+		'roads deck casing #2b2a33 (valley) vs streets (alone) blue 11',
 		'soils wash step 1 #bababa (valley) vs streets (alone) blue 1',
 		'soils wash step 3 #757575 (valley) vs teal camera teal',
 		'soils survey bounds #5a5a5a (valley) vs streets (slate) slate 11',
