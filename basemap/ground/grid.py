@@ -15,8 +15,9 @@ looks past its edges (buffers, feathers), and every window has a stable key so l
 are read with the null datum shift: their coordinates are taken as WGS 84's, as web maps and OpenStreetMap's tracing
 imagery do, so OSM, Overture, NAIP and the lidar keep the agreement they were traced or measured with (the true
 NAD83(2011)-to-WGS 84 offset here is about 1 m, under the painter's 2 m cell). Never let PROJ pick a grid-based
-NAD83-to-WGS 84 transform: the worker image turns PROJ's network on (PROJ_NETWORK=ON), and offline that transform
-returns inf or fails (checked Oct 10 in tvt-worker). rasterize.py applies the policy for vectors and rasters.
+NAD83-to-WGS 84 transform: with PROJ's network on (conda's default, which the worker image now turns off), PROJ tries
+to fetch the grid, and offline that transform returns inf or fails (checked Oct 10 in tvt-worker).
+rasterize.py applies the policy for vectors and rasters.
 
     python3 basemap/ground/ground.py spec      # sizes per level, the boxes, tile counts
 """
