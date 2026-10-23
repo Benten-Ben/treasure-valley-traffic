@@ -11,7 +11,7 @@ import { StaticData, type StaticSegment } from './batches/static.js';
 import { PHOTO_FLOATS } from './batches/photo.js';
 import { ShadowData } from './batches/shadow.js';
 import { CapLimiter } from './caps.js';
-import { DrawnGroundWatch, GroundTracker, renderedZ } from './ground.js';
+import { GroundEpoch, GroundTracker, renderedZ } from './ground.js';
 import { addSceneLayer, createGpu, destroyGpu, SCENE_LAYER, sceneLayer, type Gpu } from './layer.js';
 import { allMeshes, gpuMeshes, lodKey, lodMeshes, meshVersion, rgb, type Lod, type Mesh, type MeshKind } from './meshes.js';
 import { PickIndex, priorityOf, selectionKey } from './pick.js';
@@ -366,13 +366,8 @@ export class Scene implements HitSource {
 	#size = { w: 0, h: 0 };
 	#hoverKey = '';
 	#selectedKey = '';
-	/** Bumped when the drawn ground may have changed (camera moved, terrain tiles or settings changed). */
-	#epoch = 0;
-	/** Says when MapLibre's drawn ground changed (its tile index), so the epoch isn't bumped on every move. */
-	#watch = new DrawnGroundWatch();
-	/** The epoch the last frame saw, and the frames drawn in it (a changed epoch re-reads a share of the scenery per frame). */
-	#seenEpoch = -1;
-	#framesInEpoch = 0;
+	/** The ground epoch: bumped when the drawn ground may have changed (terrain tiles or settings; a move only for a map that can't say). */
+	#groundEpoch = new GroundEpoch();
 	/** Bumped only when terrain data changed (DEM tiles arrived, terrain set, context restored): heights queried before aren't trusted for culling. */
 	#dataEpoch = 0;
 	#selectedAt = 0;
@@ -415,7 +410,7 @@ export class Scene implements HitSource {
 		const onLost = () => this.#lose();
 		// MapLibre rebuilds its style after a restore and drops custom layers: add ours again once it's back.
 		const onRestored = () => {
-			this.#epoch++;
+			this.#groundEpoch.bump();
 			this.#dataEpoch++;
 			const readd = () => {
 				try {
@@ -430,10 +425,10 @@ export class Scene implements HitSource {
 		// The drawn ground changes only when the camera moves, terrain tiles arrive or terrain is set.
 		// With a map that can say when the drawn ground changes (the render checks that), a move alone changes nothing.
 		const bump = () => {
-			if (!DrawnGroundWatch.reliable(map)) this.#epoch++;
+			this.#groundEpoch.moved(map);
 		};
 		const bumpData = () => {
-			this.#epoch++;
+			this.#groundEpoch.bump();
 			this.#dataEpoch++;
 		};
 		const onSource = (e: { sourceId?: string }) => {
@@ -775,15 +770,12 @@ export class Scene implements HitSource {
 		const pulse = this.#pulse(now, still);
 		let total = 0;
 
-		/** True ground under a point (eased), and the drawn base height for a true height (or the ground). */
-		if (terrain && this.#watch.changed(map)) this.#epoch++;
-		const epoch = this.#epoch;
-		this.#framesInEpoch = epoch === this.#seenEpoch ? this.#framesInEpoch + 1 : 1;
-		this.#seenEpoch = epoch;
+		const epoch = this.#groundEpoch.frame(map, terrain);
 		let maxShare = 1;
 		const data = this.#dataEpoch;
 		let lazy = false;
 		const query = (lng: number, lat: number) => map.queryTerrainElevation([lng, lat]) ?? 0;
+		/** True ground under a point (eased), and the drawn base height for a true height (or the ground). */
 		const groundAt = (id: string, lng: number, lat: number, groundAlt: number | undefined, fallback: number) => {
 			if (!terrain) return groundAlt ?? fallback;
 			return this.#ground.sample(id, lng, lat, query, exag, now, still, epoch, data, lazy);
@@ -1031,7 +1023,7 @@ export class Scene implements HitSource {
 		// Keep frames coming while heights ease or the selection pulses.
 		deps.loop.want('scene:ease', this.#ground.tweening ? 60 : null);
 		// A changed epoch reads a share of the scenery per frame: keep drawing until each instance has had its turn.
-		deps.loop.want('scene:reread', terrain && this.#framesInEpoch < maxShare ? 60 : null);
+		deps.loop.want('scene:reread', this.#groundEpoch.rereading(terrain, maxShare) ? 60 : null);
 	}
 
 	#axes: [Vec3, Vec3, Vec3] = [

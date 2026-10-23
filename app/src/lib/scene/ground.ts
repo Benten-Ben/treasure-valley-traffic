@@ -55,6 +55,46 @@ export class DrawnGroundWatch {
 	}
 }
 
+/**
+ * The scene's ground epoch: bumped when the drawn ground may have changed, and counting the frames drawn in it.
+ *
+ * A move bumps it only for a map that can't say when its ground changes; otherwise the watch decides per frame.
+ * `rereading` is true while a changed epoch still has scenery to re-read (the scene asks the loop for frames then).
+ */
+export class GroundEpoch {
+	#epoch = 0;
+	#seen = -1;
+	#frames = 0;
+	#watch = new DrawnGroundWatch();
+
+	get epoch(): number {
+		return this.#epoch;
+	}
+
+	/** Terrain tiles or settings changed, or the context was restored. */
+	bump(): void {
+		this.#epoch++;
+	}
+
+	/** The camera moved: a change only for a map that can't say when its drawn ground changes. */
+	moved(map: CoverageMap): void {
+		if (!DrawnGroundWatch.reliable(map)) this.#epoch++;
+	}
+
+	/** Start a frame: bumps on a new tile index (with terrain), counts the frames in this epoch, returns the epoch. */
+	frame(map: CoverageMap, terrain: boolean): number {
+		if (terrain && this.#watch.changed(map)) this.#epoch++;
+		this.#frames = this.#epoch === this.#seen ? this.#frames + 1 : 1;
+		this.#seen = this.#epoch;
+		return this.#epoch;
+	}
+
+	/** Whether the scenery has not yet had its turn in this epoch, given the frames the share needs. */
+	rereading(terrain: boolean, maxShare: number): boolean {
+		return terrain && this.#frames < maxShare;
+	}
+}
+
 interface Track {
 	lng: number;
 	lat: number;

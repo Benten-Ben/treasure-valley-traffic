@@ -198,6 +198,7 @@ test.describe('scene budget', () => {
 	});
 
 	test('the same case on the laptop\'s GPU (headless Chromium with Metal), when it starts', { tag: '@scene-budget' }, async ({}, testInfo) => {
+		test.skip(process.platform !== 'darwin', 'the Metal backend exists only on macOS');
 		test.setTimeout(1_200_000);
 		const browser = await chromium.launch({ args: ['--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist', ...lockedArgs()] });
 		try {
@@ -207,6 +208,8 @@ test.describe('scene budget', () => {
 			page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
 			const r = await measureBudget(page);
 			await page.screenshot({ path: screenPath('scene-budget-z17-gpu.png') });
+			// A software fallback must not be recorded or judged as the GPU.
+			test.skip(/swiftshader|llvmpipe|software/i.test(r.renderer ?? ''), `no hardware renderer (${r.renderer})`);
 			record('scene-budget-gpu.json', r);
 			report('GPU', r);
 			testInfo.annotations.push({ type: 'scene JS p95 (GPU)', description: `${r.jsMs.p95.toFixed(2)} ms over ${r.frames} frames on ${r.renderer}` });
