@@ -9,6 +9,13 @@
 #   BOARD_STATUS   the single-select status field's name (default: Status)
 #   BOARD_SKIP     labels `next` never hands out (default: blocked,decision-needed,needs-design)
 #   BOARD_TEMPLATE issue body template for `new` (default: .github/ISSUE_TEMPLATE/task.md if it exists)
+#   TVT_PRIVATE_PATTERNS  the private pattern list for the public check (default: data/dev/private-patterns.txt in this
+#                  checkout, or in the main checkout when this is a linked worktree)
+#
+# The repository is public: anything this tool posts as text (today only `new`'s title, body and labels) goes through
+# tools/check_public.py --text first, and a failing text is refused, with the check's report, before gh is called.
+# --dry-run still runs the check. Every other command posts only numbers, labels already on the repository and status
+# names. A command that posts free text must call public_gate on it (tools/test_board_gate.py).
 #
 # Commands (add --dry-run anywhere to print the writes instead of doing them; reads always run):
 #   board ls [Status]                 open board items (optionally one status column): #, status, assignee, title
@@ -120,6 +127,28 @@ for r in sorted(rows):
 PY
   rm -f "${TMPDIR:-/tmp}/board-items.$$.json" "${TMPDIR:-/tmp}/board-open.$$.tsv"; }
 
+# The public gate: text about to be posted on the public repository goes through tools/check_public.py --text first.
+# Returns 2 (the check's report on stderr) when the check fails or can't run; the caller then exits 2 having posted nothing.
+public_gate() { # <file holding all the text about to be posted>
+  local checker pats="" common main out
+  checker="$(cd "$(dirname "$0")" && pwd)/check_public.py"
+  [ -f "$checker" ] || { note "the public check isn't at $checker: nothing posted"; return 2; }
+  pats=${TVT_PRIVATE_PATTERNS:-}
+  if [ -z "$pats" ] && [ ! -f "$root/data/dev/private-patterns.txt" ]; then
+    # a linked worktree has no data/dev of its own: the list is in the main checkout
+    common=$(git -C "$root" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || common=""
+    main=${common%/.git}
+    [ -n "$common" ] && [ -f "$main/data/dev/private-patterns.txt" ] && pats="$main/data/dev/private-patterns.txt"
+  fi
+  if out=$(python3 "$checker" --text "$1" ${pats:+--patterns "$pats"} 2>&1); then
+    case "$out" in *"(0 private pattern"*) note "no private pattern list found: only the mechanical checks ran";; esac
+    return 0
+  fi
+  echo "$out" >&2
+  note "refusing to post: the text failed the public check (line 1 is the title, the body starts at line 3); nothing was posted"
+  return 2
+}
+
 case "$cmd" in
   ls)
     want="${1:-}"
@@ -147,6 +176,11 @@ sys.exit(1)' "$SKIP" "$label") && echo "$pick" || { echo "board: nothing to pull
     if [ -f "$tpl" ]; then awk 'BEGIN{fm=0} NR==1&&/^---$/{fm=1;next} fm&&/^---$/{fm=0;next} !fm' "$tpl" > "$body"
     else printf '**Goal:** \n\n**Acceptance:** \n\n**Owns:** \n\n**Depends on:** nothing\n\n**Context:** \n' > "$body"; fi
     largs=(); for l in "$@"; do largs+=(--label "$l"); done
+    # the title, the body and the labels, as one text; the check runs before anything is posted (dry runs too)
+    all="${TMPDIR:-/tmp}/board-all.$$.md"
+    { printf '%s\n\n' "$title"; cat "$body"; for l in "$@"; do printf '\nlabel: %s' "$l"; done; printf '\n'; } > "$all"
+    if ! public_gate "$all"; then rm -f "$body" "$all"; exit 2; fi
+    rm -f "$all"
     if [ "$DRY" = 1 ]; then w gh issue create -R "$BOARD_REPO" --title "$title" --body-file "$body" "${largs[@]+"${largs[@]}"}"; n=0
     else url=$(gh issue create -R "$BOARD_REPO" --title "$title" --body-file "$body" "${largs[@]+"${largs[@]}"}") || die "issue create failed"
       n=${url##*/}; echo "$url"; fi
