@@ -37,8 +37,8 @@ describe('the base registry', () => {
 		expect("import { x } from '#lib/layers/scenery.js';").not.toMatch(re);
 	});
 
-	it('holds no contribution yet; later packages add theirs as folders', () => {
-		expect(BASE_CONTRIBUTIONS).toEqual([]);
+	it('holds the contributions packages added as folders (the painted ground, so far)', () => {
+		expect(BASE_CONTRIBUTIONS.map((c) => c.id)).toEqual(['ground.paint']);
 		expect(baseContribution('roads.surfaces')).toBeUndefined();
 	});
 
