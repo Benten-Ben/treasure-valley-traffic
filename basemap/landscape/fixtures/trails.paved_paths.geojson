@@ -1,0 +1,126 @@
+{
+ "type": "FeatureCollection",
+ "tvt": {
+  "geometry": "LineString",
+  "fields": {
+   "id": "int",
+   "kind": "string",
+   "material": "string",
+   "w": "double"
+  },
+  "minzoom": 15,
+  "maxzoom": 16,
+  "licence": "ODbL-1.0",
+  "republish": "yes",
+  "credit": [
+   "© OpenStreetMap contributors"
+  ],
+  "about": "Synthetic: made up for the browser specs, copied from nothing."
+ },
+ "features": [
+  {
+   "type": "Feature",
+   "properties": {
+    "id": 9101,
+    "kind": "cycleway",
+    "material": "asphalt",
+    "w": 3.0
+   },
+   "geometry": {
+    "type": "LineString",
+    "coordinates": [
+     [
+      -116.2035,
+      43.6168
+     ],
+     [
+      -116.2,
+      43.6172
+     ],
+     [
+      -116.1965,
+      43.6168
+     ]
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "id": 9102,
+    "kind": "footway",
+    "material": "concrete",
+    "w": 1.8
+   },
+   "geometry": {
+    "type": "LineString",
+    "coordinates": [
+     [
+      -116.2042,
+      43.614
+     ],
+     [
+      -116.2,
+      43.6141
+     ],
+     [
+      -116.1958,
+      43.614
+     ]
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "id": 9103,
+    "kind": "path",
+    "material": "paving_stones",
+    "w": 2.4
+   },
+   "geometry": {
+    "type": "LineString",
+    "coordinates": [
+     [
+      -116.1975,
+      43.616
+     ],
+     [
+      -116.1972,
+      43.615
+     ],
+     [
+      -116.1976,
+      43.6138
+     ]
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "id": 9104,
+    "kind": "path",
+    "material": "paved",
+    "w": 1.5
+   },
+   "geometry": {
+    "type": "LineString",
+    "coordinates": [
+     [
+      -116.2025,
+      43.616
+     ],
+     [
+      -116.2027,
+      43.615
+     ],
+     [
+      -116.2023,
+      43.6138
+     ]
+    ]
+   }
+  }
+ ]
+}

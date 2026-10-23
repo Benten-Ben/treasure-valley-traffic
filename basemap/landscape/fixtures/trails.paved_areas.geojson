@@ -1,0 +1,58 @@
+{
+ "type": "FeatureCollection",
+ "tvt": {
+  "geometry": "MultiPolygon",
+  "fields": {
+   "id": "int",
+   "kind": "string",
+   "material": "string"
+  },
+  "minzoom": 15,
+  "maxzoom": 16,
+  "licence": "ODbL-1.0",
+  "republish": "yes",
+  "credit": [
+   "© OpenStreetMap contributors"
+  ],
+  "about": "Synthetic: made up for the browser specs, copied from nothing."
+ },
+ "features": [
+  {
+   "type": "Feature",
+   "properties": {
+    "id": 9201,
+    "kind": "pedestrian",
+    "material": "concrete"
+   },
+   "geometry": {
+    "type": "MultiPolygon",
+    "coordinates": [
+     [
+      [
+       [
+        -116.2008,
+        43.6176
+       ],
+       [
+        -116.1992,
+        43.6176
+       ],
+       [
+        -116.1992,
+        43.6184
+       ],
+       [
+        -116.2008,
+        43.6184
+       ],
+       [
+        -116.2008,
+        43.6176
+       ]
+      ]
+     ]
+    ]
+   }
+  }
+ ]
+}
