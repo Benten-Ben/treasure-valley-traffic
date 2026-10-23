@@ -1,9 +1,10 @@
 """The trees build end to end (build.py) with anchors, on a synthetic area: a DSM and DTM in EPSG:6340 with one lone
 crown, and an anchors CSV with a trunk point at the crown, one on bare ground and one planted after the flight.
 
-What the lidar finds goes in the public files; the link from the crown to its anchor and the tree the lidar doesn't show
-go in anchors.jsonl; nothing of the inventory (its source, ids, genus, trunk diameters, offsets) reaches the public
-files, and the public loader accepts them. Needs NumPy, SciPy, rasterio and pyproj: run it in the worker image, where a
+Anchors play no part in finding crowns: the public files are byte for byte those of a build without anchors. The link
+from the crown to its anchor and the tree the lidar doesn't show go in anchors.jsonl, in its own folder outside the
+build's; nothing of the inventory (its source, ids, genus, trunk diameters, offsets) reaches the public files, and the
+public loader accepts them. Needs NumPy, SciPy, rasterio and pyproj: run it in the worker image, where a
 skip counts as a failure."""
 import csv
 import json
@@ -62,9 +63,10 @@ class BuildWithAnchorsTest(unittest.TestCase):
                                                  (LATE_ID, (50.0, 50.0), "ulmus", 3, late_ms)):
                 lon, lat = lonlat(e, s)
                 w.writerow([SOURCE, sid, lon, lat, genus, trunk, ms])
-        cls.out = os.path.join(d, "c-test")
+        cls.out = os.path.join(d, "public", "c-test")
+        cls.out_private = os.path.join(d, "private", "c-test")
         cls.build_it(["--area", "c", "--dsm", os.path.join(d, "dsm.tif"), "--dtm", os.path.join(d, "dtm.tif"),
-                 "--anchors", cls.csv, "--lidar-date", "2023-10-24", "--out", cls.out])
+                 "--anchors", cls.csv, "--private-out", cls.out_private, "--lidar-date", "2023-10-24", "--out", cls.out])
         # the same crown and trunk point with a conifer genus: the public row must not show it
         cls.csv_pine = os.path.join(d, "anchors-pine.csv")
         with open(cls.csv_pine, "w", newline="") as f:
@@ -72,12 +74,26 @@ class BuildWithAnchorsTest(unittest.TestCase):
             w.writerow(["source", "source_id", "lon", "lat", "genus", "trunk_in", "installed_ms"])
             lon, lat = lonlat(CROWN_E + 0.5, CROWN_S - 0.4)
             w.writerow([SOURCE, CROWN_ID, lon, lat, "pinus", 14, ""])
-        cls.pine = os.path.join(d, "c-pine")
+        cls.pine = os.path.join(d, "public", "c-pine")
+        cls.pine_private = os.path.join(d, "private", "c-pine")
         cls.build_it(["--area", "c", "--dsm", os.path.join(d, "dsm.tif"), "--dtm", os.path.join(d, "dtm.tif"),
-                 "--anchors", cls.csv_pine, "--lidar-date", "2023-10-24", "--out", cls.pine])
-        cls.plain = os.path.join(d, "c-plain")
+                 "--anchors", cls.csv_pine, "--private-out", cls.pine_private, "--lidar-date", "2023-10-24", "--out", cls.pine])
+        cls.plain = os.path.join(d, "public", "c-plain")
         cls.build_it(["--area", "c", "--dsm", os.path.join(d, "dsm.tif"), "--dtm", os.path.join(d, "dtm.tif"),
                  "--lidar-date", "2023-10-24", "--out", cls.plain])
+        # two anchors 2 m apart under the one crown, and one at the crown's edge 2.4 m off, with no trunk diameter
+        cls.csv_two = os.path.join(d, "anchors-two.csv")
+        with open(cls.csv_two, "w", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(["source", "source_id", "lon", "lat", "genus", "trunk_in", "installed_ms"])
+            for sid, (e, s) in (("zz-near", (CROWN_E + 0.3, CROWN_S)), ("zz-far", (CROWN_E + 2.0, CROWN_S)),
+                                ("zz-edge", (CROWN_E - 2.4, CROWN_S))):
+                lon, lat = lonlat(e, s)
+                w.writerow([SOURCE, sid, lon, lat, "acer", "" if sid == "zz-edge" else 14, ""])
+        cls.two = os.path.join(d, "public", "c-two")
+        cls.two_private = os.path.join(d, "private", "c-two")
+        cls.build_it(["--area", "c", "--dsm", os.path.join(d, "dsm.tif"), "--dtm", os.path.join(d, "dtm.tif"),
+                 "--anchors", cls.csv_two, "--private-out", cls.two_private, "--lidar-date", "2023-10-24", "--out", cls.two])
 
     @classmethod
     def build_it(cls, argv):
@@ -124,7 +140,7 @@ class BuildWithAnchorsTest(unittest.TestCase):
                       [(round(a, 3), round(n, 3)) for a, n in model.shapes[curve]])
         # the pine's anchor matched the crown (it is not an estimated tree)
         import anchors
-        self.assertEqual([r["kind"] for r in anchors.read(self.pine)], ["matched"])
+        self.assertEqual([r["kind"] for r in anchors.read(self.pine_private)], ["matched"])
 
     def test_the_public_loader_accepts_the_public_files(self):
         from plugins.trees.ingest import load
@@ -133,13 +149,14 @@ class BuildWithAnchorsTest(unittest.TestCase):
 
     def test_the_link_and_the_estimated_tree_are_in_the_anchors_file(self):
         import anchors
-        recs = anchors.read(self.out)
+        recs = anchors.read(self.out_private)
         self.assertEqual(sorted(r["kind"] for r in recs), ["estimated", "matched"])
         by = {r["kind"]: r for r in recs}
         public = json.load(open(os.path.join(self.out, "trees.geojson")))["features"][0]["properties"]["id"]
         self.assertEqual((by["matched"]["tree_id"], by["matched"]["source"], by["matched"]["source_id"]),
                          (public, SOURCE, CROWN_ID))
         self.assertLess(by["matched"]["fit"]["trunk_to_crown_m"], 2.5)
+        self.assertEqual(set(by["matched"]["fit"]), {"trunk_to_crown_m"})
         self.assertEqual(by["matched"]["events"][0]["event"], "measured")
         e = by["estimated"]
         self.assertEqual((e["source_id"], e["tree_id"]), (BARE_ID, f"{SOURCE}-{BARE_ID}"))
@@ -147,12 +164,48 @@ class BuildWithAnchorsTest(unittest.TestCase):
         self.assertEqual(e["events"][0]["event"], "estimated")
         self.assertGreater(e["height_m"], 0)
         # the tree planted after the flight is in neither file
-        self.assertNotIn(LATE_ID, open(os.path.join(self.out, "anchors.jsonl")).read())
+        self.assertNotIn(LATE_ID, open(os.path.join(self.out_private, "anchors.jsonl")).read())
 
-    def test_the_sources_say_anchors_were_used_and_name_nothing(self):
-        sources = json.load(open(os.path.join(self.out, "build.json")))["params"]["sources"]
-        self.assertIn("anchors", [s["source"] for s in sources])
-        self.assertNotIn("anchors", [s["source"] for s in json.load(open(os.path.join(self.plain, "build.json")))["params"]["sources"]])
+    def test_anchors_change_nothing_the_public_files_hold(self):
+        # the same crowns, ids and events as a build without anchors, in the same order, whatever the anchors are
+        for folder in (self.out, self.pine, self.two):
+            for name in ("trees.geojson", "log.jsonl"):
+                self.assertEqual(open(os.path.join(folder, name)).read(), open(os.path.join(self.plain, name)).read(),
+                                 f"{os.path.basename(folder)}/{name}")
+            a, b = (json.load(open(os.path.join(f, "build.json"))) for f in (folder, self.plain))
+            a["counts"].pop("seconds"); b["counts"].pop("seconds")
+            self.assertEqual((a["params"], a["counts"]), (b["params"], b["counts"]))
+            self.assertNotIn("anchors", [s["source"] for s in a["params"]["sources"]])
+
+    def test_the_side_file_is_never_in_the_build_folder(self):
+        for folder in (self.out, self.pine, self.two, self.plain):
+            self.assertFalse(os.path.exists(os.path.join(folder, "anchors.jsonl")), folder)
+        self.assertTrue(os.path.exists(os.path.join(self.out_private, "anchors.jsonl")))
+
+    def test_one_crown_takes_one_anchor_and_the_others_are_estimated(self):
+        import anchors
+        by = {r["source_id"]: r for r in anchors.read(self.two_private)}
+        public = json.load(open(os.path.join(self.two, "trees.geojson")))["features"][0]["properties"]["id"]
+        self.assertEqual(sorted(by), ["zz-edge", "zz-far", "zz-near"])
+        self.assertEqual(by["zz-near"]["kind"], "matched")            # the nearest to the crown's centre
+        self.assertEqual(by["zz-near"]["tree_id"], public)
+        self.assertEqual({k: by[k]["kind"] for k in ("zz-far", "zz-edge")}, {"zz-far": "estimated", "zz-edge": "estimated"})
+
+    def test_a_private_folder_beside_or_under_the_build_or_the_archive_is_refused(self):
+        d = self.tmp.name
+        base = ["--area", "c", "--dsm", os.path.join(d, "dsm.tif"), "--dtm", os.path.join(d, "dtm.tif"), "--anchors", self.csv]
+        for what, extra in (("none", []),
+                            ("inside the build", ["--private-out", os.path.join(d, "x", "sub"), "--out", os.path.join(d, "x")]),
+                            ("the build itself", ["--private-out", os.path.join(d, "x"), "--out", os.path.join(d, "x")])):
+            with self.assertRaises(SystemExit, msg=what):
+                self.build_it(base + (extra if extra else ["--out", os.path.join(d, "x")]))
+        os.environ["TVT_ARCHIVE"] = os.path.join(d, "archive")
+        try:
+            with self.assertRaises(SystemExit):
+                self.build_it(base + ["--private-out", os.path.join(d, "archive", "trees", "p"), "--out", os.path.join(d, "o")])
+        finally:
+            del os.environ["TVT_ARCHIVE"]
+        self.assertFalse(os.path.exists(os.path.join(d, "x")))        # refused before any work
 
     def test_without_anchors_there_is_no_anchors_file(self):
         self.assertFalse(os.path.exists(os.path.join(self.plain, "anchors.jsonl")))
