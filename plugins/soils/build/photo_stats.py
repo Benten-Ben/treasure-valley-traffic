@@ -1224,6 +1224,11 @@ def cmd_calibrate(args):
                                if any("de" in r for r in v.get("types", [])) else None)
                            for b, v in boxes.items()},
                "rules": P.RULES, "class_keep": [CLASS_NAMES[c] for c in CLASS_KEEP], "min_px": CAL_MIN_PX}
+    summary["misses"] = {b: m for b, m in summary["per_box"].items() if m is not None and m > CAL_PASS}
+    if summary["misses"]:
+        summary["misses_note"] = ("these boxes miss even when the median passes: they compare only urban land, where "
+                                  "the class mask holds dry lawn and sidewalk, which isn't soil, and photo-v1 keeps "
+                                  "only vacant lots")
     for b, v in boxes.items():
         v["lidar"] = LV.lidar_vintage(b)
     log("lidar vintage by box (median dE):\n" + LV.vintage_table(summary["per_box"].items()))

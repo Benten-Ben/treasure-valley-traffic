@@ -198,6 +198,10 @@ class PoolTest(unittest.TestCase):
         self.assertRegex(report["types"]["xyz:sand"]["from"], "too weak to set L")
         self.assertLess(sand["lab_med"][0], 0.8)                             # the soils' pooled L, not the line's
         self.assertEqual(report["counts"]["albedo"], 0)
+        fb = report["albedo_fallback"]                                       # the report says so too
+        self.assertTrue(fb["taken"])
+        self.assertGreaterEqual(fb["types"], 1)
+        self.assertRegex(fb["note"], "almost no skill")
 
 
 class SpearmanTest(unittest.TestCase):
