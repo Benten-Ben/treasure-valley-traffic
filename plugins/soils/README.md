@@ -263,7 +263,7 @@ cut-first list).
   the class mask (short dry grass, flat not green, pale surfaced). It passes at a median dE of 3 or less over the
   (box, type) pairs with 2,000 pixels under both. Boxes h, i and j have no NAIP 2025; they're measured on their NAIP
   2023 crops with the 2023 curve. `summary.misses` lists the boxes over the cut, with a note: the median can pass
-  while a box misses, because that box compares only urban land (below).
+  while a box misses, and the note names which boxes compared only urban land (below).
 
 **The 2 m NAIP COG** for G1b (`finish`, beside its parts on the cold drive): `naip2025_2m.tif`, 4 bands, uint8, on the
 ground's 2 m grid, the extent of Ada and Canyon, DEFLATE, 512 px tiles, with an internal mask (cells at least half

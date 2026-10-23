@@ -201,7 +201,8 @@ class PoolTest(unittest.TestCase):
         fb = report["albedo_fallback"]                                       # the report says so too
         self.assertTrue(fb["taken"])
         self.assertGreaterEqual(fb["types"], 1)
-        self.assertRegex(fb["note"], "almost no skill")
+        self.assertRegex(fb["note"], "too weak to set L")
+        self.assertNotIn("almost no skill", fb["note"])
 
 
 class SpearmanTest(unittest.TestCase):

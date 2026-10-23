@@ -520,5 +520,22 @@ class TwoCountiesTest(unittest.TestCase):
                 self.assertLessEqual(abs(got - (want + lift)), 2, x)
 
 
+class MissSummaryTest(unittest.TestCase):
+    @unittest.skipIf(gdal is None, "GDAL and NumPy not installed")
+    def test_note_names_only_what_holds(self):
+        import photo_stats
+        boxes = {"a": {"types": [{"type": "urban-land", "de": 14.0}, {"type": "x", "n_class": 1}]},
+                 "h": {"types": [{"type": "silt", "de": 5.0}, {"type": "urban-land", "de": 6.0}]},
+                 "f": {"types": [{"type": "silt", "de": 0.5}]}}
+        per_box = {"a": 14.0, "h": 5.5, "f": 0.5, "z": None}
+        out = photo_stats.miss_summary(per_box, boxes, {"urban-land"})
+        self.assertEqual(out["misses"], {"a": {"de": 14.0, "types": ["urban-land"]},
+                                         "h": {"de": 5.5, "types": ["silt", "urban-land"]}})
+        self.assertRegex(out["misses_note"], r"^box a: only urban land compared")
+        self.assertIn("box h: other types compared too", out["misses_note"])
+        self.assertNotIn("median passes", out["misses_note"])
+        self.assertEqual(photo_stats.miss_summary({"f": 0.5}, boxes, set()), {"misses": {}})
+
+
 if __name__ == "__main__":
     unittest.main()
