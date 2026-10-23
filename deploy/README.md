@@ -270,9 +270,12 @@ disk notes are in the VM's `/srv/tvt/work/README.md`.
 
 ### The tiles folder's locks
 
-Every job that rewrites the served tiles folder or its `manifest.json` takes a lock first (`basemap/lock.py`; #291):
-the landscape bake, the ground's switch-in (`tilewrite.py assemble --tiles`, `tiles.py`'s manifest update) and
-`basemap/build.sh`. The lock files live in one folder of their own, never in the served tiles folder:
+These commands take a lock before they rewrite the served tiles folder or its `manifest.json` (`basemap/lock.py`; #291):
+the landscape bake and its rollback (`bake.py rollback --tiles`), the ground's switch-in (`tilewrite.py assemble
+--tiles`), the ground's flat entry (`ground.py flat --tiles`; both ground commands go through `tiles.py`'s manifest
+update) and `basemap/build.sh`. The older layer scripts (`imagery.py`, `imagery_county.py`, `buildings.py`,
+`terrain.py`) take no lock, so they are not run against the served folder. The lock files live in one folder of their
+own, never in the served tiles folder:
 
 - **The folder** is `/srv/tvt/work/locks`, made group-writable with the setgid bit (mode 2775) so every job user can
   create files in it. `landscape.lock` and `manifest.lock` are made in it ahead of time with mode 664, because
@@ -285,7 +288,9 @@ the landscape bake, the ground's switch-in (`tilewrite.py assemble --tiles`, `ti
   does the G1a job script (`w.sh`, in the VM's work area, outside this repository).
 - **The path is the same inside and out** because a container and a host run must lock the same files, and they do
   only when the folder is one bind mount seen at one path.
-- **A host-side run** sets the variable in its environment: `TVT_TILES_LOCK_DIR=/srv/tvt/work/locks
+- **A host-side run** sets the variable in its environment. That covers `bake.py rollback --tiles` and `ground.py flat
+  --tiles` as much as the build: without it the lock lands in the checkout's `data/locks`, where a running bake does
+  not see it and both can rewrite the landscape entry. For example `TVT_TILES_LOCK_DIR=/srv/tvt/work/locks
   TILES_DIR=/srv/tvt/tiles basemap/build.sh`, or from the server's checkout `TVT_TILES_LOCK_DIR=/srv/tvt/work/locks
   python3 -m basemap.lock manifest.lock -- COMMAND`.
 - **Compose** sets nothing: its only mount of the tiles folder is the app's, read-only (`docker-compose.yml`), and no
