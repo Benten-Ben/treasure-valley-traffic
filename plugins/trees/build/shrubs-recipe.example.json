@@ -1,6 +1,6 @@
 {
   "_about": "Template for the per-box shrub build recipe (plugins/trees/README.md, Rebuilding the shrubs). Copy it to the private files and fill in every <...> value; never commit the filled copy. Each box's utm is its extent in grid metres (EPSG:32611), from basemap/ground/spec.json.",
-  "_flags": "Each key maps to a build_shrubs.py option: dsm, dtm, mask, photo, points, crop, lidar, lidar_date, photo_shift (auto or east,north in metres), skip_rects (--skip-rect, repeatable), out (--out).",
+  "_flags": "The box key is --area (a..j, downtown). Each other key maps to a build_shrubs.py option: dsm, dtm, mask, photo, points, crop, lidar, lidar_date, photo_shift (auto or east,north in metres), skip_rects (--skip-rect, repeatable), out (--out). Optional options not listed here (--points-srs, --photo-name, --crop-where, --crop-licence, --crop-republish, --crop-credit) are passed as needed, from the same filled copy. Downtown's skip rectangle is the overlap of its extent with box c's (564000,4830190,564868,4831000).",
   "boxes": {
     "a": {
       "utm": [
@@ -147,7 +147,7 @@
       "lidar_date": "<the lidar's acquisition date, YYYY-MM-DD>",
       "photo_shift": "auto",
       "skip_rects": [
-        "<x0,y0,x1,y1 in grid metres: the part of this box that belongs to the North End (box c)>"
+        "564000,4830190,564868,4831000"
       ],
       "out": "<the box's shrub build folder>"
     },
