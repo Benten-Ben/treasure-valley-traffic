@@ -41,9 +41,11 @@ ALTER TABLE trees.tree ADD CONSTRAINT tree_no_city_fields_check CHECK (catalogue
 ALTER TABLE trees.tree ADD CONSTRAINT tree_kind_check CHECK (kind = 'placed');
 
 UPDATE trees.build
-   SET counts = CASE WHEN counts ? 'catalogued' OR counts ? 'estimated'
+   SET counts = CASE WHEN COALESCE((counts ->> 'catalogued')::numeric, 0) > 0 OR COALESCE((counts ->> 'estimated')::numeric, 0) > 0
                      THEN CASE WHEN counts ? 'placed' THEN jsonb_set(counts - 'catalogued' - 'estimated' - 'types', '{trees}', counts -> 'placed')
                                ELSE counts - 'catalogued' - 'estimated' - 'types' END   -- the tree count is what it placed; the split by type was over every tree it held
+                     WHEN counts ? 'catalogued' OR counts ? 'estimated'
+                     THEN counts - 'catalogued' - 'estimated'   -- held no inventory trees (zero counts): its tree count and split are its own
                      ELSE counts END,
        params = CASE WHEN jsonb_typeof(params -> 'sources') = 'array'
                      THEN jsonb_set(params, '{sources}',
