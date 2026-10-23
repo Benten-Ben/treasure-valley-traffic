@@ -71,6 +71,13 @@ xhigh.
   `size:*`, `review:<tier>`, and the states `blocked`, `decision-needed`, `needs-design` and `owner-action`. The kit's
   `board` CLI is copied to `tools/board` (`tools/board ls|next|new|claim|status|block|sync-blocked`; it reads
   `.board.env`).
+- **Board automations** (set in the web UI; no API): item added → Backlog; item reopened (issues) → Ready; PR linked
+  to an issue → In review; changes requested → In progress; item closed or PR merged → Done; Done closes the issue;
+  closed issues archive after two weeks; open issues in this repository and sub-issues are added automatically.
+  "Code review approved" stays off, so a card stays In review until its PR merges. Replacing the Status options clears
+  these, so set them again after any change. **Views:** All, Board, Ready queue, In flight, Decisions for Ben, Waiting
+  on Ben, Chunk B, Chunk C, Backlog by area (grouped by Area) and Stale. A view's grouping saves only through "Save
+  view" and its dialog's Save. A "Waiting on" field (nobody, Ben, an agency) marks what waits on someone.
 - **Outstanding work lives on the project's GitHub board.** Each issue is a work order: Goal, Steps, Acceptance, Owns,
   Depends on, Context (`.github/ISSUE_TEMPLATE/task.md`). Decisions go on the issue they decide, as "Decided (who,
   date):", and lasting ones also go in [DECISIONS.md](DECISIONS.md).
