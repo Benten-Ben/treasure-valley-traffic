@@ -131,8 +131,11 @@ drive-through 3.5, emergency access 6.0, other service 5.5.
 `crossing=marked`, `zebra` or `uncontrolled` (OpenStreetMap's older word for
 a painted crossing without signals ⚠️; 1,700 nodes), or
 `crossing_ref=zebra`; false for `crossing:markings=no` or
-`crossing=unmarked`/`no`; otherwise null, not known
-(`crossing=traffic_signals` alone says nothing about paint). A crossing way
+`crossing=unmarked`/`no`. A signalized crossing (`crossing=traffic_signals`,
+`highway=traffic_signals` or `crossing:signals=yes`) with no paint tag is
+marked too: a stated exception (owner, Oct 22, answer 9), since signalized
+crossings are painted. Any explicit tag above wins over it. Otherwise null,
+not known. A crossing way
 with nothing on it takes its crossing nodes' (`marked_from` 'node'). Rail
 crossings (`railway=crossing`, `level_crossing`, `tram_crossing` or
 `tram_level_crossing`) are never crosswalks: `marked` stays null, and a rail
@@ -142,8 +145,8 @@ crossing ways on rail trails are marked on the way itself. Crosswalks are
 drawn only where `marked` is true (decision 10; the roads build, P7, makes
 them from `roads.osm_walk_node` where `kind = 'crossing' and marked`). On
 the Oct 5 extract: 5,912 crossing nodes and 5,183 crossing ways are marked;
-1,741 crossing nodes are at signals (`signals`), and 856 of those have no
-`crossing:markings` and stay null.
+1,741 crossing nodes are at signals (`signals`); those with no paint tag
+(856) are marked by the signals exception above.
 
 Kerbs are stored for routing, not drawn. A load that changed anything
 marks `roads-build` (`ops.build_pending`). Loading takes about 60 s and

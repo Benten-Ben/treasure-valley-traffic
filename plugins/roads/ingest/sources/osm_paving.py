@@ -236,6 +236,8 @@ def marked(tags):
         return False
     if str(tags.get("crossing_ref") or "").strip().lower() == "zebra":
         return True
+    if at_signals(tags):      # a stated exception (owner, Oct 22): a signalized crossing is painted unless tagged otherwise
+        return True
     return None
 
 
