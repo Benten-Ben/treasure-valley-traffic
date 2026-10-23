@@ -442,9 +442,10 @@ manifest names them as RAW inputs only (`3dep`, `overture-buildings`, `naip`, `s
 in the box's window and moved into the photo's frame by the photo shift (OpenStreetMap and the map are traced on the
 photo). The shift is the shrub build's, measured on its trees, unless the recipe gives the box its own (`"shift":
 [east, north]`, metres, multiples of 0.5 m), which the report records (`shift_from`). In the first build, box b
-moves 2 m west, h 1 m east and 0.5 m north, downtown 0.5 m east; the rest not at all ⚠️ (box d's lidar sits about
-2.3 m east of its photo at ground level, but the shift measured on its trees didn't earn its distance: a recipe
-shift for d is the owner's call, review 1).
+moves 2 m west, h 1 m east and 0.5 m north, downtown 0.5 m east; the rest not at all ⚠️. Box d's lidar sits about
+2.3 m east of its photo at ground level, but the shift measured on its trees didn't earn its distance, so the recipe
+gives d its own: `"shift": [-2.5, 0.0]` (owner, Oct 22, answer 11 of the end-of-wave-1 decisions; 2.5 m is the
+spike's 2.3 m rounded to the class grid). Box a keeps the shrub build's shift (none).
 
 ```bash
 python basemap/ground/classes.py build --recipe recipe.json [--box f --archive <another folder>]
@@ -483,8 +484,8 @@ under 6 GB; 18 MB). Each box's classes as a share of its cells with data, %:
 - **Box d with a recipe shift** (a quick look, Oct 15, a partial build outside the archive): with `"shift": [-2.5,
   0.0]`, the spike's ground-level offset (its lidar about 2.3 m east of the photo) rounded to the class grid, d
   agrees with the spike in 91% of cells (80% without): short green grass 92% (81%), short dry grass 85% (66%), pale
-  surfaced ground 91% (73%), dark 97% (89%). Whether d's recipe takes it, and so whether the next class build moves d
-  2.5 m west, is for owner review 1.
+  surfaced ground 91% (73%), dark 97% (89%). The owner decided on Oct 22 that d's recipe takes it, so the next class build moves d
+  2.5 m west.
 - **Box f's tracks** are back: 87,633 cells (2.2 ha) of mapped track turn pale where the photo shows them, 1% of the
   box, against none from the July rule; the rest of f stays short dry grass. Boxes h, i and j gain 4,000-14,000
   track cells each.
