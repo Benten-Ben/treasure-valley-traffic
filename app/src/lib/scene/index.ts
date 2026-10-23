@@ -815,7 +815,8 @@ export class Scene implements HitSource {
 				// Off screen (judged on the ground last read under it): neither drawn, picked nor queried for its ground.
 				// That reading counts only from the current terrain data: one taken before its DEM tile arrived
 				// (0) could place it off screen for good, since a culled model isn't read again.
-				const prev = terrain ? this.#ground.peek(inst.id, data) : undefined;
+				// (A lazy one is read again within a few frames, so a height from older terrain data can't strand it off screen.)
+				const prev = terrain ? this.#ground.peek(inst.id, lazy ? -1 : data) : undefined;
 				if (prev !== undefined || !terrain) {
 					const approx = terrain ? (inst.alt === undefined ? exag * prev! : renderedZ(inst.alt, prev!, exag)) : zAt(inst.id, inst.lng, inst.lat, inst.alt, inst.groundAlt);
 					offset(f, mx, my, approx + lift, local);

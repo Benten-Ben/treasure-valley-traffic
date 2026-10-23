@@ -87,15 +87,16 @@ export class GroundTracker {
 	 * `data`, exaggeration and position as last time, the ground isn't queried
 	 * again.
 	 *
-	 * `lazy` lets an object that hasn't moved keep the height it has when only the camera moved (the epoch
-	 * differs, the terrain data and exaggeration don't): the drawn surface under it can differ by the tile
-	 * level drawn, hardly ever by more. The scene asks for it of a different share of a big group each frame,
-	 * so every object is read again within a few frames instead of all of them every frame.
+	 * `lazy` lets an object that hasn't moved keep the height it has when the camera moved or terrain tiles
+	 * arrived (the epoch or the terrain data differ; the exaggeration doesn't): the drawn surface under it
+	 * can differ by the tile level drawn, hardly ever by more. The scene asks for it of a different share of
+	 * a big group each frame, so every object is read again within a few frames instead of all of them every
+	 * frame (or all at once when a tile arrives).
 	 */
 	sample(id: string, lng: number, lat: number, drawn: number | ((lng: number, lat: number) => number), exag: number, now: number, reducedMotion = false, epoch = -1, data = -1, lazy = false): number {
 		const t = this.#tracks.get(id);
 		const frame = this.#frame;
-		if (t && epoch >= 0 && (t.epoch === epoch || lazy) && t.data === data && t.exag === exag && t.lng === lng && t.lat === lat && frame - t.seen <= 1) {
+		if (t && epoch >= 0 && (t.epoch === epoch || lazy) && (t.data === data || lazy) && t.exag === exag && t.lng === lng && t.lat === lat && frame - t.seen <= 1) {
 			t.seen = frame;
 			return this.#advance(t, now);
 		}

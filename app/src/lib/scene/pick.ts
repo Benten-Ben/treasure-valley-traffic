@@ -26,6 +26,8 @@ export interface Placed {
 	priority: number;
 	/** A vertical capsule's axis on screen, [x1, y1, x2, y2] px: hit within `r` of it (x, y stay its centre). */
 	seg?: [number, number, number, number];
+	/** Storage for `seg` of a slot reused from frame to frame (see PickIndex.slot). */
+	own?: [number, number, number, number];
 }
 
 /** Distance from (x, y) to the segment (x1, y1)–(x2, y2), px. */
@@ -66,7 +68,7 @@ export class PickIndex implements HitSource {
 	slot(): Placed & { own: [number, number, number, number] } {
 		const b = this.#bufs[this.#w];
 		const n = this.#counts[this.#w]++;
-		let p = b[n] as (Placed & { own?: [number, number, number, number] }) | undefined;
+		let p = b[n];
 		if (!p?.own) b[n] = p = { x: 0, y: 0, r: 0, w: 0, pick: undefined as never, priority: 0, own: [0, 0, 0, 0] };
 		p.seg = undefined;
 		return p as Placed & { own: [number, number, number, number] };
