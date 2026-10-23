@@ -58,8 +58,9 @@ else a kind's default (WIDTHS, the landscape design's; a one-way parking aisle
 
 Crossings. `marked` is true for crossing:markings other than 'no', crossing=
 marked, zebra or uncontrolled, or crossing_ref=zebra; false for
-crossing:markings=no or crossing=unmarked|no; otherwise null (not known; at
-signals, crossing=traffic_signals alone says nothing about paint). A crossing
+crossing:markings=no or crossing=unmarked|no; a crossing at signals
+(crossing=traffic_signals, highway=traffic_signals or crossing:signals=yes) is true with no paint tag, a stated exception
+(owner, Oct 22, answer 9); explicit tags win. Otherwise null (not known). A crossing
 way with nothing on it takes its crossing nodes' (marked_from 'node'). Rail
 crossings (railway=crossing, level_crossing, tram_crossing or
 tram_level_crossing) are never crosswalks: marked stays null, and a rail
@@ -235,6 +236,8 @@ def marked(tags):
     if c in UNMARKED:
         return False
     if str(tags.get("crossing_ref") or "").strip().lower() == "zebra":
+        return True
+    if at_signals(tags):      # a stated exception (owner, Oct 22): a signalized crossing is painted unless tagged otherwise
         return True
     return None
 

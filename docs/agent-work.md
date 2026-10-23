@@ -51,6 +51,8 @@ xhigh.
 - **Each parallel unit gets its own worktree,** owns disjoint files, and has its own test database (`tvt_test_<unit>`) and
   port. Nobody uses `git stash`; that stack is shared by every worktree. Give a worktree its own `app/node_modules` as an
   APFS clone (`cp -cR`), not a symlink.
+  `data/dev/agent-unit.sh create|teardown <unit>` makes and removes that set (worktree, clone, test database, port)
+  on the laptop; it is git-ignored, so it is not published.
 - **Keep work resumable.** State lives in issues, branches and worktrees. Workflow scripts and helpers live in the
   git-ignored `data/dev/wf/`, never in a temporary folder.
 - **Server work** follows the existing rules: the scratch database for unmerged code, `heavy` with a deadline for heavy
