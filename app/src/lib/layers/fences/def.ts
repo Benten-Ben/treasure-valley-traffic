@@ -2,7 +2,6 @@ import type { DataMeta } from '#lib/contracts/meta.js';
 import { layerVersion } from '#lib/contracts/layer-tiles.js';
 import { prefetch } from '../prefetch.js';
 import type { LayerDef } from '../types.js';
-import { WALL } from './icons.js';
 
 /**
  * The data's URL, with the version /api/meta reports when it has one (immutable then). Same as `linesUrl` in
@@ -23,7 +22,6 @@ function linesUrl(meta: Pick<DataMeta, 'versions'> | null | undefined): string {
 const def: LayerDef = {
 	id: 'fences',
 	title: 'Fences',
-	icon: WALL,
 	order: 40, // = ORDER in fences.ts
 	group: 'landscape',
 	keepsValley: true,

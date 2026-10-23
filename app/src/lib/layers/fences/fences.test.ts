@@ -56,7 +56,7 @@ describe('the always-loaded def', () => {
 	it('imports only what the initial bundle already holds: not fences.ts, the palette or the scene (a layer loads lazily)', () => {
 		const src = readFileSync(join(__dirname, 'def.ts'), 'utf8');
 		const imports = [...src.matchAll(/^import (?!type\b)[^;]*from '([^']+)'/gm)].map((m) => m[1]);
-		expect(imports.sort()).toEqual(['#lib/contracts/layer-tiles.js', '../prefetch.js', './icons.js']);
+		expect(imports.sort()).toEqual(['#lib/contracts/layer-tiles.js', '../prefetch.js']);
 	});
 
 	it("is not imported by the layer's module or its helpers, and imports neither (so it is part of the registry's chunk, not one of its own)", () => {
