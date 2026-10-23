@@ -78,6 +78,7 @@ NEVER = {
     "water/canal_season": "the canal season (lifecycles drawn as feature-state, some from IDWR's legal window)",
     "*/boise_*": "a City of Boise layer",
     "trails/r2r_*": "Ridge to Rivers' trails",
+    "trails/trails_match": "the trails match (the City's lines linked to OpenStreetMap's)",
 }
 
 
