@@ -16,8 +16,9 @@
 -- A wetland drawn from NWI alone is geometry_from 'nwi'; where OSM also outlines it, OSM's outline is drawn
 -- (geometry_from 'osm') with the class and regime of its largest-overlap NWI polygon, and is confirmed when the NWI
 -- polygons together cover half of it (NWI splits one wetland into several polygons by class and regime). An NWI
--- polygon draws minus every OSM wetland it overlaps, and what is left only if it is a real piece (water-build's
--- WETLANDS). NWI is not a legal (regulatory) wetland boundary, and the card says so.
+-- polygon draws minus every OSM wetland it overlaps, and what is left only if it reaches far enough from OSM's
+-- outline to be a real piece, not an offset sliver or frame (water-build's WETLANDS). NWI is not a legal
+-- (regulatory) wetland boundary, and the card says so.
 
 create table water.nwi_project (
   id           bigint generated always as identity primary key,
@@ -102,4 +103,4 @@ comment on table water.nwi_project is
 comment on table water.nwi_presence is
   'The presence check''s shares for old-mapped NWI polygons: derived from public inputs (mask v0, CDL, CSB); republish: yes';
 comment on table water.wetland_check is
-  'Every NWI polygon''s outcome in each water-build, retired ones included (the QA sheet''s rows); body_id is the body that draws it: its own NWI body, or the OSM wetland that absorbed it (the one it overlaps most) when nothing of it draws. OSM and NHD overlap is listed as evidence only, never as support; republish: yes';
+  'Every NWI polygon''s outcome in each water-build, retired ones included (the QA sheet''s rows); drawn is true only when the presence check keeps the polygon and a body holds it; body_id is that body: its own NWI body, or, when nothing of the polygon draws beyond OSM''s outline, the OSM wetland it overlaps most (NULL when the polygon is under the 60 m2 drawing minimum and overlaps no OSM wetland, and drawn is then false). OSM and NHD overlap is listed as evidence only, never as support; republish: yes';

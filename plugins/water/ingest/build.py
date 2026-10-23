@@ -316,12 +316,15 @@ on conflict do nothing"""),
 #    when the NWI polygons together cover half or more of it; a small NWI polygon that is neither absorbed nor part
 #    of that half-cover lends nothing to a large OSM wetland.
 # OSM's outline is what draws. Every NWI polygon draws minus every OSM wetland it overlaps (so a small OSM wetland
-# inside a big NWI polygon leaves the rest of it), simplified. A polygon at least half inside OSM's wetlands (an
-# absorbed one, taken together) draws only what is left of it if that is a real piece of wetland and not a sliver or
-# a frame from an outline drawn a few metres off: at least REMAINDER_MIN_M2, and something left after a
-# REMAINDER_INSET_M inward buffer (never a share alone). A polygon less than half inside draws its whole leftover,
-# however little OSM overlaps it. A dropped remainder's check row points at the OSM body it overlaps most; a
-# remainder that draws is the polygon's own body, and its check row points there. NHD's marshes are
+# inside a big NWI polygon leaves the rest of it), simplified. For every NWI polygon that overlaps an OSM wetland,
+# what is left is an offset sliver or frame (an outline drawn a few metres off) and is dropped, unless the part of it
+# more than REMAINDER_REACH_M from the OSM wetlands (their union) is at least REMAINDER_REACH_MIN_M2: it is judged by
+# how far it reaches from OSM's outline, not by its own width, so a narrow tail running away from OSM draws. A leftover
+# that passes draws whole. A polygon at least half inside OSM's wetlands (an absorbed one, taken together) must also
+# leave REMAINDER_MIN_M2: a small leftover of a wetland OSM already draws is outline disagreement. A polygon less than
+# half inside draws its leftover subject to the reach rule and the drawing minimum only. A dropped leftover's check row
+# points at the OSM body that overlaps the polygon most; a leftover that draws is the polygon's own body, and its check
+# row points there; drawn is true only when a body holds the polygon. NHD's marshes are
 # evidence, and draw only where neither an OSM wetland nor any NWI polygon (retired or unchecked too) covers half
 # of them (below), as thinned tufts. Retired polygons are not drawn; they stay in water.wetland_check.
 WETLANDS = f"""
@@ -357,22 +360,28 @@ join w_nwi k using (key)
 where b.id = p.body_id;
 create temp table w_osm on commit drop as
 select ST_Union(g) g from b where kind = 'wetland' and geometry_from = 'osm';
+create temp table w_osm_reach on commit drop as
+select ST_Buffer(g, {wetlands.REMAINDER_REACH_M}) g from w_osm;
 insert into b (id, kind, intermittent, geometry_from, geom, g, area_m2, wetland_class, water_regime, modifiers,
                nwi_key, image_year, thin, presence, presence_reason)
 select {NWI_BASE} + {h48("'wetland:' || x.key")}, 'wetland', false, 'nwi', ST_Multi(ST_Transform(x.g, 4326)), x.g,
        ST_Area(x.g), x.attribute, x.regime, x.modifiers, x.key, x.image_year, x.thin, nullif(x.presence, 'kept'),
        x.reason
 from (select k.key, k.attribute, k.image_year, k.thin, k.presence, k.reason, k.regime, k.modifiers, r.mostly_inside,
+             r.reach_m2,
              ST_Multi(ST_CollectionExtract(ST_MakeValid(ST_SimplifyPreserveTopology(r.g, {wetlands.SIMPLIFY_M})), 3)) g
       from w_nwi k
       cross join lateral (select exists (select 1 from w_ov where w_ov.key = k.key) overlapped) o
       cross join lateral (select case when o.overlapped then ST_Difference(k.g, (select g from w_osm)) else k.g end g,
                                  o.overlapped and ST_Area(ST_Intersection(k.g, (select g from w_osm)))
                                                   >= {wetlands.OVERLAP_SHARE} * k.area_m2 mostly_inside
-                         ) r) x
+                         ) q
+      cross join lateral (select q.g, q.mostly_inside,
+                                 case when o.overlapped
+                                      then ST_Area(ST_Difference(q.g, (select g from w_osm_reach))) end reach_m2) r) x
 where not ST_IsEmpty(x.g) and ST_Area(x.g) >= {wetlands.MIN_AREA_M2}
-  and (not x.mostly_inside or (ST_Area(x.g) >= {wetlands.REMAINDER_MIN_M2}
-                               and not ST_IsEmpty(ST_Buffer(x.g, -{wetlands.REMAINDER_INSET_M}))))"""
+  and (x.reach_m2 is null or x.reach_m2 >= {wetlands.REMAINDER_REACH_MIN_M2})
+  and (not x.mostly_inside or ST_Area(x.g) >= {wetlands.REMAINDER_MIN_M2})"""
 
 BODIES = f"""
 create temp table b on commit drop as
@@ -739,7 +748,8 @@ def build(conn, out=None):
                                 "wetland_overlap": wetlands.OVERLAP_SHARE, "wetland_simplify_m": wetlands.SIMPLIFY_M,
                                 "wetland_min_area_m2": wetlands.MIN_AREA_M2,
                                 "wetland_remainder_min_m2": wetlands.REMAINDER_MIN_M2,
-                                "wetland_remainder_inset_m": wetlands.REMAINDER_INSET_M,
+                                "wetland_remainder_reach_m": wetlands.REMAINDER_REACH_M,
+                                "wetland_remainder_reach_min_m2": wetlands.REMAINDER_REACH_MIN_M2,
                                 "presence": {"built": wetlands.BUILT_RETIRES,
                                              "built_with_developed": wetlands.BUILT_WITH_DEVELOPED,
                                              "developed": wetlands.DEVELOPED_RETIRES,
@@ -869,11 +879,11 @@ from b""", {"build": build_id})
     step("wetland checks stored", """
 insert into water.wetland_check (key, build_id, era, presence, reason, drawn, body_id, built, developed, cultivated,
   hay_pasture, cdl_wetland, support)
-select v.key, %(build)s, v.era, v.presence, v.reason, v.drawn, coalesce(d.id, p.body_id), v.built, v.developed,
+select v.key, %(build)s, v.era, v.presence, v.reason, v.drawn and coalesce(d.id, p.body_id) is not null,
+       coalesce(d.id, p.body_id), v.built, v.developed,
        v.cultivated, v.hay_pasture, v.cdl_wetland, v.support
 from w_verdict v
-left join (select distinct on (nwi_key) nwi_key, id from b where nwi_key is not null
-           order by nwi_key, (geometry_from = 'nwi') desc, id) d on d.nwi_key = v.key
+left join (select nwi_key, id from b where geometry_from = 'nwi' and nwi_key is not null) d on d.nwi_key = v.key
 left join (select distinct on (key) key, body_id from w_ov order by key, a desc, body_id) p on p.key = v.key""",
          {"build": build_id})
     step("structures stored", """

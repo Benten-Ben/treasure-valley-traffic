@@ -365,7 +365,7 @@ class ConflationTest(unittest.TestCase):
                          values (%s, 'waterbody', 466, 'Swamp/Marsh', ST_Multi(ST_SetSRID(ST_GeomFromGeoJSON(%s), 4326)),
                                  %s)""", (pid, geom, nhd_load))
 
-        # A: OSM and NWI outline one wetland (NWI's 10 m off: 19% of it is left, under 2,000 m2); B: NWI alone,
+        # A: OSM and NWI outline one wetland (NWI's 10 m off: a strip 10 m wide, all within 15 m of OSM's outline); B: NWI alone,
         # 2017; C: 1981, mostly roofs and paving; D: 1981, in a field but with wetland on the land cover; E: 1981,
         # not checked yet; F: 1981 hay; G: 1981, nothing against it; H: NWI's marsh with an NHD marsh on it; I: NWI
         # too small to draw; J: NWI overlapping an OSM wetland a little (30%: not absorbed, so it draws what OSM's
@@ -429,6 +429,26 @@ class ConflationTest(unittest.TestCase):
         nwi_poly("X4", "PEM1C", "recent", gj_square(19088, 0, 50), 2017)
         osm(BASE + 13, gj_square(20000, 0, 100), natural="wetland")
         nwi_poly("W", "PEM1C", "recent", gj_rect(20000, 0, 100, 125), 2017)
+        # F: an 18 m wide NWI fringe, 1 km long, down the middle of a 30 x 520 m OSM wetland (a 480 m tail past its end);
+        # Y: a 100 m OSM square with NWI's outline of it plus a riparian tail 15 m wide and 400 m long; Q30: a 30 m OSM
+        # square inside NWI's 46 m outline (a frame 8 m wide); U: a 100 m OSM square with NWI's outline plus a compact
+        # 40 x 40 m lobe (1,600 m2: it reaches 40 m out, but is under the 2,000 m2 floor); AA, BB, K2: OSM wetland A2
+        # (400 m) with NWI BIG over most of it, K2 60% inside A2 and 30% inside the smaller OSM wetland B2 (which takes
+        # K2's class, covered 75% by it): K2 is absorbed into A2, which overlaps it most
+        osm(BASE + 14, gj_rect(21000, 0, 520, 30), natural="wetland")
+        nwi_poly("F1", "PEM1C", "recent", gj_rect(21000, 6, 1000, 18), 2017)
+        osm(BASE + 15, gj_square(23000, 0, 100), natural="wetland")
+        nwi_poly("Y", "PEM1C", "recent", gj_poly(((23000, 0), (23100, 0), (23100, 42), (23500, 42), (23500, 57),
+                                                  (23100, 57), (23100, 100), (23000, 100), (23000, 0))), 2017)
+        osm(BASE + 16, gj_square(25008, 8, 30), natural="wetland")
+        nwi_poly("Q30", "PEM1C", "recent", gj_square(25000, 0, 46), 2017)
+        osm(BASE + 17, gj_square(27000, 0, 100), natural="wetland")
+        nwi_poly("U", "PEM1C", "recent", gj_poly(((27000, 0), (27100, 0), (27100, 30), (27140, 30), (27140, 70),
+                                                  (27100, 70), (27100, 100), (27000, 100), (27000, 0))), 2017)
+        osm(BASE + 18, gj_square(29000, 0, 400), natural="wetland")
+        nwi_poly("BIG", "PSS1C", "recent", gj_rect(29000, 0, 300, 400), 2017)
+        nwi_poly("K2", "PEM1A", "recent", gj_square(29340, 150, 100), 2017)
+        osm(BASE + 19, gj_rect(29410, 150, 40, 100), natural="wetland")
         c.execute("""insert into water.osm_feature (osm_type, osm_id, shape, kind, name, tags, geom, first_seen,
                        last_seen) values ('w', %s, 'line', 'canal', null, '{}'::jsonb,
                          ST_SetSRID(ST_GeomFromGeoJSON(%s), 4326), %s, %s)""",
@@ -483,7 +503,7 @@ class ConflationTest(unittest.TestCase):
         self.assertEqual(rows["E"], ("unchecked", None, False))
         self.assertEqual(rows["G"], ("kept", None, True))
         self.assertEqual(rows["A"], ("kept", None, True))
-        self.assertEqual(len(rows), 28)
+        self.assertEqual(len(rows), 34)
         shares = self.q("select built, developed, support from water.wetland_check where key = 'C' and build_id = %s",
                         self.build_id)
         self.assertEqual((round(shares[0][0], 1), round(shares[0][1], 1)), (0.6, 0.7))
@@ -529,21 +549,63 @@ class ConflationTest(unittest.TestCase):
             self.assertEqual(self.check_row(k), (oid, True), k)
 
     def test_shifted_outline_leaves_no_strip(self):
-        # 100 m squares 15 m off: the L-shaped strip left (2,775 m2, 15 m wide) is above the area floor
+        # 100 m squares 15 m off: the L-shaped strip left (2,775 m2, 15 m wide) is above the area floor, but none of it
+        # lies more than 15 m from OSM's outline except a corner piece of about 48 m2 (under the 200 m2 reach minimum)
         oid, cls, confirmed, _ = self.osm_body(6)
         self.assertEqual((cls, confirmed), ("PEM1C", True))
         self.assertEqual(self.q("select count(*) from water.body where nwi_key = 'P'"), [(1,)])
         self.assertEqual(self.check_row("P"), (oid, True))
 
     def test_wider_outline_leaves_no_frame(self):
-        # a 100 m square inside NWI's 116 m one: a frame 8 m wide, 3,456 m2
+        # a 100 m square inside NWI's 116 m one: a frame 8 m wide, 3,456 m2, all within 15 m of OSM's outline
         oid, cls, confirmed, _ = self.osm_body(7)
         self.assertEqual((cls, confirmed), ("PEM1C", True))
         self.assertEqual(self.q("select count(*) from water.body where nwi_key = 'Q'"), [(1,)])
         self.assertEqual(self.check_row("Q"), (oid, True))
 
+    def test_a_small_wetland_gets_no_frame_either(self):
+        # the same frame round a 30 m OSM wetland (46 m outline): under half of NWI's polygon is inside OSM, but the
+        # frame lies within 15 m of OSM's outline, so it is dropped and the row points at the OSM body
+        oid, cls, confirmed, _ = self.osm_body(16)
+        self.assertEqual((cls, confirmed), ("PEM1C", True))
+        self.assertEqual(self.q("select count(*) from water.body where nwi_key = 'Q30'"), [(1,)])
+        self.assertEqual(self.check_row("Q30"), (oid, True))
+
+    def test_a_narrow_tail_that_runs_away_from_osm_draws(self):
+        # an 18 m fringe, 1 km long, down a 30 x 520 m OSM wetland: the 480 m tail past its end (8,642 m2) is narrower
+        # than any inset could keep, but it reaches far from OSM's outline
+        f = [r for r in self.body("F1") if r[0] == "nwi"]
+        self.assertEqual(len(f), 1)
+        self.assertAlmostEqual(float(f[0][10]), 8640, delta=200)
+        drawn = self.q("select id from water.body where nwi_key = 'F1' and geometry_from = 'nwi'")[0][0]
+        self.assertEqual(self.check_row("F1"), (drawn, True))
+        # a 15 m wide riparian tail, 400 m long, off a 100 m OSM square
+        y = [r for r in self.body("Y") if r[0] == "nwi"]
+        self.assertEqual(len(y), 1)
+        self.assertAlmostEqual(float(y[0][10]), 6000, delta=200)
+        drawn = self.q("select id from water.body where nwi_key = 'Y' and geometry_from = 'nwi'")[0][0]
+        self.assertEqual(self.check_row("Y"), (drawn, True))
+
+    def test_the_area_floor_drops_a_compact_lobe(self):
+        # a 40 x 40 m lobe (1,600 m2) reaches 40 m out of an OSM square NWI otherwise outlines, so only the 2,000 m2
+        # floor on an absorbed polygon's leftover drops it
+        oid, cls, confirmed, _ = self.osm_body(17)
+        self.assertEqual((cls, confirmed), ("PEM1C", True))
+        self.assertEqual(self.q("select count(*) from water.body where nwi_key = 'U'"), [(1,)])
+        self.assertEqual(self.check_row("U"), (oid, True))
+
+    def test_an_absorbed_polygons_row_points_at_the_wetland_that_absorbed_it(self):
+        # K2 is 60% inside the 400 m OSM wetland A2 and 30% inside the smaller B2, which takes K2's class (K2 covers
+        # 75% of it): K2's row points at A2, the one it overlaps most, not at B2
+        a2 = self.osm_body(18)
+        b2 = self.osm_body(19)
+        self.assertEqual((a2[1], b2[1], b2[3]), ("PSS1C", "PEM1A", "K2"))
+        self.assertEqual(self.check_row("K2"), (a2[0], True))
+        self.assertEqual(self.q("select count(*) from water.body where nwi_key = 'K2'"), [(1,)])
+
     def test_a_leftover_25_m_wide_is_a_real_piece(self):
-        # 100 x 125 m NWI over a 100 m OSM wetland: 80% inside, 2,500 m2 left and 5 m of it survives the 10 m inset
+        # 100 x 125 m NWI over a 100 m OSM wetland: 80% inside, 2,500 m2 left, 10 m of it more than 15 m from OSM
+        # (1,000 m2 of reach) and above the 2,000 m2 floor
         w = [r for r in self.body("W") if r[0] == "nwi"]
         self.assertEqual(len(w), 1)
         self.assertAlmostEqual(float(w[0][10]), 2500, delta=100)
@@ -564,7 +626,7 @@ class ConflationTest(unittest.TestCase):
         self.assertEqual(self.osm_body(11)[1:], (None, False, None))
 
     def test_thin_leftover_is_dropped_however_large(self):
-        # 3,000 m2 of leftover, but only 3 m wide
+        # 3,000 m2 of leftover, but only 3 m wide: none of it lies more than 15 m from OSM's outline
         oid = self.osm_body(9)[0]
         self.assertEqual(self.q("select count(*) from water.body where nwi_key = 'V'"), [(1,)])
         self.assertEqual(self.check_row("V"), (oid, True))
@@ -593,6 +655,8 @@ class ConflationTest(unittest.TestCase):
 
     def test_small_and_partly_overlapping(self):
         self.assertEqual(self.body("I"), [])                  # 36 m2: under the drawing minimum
+        # kept by the presence check, but no body holds it: not drawn, and it points nowhere
+        self.assertEqual(self.check_row("I"), (None, False))
         self.assertEqual(self.q("select count(*) from water.body where osm_id = %s", BASE + 2), [(1,)])
         # J overlaps OSM's wetland by 30%: drawn, but only the part OSM doesn't outline
         j = self.body("J")[0]
@@ -602,10 +666,11 @@ class ConflationTest(unittest.TestCase):
     def test_counts(self):
         c = self.counts
         self.assertEqual((c["nwi_polygons"], c["nwi_retired"], c["nwi_unchecked"], c["nwi_flagged"], c["nwi_kept"]),
-                         (28, 2, 1, 2, 23))
-        # by polygon: A, B, D, F, G, H, J, M, N, then S3 (the strips' class), P, Q, R, V, T, then Z, X1, X2, X4, W
-        self.assertEqual(c["wetlands_nwi"], 20)
-        self.assertEqual(c["wetlands"], 28)                  # 12 OSM, 15 NWI (R, T and W draw a leftover too), NHD's K
+                         (34, 2, 1, 2, 29))
+        # by polygon: A, B, D, F, G, H, J, M, N, then S3 (the strips' class), P, Q, R, V, T, then Z, X1, X2, X4, W, then
+        # F1, Y, Q30, U, BIG, K2
+        self.assertEqual(c["wetlands_nwi"], 26)
+        self.assertEqual(c["wetlands"], 36)                  # 18 OSM, 17 NWI (R, T, W, F1 and Y draw a leftover too), NHD's K
         self.assertEqual(c["wetlands_thin"], 4)              # D, F, G and NHD's marsh K
 
     def test_export_rows_have_the_wetland_columns(self):

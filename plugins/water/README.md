@@ -377,11 +377,17 @@ It is **not a legal (regulatory) wetland boundary**; every card says so.
   largest-overlap NWI polygon, and is confirmed, when the NWI polygons together cover half or more of it; a small NWI
   polygon that is neither absorbed nor part of that cover lends nothing to a large OSM wetland. OSM's outline is drawn
   (`geometry_from` `osm`). Every NWI polygon draws from its own outline (`geometry_from` `nwi`, simplified) minus every
-  OSM wetland it overlaps. A polygon at least half inside OSM wetlands draws what is left only if that is a real
-  piece, at least 2,000 m² with something left after a 10 m inward buffer (never a share alone: a strip or frame under
-  20 m wide is an outline drawn off); otherwise it is dropped, and its check row points at the OSM wetland. A polygon
-  less than half inside draws its whole leftover, however little OSM touches it. A check row points at the body that
-  draws it. NHD's marshes are evidence where an NWI polygon (retired or unchecked too) or OSM wetland covers
+  OSM wetland it overlaps. What is left of a polygon that overlaps an OSM wetland is an offset sliver or frame (an
+  outline drawn a few metres off) and is dropped, unless the part of it more than 15 m from the OSM wetlands (their
+  union) is at least 200 m²: a leftover is judged by how far it reaches from OSM's outline, not by its own width, so a
+  narrow tail that runs away from OSM draws, whole. (15 m is about NWI's horizontal tolerance at its 1:24,000 mapping
+  scale, the National Map Accuracy Standard's 40 ft ⚠️ a secondary basis; 200 m² keeps the corner piece of a 15 m
+  diagonal shift from counting as reach. Both are first guesses, to be tuned on the ten boxes with the worker step.)
+  A polygon at least half inside OSM wetlands (absorbed) must also leave 2,000 m²: a smaller leftover of a wetland OSM
+  already draws is outline disagreement. A polygon less than half inside draws its leftover subject to the reach rule
+  and the 60 m² minimum only. A dropped leftover's check row points at the OSM wetland that overlaps the polygon most;
+  a leftover that draws is the polygon's own body, and its row points there. `drawn` on a check row is true only when
+  a body holds the polygon. NHD's marshes are evidence where an NWI polygon (retired or unchecked too) or OSM wetland covers
   half of them; NWI wetlands never hide an NHD lake, pond, river or canal, and draw alone otherwise. `thin` marks the
   older mapping (the 1981-83 and interim polygons that passed, and NHD's marsh alone): thinned tufts from z15, where
   the rest are tufts from z14.

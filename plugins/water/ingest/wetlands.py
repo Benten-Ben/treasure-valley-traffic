@@ -67,10 +67,18 @@ SUPPORT_OVERLAP = 0.1          # an OSM wetland or NHD marsh overlapping this sh
 ERA_OLD_BEFORE = 1999          # a project whose imagery is older than this is "old"
 OVERLAP_SHARE = 0.5            # an NWI polygon is absorbed into an OSM wetland when this much of it lies inside; an OSM
                                # wetland is confirmed, and takes NWI's class, when NWI polygons cover this much of it
-REMAINDER_MIN_M2 = 2000.0      # what OSM's outline leaves of an NWI polygon at least half inside OSM wetlands draws if it
-                               # is at least this large ...
-REMAINDER_INSET_M = 10.0       # ... and something is left of it after this inward buffer (a strip or frame under 20 m
-                               # wide is an outline drawn off, not a wetland)
+REMAINDER_MIN_M2 = 2000.0      # what OSM's outline leaves of an NWI polygon at least half inside OSM wetlands (an
+                               # absorbed one) draws only if it is at least this large: a smaller leftover of a wetland
+                               # OSM already draws is outline disagreement ...
+REMAINDER_REACH_M = 15.0       # ... and, for every NWI polygon that overlaps an OSM wetland, a leftover is judged by how
+                               # far it reaches from OSM's outlines (their union), not by its own width: it is an offset
+                               # sliver or frame, and is dropped, unless the part of it more than this far away is at
+                               # least REMAINDER_REACH_MIN_M2. 15 m is about NWI's horizontal tolerance at its 1:24,000
+                               # mapping scale (the National Map Accuracy Standard's 40 ft at that scale). ⚠️ a secondary
+                               # basis: the standard, not a measurement of NWI against OSM here. A leftover that passes
+                               # draws whole, not only its far part.
+REMAINDER_REACH_MIN_M2 = 200.0  # keeps the corner piece of a 15 m diagonal shift (about 48 m2 beyond 15 m) from counting
+                               # as reach
 
 PRESENCES = ("kept", "flagged", "retired", "unchecked")
 REASONS = ("built", "farmed", "farmed_supported", "hay_pasture")
