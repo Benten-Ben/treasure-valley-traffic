@@ -1,9 +1,12 @@
 import type * as Protomaps from '@protomaps/basemaps';
-import type { LayerSpecification, LineLayerSpecification, Map, StyleSpecification } from 'maplibre-gl';
+import type { LayerSpecification, LineLayerSpecification, Map as GlMap, StyleSpecification } from 'maplibre-gl';
 import type * as Flavors from './flavors.js';
 import type { FlavorName, PaintChange } from './flavors.js';
 import { BUILDING_BASE, BUILDING_HEIGHT, ESTIMATED_FILTER, MEASURED_FILTER } from './buildings.js';
-import { anchorLayer, ANCHORS } from './order.js';
+import { anchorLayer, ANCHORS, insertSlotted } from './order.js';
+import type { BaseContribution, BaseState } from '#lib/base/types.js';
+import { BASE_CONTRIBUTIONS } from '#lib/base/registry.js';
+import type { DataMeta } from '#lib/contracts/meta.js';
 import { DEFAULT_HILLSHADE, type HillshadeMode } from '#lib/perf/flags.js';
 
 /** Where the basemap build (basemap/) publishes its output. Same origin, no third-party hosts. */
@@ -105,7 +108,78 @@ export interface BasemapManifest {
 		maxzoom: number;
 		detail?: { file: string; minzoom: number; maxzoom: number; points: number; radius: number };
 	};
+	/** The landscape base layers (one shared vector file); absent: not built yet. */
+	landscape?: LandscapeEntry;
+	/** The painted ground; absent: not built yet. */
+	ground?: GroundEntry;
 }
+
+/**
+ * The landscape file's entry (basemap/landscape/README.md, "The tiles-manifest entry"): one vector file
+ * holding every base layer the plugins export, written last by the bake. `layers` lists exactly the
+ * source-layers in the file, each with at least one feature; one whose export held none is under
+ * `empty` and is not in the file.
+ */
+export interface LandscapeLayerInfo {
+	plugin: string;
+	layer: string;
+	build: string;
+	geometry: string;
+	features: number;
+	fields: Record<string, string>;
+	minzoom: number;
+	maxzoom: number;
+	licence: string;
+	republish: string;
+	credit: string[];
+}
+
+export type LandscapeEntry =
+	| {
+			status: 'baked';
+			file: string;
+			digest: string;
+			format: string;
+			minzoom: number;
+			maxzoom: number;
+			promoteId: string;
+			layers: Record<string, LandscapeLayerInfo>;
+			empty: string[];
+			attribution: string;
+			licences: string[];
+			republish: string;
+			access: 'tailnet' | 'public';
+			inputs: string[];
+			built: string;
+			spec: number;
+			previous: string | null;
+	  }
+	/** Nothing to bake yet, or every base layer is empty. */
+	| { status: 'empty'; reason: string; previous: string | null; built: string; spec: number };
+
+/**
+ * The painted ground's entry (basemap/ground/README.md): `painted` with a valley-wide raster file and
+ * a sharper one around the key spots, or `flat` with the reason (the app then keeps the flat ground and
+ * says why). No entry at all: not built yet.
+ */
+export type GroundEntry =
+	| {
+			status: 'painted';
+			file: string;
+			tileSize: number;
+			format: string;
+			minzoom: number;
+			maxzoom: number;
+			detail: { file: string; minzoom: number; maxzoom: number; boxes: string[] };
+			attribution: string;
+			licence: string;
+			republish: string;
+			inputs: string[];
+			fallbacks: string[];
+			built: string;
+			spec: number;
+	  }
+	| { status: 'flat'; reason: string; built: string; spec: number };
 
 export type ManifestResult =
 	| { ok: true; manifest: BasemapManifest }
@@ -134,7 +208,7 @@ export async function loadManifest(fetchFn: typeof fetch = fetch): Promise<Manif
 	return { ok: true, manifest };
 }
 
-const pmtilesUrl = (origin: string, file: string) => `pmtiles://${origin}${TILES_PATH}/${file}`;
+export const pmtilesUrl = (origin: string, file: string) => `pmtiles://${origin}${TILES_PATH}/${file}`;
 
 const RAIL = '#6f6a75';
 
@@ -165,11 +239,87 @@ export function railLayers(l: LineLayerSpecification): LineLayerSpecification[] 
 }
 
 /**
- * The basemap's own layers in a flavor (docs/14 §14.5: Valley or Clay over the
- * manifest's Protomaps flavor), split at the first label: fills and lines
- * below, labels above.
+ * Named groups of the basemap's layer ids (S3a). A landscape layer or base contribution hides a group
+ * while it draws its own version (`suppressGroups`). Checked against Protomaps' own list in
+ * `style.test.ts`, so a Protomaps update that renames a layer fails a test, not the map.
  */
-function basemapLayers(m: BasemapManifest, flavor: FlavorName): { below: LayerSpecification[]; labels: LayerSpecification[] } {
+export const PROTOMAPS_GROUPS = {
+	/** Land cover and every land-use fill: the "landcover and landuse" run under `anchor:areas`. */
+	landcover: [
+		'landcover',
+		'landuse_park',
+		'landuse_urban_green',
+		'landuse_hospital',
+		'landuse_industrial',
+		'landuse_school',
+		'landuse_beach',
+		'landuse_zoo',
+		'landuse_aerodrome',
+		'landuse_runway',
+		'landuse_pedestrian',
+		'landuse_pier'
+	],
+	/** Water fills and lines, the run under `anchor:water`. */
+	water: ['water', 'water_stream', 'water_river'],
+	'water-labels': ['water_waterway_label', 'water_label_lakes'],
+	/** Every road line except rail, runway, taxiway and pier (tunnels, bridges and casings included). */
+	roads: [
+		'roads_tunnels_other_casing',
+		'roads_tunnels_minor_casing',
+		'roads_tunnels_link_casing',
+		'roads_tunnels_major_casing',
+		'roads_tunnels_highway_casing',
+		'roads_tunnels_other',
+		'roads_tunnels_minor',
+		'roads_tunnels_link',
+		'roads_tunnels_major',
+		'roads_tunnels_highway',
+		'roads_minor_service_casing',
+		'roads_minor_casing',
+		'roads_link_casing',
+		'roads_major_casing_late',
+		'roads_highway_casing_late',
+		'roads_other',
+		'roads_link',
+		'roads_minor_service',
+		'roads_minor',
+		'roads_major_casing_early',
+		'roads_major',
+		'roads_highway_casing_early',
+		'roads_highway',
+		'roads_bridges_other_casing',
+		'roads_bridges_link_casing',
+		'roads_bridges_minor_casing',
+		'roads_bridges_major_casing',
+		'roads_bridges_other',
+		'roads_bridges_minor',
+		'roads_bridges_link',
+		'roads_bridges_major',
+		'roads_bridges_highway_casing',
+		'roads_bridges_highway'
+	],
+	/** Service roads (alleys, driveways, parking aisles) and their casing. */
+	service: ['roads_minor_service', 'roads_minor_service_casing'],
+	/** Footpaths, cycleways and tracks. */
+	paths: ['roads_other']
+} as const satisfies Record<string, readonly string[]>;
+
+export type ProtomapsGroup = keyof typeof PROTOMAPS_GROUPS;
+
+const LAND_IDS: ReadonlySet<string> = new Set(PROTOMAPS_GROUPS.landcover);
+const WATER_IDS: ReadonlySet<string> = new Set(PROTOMAPS_GROUPS.water);
+
+/**
+ * The basemap's own layers in a flavor (docs/14 §14.5: Valley or Clay over the
+ * manifest's Protomaps flavor). The fills and lines come in four runs, which the
+ * landscape slots separate (docs/14 §14.8, "Layer order"): `head` (background and
+ * earth), the `land` fills, the `water` layers, and the `rest` (road lines, rail,
+ * flat buildings, boundaries); the labels above them.
+ */
+function basemapLayers(
+	m: BasemapManifest,
+	flavor: FlavorName
+): { head: LayerSpecification[]; land: LayerSpecification[]; water: LayerSpecification[]; rest: LayerSpecification[]; labels: LayerSpecification[] } {
 	const { layers, namedFlavor } = basemap();
 	let base = layers('protomaps', flavorKit().flavorOf(namedFlavor(m.basemap.flavor), flavor), { lang: 'en' });
 	if (m.buildings) {
@@ -181,10 +331,18 @@ function basemapLayers(m: BasemapManifest, flavor: FlavorName): { below: LayerSp
 	// classic railroad marks instead, a solid track line with cross-ties.
 	base = base.flatMap((l) => (l.id === 'roads_rail' && l.type === 'line' ? railLayers(l) : [l]));
 	const firstSymbol = base.findIndex((l) => l.type === 'symbol');
-	return {
-		below: firstSymbol === -1 ? base : base.slice(0, firstSymbol),
-		labels: firstSymbol === -1 ? [] : base.slice(firstSymbol)
-	};
+	const below = firstSymbol === -1 ? base : base.slice(0, firstSymbol);
+	const head: LayerSpecification[] = [];
+	const land: LayerSpecification[] = [];
+	const water: LayerSpecification[] = [];
+	const rest: LayerSpecification[] = [];
+	for (const l of below) {
+		if (l.id === 'background' || l.id === 'earth') head.push(l);
+		else if (LAND_IDS.has(l.id)) land.push(l);
+		else if (WATER_IDS.has(l.id)) water.push(l);
+		else rest.push(l);
+	}
+	return { head, land, water, rest, labels: firstSymbol === -1 ? [] : base.slice(firstSymbol) };
 }
 
 /**
@@ -305,7 +463,7 @@ export function terrainSources(
 
 /** The parts of a MapLibre map the style helpers use (so tests can pass a fake). */
 export type MapLike = Pick<
-	Map,
+	GlMap,
 	'getLayer' | 'getSource' | 'addSource' | 'addLayer' | 'getLayersOrder' | 'setLayoutProperty' | 'setPaintProperty'
 >;
 
@@ -341,11 +499,19 @@ export function setAerial(map: MapLike, m: BasemapManifest, origin: string, on: 
 }
 
 /** The basemap's first label layer: data layers drawn under the labels go before it. */
-export function firstBasemapLabel(map: Pick<Map, 'getLayer' | 'getLayersOrder'>): string | undefined {
+export function firstBasemapLabel(map: Pick<GlMap, 'getLayer' | 'getLayersOrder'>): string | undefined {
 	return map.getLayersOrder().find((id) => {
 		const l = map.getLayer(id);
 		return l?.type === 'symbol' && l.source === 'protomaps';
 	});
+}
+
+/** What `buildStyle` can also be told. */
+export interface StyleOptions {
+	/** /api/meta, when the caller has it (a toggled layer's tiles need a version). */
+	meta?: DataMeta | null;
+	/** The base contributions to build in (the registry's by default). */
+	contributions?: readonly BaseContribution[];
 }
 
 /**
@@ -356,8 +522,14 @@ export function firstBasemapLabel(map: Pick<Map, 'getLayer' | 'getLayersOrder'>)
  * It's built in one base flavor (docs/14 §14.5), Valley unless asked; the
  * layer manager switches flavors on the running map with `flavorDiff`.
  */
-export function buildStyle(m: BasemapManifest, origin: string, aerial = false, flavor: FlavorName = 'valley'): StyleSpecification {
-	const { below, labels } = basemapLayers(m, flavor);
+export function buildStyle(
+	m: BasemapManifest,
+	origin: string,
+	aerial = false,
+	flavor: FlavorName = 'valley',
+	opts: StyleOptions = {}
+): StyleSpecification {
+	const { head, land, water, rest, labels } = basemapLayers(m, flavor);
 
 	const style: StyleSpecification = {
 		version: 8,
@@ -441,9 +613,17 @@ export function buildStyle(m: BasemapManifest, origin: string, aerial = false, f
 	// insert before their slot's anchor, so the draped slots (base through
 	// routes) stay one contiguous run whatever loads first.
 	style.layers = [
-		...below,
+		...head,
+		anchorLayer('ground'),
+		...land,
+		anchorLayer('areas'),
+		...water,
+		anchorLayer('water'),
+		anchorLayer('surfaces'),
+		...rest,
 		anchorLayer('base'),
 		...middle,
+		anchorLayer('land'),
 		anchorLayer('streets'),
 		anchorLayer('lanes'),
 		anchorLayer('footprints'),
@@ -455,6 +635,16 @@ export function buildStyle(m: BasemapManifest, origin: string, aerial = false, f
 		anchorLayer('labels'),
 		anchorLayer('overlay')
 	];
+	// The base contributions (S3a): the built ones whose tiles the style can name now. The painted ground
+	// and a toggled layer's tiles are added on the running map (`syncContributions`).
+	const state: BaseState = { flavor, aerial, layers: new Set() };
+	const ranks = {};
+	const kit = flavorKit();
+	for (const c of opts.contributions ?? BASE_CONTRIBUTIONS) {
+		if (c.source.kind !== 'landscape' || !kit.contributionStatus(c, m, opts.meta).built) continue;
+		Object.assign(style.sources, kit.contributionSources(c, m, origin, opts.meta));
+		for (const l of c.layers) style.layers = insertSlotted(style.layers, [{ slot: l.slot, layer: kit.contributionLayer(c, l, state) }], l.rank, ranks);
+	}
 	return style;
 }
 

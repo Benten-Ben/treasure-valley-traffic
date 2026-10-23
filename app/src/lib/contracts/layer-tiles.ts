@@ -1,3 +1,4 @@
+import type { VectorSourceSpecification } from 'maplibre-gl';
 import type { DataMeta } from './meta.js';
 
 /**
@@ -40,4 +41,27 @@ export function layerTilesUrl(origin: string, plugin: string, layer: string, met
 	const url = `${origin}/api/${plugin}/tiles/${layer}/{z}/{x}/{y}`;
 	const v = layerVersion(meta, plugin, layer);
 	return v ? `${url}?v=${encodeURIComponent(v)}` : url;
+}
+
+/**
+ * A toggled layer's tiles as a MapLibre vector source (S3a, for a base contribution that uses them as a
+ * base: burn scars): the versioned tiles URL, the zooms the build holds, and the build's credit as the
+ * attribution (`layerCredit`), so the map credits it while one of its layers is visible.
+ */
+export function layerSource(
+	origin: string,
+	meta: Pick<DataMeta, 'versions' | 'layers'> | null | undefined,
+	plugin: string,
+	layer: string,
+	o: { minzoom: number; maxzoom: number; promoteId?: string }
+): VectorSourceSpecification {
+	const attribution = layerCredit(meta, plugin, layer);
+	return {
+		type: 'vector',
+		tiles: [layerTilesUrl(origin, plugin, layer, meta)],
+		minzoom: o.minzoom,
+		maxzoom: o.maxzoom,
+		...(o.promoteId ? { promoteId: o.promoteId } : {}),
+		...(attribution ? { attribution } : {})
+	};
 }

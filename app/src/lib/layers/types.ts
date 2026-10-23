@@ -2,6 +2,7 @@ import type { Component } from 'svelte';
 import type { MapGeoJSONFeature } from 'maplibre-gl';
 import type { AppCtx } from '#lib/app/context.js';
 import type { DataMeta } from '#lib/contracts/meta.js';
+import type { ProtomapsGroup } from '#lib/map/style.js';
 import type { IconData } from '#lib/ui/icons.js';
 
 /**
@@ -14,7 +15,7 @@ import type { IconData } from '#lib/ui/icons.js';
  * needs its icon); `load()` imports the module itself, its own chunk (≤ 30 KB
  * brotli), the first time the layer is switched on or prefetched.
  */
-export type LayerId = 'streets' | 'transit' | 'cameras' | 'lanes' | 'weather' | 'trees';
+export type LayerId = 'streets' | 'transit' | 'cameras' | 'lanes' | 'weather' | 'trees' | 'soils' | 'crops' | 'water' | 'trails' | 'fences';
 
 /** idle: not loaded yet; loading; ready; stale: shown but its feed is old; error. */
 export type LayerStatus = 'idle' | 'loading' | 'ready' | 'stale' | 'error';
@@ -23,6 +24,9 @@ export type LayerStatus = 'idle' | 'loading' | 'ready' | 'stale' | 'error';
  * What can be selected, and its picking priority (§14.3: bus > camera > hub > stop > route > lane > street).
  * Trees (docs/19) rank just under streets: crowns line the streets, so a click on a road under one
  * still opens the road, and a click on the crown away from it opens the tree.
+ * The landscape layers (plan §3.3) rank around them: trails and shrubs just over the trees, fences
+ * just under, water under those, then paving, crops and soils at the bottom, so a click on a field
+ * edge opens the fence and one in the middle of the field opens the crop.
  */
 export const PRIORITY = {
 	bus: 100,
@@ -33,8 +37,15 @@ export const PRIORITY = {
 	route: 60,
 	lane: 50,
 	street: 40,
+	trail: 38,
 	tree: 35,
-	sprite: 30
+	shrub: 34,
+	fence: 33,
+	sprite: 30,
+	water: 25,
+	paving: 22,
+	crop: 15,
+	soil: 10
 } as const;
 
 export type SelectionKind = keyof typeof PRIORITY | 'routes';
@@ -106,6 +117,20 @@ export interface LayerDef {
 	order: number;
 	/** One line on what it shows (tooltip). */
 	blurb: string;
+	/** `'landscape'`: it sits in the Landscape tray (S3b), not the toolbar's main row. */
+	group?: 'landscape';
+	/**
+	 * Base on Auto stays Valley while this layer is on (plan §3.6: Trees, Fences, Water and Lanes).
+	 * Auto goes Clay only while a layer without this is on.
+	 */
+	keepsValley?: boolean;
+	/** Basemap groups hidden while the layer is on (`#lib/map/style` `PROTOMAPS_GROUPS`). */
+	suppresses?: ProtomapsGroup[];
+	/**
+	 * Layers under which this one's area fills (`SlottedLayer.areaFill`) switch off: the crop fills
+	 * under Transit (plan §3.2).
+	 */
+	offUnder?: LayerId[];
 	/** Where its data comes from (tooltip, legend credit). */
 	source: string;
 	/** What the legend row says while it loads: "Loading routes…". */

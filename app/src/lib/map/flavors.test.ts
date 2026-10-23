@@ -21,6 +21,8 @@ import {
 	flavorOf,
 	GROUND,
 	hiddenBaseLabels,
+	registerFlavorPaint,
+	registeredFlavorLayers,
 	HILLSHADE_PAINT,
 	keepDrapeFresh,
 	photoSaturation,
@@ -31,6 +33,10 @@ import {
 	type FlavorName,
 	type PaintChange
 } from './flavors.js';
+import type { BaseContribution } from '#lib/base/types.js';
+import type { AppCtx } from '#lib/app/context.js';
+import { LayerManager } from '#lib/layers/manager.svelte.js';
+import type { LayerDef, LayerId } from '#lib/layers/types.js';
 import { basemapReady, buildStyle, flavorDiff, flavorLayers, setAerial, type BasemapManifest } from './style.js';
 
 beforeAll(() => basemapReady);
@@ -372,8 +378,13 @@ describe('flavors', () => {
 		const a: LayerSpecification[] = [{ id: 'x', type: 'background', paint: { 'background-color': '#000' } }];
 		const b: LayerSpecification[] = [{ id: 'y', type: 'background', paint: { 'background-color': '#000' } }];
 		expect(() => clayPaintDiff(a, b)).toThrow();
-		const c: LayerSpecification[] = [{ id: 'x', type: 'background', layout: { visibility: 'none' }, paint: { 'background-color': '#000' } }];
-		expect(() => clayPaintDiff(a, c)).toThrow(/layout/);
+		const line = (layout: Record<string, unknown>, color = '#000') =>
+			[{ id: 'l', type: 'line', source: 's', layout, paint: { 'line-color': color } }] as unknown as LayerSpecification[];
+		expect(() => clayPaintDiff(line({ 'line-cap': 'butt' }), line({ 'line-cap': 'round' }))).toThrow(/layout/);
+		// Visibility is the one layout property a flavor may differ in: a Valley-only base layer is hidden in Clay.
+		expect(clayPaintDiff(line({ visibility: 'visible' }), line({ visibility: 'none' }, '#111'))).toEqual([
+			{ layer: 'l', property: 'line-color', valley: '#000', clay: '#111' }
+		] satisfies PaintChange[]);
 		expect(clayPaintDiff(a, [{ id: 'x', type: 'background', paint: { 'background-color': '#111' } }])).toEqual([
 			{ layer: 'x', property: 'background-color', valley: '#000', clay: '#111' }
 		] satisfies PaintChange[]);
@@ -389,3 +400,148 @@ function test_transitionable(diff: PaintChange[]) {
 		expect(ref?.[d.property]?.transition, `${d.layer} ${d.property} is transitionable`).toBe(true);
 	}
 }
+
+
+// -- base contributions and data layers in the flavors (S3a) ------------------------------------------------------
+
+const landscapeManifest: BasemapManifest = {
+	...manifest,
+	landscape: {
+		status: 'baked',
+		file: 'landscape-1.pmtiles',
+		digest: '1',
+		format: 'pbf',
+		minzoom: 8,
+		maxzoom: 16,
+		promoteId: 'id',
+		layers: {
+			'roads.surfaces': { plugin: 'roads', layer: 'surfaces', build: 'b', geometry: 'Polygon', features: 1, fields: {}, minzoom: 12, maxzoom: 16, licence: 'ODbL-1.0', republish: 'internal', credit: [] },
+			'water.reaches': { plugin: 'water', layer: 'reaches', build: 'b', geometry: 'Polygon', features: 1, fields: {}, minzoom: 12, maxzoom: 16, licence: 'ODbL-1.0', republish: 'internal', credit: [] }
+		},
+		empty: [],
+		attribution: 'OSM',
+		licences: ['ODbL-1.0'],
+		republish: 'internal',
+		access: 'tailnet',
+		inputs: [],
+		built: '2026-10-20',
+		spec: 1,
+		previous: null
+	}
+};
+
+const contributions: BaseContribution[] = [
+	{
+		id: 'roads.surfaces',
+		title: 'Paving',
+		blurb: 'Paving',
+		source: { kind: 'landscape', sourceLayers: ['roads.surfaces'] },
+		looks: 'both',
+		layers: [{ id: 'surfaces-fill', type: 'fill', slot: 'surfaces', rank: 10, sourceLayer: 'roads.surfaces', valley: { 'fill-color': '#989088' }, clay: { 'fill-color': '#F8F4EC' } }],
+		credit: 'OSM'
+	},
+	{
+		id: 'water.reaches',
+		title: 'Water',
+		blurb: 'Water',
+		source: { kind: 'landscape', sourceLayers: ['water.reaches'] },
+		looks: 'valley',
+		layers: [{ id: 'water-fill', type: 'fill', slot: 'water', rank: 10, sourceLayer: 'water.reaches', valley: { 'fill-color': '#7cc4e4' } }],
+		credit: 'OSM'
+	}
+];
+
+describe('flavors of the landscape layers', () => {
+	const layersIn = (flavor: FlavorName) => buildStyle(landscapeManifest, 'http://x', false, flavor, { contributions }).layers;
+
+	it('switch the contributions with the look: the diff carries their Clay paints, and a Valley-only one is only hidden', () => {
+		const valley = layersIn('valley');
+		const clay = layersIn('clay');
+		expect(clay.map((l) => l.id)).toEqual(valley.map((l) => l.id));
+		const diff = clayPaintDiff(valley, clay);
+		expect(diff.filter((c) => c.layer === 'surfaces-fill')).toEqual([{ layer: 'surfaces-fill', property: 'fill-color', valley: '#989088', clay: '#F8F4EC' }]);
+		// No paint of its own in Clay, so nothing to crossfade: the manager's base pass hides it.
+		expect(diff.filter((c) => c.layer === 'water-fill')).toEqual([]);
+		expect((clay.find((l) => l.id === 'water-fill')!.layout as Paint).visibility).toBe('none');
+		expect((valley.find((l) => l.id === 'water-fill')!.layout as Paint).visibility).toBe('visible');
+		const map = fakeMap(valley);
+		applyFlavor(map as unknown as FlavorMap, diff, 'clay');
+		expect(paintOf(map.getLayer('surfaces-fill') as LayerSpecification)['fill-color']).toBe('#F8F4EC');
+		applyFlavor(map as unknown as FlavorMap, diff, 'valley', { duration: 0 });
+		expect(paintOf(map.getLayer('surfaces-fill') as LayerSpecification)['fill-color']).toBe('#989088');
+	});
+
+	it('give a data layer registered late the current look, and take it into the crossfade', () => {
+		const style = buildStyle(manifest, 'http://x');
+		const map = fakeMap([...style.layers, { id: 'fences-line', type: 'line', source: 's' } as LayerSpecification]);
+		const m = map as unknown as FlavorMap;
+		const diff = flavorDiff(manifest);
+		applyFlavor(m, diff, 'clay');
+		map.calls.length = 0;
+		// Registered while the map is Clay: Clay's paint at once, with no fade.
+		const stop = registerFlavorPaint(m, 'fences-line', { valley: { 'line-color': '#6F685E' }, clay: { 'line-color': '#9a948a' } });
+		expect(registeredFlavorLayers(m)).toEqual(['fences-line']);
+		expect(paintOf(map.getLayer('fences-line') as LayerSpecification)['line-color']).toBe('#9a948a');
+		expect(map.calls.find(([, k]) => k === 'line-color-transition')?.[2]).toEqual({ duration: 0, delay: 0 });
+		// The next switch fades it with the rest.
+		map.calls.length = 0;
+		const n0 = diff.filter((c) => map.getLayer(c.layer)).length;
+		const n = applyFlavor(m, diff, 'valley');
+		expect(paintOf(map.getLayer('fences-line') as LayerSpecification)['line-color']).toBe('#6F685E');
+		expect(map.calls.filter(([id, k]) => id === 'fences-line' && k === 'line-color-transition').map(([, , v]) => v)).toEqual([{ duration: FLAVOR_FADE_MS, delay: 0 }]);
+		expect(n).toBe(n0 + 1);
+		// A layer not on the map is skipped; unregistering stops it following the look.
+		const gone = registerFlavorPaint(m, 'not-there', { valley: { 'line-color': '#000' }, clay: { 'line-color': '#fff' } });
+		expect(() => applyFlavor(m, diff, 'clay')).not.toThrow();
+		gone();
+		stop();
+		expect(registeredFlavorLayers(m)).toEqual([]);
+		map.calls.length = 0;
+		applyFlavor(m, diff, 'valley');
+		expect(map.calls.some(([id]) => id === 'fences-line')).toBe(false);
+	});
+
+	it('gives a layer registered before any flavor was applied Valley, then Clay with the first switch', () => {
+		const style = buildStyle(manifest, 'http://x');
+		const map = fakeMap([...style.layers, { id: 'water-line', type: 'line', source: 's' } as LayerSpecification]);
+		const m = map as unknown as FlavorMap;
+		registerFlavorPaint(m, 'water-line', { valley: { 'line-color': '#7cc4e4' }, clay: { 'line-color': '#c9dce3' } });
+		expect(paintOf(map.getLayer('water-line') as LayerSpecification)['line-color']).toBe('#7cc4e4');
+		applyFlavor(m, flavorDiff(manifest), 'clay', { duration: 0 });
+		expect(paintOf(map.getLayer('water-line') as LayerSpecification)['line-color']).toBe('#c9dce3');
+	});
+});
+
+describe('Auto', () => {
+	const def = (id: LayerId, keepsValley?: boolean) => ({ id, title: id, order: 1, blurb: '', source: '', available: () => true, keepsValley }) as unknown as LayerDef;
+	const defs = [def('transit'), def('cameras'), def('trees', true), def('fences' as LayerId, true), def('water' as LayerId, true), def('lanes', true), def('soils' as LayerId)];
+	const manager = (layers: LayerId[]) => {
+		const m = new LayerManager({ selection: { current: null } } as unknown as AppCtx, defs, `#map=10/43/-116&layers=${layers.join(',') || 'none'}`);
+		return m;
+	};
+
+	it('goes Clay only while a layer that doesn’t keep Valley is on (plan §3.6)', () => {
+		expect(manager([]).flavor).toBe('valley');
+		// The default first visit stays Clay.
+		expect(manager(['transit', 'cameras']).flavor).toBe('clay');
+		// Trees, Fences, Water and Lanes keep Valley, alone or together.
+		for (const keep of [['trees'], ['fences'], ['water'], ['lanes'], ['trees', 'fences', 'water', 'lanes']] as LayerId[][]) expect(manager(keep).flavor, keep.join()).toBe('valley');
+		// One layer that doesn't keep it is enough, whatever else is on.
+		expect(manager(['trees', 'cameras']).flavor).toBe('clay');
+		expect(manager(['soils', 'trees']).flavor).toBe('clay');
+		expect(manager(['trees']).info().clay).toBe(false);
+		expect(manager(['transit']).info().clay).toBe(true);
+	});
+
+	it('leaves the Base look’s own choices alone: Clay is Clay, Map is Valley, Auto follows the layers', () => {
+		const m = manager(['trees']);
+		m.setBase('look', 'clay');
+		expect(m.flavor).toBe('clay');
+		m.setBase('look', 'map');
+		const n = manager(['cameras']);
+		n.setBase('look', 'map');
+		expect(n.flavor).toBe('valley');
+		n.setBase('look', 'auto');
+		expect(n.flavor).toBe('clay');
+	});
+});

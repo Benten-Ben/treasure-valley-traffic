@@ -7,7 +7,7 @@ import type { DbPart } from './versions.js';
 vi.mock('$app/env/private', () => ({ DATABASE_URL: undefined, FRAMES_DIR: '/nonexistent', TVT_FRAME_SOURCE: 'fixture' }));
 const { assembleMeta, dataMeta, readDatabase, readTiles, resetMetaCache, shortHash } = await import('./versions.js');
 const { META_CONTRACT } = await import('#lib/contracts/meta.js');
-const { layerCredit, layerTilesUrl, layerVersion } = await import('#lib/contracts/layer-tiles.js');
+const { layerCredit, layerSource, layerTilesUrl, layerVersion } = await import('#lib/contracts/layer-tiles.js');
 
 /** A toggled layer's build as readDatabase gives it. */
 const build = (version: string, credit = 'USDA NRCS SSURGO') => ({ version, builtAt: 1_760_000_000, license: 'public domain', republish: 'yes' as const, credit });
@@ -74,9 +74,21 @@ describe('/api/meta', () => {
 		await writeFile(join(dir, 'manifest.json'), JSON.stringify({
 			basemap: { built: '2026-10-05' }, terrain: { built: '2026-10-04' }
 		}));
-		expect(await readTiles(dir)).toEqual({ basemap: '2026-10-05', terrain: '2026-10-04', imagery: null, buildings: null });
+		expect(await readTiles(dir)).toEqual({ basemap: '2026-10-05', terrain: '2026-10-04', imagery: null, buildings: null, landscape: null, ground: null });
 		expect(await readTiles(join(dir, 'missing'))).toBeNull();
 		expect(shortHash('x')).toHaveLength(12);
+		await rm(dir, { recursive: true, force: true });
+	});
+
+	it('reads the landscape and ground build dates, only from a baked or painted entry', async () => {
+		const dir = await mkdtemp(join(tmpdir(), 'tvt-meta-'));
+		const write = (m: unknown) => writeFile(join(dir, 'manifest.json'), JSON.stringify(m));
+		await write({ basemap: { built: '2026-10-05' }, landscape: { status: 'baked', built: '2026-10-20' }, ground: { status: 'painted', built: '2026-10-18' } });
+		expect(await readTiles(dir)).toMatchObject({ landscape: '2026-10-20', ground: '2026-10-18' });
+		// A newer manifest is read again (the cache goes by modification time).
+		await new Promise((r) => setTimeout(r, 20));
+		await write({ landscape: { status: 'empty', reason: 'nothing to bake', built: '2026-10-21' }, ground: { status: 'flat', reason: 'no soils', built: '2026-10-21' } });
+		expect(await readTiles(dir)).toMatchObject({ landscape: null, ground: null });
 		await rm(dir, { recursive: true, force: true });
 	});
 
@@ -117,6 +129,21 @@ describe('/api/meta', () => {
 		expect(layerVersion({ versions: { ...m.versions, layers: undefined } }, 'soils', 'units')).toBeNull();
 		expect(layerTilesUrl('https://x', 'soils', 'units', m)).toBe('https://x/api/soils/tiles/units/{z}/{x}/{y}?v=20261011T0412Z-3fa9c1');
 		expect(layerTilesUrl('https://x', 'trails', 'paths', m)).toBe('https://x/api/trails/tiles/paths/{z}/{x}/{y}');
+		// A toggled layer as a vector source: the versioned URL, the build's zooms and its credit.
+		expect(layerSource('https://x', m, 'soils', 'units', { minzoom: 8, maxzoom: 15, promoteId: 'id' })).toEqual({
+			type: 'vector',
+			tiles: ['https://x/api/soils/tiles/units/{z}/{x}/{y}?v=20261011T0412Z-3fa9c1'],
+			minzoom: 8,
+			maxzoom: 15,
+			promoteId: 'id',
+			attribution: 'USDA NRCS SSURGO'
+		});
+		expect(layerSource('https://x', null, 'trails', 'paths', { minzoom: 10, maxzoom: 16 })).toEqual({
+			type: 'vector',
+			tiles: ['https://x/api/trails/tiles/paths/{z}/{x}/{y}'],
+			minzoom: 10,
+			maxzoom: 16
+		});
 		expect(assembleMeta(1, 'error', null, null).versions.layers).toEqual({});
 	});
 

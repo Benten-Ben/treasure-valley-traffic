@@ -20,6 +20,18 @@ describe('picker', () => {
 		expect(resolve([])).toBeNull();
 	});
 
+	it('ranks the landscape layers under the streets and trees, in the plan’s order (§3.3)', () => {
+		const order = ['bus', 'camera', 'weather', 'hub', 'stop', 'route', 'lane', 'street', 'trail', 'tree', 'shrub', 'fence', 'sprite', 'water', 'paving', 'crop', 'soil'] as const;
+		for (let i = 1; i < order.length; i++) expect(PRIORITY[order[i - 1]], `${order[i - 1]} over ${order[i]}`).toBeGreaterThan(PRIORITY[order[i]]);
+		expect([PRIORITY.trail, PRIORITY.shrub, PRIORITY.fence, PRIORITY.water, PRIORITY.paving, PRIORITY.crop, PRIORITY.soil]).toEqual([38, 34, 33, 25, 22, 15, 10]);
+		// The bus > camera > weather > hub > stop > route > lane > street order still holds, each against its neighbours.
+		const rows = order.map((k, i) => hit(sel(k, String(i))));
+		for (let i = 0; i < rows.length - 1; i++) expect(resolve([rows[i + 1], rows[i]])?.kind, `${order[i]} against ${order[i + 1]}`).toBe(order[i]);
+		// A click on a crop field's fence opens the fence; in the middle of the field, the crop.
+		expect(resolve([hit(sel('crop', 'c')), hit(sel('fence', 'f'), 6)])?.kind).toBe('fence');
+		expect(resolve([hit(sel('crop', 'c')), hit(sel('soil', 's'))])?.kind).toBe('crop');
+	});
+
 	it('takes the nearest of equal priority', () => {
 		expect(resolve([hit(sel('bus', 'far'), 10), hit(sel('bus', 'near'), 3)])?.id).toBe('near');
 	});

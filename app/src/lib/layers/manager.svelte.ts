@@ -1,7 +1,10 @@
-import type { Map } from 'maplibre-gl';
+import type { Map as GlMap } from 'maplibre-gl';
 import { untrack } from 'svelte';
 import type { AppCtx } from '#lib/app/context.js';
 import type { FlavorName } from '#lib/map/flavors.js';
+import { BASE_CONTRIBUTIONS } from '#lib/base/registry.js';
+import type { BaseState } from '#lib/base/types.js';
+import { fillOwner, slotAllowed, slotFlags, type SlotGate } from '#lib/map/order.js';
 import { BUILDINGS_LAYERS, flavorDiff, flavorKit } from '#lib/map/style.js';
 import { ringSprite } from '#lib/overlay/sprites.js';
 import {
@@ -31,7 +34,11 @@ import type { Chip, LayerDef, LayerId, LayerModule, LayerStatus, Selection } fro
  *   (with the reason, and Retry).
  * - It also holds the Base look (the Base popover): the basemap flavor
  *   (Valley or Clay, docs/14 §14.5; Auto means Clay whenever a data layer is
- *   on), buildings, terrain and labels.
+ *   on, except the layers that keep Valley: `LayerDef.keepsValley`, plan §3.6),
+ *   buildings, terrain and labels.
+ * - It applies the landscape contracts: the base contributions (`#lib/base`),
+ *   the basemap groups a layer hides (`LayerDef.suppresses`), and the slot flags
+ *   of the layers' area fills (aerial, one fill at a time, `offUnder`).
  */
 
 export type Look = 'auto' | 'map' | 'clay';
@@ -67,10 +74,13 @@ export class BaseLook {
 		writeStored(BASE_KEY, this.settings);
 	}
 
-	/** Whether the map wants the Clay flavor: Clay, or Auto with any data layer on. */
-	clay(anyLayerOn: boolean): boolean {
+	/**
+	 * Whether the map wants the Clay flavor: Clay, or Auto while a data layer that doesn't keep Valley is on
+	 * (`anyClayLayerOn`: Trees, Fences, Water and Lanes keep it; the first visit's Transit and Cameras don't).
+	 */
+	clay(anyClayLayerOn: boolean): boolean {
 		const look = this.settings.look;
-		return look === 'clay' || (look === 'auto' && anyLayerOn);
+		return look === 'clay' || (look === 'auto' && anyClayLayerOn);
 	}
 }
 
@@ -79,7 +89,7 @@ export interface LayersInfo {
 	shown: LayerId[];
 	status: Record<string, LayerStatus>;
 	errors: Record<string, string | null>;
-	/** The Base look wants Clay (Clay, or Auto with a layer on). */
+	/** The Base look wants Clay (Clay, or Auto with a layer on that doesn't keep Valley). */
 	clay: boolean;
 	/** The flavor the map is drawn in now (a mode keeps the one it found). */
 	flavor: FlavorName;
@@ -102,10 +112,14 @@ export class LayerManager {
 	#loading = new Set<LayerId>();
 	#unpick: Partial<Record<LayerId, () => void>> = {};
 	#cleanup: (() => void)[] = [];
-	#map: Map | null = null;
+	#map: GlMap | null = null;
 	#destroyed = false;
 	#stopEffects: (() => void) | null = null;
 	#shown = new Set<LayerId>();
+	/** Slot-flagged layers this manager hid (so it can show them again). */
+	#gated = new Set<string>();
+	/** Base contributions whose `live` hook is running, with the hook's cleanup. */
+	#live = new Map<string, () => void>();
 
 	constructor(ctx: AppCtx, defs: readonly LayerDef[], hash = typeof location === 'undefined' ? '' : location.hash) {
 		this.#ctx = ctx;
@@ -199,6 +213,8 @@ export class LayerManager {
 			$effect(() => {
 				const enabled = this.set.enabled;
 				void ctx.modes.current;
+				void ctx.aerial;
+				void ctx.meta;
 				void this.base.settings;
 				void this.modules;
 				untrack(() => {
@@ -218,6 +234,8 @@ export class LayerManager {
 		this.#stopEffects?.();
 		this.#stopDrape?.();
 		for (const f of this.#cleanup.splice(0)) f();
+		for (const f of this.#live.values()) f();
+		this.#live.clear();
 		for (const f of Object.values(this.#unpick)) f?.();
 		for (const m of Object.values(this.modules)) m?.destroy();
 		this.modules = {};
@@ -289,7 +307,7 @@ export class LayerManager {
 			shown: [...this.#shown],
 			status,
 			errors,
-			clay: this.base.clay(this.set.enabled.length > 0),
+			clay: this.#wantsClay(),
 			flavor: this.#map ? flavorKit().appliedFlavor(this.#map) : 'valley',
 			selection: sel ? { kind: sel.kind, id: sel.id, layer: sel.layer, title: sel.title } : null,
 			lens: this.set.last,
@@ -337,6 +355,7 @@ export class LayerManager {
 		this.#status[id] = 'ready';
 		mod.selected?.(this.#ctx.selection.current);
 		this.#apply(id);
+		this.#applyLandscape();
 	}
 
 	// Only Calibrate owns layer visibility (§14.3); look-through keeps the data layers drawn.
@@ -360,6 +379,77 @@ export class LayerManager {
 	#applyAll() {
 		for (const d of this.defs) this.#apply(d.id);
 		this.#applyBase();
+		this.#applyLandscape();
+	}
+
+	/**
+	 * The landscape contracts, after the base pass: the base contributions (added, shown or hidden for this
+	 * flavor, Aerial and layer set, their basemap groups hidden while they draw), the groups the layers on
+	 * hide, and the slot flags of the layers' area fills.
+	 */
+	#applyLandscape() {
+		const map = this.#map;
+		const manifest = this.#ctx.manifest;
+		if (!map || !manifest || this.#ctx.modes.current !== 'explore') return;
+		const aerial = this.#ctx.aerial;
+		const state: BaseState = { flavor: this.flavor, aerial, layers: new Set(this.set.enabled) };
+		// (The flavors module loads with the basemap style, so it's here whenever a map is.)
+		const kit = flavorKit();
+		const ready = kit.syncContributions(map, manifest, location.origin, this.#ctx.meta, state);
+		this.#startLive(ready);
+		// Groups a layer hides while it's on (and shown: not under a mode that owns the map).
+		for (const d of this.defs) {
+			const owner = `layer:${d.id}`;
+			if (d.suppresses?.length && this.#shown.has(d.id)) kit.suppressGroups(map, owner, d.suppresses);
+			else kit.releaseGroups(map, owner);
+		}
+		this.#gateSlots(map, aerial);
+	}
+
+	/** Start the `live` hook of each base contribution that is built and on the map, once; stop the rest. */
+	#startLive(ready: readonly string[]) {
+		const map = this.#map;
+		if (!map) return;
+		for (const [id, stop] of this.#live) {
+			if (ready.includes(id)) continue;
+			stop();
+			this.#live.delete(id);
+		}
+		for (const c of BASE_CONTRIBUTIONS) {
+			if (!c.live || !ready.includes(c.id) || this.#live.has(c.id)) continue;
+			this.#live.set(c.id, c.live({ map, app: this.#ctx, layerIds: c.layers.map((l) => l.id) }));
+		}
+	}
+
+	/**
+	 * Apply the slot flags (`SlottedLayer.aerial` and `areaFill`) to the layers modules added with them: a
+	 * layer the flags don't allow is hidden; when they allow it again it is shown if its owner is shown.
+	 * One area fill draws at a time: the owner turned on last that isn't off under a layer that's on.
+	 */
+	#gateSlots(map: GlMap, aerial: boolean) {
+		const flags = slotFlags(map);
+		if (!flags.size && !this.#gated.size) return;
+		const owners = new Set<LayerId>();
+		const fillsOff = new Set<LayerId>();
+		for (const f of flags.values()) {
+			if (!f.areaFill || !f.owner) continue;
+			if (this.def(f.owner)?.offUnder?.some((u) => this.set.has(u) && this.#shown.has(u))) fillsOff.add(f.owner);
+			else if (this.#shown.has(f.owner)) owners.add(f.owner);
+		}
+		const gate: SlotGate = { aerial, fillOwner: fillOwner(this.set.enabled, owners), fillsOff };
+		for (const [id, f] of flags) {
+			if (!map.getLayer(id)) continue;
+			const ownerOn = f.owner ? this.#shown.has(f.owner) : true;
+			if (!slotAllowed(f, gate)) {
+				if (map.getLayoutProperty(id, 'visibility') !== 'none') {
+					map.setLayoutProperty(id, 'visibility', 'none');
+					this.#gated.add(id);
+				}
+			} else if (this.#gated.has(id) && ownerOn) {
+				map.setLayoutProperty(id, 'visibility', 'visible');
+				this.#gated.delete(id);
+			}
+		}
 	}
 
 	#remember(enabled: LayerId[]) {
@@ -372,7 +462,12 @@ export class LayerManager {
 
 	/** The flavor the Base look wants (reactive): Clay, or Auto with a data layer on; otherwise Valley. */
 	get flavor(): FlavorName {
-		return this.base.clay(this.set.enabled.length > 0) ? 'clay' : 'valley';
+		return this.#wantsClay() ? 'clay' : 'valley';
+	}
+
+	/** Auto's rule (plan §3.6): a layer is on whose def doesn't keep Valley. */
+	#wantsClay(): boolean {
+		return this.base.clay(this.set.enabled.some((id) => !this.def(id)?.keepsValley));
 	}
 
 	/** Whether a flavor was applied to this map yet (the first goes in instantly, before the first frame). */

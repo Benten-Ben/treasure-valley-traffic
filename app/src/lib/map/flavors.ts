@@ -1,6 +1,21 @@
 import type { Flavor } from '@protomaps/basemaps';
-import type { LayerSpecification, Map } from 'maplibre-gl';
-import { BUILDING_OPACITY, BUILDINGS_LAYERS, IMAGERY_LAYERS } from './style.js';
+import type { LayerSpecification, Map as GlMap } from 'maplibre-gl';
+import type { StyleSpecification } from 'maplibre-gl';
+import { BASE_CONTRIBUTIONS } from '#lib/base/registry.js';
+import type { BaseContribution, BaseLayer, BaseState, BaseStatus } from '#lib/base/types.js';
+import { layerSource, layerVersion } from '#lib/contracts/layer-tiles.js';
+import type { DataMeta } from '#lib/contracts/meta.js';
+import { beforeSlot, setRank } from './order.js';
+import {
+	BUILDING_OPACITY,
+	BUILDINGS_LAYERS,
+	IMAGERY_LAYERS,
+	PROTOMAPS_GROUPS,
+	pmtilesUrl,
+	type BasemapManifest,
+	type MapLike,
+	type ProtomapsGroup
+} from './style.js';
 
 export { BUILDINGS_ESTIMATED_LAYER, BUILDINGS_LAYER, BUILDINGS_LAYERS, buildingOpacity, HILLSHADE_LAYER, IMAGERY_LAYERS } from './style.js';
 
@@ -211,7 +226,12 @@ export function clayPaintDiff(valley: readonly LayerSpecification[], clay: reado
 	const out: PaintChange[] = [];
 	valley.forEach((v, i) => {
 		const c = clay[i];
-		if (!deepEqual(v.layout ?? {}, c.layout ?? {})) throw new Error(`The flavors differ in ${v.id}'s layout; flavors change paint only.`);
+		// Paint only, except `visibility`: a Valley-only base layer is hidden in Clay (the manager's base pass
+		// shows and hides it; `#lib/map/style` `syncContributions`).
+		const { visibility: _v, ...vl } = (v.layout ?? {}) as Record<string, unknown>;
+		const { visibility: _c, ...cl } = (c.layout ?? {}) as Record<string, unknown>;
+		void _v, void _c;
+		if (!deepEqual(vl, cl)) throw new Error(`The flavors differ in ${v.id}'s layout; flavors change paint only.`);
 		const vp = (v as { paint?: Record<string, unknown> }).paint ?? {};
 		const cp = (c as { paint?: Record<string, unknown> }).paint ?? {};
 		for (const property of new Set([...Object.keys(vp), ...Object.keys(cp)])) {
@@ -224,7 +244,7 @@ export function clayPaintDiff(valley: readonly LayerSpecification[], clay: reado
 // -- applying a flavor to the map -----------------------------------------------------------------------
 
 /** The parts of a MapLibre map applying a flavor needs (tests pass a fake). */
-export type FlavorMap = Pick<Map, 'getLayer' | 'setPaintProperty' | 'getLayoutProperty'>;
+export type FlavorMap = Pick<GlMap, 'getLayer' | 'setPaintProperty' | 'getLayoutProperty'>;
 
 const applied = new WeakMap<object, FlavorName>();
 const trueColor = new WeakMap<object, boolean>();
@@ -252,7 +272,7 @@ export function setTrueColorPhoto(map: FlavorMap, on: boolean): void {
 }
 
 /** Whether the aerial photo shows on this map. */
-export function aerialShown(map: Pick<Map, 'getLayer' | 'getLayoutProperty'>): boolean {
+export function aerialShown(map: Pick<GlMap, 'getLayer' | 'getLayoutProperty'>): boolean {
 	return Boolean(map.getLayer(IMAGERY_LAYERS[0])) && map.getLayoutProperty(IMAGERY_LAYERS[0], 'visibility') !== 'none';
 }
 
@@ -260,7 +280,8 @@ export function aerialShown(map: Pick<Map, 'getLayer' | 'getLayoutProperty'>): b
  * Switch the map to a flavor: every changed paint property, each with a
  * transition of `duration` ms (0 = instant). Layers not on the map (the
  * imagery before Aerial's first use) are skipped. Building opacity follows
- * Aerial. Returns the number of properties set (0 when already applied).
+ * Aerial. The data layers' registered paints (`registerFlavorPaint`) go with it. Returns the number of
+ * properties set (0 when already applied).
  */
 export function applyFlavor(map: FlavorMap, diff: readonly PaintChange[], name: FlavorName, opts: { duration?: number; force?: boolean } = {}): number {
 	if (!opts.force && applied.has(map) && applied.get(map) === name) return 0;
@@ -278,8 +299,53 @@ export function applyFlavor(map: FlavorMap, diff: readonly PaintChange[], name: 
 		set(ch.layer, ch.property, value);
 		n++;
 	}
+	for (const [layer, paint] of dataPaints.get(map) ?? []) n += setDataPaint(map, layer, paint, name, duration);
 	applied.set(map, name);
 	return n;
+}
+
+// -- data layers' flavor paints -----------------------------------------------------------------------------------
+
+/** A data layer's MapLibre layer in each flavor (paint properties). */
+export interface DataPaint {
+	valley: Record<string, unknown>;
+	clay: Record<string, unknown>;
+}
+
+const dataPaints = new WeakMap<object, Map<string, DataPaint>>();
+
+type PaintSetter = (layer: string, key: string, v: unknown) => void;
+
+function setDataPaint(map: FlavorMap, layer: string, paint: DataPaint, name: FlavorName, duration: number): number {
+	if (!map.getLayer(layer)) return 0;
+	const set = map.setPaintProperty.bind(map) as PaintSetter;
+	let n = 0;
+	for (const [property, value] of Object.entries(paint[name])) {
+		set(layer, `${property}-transition`, { duration, delay: 0 });
+		set(layer, property, value);
+		n++;
+	}
+	return n;
+}
+
+/**
+ * A data layer's module registers a MapLibre layer's Valley and Clay paints (a few properties, such as
+ * a fence's color), and the manager keeps it in step with the Base look: the current flavor goes on at
+ * once (a late layer gets the current look, not Valley's), and every later switch includes it in the
+ * 350 ms crossfade (`applyFlavor`). Properties not named are the layer's own, in both flavors. Returns
+ * the unregister. Call it after the layer is on the map; a layer not on the map is skipped.
+ */
+export function registerFlavorPaint(map: FlavorMap & object, layer: string, paint: DataPaint): () => void {
+	let layers = dataPaints.get(map);
+	if (!layers) dataPaints.set(map, (layers = new Map()));
+	layers.set(layer, paint);
+	setDataPaint(map, layer, paint, appliedFlavor(map), 0);
+	return () => void dataPaints.get(map)?.delete(layer);
+}
+
+/** The data layers registered on this map. */
+export function registeredFlavorLayers(map: object): string[] {
+	return [...(dataPaints.get(map)?.keys() ?? [])];
 }
 
 /** The parts of a map the drape keeper needs (tests pass a fake). */
@@ -343,4 +409,239 @@ export function prefersReducedMotion(): boolean {
 	} catch {
 		return false;
 	}
+}
+
+// -- base contributions (S3a), applied to the map -----------------------------------------------------------------------------------
+
+/**
+ * Whether a contribution is built, or why not (the Base menu says it). **Built** means: every
+ * source-layer it names is in the landscape entry's `layers` (never one listed under `empty`); the
+ * ground entry's status is `painted`; a toggled layer's tiles have a version in /api/meta. An unbuilt
+ * contribution adds nothing to the map and hides nothing.
+ */
+export function contributionStatus(c: BaseContribution, m: BasemapManifest, meta?: Pick<DataMeta, 'versions'> | null): BaseStatus {
+	const notYet: BaseStatus = { built: false, reason: 'not built yet' };
+	switch (c.source.kind) {
+		case 'landscape': {
+			const e = m.landscape;
+			if (!e) return notYet;
+			if (e.status !== 'baked') return { built: false, reason: e.reason || notYet.reason };
+			const missing = c.source.sourceLayers.filter((n) => !(n in e.layers) || e.empty.includes(n));
+			return missing.length ? notYet : { built: true };
+		}
+		case 'ground': {
+			const e = m.ground;
+			if (!e) return notYet;
+			return e.status === 'painted' ? { built: true } : { built: false, reason: e.reason || notYet.reason };
+		}
+		case 'tiles':
+			return layerVersion(meta, c.source.plugin, c.source.layer) ? { built: true } : notYet;
+	}
+}
+
+/** The style source id a contribution's layer reads. */
+function sourceId(c: BaseContribution, l: BaseLayer): string {
+	switch (c.source.kind) {
+		case 'landscape':
+			return 'landscape';
+		case 'ground':
+			return l.detail ? 'groundDetail' : 'ground';
+		case 'tiles':
+			return `${c.source.plugin}.${c.source.layer}`;
+	}
+}
+
+/**
+ * The style sources a built contribution needs: the shared landscape vector source (the entry's
+ * zooms, `promoteId` and attribution), the ground's two rasters, or a toggled layer's versioned tiles.
+ */
+export function contributionSources(
+	c: BaseContribution,
+	m: BasemapManifest,
+	origin: string,
+	meta?: DataMeta | null
+): StyleSpecification['sources'] {
+	switch (c.source.kind) {
+		case 'landscape': {
+			const e = m.landscape;
+			if (e?.status !== 'baked') return {};
+			return {
+				landscape: {
+					type: 'vector',
+					url: pmtilesUrl(origin, e.file),
+					minzoom: e.minzoom,
+					maxzoom: e.maxzoom,
+					promoteId: e.promoteId,
+					attribution: e.attribution
+				}
+			};
+		}
+		case 'ground': {
+			const e = m.ground;
+			if (e?.status !== 'painted') return {};
+			return {
+				ground: { type: 'raster', url: pmtilesUrl(origin, e.file), tileSize: e.tileSize, attribution: e.attribution },
+				groundDetail: { type: 'raster', url: pmtilesUrl(origin, e.detail.file), tileSize: e.tileSize }
+			};
+		}
+		case 'tiles': {
+			const { plugin, layer, minzoom, maxzoom, promoteId } = c.source;
+			return { [`${plugin}.${layer}`]: layerSource(origin, meta, plugin, layer, { minzoom, maxzoom, promoteId }) };
+		}
+	}
+}
+
+/** Whether a contribution's layer draws in this state (it is built; the manager's pass applies this). */
+export function layerShown(c: BaseContribution, l: BaseLayer, state: BaseState): boolean {
+	if (c.looks === 'valley' && state.flavor !== 'valley') return false;
+	if (l.aerial === 'only' && !state.aerial) return false;
+	if (l.aerial === 'hide' && state.aerial) return false;
+	return l.show ? l.show(state) : true;
+}
+
+/** A contribution's layer as a style layer, in the flavor's paint and shown or hidden as `state` says. */
+export function contributionLayer(c: BaseContribution, l: BaseLayer, state: BaseState): LayerSpecification {
+	const paint = state.flavor === 'clay' && l.clay ? l.clay : l.valley;
+	return {
+		id: l.id,
+		type: l.type,
+		source: sourceId(c, l),
+		...(l.sourceLayer ? { 'source-layer': l.sourceLayer } : {}),
+		...(l.filter ? { filter: l.filter } : {}),
+		...(l.minzoom !== undefined ? { minzoom: l.minzoom } : {}),
+		...(l.maxzoom !== undefined ? { maxzoom: l.maxzoom } : {}),
+		layout: { visibility: layerShown(c, l, state) ? 'visible' : 'none' },
+		paint
+	} as LayerSpecification;
+}
+
+/** What suppressing a group needs of a map (so tests pass a fake). */
+export type SuppressMap = Pick<GlMap, 'getLayer' | 'setLayoutProperty' | 'getLayoutProperty' | 'setLayerZoomRange'>;
+
+interface Hidden {
+	visibility: string;
+	minzoom: number;
+	maxzoom: number;
+	/** owner → hidden from this zoom up, or null for outright. */
+	owners: Map<string, number | null>;
+}
+
+const hiddenGroups = new WeakMap<object, Map<string, Hidden>>();
+const ownerSignature = new WeakMap<object, Map<string, string>>();
+
+function refreshHidden(map: SuppressMap, id: string, h: Hidden): void {
+	if (!map.getLayer(id)) return;
+	const outright = [...h.owners.values()].some((z) => z === null);
+	const from = Math.min(...[...h.owners.values()].filter((z): z is number => z !== null), Infinity);
+	map.setLayoutProperty(id, 'visibility', outright ? 'none' : (h.visibility as 'visible' | 'none'));
+	if (Number.isFinite(from)) map.setLayerZoomRange(id, h.minzoom, Math.min(h.maxzoom, from));
+	else map.setLayerZoomRange(id, h.minzoom, h.maxzoom);
+}
+
+/** Stop hiding what `owner` hid. Other owners' hiding of the same layer stays. */
+export function releaseGroups(map: SuppressMap & object, owner: string): void {
+	ownerSignature.get(map)?.delete(owner);
+	const hidden = hiddenGroups.get(map);
+	if (!hidden) return;
+	for (const [id, h] of hidden) {
+		if (!h.owners.delete(owner)) continue;
+		refreshHidden(map, id, h);
+		if (!h.owners.size) hidden.delete(id);
+	}
+}
+
+/**
+ * Hide basemap groups for `owner` (a layer or a base contribution), from `fromZoom` up when given
+ * (the road lines from z14). Owners are counted per layer, so two owners never fight: a layer comes
+ * back only when the last owner lets go. Asking again with the same groups and zoom does nothing.
+ */
+export function suppressGroups(map: SuppressMap & object, owner: string, groups: readonly ProtomapsGroup[], fromZoom?: number): void {
+	let sigs = ownerSignature.get(map);
+	if (!sigs) ownerSignature.set(map, (sigs = new Map()));
+	const sig = `${[...groups].sort().join(',')}@${fromZoom ?? ''}`;
+	if (sigs.get(owner) === sig) return;
+	releaseGroups(map, owner);
+	sigs.set(owner, sig);
+	let hidden = hiddenGroups.get(map);
+	if (!hidden) hiddenGroups.set(map, (hidden = new Map()));
+	for (const g of groups) {
+		for (const id of PROTOMAPS_GROUPS[g] as readonly string[]) {
+			const layer = map.getLayer(id) as { minzoom?: number; maxzoom?: number } | undefined;
+			if (!layer) continue;
+			let h = hidden.get(id);
+			if (!h) {
+				h = {
+					visibility: (map.getLayoutProperty(id, 'visibility') as string | undefined) ?? 'visible',
+					minzoom: layer.minzoom ?? 0,
+					maxzoom: layer.maxzoom ?? 24,
+					owners: new Map()
+				};
+				hidden.set(id, h);
+			}
+			h.owners.set(owner, fromZoom ?? null);
+			refreshHidden(map, id, h);
+		}
+	}
+}
+
+/** What the base pass needs of a map (tests pass a fake). */
+export type SyncMap = MapLike & SuppressMap;
+
+const runtimeLayers = new WeakMap<object, Map<string, { c: BaseContribution; l: BaseLayer; flavor: FlavorName }>>();
+
+/**
+ * The manager's base pass for contributions: add the ones that join the running map (the painted ground
+ * on the first use of Valley, never in a Clay first load; a toggled layer's tiles once /api/meta has
+ * its version), then show or hide every contribution layer for this state, and hide the basemap
+ * groups of each built, shown contribution. Returns the ids of the contributions built and on the
+ * map, for their `live` hooks. An unbuilt contribution adds nothing and hides nothing.
+ */
+export function syncContributions(
+	map: SyncMap & object,
+	m: BasemapManifest,
+	origin: string,
+	meta: DataMeta | null,
+	state: BaseState,
+	contributions: readonly BaseContribution[] = BASE_CONTRIBUTIONS
+): string[] {
+	const live: string[] = [];
+	let added = runtimeLayers.get(map);
+	for (const c of contributions) {
+		const owner = `base:${c.id}`;
+		const status = contributionStatus(c, m, meta);
+		if (!status.built) {
+			releaseGroups(map, owner);
+			continue;
+		}
+		if (c.layers.length && !map.getLayer(c.layers[0].id)) {
+			// Joins the running map: the ground (first use of Valley) and a toggled layer's tiles.
+			if (c.source.kind === 'landscape') continue;
+			if (c.looks === 'valley' && state.flavor !== 'valley') continue;
+			for (const [id, src] of Object.entries(contributionSources(c, m, origin, meta))) if (!map.getSource(id)) map.addSource(id, src);
+			if (!added) runtimeLayers.set(map, (added = new Map()));
+			for (const l of c.layers) {
+				const before = beforeSlot(map as never, l.slot, l.rank);
+				map.addLayer(contributionLayer(c, l, state), before);
+				added.set(l.id, { c, l, flavor: state.flavor });
+			}
+		}
+		for (const l of c.layers) {
+			if (!map.getLayer(l.id)) continue;
+			setRank(map, l.id, l.rank);
+			const want = layerShown(c, l, state) ? 'visible' : 'none';
+			if (map.getLayoutProperty(l.id, 'visibility') !== want) map.setLayoutProperty(l.id, 'visibility', want);
+			// A layer added at run time isn't in the Valley/Clay diff: repaint it when the flavor changes.
+			const r = added?.get(l.id);
+			if (r && r.flavor !== state.flavor && l.clay) {
+				const paint = state.flavor === 'clay' ? l.clay : l.valley;
+				for (const [k, v] of Object.entries(paint)) (map.setPaintProperty as (id: string, k: string, v: unknown) => void)(l.id, k, v);
+				r.flavor = state.flavor;
+			}
+		}
+		const shown = c.layers.some((l) => layerShown(c, l, state));
+		if (c.suppresses && shown) suppressGroups(map, owner, c.suppresses.groups, c.suppresses.fromZoom);
+		else releaseGroups(map, owner);
+		live.push(c.id);
+	}
+	return live;
 }
