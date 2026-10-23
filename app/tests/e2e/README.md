@@ -44,6 +44,7 @@ or `--project=map`.
 | `tracks.spec.ts` | non-map | the tracks API and replay (WP7) |
 | `boot.spec.ts` | map | the map loads same-origin, shell paint |
 | `budget.spec.ts` | map | first-load budgets |
+| `buses3d.spec.ts` | map | 3D buses and stops on the replay (WP10) |
 | `calibrate.spec.ts` | map | camera calibration on the map |
 | `cameras.spec.ts` | map | camera views on the map |
 | `flavors.spec.ts` | map | map flavors and layer looks |
