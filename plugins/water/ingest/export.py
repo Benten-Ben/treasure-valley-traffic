@@ -145,7 +145,7 @@ def export(conn, archive, build=None, min_features=None):
     hydroshare = bool(named_by_hs or (counts or {}).get("kinds_from_hydroshare"))
     nwi_drawn = bool((counts or {}).get("wetlands_nwi"))
     inputs = [i for i in input_entries(build_inputs or {}, nwi_drawn) if i["name"] != "hydroshare" or hydroshare]
-    base_inputs = [i["name"] for i in inputs]
+    base_inputs = [i["name"] for i in inputs if i["name"] != "nwi"]      # NWI is in the bodies layer only
     folder = M.export_dir(archive, "water", build or M.build_id())
     os.makedirs(folder)
     try:

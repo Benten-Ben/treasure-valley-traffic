@@ -368,13 +368,13 @@ It is **not a legal (regulatory) wetland boundary**; every card says so.
   rules are `wetlands.presence()`: retired as `built` (built half or more, or a quarter with CDL developed at half and
   no support); retired as `farmed` (cultivated half or more, no support), or flagged `farmed_supported` with support;
   flagged `hay_pasture` (half or more); otherwise kept. Support is CDL wetland classes over a quarter of the
-  polygon, or an OSM wetland or NHD marsh overlapping it. CDL class 121 counts for nothing. The thresholds are the
+  polygon; an OSM wetland or NHD marsh overlapping it is listed on the card as evidence but does not rescue it. CDL class 121 counts for nothing. The thresholds are the
   review's first guesses, to be tuned on the ten boxes (the Greenbelt strip's roof share first). **An old polygon with
   no shares yet is `unchecked` and not drawn.**
 - **Conflation** (water-build, [`ingest/build.py`](ingest/build.py) `WETLANDS`): where OSM and NWI outline one wetland
-  (they overlap half or more of the smaller of the two) OSM's outline is drawn with NWI's class and regime
-  (`geometry_from` `osm`, confirmed); NWI alone is drawn from its own outline (`geometry_from` `nwi`), minus any OSM
-  wetland it only partly overlaps; NHD's marshes are evidence where an NWI or OSM wetland covers half of them, and
+  (they overlap half or more of the smaller and a quarter of the larger) OSM's outline is drawn with NWI's class and regime
+  (`geometry_from` `osm`, confirmed); NWI alone is drawn from its own outline (`geometry_from` `nwi`), minus every OSM
+  wetland (a paired polygon still draws what OSM's outline leaves, if that is a quarter of it); NHD's marshes are evidence where an NWI polygon (retired or unchecked too) or OSM wetland covers half of them; NWI wetlands never hide an NHD lake, pond, river or canal, and
   draw alone otherwise. `thin` marks the older mapping (the 1981-83 and interim polygons that passed, and NHD's marsh
   alone): thinned tufts from z15, where the rest are tufts from z14.
 - **Generalisation, per zoom, for the bake's byte budget:** NWI outlines are simplified to 1 m, NWI-only polygons under

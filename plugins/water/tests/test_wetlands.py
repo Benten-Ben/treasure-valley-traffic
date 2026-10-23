@@ -116,8 +116,8 @@ class EraAndPresenceTest(unittest.TestCase):
         self.assertEqual((v["support"], v["regime"], v["modifiers"]), (["cdl"], "C", "h"))
         v = wetlands.verdict({**row, "cdl_wetland": 0.1})
         self.assertEqual((v["presence"], v["reason"], v["drawn"]), ("retired", "farmed", False))
-        v = wetlands.verdict({**row, "cdl_wetland": 0.1, "nhd": True})          # an NHD marsh here stands for it
-        self.assertEqual(v["presence"], "flagged")
+        v = wetlands.verdict({**row, "cdl_wetland": 0.1, "nhd": True, "osm": True})   # only USDA land cover supports
+        self.assertEqual((v["presence"], v["reason"], v["support"]), ("retired", "farmed", ["osm", "nhd"]))
         v = wetlands.verdict({**row, "checked": False})
         self.assertEqual((v["presence"], v["drawn"]), ("unchecked", False))
         v = wetlands.verdict({**row, "era": "recent", "checked": False})
@@ -378,6 +378,18 @@ class ConflationTest(unittest.TestCase):
         osm(BASE + 2, gj_square(4570, 0, 100), natural="wetland")
         nwi_poly("J", "PEM1C", "recent", gj_square(4500, 0, 100), 2017)
         marsh("{M-K}", gj_square(5000, 0, 100))
+        # L: 1981, retired as built, with an NHD marsh on it; M: a big NWI polygon with a small OSM wetland inside;
+        # N: an NHD pond with an NWI wetland over most of it
+        nwi_poly("L", "PEM1C", "old", gj_square(6000, 0, 100), 1981)
+        shares("L", built=0.9, developed=0.9)
+        marsh("{M-L}", gj_square(6000, 0, 100))
+        nwi_poly("M", "PEM1C", "recent", gj_square(7000, 0, 300), 2017)
+        osm(BASE + 4, gj_square(7100, 100, 40), natural="wetland")
+        nwi_poly("N", "PEM1C", "recent", gj_square(8000, 0, 80), 2017)
+        c.execute("""insert into water.nhd_polygon (permanent_identifier, layer, ftype, ftype_name, geom, load_id)
+                     values ('{P-N}', 'waterbody', 390, 'Lake/Pond',
+                             ST_Multi(ST_SetSRID(ST_GeomFromGeoJSON(%s), 4326)), %s)""",
+                  (gj_square(8000, 0, 100), nhd_load))
         c.execute("""insert into water.osm_feature (osm_type, osm_id, shape, kind, name, tags, geom, first_seen,
                        last_seen) values ('w', %s, 'line', 'canal', null, '{}'::jsonb,
                          ST_SetSRID(ST_GeomFromGeoJSON(%s), 4326), %s, %s)""",
@@ -432,7 +444,7 @@ class ConflationTest(unittest.TestCase):
         self.assertEqual(rows["E"], ("unchecked", None, False))
         self.assertEqual(rows["G"], ("kept", None, True))
         self.assertEqual(rows["A"], ("kept", None, True))
-        self.assertEqual(len(rows), 10)
+        self.assertEqual(len(rows), 13)
         shares = self.q("select built, developed, support from water.wetland_check where key = 'C' and build_id = %s",
                         self.build_id)
         self.assertEqual((round(shares[0][0], 1), round(shares[0][1], 1)), (0.6, 0.7))
@@ -448,6 +460,20 @@ class ConflationTest(unittest.TestCase):
         row = self.q("select geometry_from, thin, minzoom, kind from water.body where nhd_pid = '{M-K}'")
         self.assertEqual(row, [("nhd", True, 15, "wetland")])
 
+    def test_retired_nwi_is_not_redrawn_by_nhd(self):
+        self.assertEqual(self.body("L"), [])
+        self.assertEqual(self.q("select count(*) from water.body where nhd_pid = '{M-L}'"), [(0,)])
+
+    def test_small_osm_wetland_inside_a_big_nwi_polygon(self):
+        m = self.body("M")[0]
+        self.assertEqual(m[0], "nwi")
+        self.assertAlmostEqual(float(m[10]), 90000 - 1600, delta=500)
+        self.assertEqual(self.q("select wetland_class from water.body where osm_id = %s", BASE + 4), [(None,)])
+
+    def test_nwi_wetland_does_not_suppress_an_nhd_pond(self):
+        self.assertEqual(self.q("select kind, geometry_from from water.body where nhd_pid = '{P-N}'"),
+                         [("pond", "nhd")])
+
     def test_small_and_partly_overlapping(self):
         self.assertEqual(self.body("I"), [])                  # 36 m2: under the drawing minimum
         self.assertEqual(self.q("select count(*) from water.body where osm_id = %s", BASE + 2), [(1,)])
@@ -459,9 +485,9 @@ class ConflationTest(unittest.TestCase):
     def test_counts(self):
         c = self.counts
         self.assertEqual((c["nwi_polygons"], c["nwi_retired"], c["nwi_unchecked"], c["nwi_flagged"], c["nwi_kept"]),
-                         (10, 1, 1, 2, 6))
-        self.assertEqual(c["wetlands_nwi"], 7)               # A, B, D, F, G, H, J
-        self.assertEqual(c["wetlands"], 9)                  
+                         (13, 2, 1, 2, 8))
+        self.assertEqual(c["wetlands_nwi"], 9)               # A, B, D, F, G, H, J
+        self.assertEqual(c["wetlands"], 12)                  
         self.assertEqual(c["wetlands_thin"], 4)              # D, F, G and NHD's marsh K
 
     def test_export_rows_have_the_wetland_columns(self):
@@ -480,13 +506,13 @@ class ConflationTest(unittest.TestCase):
             path, n = wetlands.write_qa(self.conn, self.build_id, d)
             with open(path, newline="") as f:
                 rows = list(csv.DictReader(f))
-        self.assertEqual(n, 5)                                    # C, D, E, F, G
+        self.assertEqual(n, 6)                                    # C, D, E, F, G, L
         self.assertEqual([(r["key"], r["presence"], r["reason"]) for r in rows[:2]],
-                         [("C", "retired", "built"), ("D", "flagged", "farmed_supported")])
+                         [("C", "retired", "built"), ("L", "retired", "built")])
         self.assertEqual(rows[0]["support"], "")
         x, y = (lambda p: (p[0], p[1]))(__import__("ingest.utm", fromlist=["to_utm"]).to_utm(*S.at(1040, 40)))
         counts = wetlands.box_counts(self.conn, self.build_id, {"hit": (x - 100, y - 100, x + 100, y + 100),
-                                                               "miss": (x + 5000, y, x + 5200, y + 100)})
+                                                               "miss": (x + 20000, y, x + 20200, y + 100)})
         self.assertEqual(counts, {"hit": {"retired": 1}, "miss": {}})
 
     def test_export_credits_nwi_and_carries_thin(self):

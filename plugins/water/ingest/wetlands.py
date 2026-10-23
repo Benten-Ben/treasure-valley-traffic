@@ -62,10 +62,12 @@ DEVELOPED_RETIRES = 0.5        # ... developed this much and no wetland support:
 CULTIVATED_RETIRES = 0.5       # cultivated this much and no support: retired; with support: kept, flagged
 HAY_PASTURE_FLAGS = 0.5        # hay or pasture this much: kept, flagged
 CDL_SUPPORT = 0.25             # CDL wetland classes over this share of the polygon count as support
-SUPPORT_OVERLAP = 0.1          # an OSM wetland or NHD marsh overlapping this share of the polygon counts as support
+SUPPORT_OVERLAP = 0.1          # an OSM wetland or NHD marsh overlapping this share is listed as evidence (not support)
 
 ERA_OLD_BEFORE = 1999          # a project whose imagery is older than this is "old"
 OVERLAP_SHARE = 0.5            # OSM and NWI outline one wetland when they overlap this much of the smaller of the two
+PAIR_LARGER_SHARE = 0.25       # ... and this much of the larger (a small wetland inside a big one is not the same one)
+REMAINDER_SHARE = 0.25         # a paired NWI polygon still draws what OSM's outline leaves, if that is this much of it
 
 PRESENCES = ("kept", "flagged", "retired", "unchecked")
 REASONS = ("built", "farmed", "farmed_supported", "hay_pasture")
@@ -446,11 +448,11 @@ select w.key, w.attribute, w.era, p.key is not null checked, p.built, p.develope
        p.cdl_wetland,
        exists (select 1 from water.osm_feature o
                where o.active and o.shape = 'area' and o.kind = 'wetland' and ST_Intersects(o.geom, w.geom)
-                 and ST_Area(ST_Intersection(ST_MakeValid(o.geom), w.geom)) >= {SUPPORT_OVERLAP} * ST_Area(w.geom))
+                 and ST_Area(ST_Intersection(ST_CollectionExtract(ST_MakeValid(o.geom), 3), w.geom)) >= {SUPPORT_OVERLAP} * ST_Area(w.geom))
          osm,
        exists (select 1 from water.nhd_polygon n
                where n.ftype_name = 'Swamp/Marsh' and ST_Intersects(n.geom, w.geom)
-                 and ST_Area(ST_Intersection(ST_MakeValid(n.geom), w.geom)) >= {SUPPORT_OVERLAP} * ST_Area(w.geom))
+                 and ST_Area(ST_Intersection(ST_CollectionExtract(ST_MakeValid(n.geom), 3), w.geom)) >= {SUPPORT_OVERLAP} * ST_Area(w.geom))
          nhd
 from water.nwi_wetland w left join water.nwi_presence p using (key)"""
 
@@ -470,7 +472,7 @@ def verdict(row):
         return {**out, "presence": "unchecked", "reason": None, "drawn": False, "thin": False}
     pres, reason = presence(row["era"], built=row["built"] or 0.0, developed=row["developed"] or 0.0,
                             cultivated=row["cultivated"] or 0.0, hay_pasture=row["hay_pasture"] or 0.0,
-                            support=bool(support))
+                            support="cdl" in support)
     return {**out, "presence": pres, "reason": reason, "drawn": pres != "retired", "thin": is_thin(row["era"])}
 
 

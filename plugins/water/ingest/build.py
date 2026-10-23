@@ -330,7 +330,8 @@ create temp table w_pair on commit drop as
 select o.id body_id, k.key, ST_Area(ST_Intersection(o.g, k.g)) a
 from b o join w_nwi k on ST_Intersects(o.g, k.g)
 where o.kind = 'wetland' and o.geometry_from = 'osm'
-  and ST_Area(ST_Intersection(o.g, k.g)) >= {wetlands.OVERLAP_SHARE} * least(o.area_m2, k.area_m2);
+  and ST_Area(ST_Intersection(o.g, k.g)) >= {wetlands.OVERLAP_SHARE} * least(o.area_m2, k.area_m2)
+  and ST_Area(ST_Intersection(o.g, k.g)) >= {wetlands.PAIR_LARGER_SHARE} * greatest(o.area_m2, k.area_m2);
 update b set wetland_class = k.attribute, water_regime = k.regime, modifiers = k.modifiers, nwi_key = k.key,
   image_year = k.image_year, presence = nullif(k.presence, 'kept'), presence_reason = k.reason, confirmed = true
 from (select distinct on (body_id) body_id, key from w_pair order by body_id, a desc, key) p
@@ -343,12 +344,14 @@ insert into b (id, kind, intermittent, geometry_from, geom, g, area_m2, wetland_
 select {NWI_BASE} + {h48("'wetland:' || x.key")}, 'wetland', false, 'nwi', ST_Multi(ST_Transform(x.g, 4326)), x.g,
        ST_Area(x.g), x.attribute, x.regime, x.modifiers, x.key, x.image_year, x.thin, nullif(x.presence, 'kept'),
        x.reason
-from (select k.key, k.attribute, k.image_year, k.thin, k.presence, k.reason, k.regime, k.modifiers,
+from (select k.key, k.attribute, k.image_year, k.thin, k.presence, k.reason, k.regime, k.modifiers, k.area_m2 full_m2,
+             exists (select 1 from w_pair p where p.key = k.key) paired,
              ST_Multi(ST_CollectionExtract(ST_MakeValid(ST_SimplifyPreserveTopology(
                case when exists (select 1 from w_osm where ST_Intersects(w_osm.g, k.g))
                     then ST_Difference(k.g, (select g from w_osm)) else k.g end, {wetlands.SIMPLIFY_M})), 3)) g
-      from w_nwi k where not exists (select 1 from w_pair p where p.key = k.key)) x
-where not ST_IsEmpty(x.g) and ST_Area(x.g) >= {wetlands.MIN_AREA_M2}"""
+      from w_nwi k) x
+where not ST_IsEmpty(x.g) and ST_Area(x.g) >= {wetlands.MIN_AREA_M2}
+  and (not x.paired or ST_Area(x.g) >= {wetlands.REMAINDER_SHARE} * x.full_m2)"""
 
 BODIES = f"""
 create temp table b on commit drop as
@@ -373,12 +376,22 @@ from water.nhd_polygon, box
 where ftype_name in ('Lake/Pond', 'Reservoir', 'Swamp/Marsh', 'Playa', 'Stream/River', 'Canal/Ditch');
 delete from n_poly where ST_IsEmpty(g);
 create index on n_poly using gist (g);
-create temp table b_sub on commit drop as select id, ST_Subdivide(g, 64) g from b;
+create temp table b_sub on commit drop as select id, ST_Subdivide(g, 64) g from b where kind <> 'wetland';
 create index on b_sub using gist (g);
+create temp table m_sub on commit drop as
+select ST_Subdivide(g, 64) g from (
+  select g from b
+  union all
+  select ST_CollectionExtract(ST_MakeValid(ST_Transform(geom, 32611)), 3) from water.nwi_wetland) a
+where not ST_IsEmpty(g);
+create index on m_sub using gist (g);
 create temp table n_cover on commit drop as
 select n.pid, ST_Area(n.g) area,
-       coalesce((select sum(ST_Area(ST_Intersection(n.g, bs.g))) from b_sub bs where ST_Intersects(bs.g, n.g)), 0)
-         covered
+       case when n.ftype_name = 'Swamp/Marsh'
+            then coalesce((select ST_Area(ST_Union(ST_Intersection(n.g, ms.g))) from m_sub ms
+                           where ST_Intersects(ms.g, n.g)), 0)
+            else coalesce((select sum(ST_Area(ST_Intersection(n.g, bs.g))) from b_sub bs
+                           where ST_Intersects(bs.g, n.g)), 0) end covered
 from n_poly n;
 update b set confirmed = true
 where (select coalesce(ST_Area(ST_Intersection(b.g, ST_Union(n.g))), 0) from n_poly n where ST_Intersects(n.g, b.g))
