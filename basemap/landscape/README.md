@@ -185,6 +185,7 @@ production's (`deploy/scratch/README.md`). Its build name for the staleness mark
 /srv/tvt/work/bin/heavy --deadline 22:00 --runtime 20 --peak 1 "base bake (deploy)" \
   docker run --rm --memory 2g --memory-swap 2g --cpus 2 --network none --user "$(id -u):$(id -g)" \
     -e HOME=/tmp -e PYTHONDONTWRITEBYTECODE=1 -e TZ=America/Boise -e TVT_ARCHIVE=/srv/archive \
+    -e TVT_TILES_LOCK_DIR=/srv/tvt/work/locks -v /srv/tvt/work/locks:/srv/tvt/work/locks \
     -v /srv/tvt/repo:/repo:ro -v /srv/tvt/archive:/srv/archive:ro -v /srv/tvt/tiles:/srv/tiles -w /repo \
     tvt-worker python basemap/landscape/bake.py bake --tiles /srv/tiles
 ```
@@ -193,7 +194,9 @@ The two host folders are `deploy/.env`'s `ARCHIVE_DIR` (Compose's default, `/srv
 set it) and `TILES_DIR`: change them here if the file says otherwise. Both must exist (`docker run -v` would create a
 missing one as root), and the tiles folder must be writable by the user the container runs as. GDAL writes in the
 container's own `/tmp` (about the file's size; it goes with the container), so there's no work folder to make or
-clean. The bake needs no network.
+clean. The bake needs no network. The lock folder is mounted at the same path inside and out, so a container and a host run lock the same
+files ([deploy/README.md](../../deploy/README.md#the-tiles-folders-locks)); without the variable the read-only checkout
+has nowhere to put the lock and the bake stops at the start.
 
 The tests' exports are synthetic: FlatGeobuf files around downtown written with GDAL, and copies of the ground's
 PostGIS-written fixtures, with real manifests whose sources are checked against the repository's plugin.json files.
