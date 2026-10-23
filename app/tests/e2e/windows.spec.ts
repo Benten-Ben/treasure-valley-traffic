@@ -728,7 +728,7 @@ test.describe('windows', () => {
 
 		// O the same way, framing the valley (Caldwell to east Boise, Kuna to Eagle) in the visible area.
 		await page.keyboard.press('KeyO');
-		await expect(chip).toBeVisible();
+		await chip.waitFor({ state: 'attached', timeout: 5_000 });   // as for H: the fade-in may lag under load
 		expect(await history()).toBe(1);
 		const o = await view();
 		expect(o.pitch).toBeCloseTo(0, 3);

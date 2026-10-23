@@ -190,7 +190,12 @@ test.describe('persistent', () => {
 		const hash = await page.evaluate(() => location.hash);
 		await page.reload();
 		await mapReady(page);
-		await expect.poll(() => currentView(page), { timeout: 30_000 }).not.toBeNull();
+		// Poll on the restored value itself, not just "some view": an early view can be the default one.
+		await expect.poll(async () => {
+			const v = await currentView(page);
+			return v !== null && Math.abs(v.lng - want.lng) < 1e-6 && Math.abs(v.lat - want.lat) < 1e-6
+				&& Math.abs(v.zoom - want.zoom) < 0.01;
+		}, { timeout: 30_000 }).toBe(true);
 		const after = (await currentView(page))!;
 		expect(Math.abs(after.lng - want.lng)).toBeLessThan(1e-6);
 		expect(Math.abs(after.lat - want.lat)).toBeLessThan(1e-6);
@@ -203,7 +208,11 @@ test.describe('persistent', () => {
 		const p2 = await other.newPage();
 		await p2.goto(`/${hash}`);
 		await mapReady(p2);
-		await expect.poll(() => currentView(p2), { timeout: 30_000 }).not.toBeNull();
+		await expect.poll(async () => {
+			const v = await currentView(p2);
+			return v !== null && Math.abs(v.lng - want.lng) < 1e-4 && Math.abs(v.lat - want.lat) < 1e-4
+				&& Math.abs(v.zoom - want.zoom) < 0.01;
+		}, { timeout: 30_000 }).toBe(true);
 		const shared = (await currentView(p2))!;
 		expect(Math.abs(shared.lng - want.lng)).toBeLessThan(1e-4);
 		expect(Math.abs(shared.lat - want.lat)).toBeLessThan(1e-4);
