@@ -56,6 +56,28 @@ xhigh.
 - **Server work** follows the existing rules: the scratch database for unmerged code, `heavy` with a deadline for heavy
   jobs, and the night window around the camera roll-up ([deploy/README.md](../deploy/README.md)).
 
+## The agents' GitHub App
+
+Agents don't act as the owner on GitHub. Since Oct 22 (owner: "yes set up the agents App for TVT") they use the owner's
+`bens-agents` GitHub App, the same App the owner's other projects use, with tokens scoped to this repository alone. Their PRs,
+comments and issue edits show as the App's bot, and they spend the App's own API budget instead of the owner's.
+
+- **How it works:** `tools/gh-app-token` mints a one-hour installation token from the App's private key and caches it.
+  `tools/agent-bin/gh` is a `gh` wrapper that puts that token in `GH_TOKEN` for ordinary calls. Every build unit puts
+  `tools/agent-bin` first on its `PATH`.
+- **What stays on the owner's login:**
+  - the board (a Project on a personal account, which an App can't reach): `tools/board` and
+    `tools/board_status_sync.py` set `TVT_GH_AS_USER=1`, and project queries are caught by name;
+  - anything naming `@me`;
+  - `gh auth`, and approvals (`gh pr review`).
+- **Configuration:** `~/.config/tvt/gh-app.env` (mode 600, never in the repository) names the App, its installation and
+  the private key's path, with `TVT_GH_APP_REPOS=treasure-valley-traffic`. The cache is `~/.cache/tvt/`. Never print a
+  token, the key or the ids into a chat, a prompt or the repository. Without the configuration, the wrapper falls back
+  to the login.
+- **Check:** `tools/gh-app-token >/dev/null && echo ok`. Then, with `GH_TOKEN=$(tools/gh-app-token)`,
+  `gh api /installation/repositories` should list this repository alone. Tests:
+  `python3 -m unittest tools.test_gh_app_token`.
+
 ## Testing
 
 - Builders run only the tests their change touches: unit tests, `npm run check` and `npm test` behind the build lock,

@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# gh for agents: GitHub calls run on the agents' GitHub App token (its own rate limit), not the
+# account's login. Put this directory first on PATH for agent sessions (docs/agent-work.md, "The agents'
+# GitHub App"). Falls back to the login when the app isn't configured.
+# Calls that must stay on the login:
+#   - the board (GitHub Projects on a personal account, which an app can't reach): tools/board and
+#     tools/board_status_sync.py set TVT_GH_AS_USER=1 themselves, and project queries are caught by name;
+#   - anything naming "@me" (an app token has no user);
+#   - `gh auth`, and approvals (`gh pr review`), which are a person's act;
+#   - any call made with TVT_GH_AS_USER=1 or with GH_TOKEN already set.
+here=$(cd "$(dirname "$0")" && pwd)
+real=""
+IFS=: read -ra dirs <<< "$PATH"
+for d in "${dirs[@]}"; do
+  [ -n "$d" ] && [ "$(cd "$d" 2>/dev/null && pwd)" != "$here" ] && [ -x "$d/gh" ] && { real="$d/gh"; break; }
+done
+[ -n "$real" ] || { echo "agent-bin/gh: no real gh on PATH" >&2; exit 127; }
+if [ -z "${GH_TOKEN:-}" ] && [ "${TVT_GH_AS_USER:-}" != 1 ]; then
+  as_user=0
+  case "${1:-}" in auth|project) as_user=1 ;; esac
+  [ "${1:-} ${2:-}" = "pr review" ] && as_user=1
+  for a in "$@"; do
+    case "$a" in *@me*|*projectV2*|*ProjectV2*|*projectsV2*|*projectV2Item*|*projectItems*) as_user=1 ;; esac
+  done
+  if [ "$as_user" = 0 ] && tok=$("$here/../gh-app-token" 2>/dev/null) && [ -n "$tok" ]; then
+    export GH_TOKEN="$tok"
+  fi
+fi
+exec "$real" "$@"

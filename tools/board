@@ -22,6 +22,8 @@
 #   board blockers <n>                list the issue's blockers and their state
 #   board sync-blocked                drop `blocked` from issues whose blockers are all closed
 #   board help
+# The board is a Project on a personal account, which the agents' App can't reach: always use the login.
+export TVT_GH_AS_USER=1
 set -uo pipefail
 
 DRY=0; ARGS=()

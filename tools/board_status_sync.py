@@ -21,6 +21,8 @@ import time
 from collections import Counter
 
 REPO_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# The board is a Project on a personal account, which the agents' App can't reach: always use the login.
+os.environ["TVT_GH_AS_USER"] = "1"
 QUERY = ("query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){issue(number:$n){number state "
          "labels(first:30){nodes{name}} blockedBy(first:50){nodes{state}} subIssuesSummary{total completed} "
          "projectItems(first:5){nodes{id project{number} fieldValueByName(name:\"Status\"){... on ProjectV2ItemFieldSingleSelectValue{name}}}}}}}")
