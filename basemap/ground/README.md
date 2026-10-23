@@ -316,7 +316,7 @@ into a work folder.
 
 | Input | Read from | What's taken |
 |---|---|---|
-| `osm` | S1's valley cut, `$TVT_ARCHIVE/osm/cut/valley.osm.pbf`, through GDAL's OSM driver with [`osmconf.ini`](osmconf.ini) (every tag, as JSON) | highway ways and waterways; parking, highway areas (plazas drawn as multipolygon relations included), water, and the soils design's rail and aeroway areas (aprons, runways, taxiways, helipads, `landuse=railway`). Railway tracks, runways and taxiways drawn as lines aren't read: no approval names them yet. OSM's buildings aren't read either: Overture's roofs hold them |
+| `osm` | S1's valley cut, `$TVT_ARCHIVE/osm/cut/valley.osm.pbf`, through GDAL's OSM driver with [`osmconf.ini`](osmconf.ini) (every tag, as JSON) | highway ways and waterways; railway tracks, runways and taxiways drawn as lines (sampling only, owner Oct 22); parking, highway areas (plazas drawn as multipolygon relations included), water, and the soils design's rail and aeroway areas (aprons, runways, taxiways, helipads, `landuse=railway`). OSM's buildings aren't read: Overture's roofs hold them |
 | `overture-buildings` | a copy of the map's `buildings.pmtiles` at z15, with `buildings.json` beside it | every footprint. One crossing a z15 tile's edge comes in two pieces, and the tiles' coordinates are good to about 0.2 m |
 | `nhd` | `$TVT_SOURCES/nhd/nhd_mapbox.gpkg` (HU4 1705) | Lake/Pond and Reservoir waterbodies; Stream/River and Canal/Ditch areas; stream, river and canal flowlines (canal and ditch lines for sampling only) |
 | `cdl` | `$TVT_SOURCES/cdl/out/cdl_2025_10m.tif` | developed land, classes 123 and 124 (medium and high intensity), polygonised on CDL's own 10 m grid |
@@ -342,12 +342,15 @@ null datum shift.
 | `road` | `roads` | 2 m beyond half the width |
 | `paving` | `paving` | 2 m |
 | `water` | all water, intermittent included (C6 and the soils design put no condition on it), and NHD's canal and ditch lines | 5 m (beyond half a line's width) |
-| `aeroway` | OSM's aprons, runways, taxiways and helipads drawn as areas | 2 m |
-| `rail` | OSM's rail yards (`landuse=railway`) | 2 m |
+| `aeroway` | OSM's aprons, runways, taxiways and helipads drawn as areas; runway and taxiway lines (45 m and 23 m wide ⚠️, or their `width` tag) | 2 m (beyond half a line's width) |
+| `rail` | OSM's rail yards (`landuse=railway`); railway track lines (`rail`, `light_rail`, `narrow_gauge`, `preserved`; sidings too, not trams or tunnels), a 5 m bed per track ⚠️ | 2 m (beyond half a line's width) |
 | `developed` | CDL 2025 classes 123 and 124 | none |
 
 Sampling buffers have square ends and mitred corners, a little more than round ones would cover. Aeroway and rail are
 for sampling only: the map doesn't draw them as surfaces, so the painter leaves them to the photo.
+The bed and runway widths are estimates ⚠️ (5 m per track, runway 45 m, taxiway 23 m, as before Oct 11) that wait for
+calibration in the ten windows. The lines only keep ballast and runways out of the soil sample, so a width on the wide
+side costs a few sample pixels and nothing else.
 
 **The rules** ([`maskrules.py`](maskrules.py), standard library, tested case by case):
 - **Which highway ways count.** Every road, street, service way, sidewalk and crossing counts, whatever its surface:

@@ -210,12 +210,21 @@ class LinesTest(unittest.TestCase):
                      {"waterway": "riverbank"}, {"waterway": "weir"}, {"highway": "residential"}):
             self.assertIsNone(MR.waterway(tags), tags)
 
-    def test_rail_and_runway_lines_are_not_read(self):
-        # Decision 2's tag lists and the soils design name rail and aeroway areas only, so tracks and runways drawn
-        # as lines aren't mask v0's (an owner item).
+    def test_rail_runway_and_taxiway_lines(self):
+        # The owner's answer 4 (Oct 22): lines, sampled around only. Widths are estimates until calibration.
+        self.assertEqual(MR.other_line({"railway": "rail"}), ("rail", "rail", 5.0))
+        self.assertEqual(MR.other_line({"railway": "light_rail", "service": "siding"}), ("rail", "light_rail", 5.0))
+        self.assertEqual(MR.other_line({"aeroway": "runway"}), ("aeroway", "runway", 45.0))
+        self.assertEqual(MR.other_line({"aeroway": "taxiway"}), ("aeroway", "taxiway", 23.0))
+        self.assertEqual(MR.other_line({"aeroway": "runway", "width": "30"}), ("aeroway", "runway", 30.0))
+        self.assertEqual(MR.other_line({"aeroway": "taxiway", "width": "900"}), ("aeroway", "taxiway", 23.0))
+        for tags in ({"railway": "tram"}, {"railway": "abandoned"}, {"railway": "rail", "tunnel": "yes"},
+                     {"railway": "rail", "location": "underground"}, {"aeroway": "runway", "area": "yes"},
+                     {"aeroway": "apron"}, {"aeroway": "taxilane"}, {"highway": "residential"}, {}):
+            self.assertIsNone(MR.other_line(tags), tags)
         for tags in ({"railway": "rail"}, {"aeroway": "runway"}, {"aeroway": "taxiway"}):
             self.assertIsNone(MR.road(tags), tags)
-            self.assertIsNone(MR.waterway(tags), tags)          # on a line, mask.read_osm reads only these two
+            self.assertIsNone(MR.waterway(tags), tags)
 
 
 class NhdTest(unittest.TestCase):
