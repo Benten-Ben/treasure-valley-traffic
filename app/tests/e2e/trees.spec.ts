@@ -48,6 +48,19 @@ const selection = (page: Page) => page.evaluate(() => (globalThis as any).__tvt.
  * "map error detail" warnings beside them (source, tile and URL), so a failure names what failed (#368).
  */
 async function keepErrors(page: Page) {
+	// Any /tiles/, sprite or /api/ answer that is not an image (or not 2xx/206): a decode error with no URL is traced by it.
+	const odd: string[] = [];
+	oddResponses.set(page, odd);
+	page.on('response', (r) => {
+		const u = r.url();
+		if (!/\/tiles\/|sprite|\/api\//.test(u)) return;
+		const h = r.headers();
+		const type = h['content-type'] ?? '';
+		const ok = r.status() === 200 || r.status() === 206;
+		if (ok && /^image\//.test(type)) return;
+		if (ok && !/\/tiles\/|sprite/.test(u)) return; // data answers under /api/ are not images
+		odd.push(`${r.status()} ${u} content-type=${type || '-'} length=${h['content-length'] ?? '-'}`);
+	});
 	await page.addInitScript(() => {
 		const w = globalThis as any;
 		w.__errors = [];
@@ -64,12 +77,16 @@ async function keepErrors(page: Page) {
 		};
 	});
 }
-const errorsOf = (page: Page): Promise<string[]> =>
-	page.evaluate(() => {
+const oddResponses = new WeakMap<Page, string[]>();
+const errorsOf = async (page: Page): Promise<string[]> => {
+	const out = await page.evaluate(() => {
 		const w = globalThis as any;
 		const errors: string[] = w.__errors ?? [];
 		return errors.length ? [...errors, ...(w.__details ?? [])] : errors;
 	});
+	const odd = oddResponses.get(page) ?? [];
+	return out.length && odd.length ? [...out, ...odd.map((o) => `non-image answer: ${o}`)] : out;
+};
 
 let seeded: Seeded | null = null;
 
