@@ -54,7 +54,9 @@ ways and lots are 'unknown' until one is, and the counts say so.
 
 Widths (⚠️ estimates until measured): the width tag where it reads as metres,
 else a kind's default (WIDTHS, the landscape design's; a one-way parking aisle
-4.5 m).
+4.5 m; a raceway 10 m and an escape ramp 6 m). A raceway or escape ramp (highway=raceway|escape, with
+no lanes or turn tags: osm_valley keeps those) is paving drawn by material and never routed; its kind is
+the highway value, and untagged it's 'unknown' (no default).
 
 Crossings. `marked` is true for crossing:markings other than 'no', crossing=
 marked, zebra or uncontrolled, or crossing_ref=zebra; false for
@@ -101,7 +103,7 @@ SOURCE = {
     "credit": "© OpenStreetMap contributors",
     "notes": "A consumer of the OpenStreetMap loader (python3 -m ingest osm-load): service ways but alleys, "
              "sidewalks, crossings, access aisles and traffic islands; parking lots and stalls drawn as areas; "
-             "crossing and kerb nodes, cut to the valley box. roads.osm_paving, roads.osm_parking and "
+             "raceways and escape ramps, crossing and kerb nodes, cut to the valley box. roads.osm_paving, roads.osm_parking and "
              "roads.osm_walk_node, its own tables (ODbL), versioned in place. Untagged service ways and lots "
              "take a default material only on the Cropland Data Layer's developed land (USDA NASS, public domain: "
              "roads.developed_land, loaded by roads-developed-load).",
@@ -117,9 +119,12 @@ WALKWAY_KINDS = tuple(sorted(osm_extract.PAVING_FOOTWAYS))         # footway=* o
 
 
 def way_kind(tags):
-    """A paving way's kind: from service=* on a service way, else its footway=* value."""
+    """A paving way's kind: from service=* on a service way, the highway value on a raceway or
+    escape ramp, else its footway=* value."""
     if tags.get("highway") == "service":
         return SERVICE_KINDS.get(tags.get("service"), "service")
+    if tags.get("highway") in osm_extract.PAVED_OTHER:
+        return tags["highway"]                  # raceway, escape: the highway value is the kind
     return tags["footway"]
 
 
@@ -156,6 +161,7 @@ KIND_DEFAULTS = {
     "sidewalk": ("concrete", False), "crossing": ("asphalt", False),       # a crossing is the carriageway's
     "access_aisle": ("asphalt", False), "traffic_island": ("concrete", False),
     "lot": ("asphalt", True), "space": ("asphalt", True),
+    "raceway": (None, False), "escape": (None, False),     # no default: untagged is 'unknown' (Oct 22)
 }
 STRUCTURES = {"multi-storey": "concrete", "rooftop": "concrete", "underground": None}   # parking=*: no land rule
 DEVELOPED_SHARE = 0.5      # on developed land: at least half of it (developed.py measures it)
@@ -196,7 +202,8 @@ def material(kind, tags, share=None):
 
 # The landscape design's defaults, in metres, until measured in the test windows.
 WIDTHS = {"service": 5.5, "driveway": 4.0, "parking_aisle": 7.0, "drive_through": 3.5, "emergency_access": 6.0,
-          "sidewalk": 1.5, "crossing": 3.0, "access_aisle": 1.5, "traffic_island": 1.5}
+          "sidewalk": 1.5, "crossing": 3.0, "access_aisle": 1.5, "traffic_island": 1.5,
+          "raceway": 10.0, "escape": 6.0}
 ONE_WAY_AISLE = 4.5
 
 

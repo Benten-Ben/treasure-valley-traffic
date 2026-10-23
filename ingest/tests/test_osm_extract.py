@@ -771,6 +771,32 @@ class MainTest(unittest.TestCase):
                 code = e.code
         return code, out.getvalue() + err.getvalue()
 
+    def test_count_ownerless_reads_the_cut_and_loads_nothing(self):
+        def line(i, **tags):
+            return json.dumps({"type": "Feature", "id": f"w{i}", "geometry": {"type": "LineString", "coordinates": []},
+                               "properties": {"@type": "way", "@id": i, **tags}})
+        ways = [line(1, highway="residential"), line(2, highway="residential", area="yes"),
+                line(3, highway="raceway"), line(4, highway="unclassified_link"), line(5, highway="corridor"),
+                line(6, highway="bus_guideway"), line(7, building="yes")]
+
+        def fake_osmium(cmd):
+            with open(cmd[cmd.index("--output") + 1], "w", encoding="utf-8") as f:
+                f.write("\n".join(ways) + "\n")
+            return ""
+
+        with tempfile.TemporaryDirectory() as d:
+            self.assertRaises(RuntimeError, ox.count_ownerless_in_cut, os.path.join(d, ox.CUT_DIR))             # no cut yet
+            os.makedirs(os.path.join(d, ox.CUT_DIR))
+            open(os.path.join(d, ox.CUT_DIR, ox.CUT_NAME), "w").close()
+            with mock.patch.object(ox, "osmium", fake_osmium), mock.patch.object(ox, "archive_dir", return_value=d):
+                lines = []
+                counts = ox.count_ownerless_in_cut(os.path.join(d, ox.CUT_DIR), out=lines.append)
+                self.assertEqual(counts, Counter({"area:residential": 1, "bus_guideway": 1}))
+                self.assertIn("6 highway ways", lines[0])
+                with mock.patch.object(ox.db, "connect", side_effect=AssertionError("no database")):
+                    code, text = self.run_main("--count-ownerless")
+        self.assertEqual(code, 0)
+
     def test_it_needs_to_be_told_which_extract(self):
         code, text = self.run_main()
         self.assertEqual(code, 2)

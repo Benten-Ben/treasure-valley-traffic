@@ -3,6 +3,7 @@
     python3 -m ingest osm-load --inbox                 # the newest extract in $TVT_ARCHIVE/osm/inbox/
     python3 -m ingest osm-load --file PATH             # an extract anywhere (copied into the archive)
     python3 -m ingest osm-load --archived              # the newest extract in the archive again
+    python3 -m ingest osm-load --count-ownerless       # built highway ways in the valley cut that no consumer owns
     python3 -m ingest osm-load --only roads.osm_street # one consumer (on the newest archived extract,
                                                        # unless --inbox or --file says otherwise)
     python3 -m ingest osm-load --cut-only              # just make the valley cut (S5a's mask reads it)
@@ -204,6 +205,36 @@ def ownerless_built(tags):
 def count_ownerless(tags_list):
     """Counter of ownerless_built keys over the built ways, for the real-extract check."""
     return Counter(key for key in map(ownerless_built, tags_list) if key)
+
+
+def count_ownerless_in_cut(cut_dir, out=print):
+    """Count the built highway ways with no owner in the valley cut (`osm-load --count-ownerless`,
+    run by hand; it loads nothing): the keys of ownerless_built(), over the ways osmium exports as
+    lines or areas. The real-extract check for the partition. Returns the Counter."""
+    cut = os.path.join(cut_dir, CUT_NAME)
+    if not os.path.isfile(cut):
+        raise RuntimeError(f"no valley cut at {cut} (make it with --cut-only)")
+    counts, total = Counter(), 0
+    with tempfile.TemporaryDirectory() as work:
+        config, lines = os.path.join(work, "export.json"), os.path.join(work, "ways.geojsonseq")
+        write_json(config, {"attributes": {"type": True, "id": True}, "linear_tags": True, "area_tags": False})
+        osmium(["osmium", "export", "--config", config, "--output-format", "geojsonseq", "--format-option",
+                "print_record_separator=false", "--geometry-types", "linestring,polygon", "--add-unique-id", "type_id",
+                "--no-progress", "--overwrite", "--output", lines, cut])
+        with open(lines, encoding="utf-8") as f:
+            for line in f:
+                if '"highway"' not in line:
+                    continue
+                feature = parse_export_line(line)
+                if feature and feature["type"] == "w":
+                    total += 1
+                    key = ownerless_built(feature["tags"])
+                    if key:
+                        counts[key] += 1
+    out(f"{total} highway ways in the cut; {sum(counts.values())} built ones with no owner")
+    for key, n in sorted(counts.items()):
+        out(f"  {key}: {n}")
+    return counts
 
 
 def named_exception(tags):
@@ -1042,12 +1073,17 @@ def main(argv=None):
                     help=f"just make the valley cut, in $TVT_ARCHIVE/osm/cut/ (heavy: {CUT_MEMORY})")
     ap.add_argument("--make-cut", action="store_true",
                     help="make the valley cut if it's missing (heavy); a run with osm_valley due makes it anyway")
+    ap.add_argument("--count-ownerless", action="store_true",
+                    help="count the built highway ways in the valley cut that no consumer owns (loads nothing)")
     ap.add_argument("--list", action="store_true", help="list the consumers and the extract each loaded last")
     args = ap.parse_args(argv)
 
     every = consumers()
     if args.list:
         list_consumers(every)
+        return 0
+    if args.count_ownerless:
+        count_ownerless_in_cut(os.path.join(archive_dir(), CUT_DIR))
         return 0
     if not (args.inbox or args.file or args.archived or args.only or args.cut_only):
         ap.error("say which extract: --inbox, --file PATH or --archived (or --only, --cut-only, --list)")

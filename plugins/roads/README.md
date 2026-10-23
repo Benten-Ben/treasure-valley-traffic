@@ -35,7 +35,8 @@ to one consumer by its tags (plan C10):
   and keeps its own gate (`$TVT_ARCHIVE/osm/last-loaded.json`).
 - `osm_street` (landscape sprint, Oct 2026): the other streets, so the
   real-width roads build has every carriageway. That's residential,
-  unclassified, unclassified_link, living_street, road and busway ways, and alleys
+  unclassified, unclassified_link (stored as `unclassified`, the raw value kept in `tags`),
+  living_street, road and busway ways, and alleys
   (`highway=service` + `service=alley`), that `osm_valley` doesn't keep, into
   `roads.osm_street`. It's versioned in place (OpenStreetMap's version and
   timestamp, first and last seen, active) with no `raw.record` copies. Its
@@ -43,8 +44,11 @@ to one consumer by its tags (plan C10):
 - `osm_paving` (landscape sprint, Oct 2026): the paving that meets the
   carriageways ([below](#paving-service-ways-sidewalks-crossings-and-lots)):
   every other service way, sidewalks, crossings, access aisles and traffic
-  islands into `roads.osm_paving`, and raceways and escape ramps too (a raceway
-  with lanes or turn tags stays `osm_valley`'s); parking lots and stalls into
+  islands into `roads.osm_paving`, and raceways and escape ramps too (`kind` and
+  `highway` are `raceway` or `escape`; drawn by material, never routed; a raceway
+  with lanes or turn tags stays `osm_valley`'s, and this rule is for the rest). Their default width is an
+  estimate ⚠️ (a raceway 10 m, an escape ramp 6 m) and an untagged surface is `unknown`, with no default
+  material (migration 0005 widens the table's `kind` and `highway` checks). Parking lots and stalls into
   `roads.osm_parking`; crossing and kerb nodes into `roads.osm_walk_node`.
   Versioned in place, gated in `ops.osm_consumer`, like `osm_street`.
 
