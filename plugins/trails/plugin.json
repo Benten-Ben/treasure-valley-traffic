@@ -26,7 +26,9 @@
   ],
   "commands": [
     {"name": "trails-match", "module": "ingest.match",
-     "help": "link Ridge to Rivers' trails and the Greenbelt's closures to OpenStreetMap's paths, and build the routes and the valley-zoom network (the trails-match build; --dry-run)"}
+     "help": "link Ridge to Rivers' trails and the Greenbelt's closures to OpenStreetMap's paths, and build the routes and the valley-zoom network (the trails-match build; --dry-run)"},
+    {"name": "trails-export", "module": "ingest.export",
+     "help": "export OpenStreetMap's paved paths and pedestrian areas as base layers to $TVT_ARCHIVE/trails/export/ (marks the base bake out of date)"}
   ],
   "osm_consumers": [
     {"source": "osm_paths",
