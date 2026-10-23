@@ -75,7 +75,8 @@ test.beforeEach(async ({ page }) => {
 /** Wait until the status is in and applied. */
 async function statusIn(page: Page) {
 	await expect.poll(async () => (await info(page))?.applied ?? 0, { timeout: 90_000 }).toBeGreaterThan(5);
-	expect((await info(page)).status).toBe('ready');
+	const i = await info(page);
+	expect(i.status, i.error ?? '').toBe('ready');
 }
 
 test.describe('trails', () => {
@@ -105,7 +106,8 @@ test.describe('trails', () => {
 		await page.goto(at(14, FOOTHILLS, 'none'));
 		await mapReady(page);
 		await expect.poll(() => layout(page, 'roads_other')).toBe('visible');
-		expect(await layout(page, 'trails-ways')).toBeNull();
+		// (A hash change keeps the page, so the module stays mounted: its layers are hidden.)
+		expect(['none', null]).toContain(await layout(page, 'trails-ways'));
 	});
 
 	test('the status draws by feature-state: a closed line that no way lies along draws itself closed, and the others take their dashes', { tag: '@trails' }, async ({ page }) => {

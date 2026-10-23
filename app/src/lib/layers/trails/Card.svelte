@@ -92,7 +92,7 @@
 			{:else}
 				<b>{way ? kindWord(way.kind) : kindWord(String(data.props.kind ?? 'path'))}</b>
 			{/if}
-			{#if sev} · {LOOKS[sev].word}{/if}
+			{#if sev}{' · '}{LOOKS[sev].word}{/if}
 		</span>
 	</p>
 	{#if way?.informal || (data.type === 'way' && data.props.informal === true)}
@@ -132,11 +132,12 @@
 				{#each way.lines as l (l.source + (l.line_id ?? ''))}
 					<li data-state={l.state}>
 						<b>{stateWord(l.state, l.label)}</b>
-						{#if l.name}<span class="how"> · {l.name}{l.system ? ` (${l.system})` : ''}</span>{/if}
+						{#if l.name}<span class="how">{' · '}{l.name}{l.system ? ` (${l.system})` : ''}</span>{/if}
+						<br />
 						<span class="how">
 							{#if l.source === 'r2r_trails'}Ridge to Rivers' advice{l.set_at ? `, set ${dateText(l.set_at)}` : ''}.
 							{:else}City of Boise Parks and Recreation{l.since ? `, seen since ${dateText(l.since)}` : ''}.{/if}
-							{#if !l.paints} Only part of this way lies along it.{/if}
+							{#if !l.paints}{' '}Only part of this way lies along it.{/if}
 						</span>
 					</li>
 				{/each}

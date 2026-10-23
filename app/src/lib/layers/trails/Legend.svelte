@@ -19,7 +19,7 @@
 	const ICON: Record<string, string> = { caution: '▲', do_not_use: '■', closed: '✕', detour: '➤' };
 </script>
 
-<p class="legend-title">Trails</p>
+<p class="legend-title">Status and kind</p>
 <ul class="keys" aria-label="Trail status">
 	{#each ORDER as sev (sev)}
 		{@const look = LOOKS[sev]}
@@ -37,7 +37,7 @@
 					stroke-dasharray={dash(look.dash)}
 				/>
 			</svg>
-			<span><b>{look.word}</b>{#if ICON[sev]} <span class="mark" aria-hidden="true">{ICON[sev]}</span>{/if}: {look.about}. <span class="shape">{look.shape}.</span></span>
+			<span><b>{look.word}</b>{#if ICON[sev]}{' '}<span class="mark" aria-hidden="true">{ICON[sev]}</span>{/if}: {look.about}. <span class="shape">{look.shape}.</span></span>
 		</li>
 	{/each}
 	<li data-sev="informal">
