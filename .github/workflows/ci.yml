@@ -1,0 +1,160 @@
+# The project's light CI (issue #259): offline tests, the front end's check/test/build, and the public check.
+#
+# Rules this file keeps (CLAUDE.md, docs/agent-work.md):
+#   - read-only token (`contents: read`), GitHub-hosted runners, no secrets, never `pull_request_target`;
+#   - no network beyond package installs (pip, npm) and the actions below, each pinned to a commit;
+#   - the tests that need PostGIS, TimescaleDB or the worker image skip without a database
+#     (no DATABASE_URL or TVT_TEST_DATABASE_URL is set here), as they do for any offline run;
+#   - the front end builds with TVT_FRAME_SOURCE=fixture and no data/tiles/ (confirmed on a clean checkout);
+#   - browser specs (Playwright) are not run here: they need seeded data and a map-capable runner
+#     (app/tests/e2e/README.md).
+#
+# Make the `ci` job the required status check: it is the one name that reports for every run, including
+# docs-only changes (which skip the Python and front-end jobs). Draft PRs run the whole workflow too. Skipping
+# them would leave a skipped `ci` on the head commit, which a required check reads as passed, so a merge right
+# after "ready for review" would go through before the real run had reported.
+name: CI
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A new push to a PR cancels its older run. Every other run (a push to main, a manual run) gets a group of its own,
+# because a shared group keeps only one pending run and would cancel the middle one of several quick pushes.
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('ci-pr-{0}', github.event.pull_request.number) || format('ci-run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  TVT_FRAME_SOURCE: fixture
+
+jobs:
+  scope:
+    name: Scope
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      docs_only: ${{ steps.scope.outputs.docs_only }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      # A pull request is checked out as a merge commit, whose first parent is the base branch, so
+      # HEAD^1..HEAD is exactly what the PR changes. Any doubt (a push, a manual run, a failed diff) runs everything.
+      # --no-renames lists both paths of a move, so a file moved out of code into docs/ still counts as code.
+      # Docs that tests read count as code: the front end's specs parse docs/14-ui-v2.md (palette, flavors, ramp),
+      # so a PR that edits it runs the app job. Add a doc here when a test starts reading it.
+      - id: scope
+        run: |
+          docs_only=false
+          read_by_tests='^docs/14-ui-v2\.md$'
+          if [ "$GITHUB_EVENT_NAME" = pull_request ] && files=$(git diff --name-only --no-renames HEAD^1 HEAD) && [ -n "$files" ]; then
+            if ! printf '%s\n' "$files" | grep -vE '^(docs/|\.github/ISSUE_TEMPLATE/|LICENSE$|[^/]+\.md$)' > /dev/null \
+               && ! printf '%s\n' "$files" | grep -E "$read_by_tests" > /dev/null; then
+              docs_only=true
+            fi
+          fi
+          echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
+          echo "docs_only=$docs_only"
+
+  public:
+    name: Public check
+    needs: scope
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.11'
+      - name: Nothing private in the repository
+        run: python3 tools/check_public.py
+      - name: The public check's own tests
+        run: python3 -m unittest tools.test_check_public
+
+  python:
+    name: Python tests (offline)
+    needs: scope
+    if: needs.scope.outputs.docs_only != 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            ingest/requirements.txt
+      - name: Install what the tests import
+        run: python3 -m pip install -r requirements.txt -r ingest/requirements.txt
+      - name: tvt prototype
+        run: python3 -m unittest discover tests
+      # tools/test_gh_app_token.py builds a PATH ending in /usr/bin and /bin and expects no `gh` there
+      # (test_no_real_gh_is_exit_127). GitHub-hosted runners ship one in /usr/bin, so the test fails on them
+      # for that reason alone. Set it aside for the job until the test builds its PATH without the system's.
+      - name: Set aside the runner's gh (tools/test_gh_app_token.py expects none on its PATH)
+        run: |
+          if [ -e /usr/bin/gh ]; then sudo mv /usr/bin/gh /usr/bin/gh.set-aside; fi
+          if command -v gh > /dev/null; then echo "gh still on PATH: $(command -v gh)"; fi
+      - name: tools
+        run: python3 -m unittest discover tools
+      - name: ingest core
+        run: python3 -m unittest discover -s ingest/tests -t .
+      - name: plugins
+        run: python3 -m unittest discover -s plugins -t .
+      - name: the ground's contract
+        run: python3 -m unittest discover -s basemap/ground -t .
+
+  app:
+    name: Front end (check, test, build)
+    needs: scope
+    if: needs.scope.outputs.docs_only != 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - run: npm ci
+      - run: npm run check
+      - run: npm test
+      - run: npm run build
+
+  # The one required check. `always()` so it reports (and fails) when a needed job failed or was cancelled,
+  # instead of being skipped with them.
+  ci:
+    name: ci
+    needs: [scope, public, python, app]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Every job passed or was skipped on purpose
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "results: $RESULTS"
+          case " $RESULTS " in
+            *" failure "*|*" cancelled "*) exit 1 ;;
+          esac
