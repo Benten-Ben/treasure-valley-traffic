@@ -149,6 +149,11 @@
 		align-items: center;
 		gap: 10px;
 		min-width: 0;
+		/* Nothing from the left track may sit under the right side. The padding and negative margin
+		   keep the cards' drop shadows and focus rings from being clipped. */
+		overflow: hidden;
+		padding: 4px 6px 8px 6px;
+		margin: -4px -6px -8px -6px;
 	}
 	.nameplate {
 		display: flex;

@@ -30,6 +30,11 @@ export interface StatusChip {
 	color: string;
 	/** Short: "Data fresh", "2 sources late", "1 source stale · 1 build waiting". */
 	headline: string;
+	/**
+	 * How many sources and builds the headline counts, for the compact chip (shape and number);
+	 * null when there is nothing to count (fresh, unknown).
+	 */
+	count: number | null;
 	/** One per source or build worth a word, worst first, for the tooltip. */
 	lines: string[];
 }
@@ -105,6 +110,7 @@ export function statusChip(meta: Pick<DataMeta, 'status'> | null | undefined, no
 			shape: SHAPE.unknown,
 			color: COLOR.unknown,
 			headline: 'Status unknown',
+			count: null,
 			lines: [meta ? "The server didn't say how its scheduled sources are doing" : "The server didn't answer"]
 		};
 	}
@@ -123,6 +129,8 @@ export function statusChip(meta: Pick<DataMeta, 'status'> | null | undefined, no
 				? 'late'
 				: 'fresh';
 
+	const counted =
+		n.stale + n.never + n.late + failingFresh + failedBuilds.length + longRuns.length + waiting.length;
 	const parts: string[] = [];
 	if (n.stale) parts.push(`${plural(n.stale, 'source')} stale`);
 	if (n.never) parts.push(`${plural(n.never, 'source')} never fetched`);
@@ -142,5 +150,5 @@ export function statusChip(meta: Pick<DataMeta, 'status'> | null | undefined, no
 		const total = n.fresh + n.late + n.stale + n.never;
 		lines.push(`${plural(total, 'scheduled source')}, all fresh`);
 	}
-	return { level, shape: SHAPE[level], color: COLOR[level], headline, lines };
+	return { level, shape: SHAPE[level], color: COLOR[level], headline, count: counted > 0 ? counted : null, lines };
 }
