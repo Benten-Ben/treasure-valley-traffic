@@ -1,6 +1,5 @@
 import { prefetch } from '../prefetch.js';
 import type { LayerDef } from '../types.js';
-import { DROP } from './icons.js';
 
 /** The water points the map draws, and the river notices (small; asked for once). */
 export const POINTS_URL = '/api/water/points';
@@ -15,7 +14,6 @@ export const NOTICES_URL = '/api/water/notices';
 const def: LayerDef = {
 	id: 'water',
 	title: 'Water',
-	icon: DROP,
 	order: 60,
 	group: 'landscape',
 	keepsValley: true,
