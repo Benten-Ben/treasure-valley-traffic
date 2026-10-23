@@ -23,6 +23,17 @@ import { CHROMIUM_ARGS, harnessEnv, lockedArgs } from './scripts/harness-env.mjs
  * seeds make sense there, e.g. tests/e2e/boot.spec.ts.
  */
 const env = harnessEnv();
+/**
+ * Specs that never render the map (no mapReady, no map canvas): the server
+ * runner runs these (project `nonmap`); everything else is the `map` project
+ * (a new spec is a map spec until it is listed here). Basenames, no path.
+ */
+export const NONMAP_SPECS = ['harness', 'live-images', 'network', 'tracks'] as const;
+const specMatch = (names: readonly string[]) => names.map((n) => new RegExp(`[\\\\/]${n}\\.spec\\.ts$`));
+
+/** Timeout multiplier for a slow runner (TVT_E2E_SLOW=2 doubles the fixed timeouts below). */
+const slowRaw = Number(process.env.TVT_E2E_SLOW);
+const SLOW = Number.isFinite(slowRaw) && slowRaw > 0 ? slowRaw : 1;
 // Specs and helpers read the same values from process.env.
 Object.assign(process.env, env);
 const port = Number(env.TVT_PORT);
@@ -33,10 +44,14 @@ export default defineConfig({
 	testDir: 'tests/e2e',
 	outputDir: join(runDir, 'test-results'),
 	// SwiftShader renders the map on the CPU: be generous.
-	timeout: 240_000,
-	expect: { timeout: 30_000 },
+	timeout: 240_000 * SLOW,
+	expect: { timeout: 30_000 * SLOW },
 	workers: 1,
 	fullyParallel: false,
+	projects: [
+		{ name: 'nonmap', testMatch: specMatch(NONMAP_SPECS) },
+		{ name: 'map', testIgnore: specMatch(NONMAP_SPECS) }
+	],
 	retries: 0,
 	forbidOnly: true,
 	reporter: [['list'], ['./tests/e2e/reporter.ts']],
@@ -46,7 +61,7 @@ export default defineConfig({
 		viewport: { width: 1280, height: 800 },
 		// SwiftShader WebGL; and nothing resolves but localhost, so no request can leave the machine.
 		launchOptions: { args: [...CHROMIUM_ARGS, ...lockedArgs(remote ? [new URL(remote).hostname] : [])] },
-		actionTimeout: 60_000,
+		actionTimeout: 60_000 * SLOW,
 		navigationTimeout: 120_000,
 		trace: 'retain-on-failure',
 		screenshot: 'only-on-failure'
