@@ -442,9 +442,11 @@ manifest names them as RAW inputs only (`3dep`, `overture-buildings`, `naip`, `s
 in the box's window and moved into the photo's frame by the photo shift (OpenStreetMap and the map are traced on the
 photo). The shift is the shrub build's, measured on its trees, unless the recipe gives the box its own (`"shift":
 [east, north]`, metres, multiples of 0.5 m), which the report records (`shift_from`). In the first build, box b
-moves 2 m west, h 1 m east and 0.5 m north, downtown 0.5 m east; the rest not at all ⚠️ (box d's lidar sits about
-2.3 m east of its photo at ground level, but the shift measured on its trees didn't earn its distance: a recipe
-shift for d is the owner's call, review 1).
+moves 2 m west, h 1 m east and 0.5 m north, downtown 0.5 m east; the rest not at all ⚠️. Box d's lidar sits about
+2.3 m east of its photo at ground level, but the shift measured on its trees didn't earn its distance, so the recipe
+gives d its own: `"shift": [-2.5, 0.0]` (owner, Oct 22, answer 11 of the end-of-wave-1 decisions; 2.5 m is the
+spike's 2.3 m rounded to the class grid). Box a keeps the shrub build's shift (none). The class build of Oct 23
+(#281) is the first with it: its `report.json` records `shift_from` "recipe" for d.
 
 ```bash
 python basemap/ground/classes.py build --recipe recipe.json [--box f --archive <another folder>]
@@ -480,11 +482,13 @@ under 6 GB; 18 MB). Each box's classes as a share of its cells with data, %:
   moved 3 m onto the lidar where the shrub build measured no shift (a 0.7 m, j 0.5 m), so their green and dry edges
   move; and the July tree level, which now comes from the whole box (e 0.56 against the pooled 0.70, j 0.62 against
   0.50).
-- **Box d with a recipe shift** (a quick look, Oct 15, a partial build outside the archive): with `"shift": [-2.5,
-  0.0]`, the spike's ground-level offset (its lidar about 2.3 m east of the photo) rounded to the class grid, d
-  agrees with the spike in 91% of cells (80% without): short green grass 92% (81%), short dry grass 85% (66%), pale
-  surfaced ground 91% (73%), dark 97% (89%). Whether d's recipe takes it, and so whether the next class build moves d
-  2.5 m west, is for owner review 1.
+- **Box d with a recipe shift:** `"shift": [-2.5, 0.0]`, the spike's ground-level offset (its lidar about 2.3 m east
+  of the photo) rounded to the class grid. A quick look on Oct 15 (a partial build outside the archive) found 91% of
+  d's cells agreeing with the spike (80% without), and the owner decided on Oct 22 that d's recipe takes it. The
+  class build of Oct 23 (all ten boxes, 36 minutes under heavy) confirms it: d agrees in 90.9% of cells (79.8%
+  before), with short green grass 92% (81%), short dry grass 85% (66%), pale surfaced ground 91% (73%) and dark 97%
+  (89%). The other nine boxes' agreement is unchanged. The spike check moves the classes back into the lidar's frame
+  by the shift the build used, the recipe's where it gives one.
 - **Box f's tracks** are back: 87,633 cells (2.2 ha) of mapped track turn pale where the photo shows them, 1% of the
   box, against none from the July rule; the rest of f stays short dry grass. Boxes h, i and j gain 4,000-14,000
   track cells each.
