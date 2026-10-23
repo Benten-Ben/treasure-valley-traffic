@@ -3,6 +3,7 @@
 	import { onDestroy, onMount, untrack, type Component } from 'svelte';
 	import type { AppCtx } from '#lib/app/context.js';
 	import PanelBoundary from '#lib/components/PanelBoundary.svelte';
+	import StatusChip from '#lib/status/StatusChip.svelte';
 	import { MARK, mark } from '#lib/perf/marks.js';
 	import CameraWidget from './CameraWidget.svelte';
 	import InspectCard from './InspectCard.svelte';
@@ -60,6 +61,9 @@
 			t.removeEventListener('change', sync);
 		});
 	}
+
+	// The status chip (M1) sits in the top bar's right slot on desktop and tablet; the phone bar doesn't draw that slot.
+	onDestroy(slots.add('topbar-right', { id: 'status', component: StatusChip, props: { app: untrack(() => app) }, order: -10 }));
 
 	const exploring = $derived(app.modes.current === 'explore');
 	const banner = $derived(slots.banner(app.modes.current));
