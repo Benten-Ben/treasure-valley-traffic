@@ -10,9 +10,10 @@ import { env, expect, mapReady, test } from './fixtures.js';
  * 40 ms; JS and JSON counted at their gzip size).
  *
  * The first test records the numbers and holds today. The others are later
- * packages' targets, marked expected-to-fail until they're met; the package
- * that meets one removes its test.fail line. WP5 met the bytes and duplicates
- * (one DEM source) and split them from the request count, which it didn't.
+ * packages' targets. The request count is no longer a target: the owner
+ * restated the first-load target as bytes and timings (DECISIONS, 2026-10-22,
+ * item 5). Real-Chrome timings are a manual record (docs/14 §14.11), not
+ * asserted here, since SwiftShader timings don't mean much.
  */
 async function coldLoad(page: Page, baseURL: string) {
 	const net = await recordNetwork(page, { throttle: { latencyMs: 40, mbps: 25 } });
@@ -51,12 +52,6 @@ test.describe('budget', () => {
 		const { summary } = await coldLoad(page, baseURL!);
 		expect(summary.bytes).toBeLessThanOrEqual(6e6);
 		expect(summary.duplicates).toBe(0);
-	});
-
-	test('cold first load ≤ 50 requests (WP5)', { tag: ['@wp0', '@wp5'] }, async ({ page, baseURL }) => {
-		test.fail(true, "WP5 target (§14.9), still missed: 101–105 requests since waves E–G (perf.mjs counts 101; this spec 105, with the first idle's prefetches), 71 of them the app's own JS, CSS and web fonts (UI v2's chunks). Restating the target is the owner's call (DECISIONS, \"Pending\"); see §14.11's results.");
-		const { summary } = await coldLoad(page, baseURL!);
-		expect(summary.requests).toBeLessThanOrEqual(50);
 	});
 
 	test('data API requests start before the first DEM tile response (WP1)', { tag: ['@wp0', '@wp1'] }, async ({ page, baseURL }) => {
