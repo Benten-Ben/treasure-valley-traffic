@@ -197,6 +197,17 @@ class DatabaseTest(unittest.TestCase):
     def setUp(self):
         self.conn = self.psycopg.connect(DB_URL)
         c = self.conn
+        try:
+            self._clean_slate(c)
+        except self.psycopg.errors.InsufficientPrivilege as e:
+            # Any table the setUp touches may be off limits to the role (the scratch build role can't write all of them).
+            self.conn.rollback()
+            self.conn.close()
+            self.skipTest("the database role lacks a privilege this setUp needs "
+                          f"({str(e).splitlines()[0]}); run these as the owner on a test database")
+        self.fetch0 = c.execute("select coalesce(max(id), 0) from ops.fetch").fetchone()[0]
+
+    def _clean_slate(self, c):
         for s in (r2r.SOURCE, gb.SOURCE, osm_paths.SOURCE, match.SOURCE):
             db.ensure_source(c, s)
         # A clean slate inside the transaction (rolled back): no other trails, lines or marks.
@@ -212,7 +223,6 @@ class DatabaseTest(unittest.TestCase):
                     "delete from ops.osm_consumer where consumer = 'trails.osm_paths'",
                     "delete from ops.build_pending where build = 'trails-match'"):
             c.execute(sql)
-        self.fetch0 = c.execute("select coalesce(max(id), 0) from ops.fetch").fetchone()[0]
 
     def tearDown(self):
         self.conn.rollback()
