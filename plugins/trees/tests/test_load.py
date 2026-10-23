@@ -113,9 +113,6 @@ class DatabaseTest(unittest.TestCase):
         with psycopg.connect(DB_URL) as conn:
             try:
                 ensure_tables(conn)
-                cols = {r[0] for r in conn.execute(
-                    "select column_name from information_schema.columns where table_schema = 'trees' and table_name = 'tree'")}
-                self.assertFalse(cols & set(PRIVATE_TREE), "the migration leaves no private column")
                 with tempfile.TemporaryDirectory() as d:
                     write(d, [dict(TREE, id="tvt-test-1"), dict(TREE, id="tvt-test-2")],
                           [dict(EVENT, tree_id="tvt-test-1")])
@@ -125,6 +122,9 @@ class DatabaseTest(unittest.TestCase):
                                               " and tree_id like 'tvt-test-%'").fetchone()[0], 2)
                 self.assertEqual(conn.execute(
                     "select count(*) from trees.tree where fit ? 'dbh_in' or fit ? 'trunk_to_crown_m'").fetchone()[0], 0)
+                # the loader never writes the City fields (the columns stay, empty, after 0003)
+                self.assertEqual(conn.execute(
+                    "select count(*) from trees.tree where catalogue is not null or catalogue_id is not null").fetchone()[0], 0)
                 self.assertEqual(conn.execute(
                     "select count(*) from trees.tree_log where detail ? 'dbh_in' or detail ? 'trunk_to_crown_m'").fetchone()[0], 0)
                 # the table itself refuses any other kind, whatever loads it
@@ -152,11 +152,11 @@ class MigrationCleanUpTest(unittest.TestCase):
 
     OLD_POINT = "ST_SetSRID(ST_MakePoint(-116.2, 43.6), 4326)"
 
-    def old_tree(self, conn, tree_id, kind="placed", catalogue=None, fit=None, build="c-old"):
+    def old_tree(self, conn, tree_id, kind="placed", catalogue=None, fit=None, build="c-old", catalogue_id=None):
         conn.execute(
             f"insert into trees.tree (tree_id, area, kind, type, geom, height_m, crown_radius_m, catalogue, catalogue_id, fit, build_id)"
             f" values (%s, 'c', %s, 'broadleaf', {self.OLD_POINT}, 9, 3, %s, %s, %s, %s)",
-            (tree_id, kind, catalogue, "x-1" if catalogue else None, json.dumps(fit or {}), build))
+            (tree_id, kind, catalogue, catalogue_id or ("x-1" if catalogue else None), json.dumps(fit or {}), build))
 
     def old_event(self, conn, tree_id, event, detail):
         conn.execute("insert into trees.tree_log (tree_id, at, event, detail, build_id) values (%s, '2023-10-24T12:00:00Z', %s, %s, 'c-old')",
@@ -178,6 +178,7 @@ class MigrationCleanUpTest(unittest.TestCase):
                 self.old_tree(conn, "c-3-3", kind="catalogued", catalogue="boise")                            # goes
                 self.old_tree(conn, "boise-fake-1", kind="estimated", catalogue="boise")                                      # goes
                 self.old_tree(conn, "c-9-9", kind="catalogued", catalogue="boise")                            # goes, with its log
+                self.old_tree(conn, "c-4-4", catalogue_id="x-4")                                              # goes: a placed row that still names an entry
                 self.old_event(conn, "c-1-1", "placed", {"height_m": 12, "dbh_in": 14, "trunk_to_crown_m": 0.8})   # goes (carries both)
                 self.old_event(conn, "c-1-1", "measured", {"height_m": 12})                                   # stays
                 self.old_event(conn, "c-2-2", "placed", {"height_m": 8, "theta": 0.2})                        # stays
@@ -196,8 +197,18 @@ class MigrationCleanUpTest(unittest.TestCase):
                 events = sorted((r[0], r[1]) for r in conn.execute("select tree_id, event from trees.tree_log"))
                 self.assertEqual(events, [("c-1-1", "measured"), ("c-2-2", "placed"), ("c-7-7", "placed")])
                 self.assertEqual(conn.execute("select count(*) from trees.tree_log where detail ? 'dbh_in' or detail ? 'trunk_to_crown_m'").fetchone()[0], 0)
+                # the City fields stay as columns, empty, so an app image built before 0003 that still selects them runs
                 cols = {r[0] for r in conn.execute("select column_name from information_schema.columns where table_schema = 'trees' and table_name = 'tree'")}
-                self.assertFalse(cols & {"catalogue", "catalogue_id"})
+                self.assertLessEqual({"catalogue", "catalogue_id"}, cols)
+                self.assertEqual(conn.execute("select count(*) from trees.tree where catalogue is not null or catalogue_id is not null").fetchone()[0], 0)
+                self.assertEqual(sorted(conn.execute("select tree_id, catalogue, catalogue_id from trees.tree").fetchall()),
+                                 [("c-1-1", None, None), ("c-2-2", None, None)])   # an old-style query still runs, with nothing City-derived
+                for col in ("catalogue", "catalogue_id"):   # and nothing can write them again
+                    with self.assertRaises(psycopg.errors.CheckViolation, msg=col), conn.transaction():
+                        conn.execute(f"insert into trees.tree (tree_id, area, kind, type, geom, height_m, crown_radius_m, build_id, {col})"
+                                     f" values ('c-6-6', 'c', 'placed', 'broadleaf', {self.OLD_POINT}, 9, 3, 'c-old', 'x')")
+                    with self.assertRaises(psycopg.errors.CheckViolation, msg=col), conn.transaction():
+                        conn.execute(f"update trees.tree set {col} = 'x' where tree_id = 'c-1-1'")
                 self.assertEqual(conn.execute("select count(*) from pg_indexes where schemaname = 'trees' and indexname = 'tree_catalogue_idx'").fetchone()[0], 0)
                 b = conn.execute("select counts, params from trees.build where build_id = 'c-old'").fetchone()
                 self.assertEqual(b[0], {"trees": 2, "placed": 2})

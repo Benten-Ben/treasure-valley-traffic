@@ -1,18 +1,23 @@
 -- The public trees tables keep only trees found in the lidar (owner, Oct 22, answer 6 of the end-of-wave-1 decisions).
 -- A City inventory's tree ids and trunk points, its trunk diameters and the link from a tree to its inventory entry
 -- belong to the private plugin that owns the inventory (its own tables). Nothing is
--- kept here: a rebuild with the new build.py writes the lidar crowns as ordinary trees and the links as anchors.jsonl.
+-- kept here: a rebuild with the new build.py, without --anchors, writes the lidar crowns as ordinary trees; the private
+-- plugin's matching (build.py --anchors with --private-out) runs separately afterwards and changes nothing public.
 --
 -- What this removes, in one transaction:
 --   * trees of kind 'catalogued' and 'estimated', and any tree with a catalogue entry (their ids hold the City's ids;
 --     their points are its trunk points), with their log events; every log event of an id of the inventory's form
 --     (boise-...) and every one that carries a trunk diameter or a trunk-to-crown offset or says 'estimated'; and the
 --     same keys from the fits that remain (no log event that carries one is left to strip);
---   * the columns catalogue and catalogue_id, their index and the check that tied them to kind;
+--   * the values of the columns catalogue and catalogue_id (they stay, empty, so that an app image built before this
+--     change, which still selects them, keeps working and gets nothing City-derived), their index and the check that tied
+--     them to kind; a check now refuses any value in them, so nothing can write those fields again (a later migration
+--     drops the columns once every app image is past this change);
 --   * the build records' counts of catalogued and estimated trees (their tree count becomes the placed count) and
 --     their inventory sources.
--- The areas that held such trees are empty or short until they are rebuilt (build.py --anchors, trees-load here, then
--- the private plugin's load): the runbook is in plugins/trees/README.md. Not reversible.
+-- The areas that held such trees are short until they are rebuilt (build.py without --anchors, then trees-load here;
+-- the private plugin's matching and load come after, separately, and change nothing public): the runbook is in
+-- plugins/trees/README.md. Applied before those rebuilds load, the only effect is those transient gaps. Not reversible.
 
 DELETE FROM trees.tree_log
  WHERE tree_id IN (SELECT tree_id FROM trees.tree WHERE kind <> 'placed' OR catalogue IS NOT NULL OR catalogue_id IS NOT NULL)
@@ -27,8 +32,10 @@ UPDATE trees.tree SET fit = fit - 'dbh_in' - 'trunk_to_crown_m' WHERE fit ? 'dbh
 DROP INDEX IF EXISTS trees.tree_catalogue_idx;
 ALTER TABLE trees.tree DROP CONSTRAINT IF EXISTS tree_check;
 ALTER TABLE trees.tree DROP CONSTRAINT IF EXISTS tree_kind_check;
-ALTER TABLE trees.tree DROP COLUMN IF EXISTS catalogue;
-ALTER TABLE trees.tree DROP COLUMN IF EXISTS catalogue_id;
+-- the two fields stay as columns: every row that held a value is deleted above, so they are NULL everywhere, and a
+-- check refuses any value in them from now on (adding it fails if a value were left)
+ALTER TABLE trees.tree DROP CONSTRAINT IF EXISTS tree_no_city_fields_check;
+ALTER TABLE trees.tree ADD CONSTRAINT tree_no_city_fields_check CHECK (catalogue IS NULL AND catalogue_id IS NULL);
 -- fail closed: a row of any other kind can't be written, whatever loads it
 ALTER TABLE trees.tree ADD CONSTRAINT tree_kind_check CHECK (kind = 'placed');
 

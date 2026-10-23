@@ -7,8 +7,13 @@ import unittest
 README = os.path.join(os.path.dirname(__file__), "..", "README.md")
 
 
+def _read(path):
+    with open(path, encoding="utf-8") as f:
+        return f.read()
+
+
 def _steps():
-    text = open(README, encoding="utf-8").read()
+    text = _read(README)
     body = text[text.index("### Runbook: migration 0003 on production"):text.index("The settings were calibrated")]
     parts = re.split(r"\n(?=\d\. \*\*)", body)
     return {int(p[0]): p for p in parts if re.match(r"\d\. \*\*", p)}
@@ -34,6 +39,22 @@ class RunbookTest(unittest.TestCase):
 
     def test_the_preview_is_checked_where_the_trees_layer_runs(self):
         self.assertIn("localhost:8081/api/trees/", self.s[4])
+        self.assertIn("localhost:8080/api/trees/", self.s[4])
+
+    def test_the_migration_check_greps_the_line_migrate_prints(self):
+        self.assertIn("grep -F 'applied  trees/0003'", self.s[4])
+        self.assertNotIn("grep -i migrat", self.s[4])
+
+    def test_an_early_migration_is_said_to_cost_only_transient_gaps(self):
+        text = _read(README)
+        intro = text[text.index("### Runbook: migration 0003 on production"):text.index("0. **Ordering")]
+        self.assertIn("only effect is transient gaps", intro)
+        self.assertNotIn("dropped columns", "\n".join(self.s.values()))
+
+    def test_the_migration_keeps_the_city_columns_empty(self):
+        sql = _read(os.path.join(os.path.dirname(README), "migrations", "0003_no_city_rows.sql"))
+        self.assertNotRegex(sql, r"(?i)drop\s+column")
+        self.assertIn("CHECK (catalogue IS NULL AND catalogue_id IS NULL)", sql)
 
     def test_the_private_matching_build_is_named_like_the_loaded_build(self):
         step5 = self.s[5]

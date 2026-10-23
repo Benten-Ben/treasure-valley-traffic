@@ -24,7 +24,8 @@ Every tree we can find in the lidar ([docs/19](../../docs/19-trees.md)), and the
 - `python3 -m ingest trees-load --build DIR` loads a build: the area's trees are replaced, its log events added. It takes
   a fixed set of fields and refuses a build that carries any other (`ingest/load.py`).
 - Tables: `trees.build`, `trees.tree`, `trees.tree_log` (migrations/0001_trees.sql; 0003 removed the inventory's rows
-  and fields).
+  and emptied its fields: `trees.tree.catalogue` and `catalogue_id` stay as columns, NULL, behind a check that refuses
+  any value, until a later migration drops them).
 - Sources (`plugin.json`, each a manual source with a module stating its licence and credit, in `ingest/sources/`):
   the USGS 3DEP lidar (public domain), Sentinel-2 (Copernicus: "Contains modified Copernicus Sentinel data 2025"), USDA
   NAIP (public domain; the shrubs' near-infrared) and OpenStreetMap's hedges (ODbL; the shrubs' hedge check, docs/19
@@ -68,13 +69,17 @@ private plugin's match table, keyed by the crown's id).
 ### Runbook: migration 0003 on production
 
 `0003_no_city_rows.sql` deletes the trees that came from an inventory (the old `catalogued` and `estimated` kinds and
-any tree with an entry), their log events and the diameter and offset keys, drops columns, and adds the kind check. It
-is **not reversible**, and the `ingest` service applies it on start, so it runs as soon as the release that carries it is
+any tree with an entry), their log events and the diameter and offset keys, and adds the kind check. It keeps the columns `catalogue` and
+`catalogue_id`, empty, with a check that each is NULL, so an app image built before this change (the live app is
+pinned) still runs its queries and gets nothing City-derived; a later migration drops them once every app image is past
+this change. It is **not reversible**, and the `ingest` service applies it on start, so it runs as soon as the release that carries it is
 deployed. Nothing is backed up today ([DECISIONS](../../docs/DECISIONS.md)). So, in this order. Every long command runs
 under `/srv/tvt/work/bin/heavy` ([deploy/README.md](../../deploy/README.md), "Heavy jobs"), with a deadline inside the
 day window (06:00-23:15 Boise, never in the nightly roll-up's hours) and a runtime that fits it; `heavy` refuses a
 command outside the window. Compose runs from `/srv/tvt/repo/deploy` without `-f`, except the production load, which names its files as
-deploy/README.md does.
+deploy/README.md does. The order below is the recommended one. If 0003 is applied before the area rebuilds are loaded
+(an early deploy), the only effect is transient gaps where matched inventory trees were; the step-3 rebuilds and the
+step-4 load close them.
 
 0. **Ordering with the private plugin.** Its match tables and loader (the private branch for #277, rebased on the private
    repository's `main`) go onto the server first: merged, copied to the private plugins' folder (readable by the
@@ -99,22 +104,21 @@ deploy/README.md does.
    `/srv/tvt/work/bin/heavy --deadline HH:MM --runtime MIN --peak 6 "trees <area> (0003)" docker run --rm --memory 6g --memory-swap 6g --cpus 2 --network none --user 1000:1000 -e PYTHONDONTWRITEBYTECODE=1 -v /srv/tvt/repo:/repo:ro -v /srv/tvt/archive:/srv/archive -v <the area's inputs>:/in:ro -w /repo tvt-worker python plugins/trees/build/build.py --area <area> --dsm /in/... --dtm /in/... --out /srv/archive/trees/<new build name>`.
    Check that `trees.geojson` is in the folder before the deploy. Do it before the deploy so the public layer never
    shows gaps where the City's crowns were.
-4. **Deploy and load straight after.** Rebuild the services that read the trees tables together, so no old image
-   queries the dropped columns: `cd /srv/tvt/repo/deploy && docker compose up -d --build ingest app` (and `app-next`
-   as well when `compose.preview.yml` is switched on; see the next paragraph). Check
-   `docker compose logs ingest | grep -i migrat`: `trees/0003_no_city_rows.sql`, then the private plugin's own. Then at
-   once, for each build from step 3, in the day window (the deadline and runtime from `heavy`'s rules):
+4. **Deploy and load straight after.** Rebuild the services that carry this release:
+   `cd /srv/tvt/repo/deploy && docker compose up -d --build ingest app` (and `app-next` as well when
+   `compose.preview.yml` is switched on). No app image has to be rebuilt for the migration's sake: 0003 keeps the City
+   columns, empty, so the pinned live app (`tvt-app:live`) keeps working. Check that the migration ran:
+   `docker compose logs ingest | grep -F 'applied  trees/0003'` prints `applied  trees/0003_no_city_rows.sql` (two
+   spaces, as `db/migrate.py` writes it). Then at once, for each build from step 3, in the day window (the deadline and runtime from `heavy`'s rules):
    `cd /srv/tvt/repo/deploy && /srv/tvt/work/bin/heavy --deadline HH:MM --runtime 30 --peak 1 "trees load <area> (0003)" docker compose -f docker-compose.yml -f compose.private.yml -f compose.load.yml run --rm --no-deps -e DATABASE_URL ingest python3 -m ingest trees-load --build /srv/archive/trees/<new build name>`
    (`DATABASE_URL`, the load's role, comes from the shell). Until a build is loaded, that area's trees are the migration's
    leftovers: the old lidar-found rows, with gaps where the matched inventory trees were. Keep that window as short as
    the steps allow (load straight after the deploy).
-   Then check the app, against a placed tree (take one with
-   `docker compose exec -T db psql -U tvt tvt -Atc "select tree_id from trees.tree limit 1"`): with the preview off,
-   `curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8080/api/trees/<id>` is `200`. With the preview on,
-   `app` is pinned (`tvt-app:live`, not rebuilt by `up --build`) and the trees layer runs in `app-next`, so check
-   `http://localhost:8081/api/trees/<id>` is `200` (port 8081), and `:8080` too: a `404` there means the pinned image
-   predates the trees layer (nothing to do), a `200` means it is fine, a `500` means it still queries the dropped
-   columns: stop and ask the owner before changing the pin. A tree's card opens on the map (the preview's, when on).
+   Then check both apps against a placed tree (take one with
+   `docker compose exec -T db psql -U tvt tvt -Atc "select tree_id from trees.tree limit 1"`): the live app,
+   `curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8080/api/trees/<id>`, and, when the preview is on,
+   `app-next`, `http://localhost:8081/api/trees/<id>`, each answer `200`, and the tree's card opens on the map (the
+   preview's, when on). Any other answer from either: stop and ask the owner before changing anything.
 5. **Private matching, after, separately** (it changes nothing public). Rebuild each area again under `heavy` as in
    step 3 with the same options plus `--anchors FILE --private-out <private files>/trees/<new build name>` (the private
    plugin writes the CSV; add `--private-root` only if the private files are not at `/srv/tvt/private`; mount them in
@@ -203,8 +207,9 @@ Survey's 3D Elevation Program and USDA NAIP plus the crop cover's credits (each 
 `python3 -m unittest plugins.trees.tests.test_load plugins.trees.tests.test_anchors plugins.trees.tests.test_shrubs_load plugins.trees.tests.test_hedge_check`
 (standard library; with `TVT_TEST_DATABASE_URL` naming a PostGIS database, the loading and the hedge check run too,
 inside a transaction that is rolled back; `test_load` proves the loader refuses the inventory's fields and that the
-migrated table has no such column and takes no other kind; `MigrationCleanUpTest` runs 0003 over rows in the old formats and
-checks what it deletes, strips and keeps). `test_build_anchors` runs the build end to end with anchors
+migrated table holds no value in those fields and takes no other kind; `MigrationCleanUpTest` runs 0003 over rows in the old
+formats and checks what it deletes, strips and keeps, that the City fields are NULL and refuse a value, and that an
+old-style query naming them still runs). `test_build_anchors` runs the build end to end with anchors
 (worker image): the public files are those of a build without anchors, and the side file is in its own folder. The placer's, the narrow rule's, the spring cue's and the shrubs' tests need
 the worker image (NumPy, SciPy, rasterio, pyproj, PDAL, GDAL), where a skip counts as a failure. On the VM:
 `worker-test -C <checkout> plugins.trees.tests.test_place plugins.trees.tests.test_narrow plugins.trees.tests.test_spring
