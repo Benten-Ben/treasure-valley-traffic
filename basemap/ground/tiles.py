@@ -26,6 +26,7 @@ import math
 import os
 import tempfile
 
+from basemap import lock
 from basemap.ground import grid
 
 _S = grid.spec()
@@ -255,21 +256,22 @@ def update_manifest(tiles_dir, entry):
     entries are kept as they are."""
     check_entry(entry)
     path = os.path.join(tiles_dir, "manifest.json")
-    with open(path, encoding="utf-8") as f:
-        m = json.load(f)
-    m[ENTRY] = entry
-    fd, tmp = tempfile.mkstemp(prefix=".manifest-", suffix=".json", dir=tiles_dir)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(m, f, indent=1)
-            f.flush()
-            os.fsync(f.fileno())
-        os.chmod(tmp, 0o644)
-        os.replace(tmp, path)
-    except BaseException:
-        if os.path.exists(tmp):
-            os.unlink(tmp)
-        raise
+    with lock.locked(lock.MANIFEST):               # the same lock as the landscape bake's and build.sh's writes
+        with open(path, encoding="utf-8") as f:
+            m = json.load(f)
+        m[ENTRY] = entry
+        fd, tmp = tempfile.mkstemp(prefix=".manifest-", suffix=".json", dir=tiles_dir)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(m, f, indent=1)
+                f.flush()
+                os.fsync(f.fileno())
+            os.chmod(tmp, 0o644)
+            os.replace(tmp, path)
+        except BaseException:
+            if os.path.exists(tmp):
+                os.unlink(tmp)
+            raise
     return path
 
 

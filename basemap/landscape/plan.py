@@ -27,16 +27,15 @@ ITD), the file is **tailnet-only**: its tiles-manifest entry and its own metadat
 """
 
 import datetime as dt
-import fcntl
 import fnmatch
 import hashlib
 import json
 import os
 import re
 import tempfile
-from contextlib import contextmanager
 from dataclasses import dataclass, field
 
+from basemap import lock
 from basemap.ground import fgb, grid, inputs as ground_inputs, manifest as M, tiles as ground_tiles
 
 SPEC_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "spec.json")
@@ -496,15 +495,9 @@ def _check_entry(e, in_manifest):
 
 # --- tiles/manifest.json ----------------------------------------------------------------------------------------
 
-@contextmanager
-def locked(tiles_dir, name=".landscape.lock"):
-    """An exclusive lock on a file in the tiles folder, held for the block."""
-    fd = os.open(os.path.join(tiles_dir, name), os.O_RDWR | os.O_CREAT, 0o644)
-    try:
-        fcntl.flock(fd, fcntl.LOCK_EX)
-        yield
-    finally:
-        os.close(fd)
+def locked(name=lock.LANDSCAPE):
+    """An exclusive lock (basemap/lock.py: a file in the lock folder, not the served tiles folder), held for the block."""
+    return lock.locked(name)
 
 
 def read_tiles_manifest(tiles_dir):
@@ -530,7 +523,7 @@ def update_manifest(tiles_dir, entry):
     """Put the landscape entry into tiles/manifest.json atomically (the app fetches it with no-cache), keeping every
     other entry as it is."""
     check_entry(entry)
-    with locked(tiles_dir, ".manifest.lock"):
+    with locked(lock.MANIFEST):
         m = read_tiles_manifest(tiles_dir)
         m[ENTRY] = entry
         fd, tmp = tempfile.mkstemp(prefix=".manifest-", suffix=".json", dir=tiles_dir)
