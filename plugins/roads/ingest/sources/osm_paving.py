@@ -18,7 +18,8 @@ the valley box:
     (osm_extract.owner), by tags alone: every service way but alleys (those are
     osm_street's), so driveways, parking aisles, drive-throughs, emergency
     access and untagged and other service ways; and footway=sidewalk, crossing,
-    access_aisle or traffic_island on a footway, path or cycleway. osm_valley
+    access_aisle or traffic_island on a footway, path or cycleway; and raceways
+    and escape ramps (built surfaces, never routed). osm_valley
     keeps any of them tagged with lanes. Lines, kept whole across the box's
     edge. A closed way tagged area=yes keeps its outline, with area true. An
     alley tagged area=yes is the paving's too, closed or not, and so is one

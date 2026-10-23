@@ -92,7 +92,7 @@ osmium export makes areas only from a/ expressions, so a lot or a lake needs
 | Consumer | Tags | Writes |
 |---|---|---|
 | `roads.osm_valley` | highway ways; signal, crossing-signal and level-crossing nodes | as below (unchanged; its own pipeline over the cut) |
-| `roads.osm_street` | residential, unclassified, living_street, road, busway and alleys that osm_valley doesn't keep | `roads.osm_street` |
+| `roads.osm_street` | residential, unclassified, unclassified_link, living_street, road, busway and alleys that osm_valley doesn't keep | `roads.osm_street` |
 | `roads.osm_paving` | the other service ways, sidewalks, crossings, access aisles and traffic islands; parking lots and stalls drawn as areas (multipolygons too); crossing and kerb nodes. Untagged service ways and lots get a default material only on the Cropland Data Layer's developed land, traced in the worker image and measured in PostGIS ([plugins/roads](../plugins/roads/README.md#paving-service-ways-sidewalks-crossings-and-lots)) | `roads.osm_paving`, `roads.osm_parking`, `roads.osm_walk_node` |
 | `water.osm_waterways` | waterways (lines and nodes), water areas, wetlands, springs, reservoirs and basins, swimming pools (not part of the highway partition) | `water.osm_feature` |
 

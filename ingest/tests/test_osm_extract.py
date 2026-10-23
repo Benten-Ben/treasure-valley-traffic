@@ -130,6 +130,7 @@ class PartitionTest(unittest.TestCase):
         self.assertIn("not built", ox.unowned_reason({"highway": "proposed"}))
         self.assertIn("as an area", ox.unowned_reason({"highway": "residential", "area": "yes"}))
         self.assertIn("not drawn", ox.unowned_reason({"highway": "corridor"}))
+        self.assertIn("as an area", ox.unowned_reason({"highway": "unclassified_link", "area": "yes"}))
         self.assertIsNone(ox.unowned_reason({"highway": "residential"}))
         self.assertIsNone(ox.unowned_reason({"waterway": "canal"}))
 

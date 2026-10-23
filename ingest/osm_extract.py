@@ -180,7 +180,7 @@ def unowned_reason(tags):
         return None
     if hw in NOT_ROADS:
         return f"not built or not a way (highway={hw})"
-    if tags.get("area") == "yes" and (hw in ROADS):
+    if tags.get("area") == "yes" and (hw in ROADS or hw in AREA_STREET_CLASSES):
         return f"a road drawn as an area (highway={hw}, area=yes)"
     return f"not drawn (highway={hw})"
 

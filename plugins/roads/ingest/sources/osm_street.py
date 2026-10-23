@@ -13,7 +13,7 @@ core.osm_way and roads.osm_street always split one extract's ways between
 them; a build that reads both calls osm_extract.check_partition() first.
 
 What it keeps: the highway ways core's partition gives it (osm_extract.owner),
-by tags alone: residential, unclassified, living_street, road and busway, and
+by tags alone: residential, unclassified, unclassified_link, living_street, road and busway, and
 alleys (highway=service + service=alley), unless drawn as an area. osm_valley
 keeps any of them tagged with lanes (core.osm_way, unchanged), so each way has
 one owner. Lines only, with every way that has a node in the valley box kept

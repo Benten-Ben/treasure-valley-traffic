@@ -286,7 +286,7 @@ class LayersTest(unittest.TestCase):
 def tag_grid():
     """Highway tag sets across the partition's cases: every class, the footway and service subtypes, surfaces,
     lanes, areas and tunnels."""
-    classes = sorted(set(MR.CLASS_WIDTH) | OX.ROADS | OX.PATH_CLASSES | OX.NOT_ROADS | {"corridor", "raceway"})
+    classes = sorted(set(MR.CLASS_WIDTH) | OX.ROADS | OX.PATH_CLASSES | OX.NOT_ROADS | {"corridor", "raceway", "escape"})
     for hw, footway, service, surface, lanes, area, tunnel in itertools.product(
             classes, (None, "sidewalk", "crossing", "access_aisle", "traffic_island", "link"),
             (None, "alley", "driveway"), (None, "asphalt", "gravel"), (None, "2"), (None, "yes"), (None, "yes")):

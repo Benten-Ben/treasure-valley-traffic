@@ -131,7 +131,7 @@ EDGE_M = 1.0              # gutter or shoulder, each side of a carriageway âš ï¸
 
 MAJOR = {"motorway", "trunk", "primary", "secondary", "tertiary"}
 MAJOR_LINKS = {f"{c}_link" for c in MAJOR}
-STREETS = {"residential", "unclassified", "living_street", "road", "busway"}
+STREETS = {"residential", "unclassified", "unclassified_link", "living_street", "road", "busway"}
 SIDEWALKS = {"sidewalk", "crossing", "access_aisle", "traffic_island"}   # footway=*, on a footway, path or cycleway
 WALK_CLASSES = {"footway", "path", "cycleway"}
 
@@ -140,7 +140,7 @@ WALK_CLASSES = {"footway", "path", "cycleway"}
 CLASS_WIDTH = {
     "motorway": (24.0, 12.0), "trunk": (20.0, 11.0), "primary": (18.0, 10.0), "secondary": (15.0, 9.0),
     "tertiary": (12.0, 7.5),
-    "residential": (10.4, 7.0), "unclassified": (7.3, 5.0), "road": (7.3, 5.0), "living_street": (7.0, 5.0),
+    "residential": (10.4, 7.0), "unclassified": (7.3, 5.0), "unclassified_link": (7.3, 5.0), "road": (7.3, 5.0), "living_street": (7.0, 5.0),
     "busway": (7.0, 4.0), "service": (5.5, 4.0), "track": (3.5, 3.5), "pedestrian": (6.0, 6.0),
     "cycleway": (2.5, 2.5), "footway": (2.0, 2.0), "path": (2.0, 2.0), "bridleway": (2.5, 2.5), "steps": (2.0, 2.0),
 }
@@ -191,7 +191,7 @@ def road(tags):
     """For an OSM highway way (a line), (kind, surface class, width m, width_from) when it covers the ground, else
     None. Kinds:
       major    motorway to tertiary, and their links
-      street   residential, unclassified, living_street, road, busway
+      street   residential, unclassified, unclassified_link, living_street, road, busway
       service  every service way (alleys, driveways, parking aisles, ...)
       walkway  sidewalks, crossings, access aisles and traffic islands (footway=* on a footway, path or cycleway),
                and pedestrian streets unless tagged unpaved
@@ -202,7 +202,8 @@ def road(tags):
     drawn as areas
     (area=yes) are areas (paving_area), and ways under the ground or indoors don't count. Every way of these classes
     that osm_extract's partition gives osm_valley, osm_street or osm_paving counts (test_maskrules checks it);
-    osm_valley also keeps other classes when they carry lanes (one raceway on Oct 11), which don't."""
+    osm_valley also keeps other classes when they carry lanes (one raceway on Oct 11), which don't. A raceway or escape
+    ramp (osm_paving's, drawn by material) stays out of the mask: it has no class width here."""
     hw = tags.get("highway")
     if not hw or hw not in CLASS_WIDTH or tags.get("area") == "yes" or below_ground(tags):
         return None

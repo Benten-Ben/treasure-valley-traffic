@@ -348,7 +348,7 @@ them.
 
 **Inputs.** The carriageways are `core.osm_way`'s road classes and
 `roads.osm_street`: motorway to tertiary and their links, residential,
-unclassified, living_street, road, busway, alleys, and the few lane-tagged
+unclassified, unclassified_link, living_street, road, busway, alleys, and the few lane-tagged
 service ways osm_valley keeps (not its 12 cycleways, tracks and pedestrian
 ways, which are trails'). The build first calls
 `osm_extract.check_partition(conn, ("osm_valley", "osm_street",
