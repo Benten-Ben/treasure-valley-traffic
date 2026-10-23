@@ -241,6 +241,13 @@ On Oct 11, 2026 it held 3,932 records over 1,080 miles: 3,401 on streets,
   whole read with the last one (`ops.layer_signature`): an unchanged layer
   only confirms its versions. The hub's DCAT feed isn't read: it lists the
   whole hub on another host, while the layer itself is three requests.
+- **Readings checked** (Oct 23, 2026, against the reader's code and its tests, not the live layer, which the
+  sandbox can't reach): a protected bike lane reads as `protected_bike_lane`, which the view counts as lying
+  between the curbs (`bike_in_roadway`); a direction of 'N/A' reads as a one-way street's other side (0 lanes, its
+  edge and parking kept). Still ⚠️ until the live layer is checked: whether ACHD also writes 'N/A' on records it
+  hasn't field-checked (those would read as a 0-lane side), and whether ACHD's protected lanes lie inside
+  `TotalPavement` (few records). `MarkingLocation` is kept in the attributes as `MarkingLocationEBNB` and
+  `MarkingLocationWBSB`; its meaning is still open ([the ACHD ask, #164](https://github.com/Benten-Ben/treasure-valley-traffic/issues/164)).
 - **Free text:** ACHD's `Comments` and `FieldNotes` stay in
   `roads.bike_facility_note` (and `raw.record`). No view, export, tile set or
   card reads them.
@@ -249,7 +256,11 @@ On Oct 11, 2026 it held 3,932 records over 1,080 miles: 3,401 on streets,
   lines failing), into `roads.bike_facility_match`. A match whose street
   names disagree is dropped (150 of 8,478 on Oct 11: mostly another street's
   segments beside or across the record), after ACHD's zero-padded numbers
-  ('08th St') are unpadded. Pathways and roads not built yet aren't matched.
+  ('08th St') are unpadded. The exact name check stays: a few of the 150 were
+  ACHD's misspellings of a true match ('Tast St' for Taft St), and those are
+  lost. A fuzzy match was considered and left for later (Oct 23, 2026); how many
+  of the 150 are such misses hasn't been counted yet, so the known misses are
+  named by example only. Pathways and roads not built yet aren't matched.
   On Oct 11: 3,312 of 3,401 street records matched, 8,328 matches on 8,105
   ACHD segments (1,300 km). It reruns after a run that changes the records,
   and after ACHD's segments change (`achd_roads`' rematch).
