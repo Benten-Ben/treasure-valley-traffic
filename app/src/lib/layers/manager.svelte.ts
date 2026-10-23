@@ -422,7 +422,7 @@ export class LayerManager {
 	}
 
 	/**
-	 * Apply the slot flags (`SlottedLayer.aerial` and `areaFill`) to the layers modules added with them: a
+	 * Apply the slot flags (`SlottedLayer.aerial`, `areaFill` and `looks`) to the layers modules added with them: a
 	 * layer the flags don't allow is hidden; when they allow it again it is shown if its owner is shown.
 	 * One area fill draws at a time: the owner turned on last that isn't off under a layer that's on.
 	 */
@@ -436,7 +436,7 @@ export class LayerManager {
 			if (this.def(f.owner)?.offUnder?.some((u) => this.set.has(u) && this.#shown.has(u))) fillsOff.add(f.owner);
 			else if (this.#shown.has(f.owner)) owners.add(f.owner);
 		}
-		const gate: SlotGate = { aerial, fillOwner: fillOwner(this.set.enabled, owners), fillsOff };
+		const gate: SlotGate = { aerial, fillOwner: fillOwner(this.set.enabled, owners), fillsOff, flavor: this.flavor };
 		for (const [id, f] of flags) {
 			if (!map.getLayer(id)) continue;
 			const ownerOn = f.owner ? this.#shown.has(f.owner) : true;

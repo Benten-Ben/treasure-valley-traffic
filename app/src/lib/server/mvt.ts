@@ -109,6 +109,14 @@ export interface TileLayerDef {
 	maxzoom: number;
 	/** This layer's cap in the shared LRU, in bytes (default `LAYER_CACHE_BYTES`). */
 	cacheBytes?: number;
+	/**
+	 * Another layer of the same plugin whose version (and credit) this one takes: the layers are cuts of
+	 * one build (the crop fields' year switcher, one layer per earlier year over `farm.field_lo`), so the
+	 * build writes a single `core.layer_version` row, under that layer's name. This layer's own tiles are
+	 * cached and tagged under its own name, with that version. Callers that build a tile URL pass the
+	 * shared key to `layerTilesUrl`.
+	 */
+	versionOf?: string;
 	/** The MVT layers, read from tables; or `cut` instead. */
 	parts?: readonly TileLayerPart[];
 	/**
@@ -159,6 +167,10 @@ export function tileLayerProblems(def: TileLayerDef): string[] {
 	const schemas = tileSchemas(def.plugin ?? '');
 	if (!isZoom(def.minzoom) || !isZoom(def.maxzoom) || def.minzoom > def.maxzoom) p.push(`zooms ${def.minzoom}–${def.maxzoom}`);
 	if (def.cacheBytes !== undefined && !(Number.isFinite(def.cacheBytes) && def.cacheBytes > 0)) p.push(`cacheBytes ${def.cacheBytes}`);
+	if (def.versionOf !== undefined) {
+		if (!LAYER_NAME.test(def.versionOf)) p.push(`versionOf ${JSON.stringify(def.versionOf)}`);
+		else if (def.versionOf === def.layer) p.push('versionOf names the layer itself');
+	}
 	if (!def.parts === !def.cut) p.push('give parts or cut, not both');
 	if (def.cut !== undefined && typeof def.cut !== 'function') p.push('cut is not a function');
 	if (def.parts && !def.parts.length) p.push('no parts');
@@ -215,6 +227,11 @@ function partSql(part: TileLayerPart, s: TileSource): string {
 
 const queries = new WeakMap<TileLayerDef, Map<number, string | null>>();
 
+/** The key of the layer whose version this one carries: its own, or the `versionOf` layer's. */
+export function versionKey(def: Pick<TileLayerDef, 'plugin' | 'layer' | 'versionOf'>): string {
+	return layerKey(def.plugin, def.versionOf ?? def.layer);
+}
+
 /** The layer's newest version (core.layer_version, migration 0020), read in the cut's own snapshot. */
 const VERSION_SQL = (param: string) => `(select version from core.layer_version where layer = ${param} order by id desc limit 1)`;
 
@@ -269,7 +286,7 @@ export interface LayerCut {
  * version first, so both see one snapshot.
  */
 export async function cutLayerTile(sql: postgres.Sql, def: TileLayerDef, t: TileId, signal: AbortSignal): Promise<LayerCut> {
-	const id = layerKey(def.plugin, def.layer);
+	const id = versionKey(def);
 	const own = def.cut;
 	if (own) {
 		return sql.begin('isolation level repeatable read read only', async (tx) => {
@@ -552,7 +569,7 @@ export function layerTileServer(deps: LayerTileDeps): LayerTileServer {
 		},
 		async respond(def, t, requestedVersion, acceptEncoding, ifNoneMatch) {
 			const id = layerKey(def.plugin, def.layer);
-			const current = await deps.version(id);
+			const current = await deps.version(versionKey(def));
 			const headers = new Headers({ 'content-type': CONTENT_TYPE, vary: 'Accept-Encoding' });
 			// No version row: its build hasn't recorded the layer's licence and republish (plan C3), so nothing is served.
 			if (current === null) {
@@ -587,6 +604,12 @@ export function layerTileServer(deps: LayerTileDeps): LayerTileServer {
 	};
 }
 
+/** A plugin's layer definition among the found modules. */
+function findDef(found: TileModules, layer: string, plugin: string): TileLayerDef | undefined {
+	for (const m of Object.values(found)) for (const d of ([] as TileLayerDef[]).concat(m.default ?? [])) if (d.plugin === plugin && d.layer === layer) return d;
+	return undefined;
+}
+
 /** The modules found by glob: each `<plugin>/tiles.ts` beside this file, by path. */
 export type TileModules = Record<string, { default: TileLayerDef | readonly TileLayerDef[] }>;
 
@@ -605,6 +628,11 @@ export function buildRegistry(found: TileModules, log: (msg: string) => void = c
 			const problems = tileLayerProblems(def);
 			if (def.plugin !== folder) problems.push(`it's in ${folder}/, not ${def.plugin}/`);
 			if (out.has(id)) problems.push('defined twice');
+			if (def.versionOf) {
+				const target = findDef(found, def.versionOf, def.plugin);
+				if (!target) problems.push(`versionOf ${def.versionOf}: no such layer in ${def.plugin}`);
+				else if (target.versionOf) problems.push(`versionOf ${def.versionOf}: that layer takes another's version`);
+			}
 			if (problems.length) {
 				log(`tile layer ${id} (${path}) left out: ${problems.join('; ')}`);
 				continue;

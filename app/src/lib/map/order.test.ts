@@ -305,4 +305,20 @@ describe('the landscape slots', () => {
 		// A layer added without an owner is gated by Aerial only.
 		expect(slotAllowed({ areaFill: true }, gate({ fillOwner: null }))).toBe(true);
 	});
+	it('gates a layer by the flavor its `looks` names, as a base contribution\'s looks do', () => {
+		const map: Parameters<typeof addSlotted>[0] = { getLayer: () => ({}), getLayersOrder: () => [] };
+		const fill = (id: string, looks?: SlottedLayer['looks']): SlottedLayer => ({ slot: 'areas', layer: { id, type: 'fill', source: 's' }, looks });
+		addSlotted(map, [fill('clay-only', 'clay'), fill('valley-only', 'valley'), fill('both', 'both'), fill('plain')], 10, () => {}, 'crops');
+		const flags = slotFlags(map);
+		// 'both' and no looks are no gate at all: not recorded.
+		expect([...flags.keys()]).toEqual(['clay-only', 'valley-only']);
+		const gate = (flavor?: SlotGate['flavor']): SlotGate => ({ aerial: false, fillOwner: 'crops', fillsOff: new Set(), flavor });
+		expect(slotAllowed(flags.get('clay-only')!, gate('clay'))).toBe(true);
+		expect(slotAllowed(flags.get('clay-only')!, gate('valley'))).toBe(false);
+		expect(slotAllowed(flags.get('valley-only')!, gate('valley'))).toBe(true);
+		expect(slotAllowed(flags.get('valley-only')!, gate('clay'))).toBe(false);
+		// A gate that doesn't know the flavor leaves `looks` alone; the other flags still apply.
+		expect(slotAllowed(flags.get('clay-only')!, gate())).toBe(true);
+		expect(slotAllowed({ looks: 'clay', areaFill: true, owner: 'crops' }, { ...gate('clay'), fillsOff: new Set<LayerId>(['crops']) })).toBe(false);
+	});
 });
