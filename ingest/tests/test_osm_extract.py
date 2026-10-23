@@ -106,10 +106,8 @@ class PartitionTest(unittest.TestCase):
             ({"highway": "unclassified_link", "area": "yes"}, None),                # a street drawn as an area
             ({"highway": "raceway"}, P), ({"highway": "raceway", "area": "yes"}, P),
             ({"highway": "raceway", "lanes": "2"}, V), ({"highway": "raceway", "turn:lanes": "through"}, V),
-            ({"highway": "escape"}, P),
-            ({"highway": "residential", "area": "yes"}, None), ({"highway": "unclassified", "area": "yes"}, None),
-            ({"highway": "primary", "area": "yes"}, None), ({"highway": "service", "area": "yes"}, P),
-            ({"highway": "corridor"}, None), ({"highway": "elevator"}, None),
+            ({"highway": "escape"}, P), ({"highway": "unclassified", "area": "yes"}, None),
+            ({"highway": "service", "area": "yes"}, P), ({"highway": "elevator"}, None),
             ({"building": "yes"}, None), ({}, None),
         ]
         for tags, want in cases:

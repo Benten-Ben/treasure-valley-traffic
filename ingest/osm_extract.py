@@ -190,28 +190,20 @@ INDOOR_OR_NONBUILT = NOT_ROADS | {"corridor", "elevator"}
 
 
 def ownerless_built(tags):
-    """The reason a built highway way has no owner, or None: an area-drawn road (named, expected)
-    or a gap (the count the real-extract check reports must be 0 apart from the named areas)."""
+    """The count key for a built highway way with no owner, or None (it has one, or it's indoor or
+    unbuilt): 'area:<highway>' for an area-drawn street (named, expected), else the highway value,
+    a gap the real-extract check must not find (apart from the named areas)."""
     hw = tags.get("highway")
     if not hw or owner(tags) or hw in INDOOR_OR_NONBUILT:
         return None
     if tags.get("area") == "yes" and hw in AREA_STREET_CLASSES:
-        return None
+        return f"area:{hw}"
     return hw
 
 
 def count_ownerless(tags_list):
-    """Counter of highway values for built ways with no owner (ownerless_built), for the
-    real-extract check. Area-drawn streets are counted apart under 'area:<highway>'."""
-    counts = Counter()
-    for tags in tags_list:
-        hw = ownerless_built(tags)
-        if hw is None:
-            if tags.get("highway") and not owner(tags) and tags.get("highway") not in INDOOR_OR_NONBUILT:
-                counts[f"area:{tags['highway']}"] += 1
-            continue
-        counts[hw] += 1
-    return counts
+    """Counter of ownerless_built keys over the built ways, for the real-extract check."""
+    return Counter(key for key in map(ownerless_built, tags_list) if key)
 
 
 def named_exception(tags):
