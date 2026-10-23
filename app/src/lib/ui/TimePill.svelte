@@ -62,7 +62,7 @@
 		title="Playback: the delay behind live, pause and go live"
 		onclick={() => (open = !open)}
 	>
-		<span class="mark" aria-hidden="true">{mode === 'paused' ? '❚❚' : mode === 'behind' ? '▶\uFE0E' : mode === 'replay' ? '↺' : ''}</span>{label}
+		<span class="mark" aria-hidden="true">{mode === 'paused' ? '❚❚' : mode === 'behind' ? '▶\uFE0E' : mode === 'replay' ? '↺' : ''}</span><span class="label">{label}</span>
 	</button>
 	{#if open}
 		<div class="popover card" id="time-popover" role="dialog" aria-label="Playback">

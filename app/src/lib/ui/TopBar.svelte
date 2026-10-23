@@ -23,6 +23,11 @@
 	// The playhead: the moment the buses on the map are at (WP8's clock, ticking once a second).
 	const playhead = $derived(clockOf(app));
 	const clock = $derived(clockText(playhead.T));
+	// "8:48:46 AM · Fri": the weekday is the part the bar drops first when it is short of room.
+	const clockParts = $derived.by(() => {
+		const i = clock.indexOf(' · ');
+		return i < 0 ? { time: clock, day: '' } : { time: clock.slice(0, i), day: clock.slice(i) };
+	});
 
 	const chips = $derived(app.layers.chips());
 
@@ -115,7 +120,7 @@
 	</div>
 	{#if !phone}
 		<div class="right">
-			<span class="clock card num" title="The time the buses on the map are at (Boise)">{clock}</span>
+			<span class="clock card num" title="The time the buses on the map are at (Boise)">{clockParts.time}<span class="day">{clockParts.day}</span></span>
 			<TimePill {app} />
 			{#each slots.items('topbar-right') as it (it.id)}<it.component {...it.props} />{/each}
 			<button class="help card" aria-label="Help and keys (?)" onclick={onhelp}><Icon icon={QUESTION} size={22} /></button>
@@ -125,10 +130,12 @@
 </header>
 
 <style>
-	/* Two tracks: the left (nameplate and stat chips) takes what the right side leaves, so the chips' row
-	   (and its "+N" chip) stays clear of the clock, the time pill, the status chip and Help. The chip row can
-	   shrink to nothing; the nameplate does not shrink below its own width, so on a very narrow bar the
-	   nameplate can still extend past its track. Check the floor at 700 px before relying on it. */
+	/* Two tracks: the left (nameplate and stat chips) takes what the right side leaves. The track has a floor:
+	   its min-content, which is the nameplate plus the "+N" chip (the chips' own list counts for nothing, it
+	   scrolls), so the "+N" chip is always whole and the stats are always one click away. To keep the right side
+	   from pushing the track below that floor, the right side compacts in two steps (900 and 700 px, below):
+	   no weekday on the clock, a capped time pill, a smaller nameplate. Checked at 600, 700, 768, 800 and
+	   1024 px, with the longest pill label ("LIVE · no new GPS for 3 min"). */
 	.topbar {
 		position: absolute;
 		top: 12px;
@@ -136,7 +143,7 @@
 		right: 16px;
 		z-index: 40;
 		display: grid;
-		grid-template-columns: minmax(0, 1fr) auto;
+		grid-template-columns: minmax(min-content, 1fr) auto;
 		align-items: start;
 		gap: 12px;
 		pointer-events: none;
@@ -171,12 +178,16 @@
 	}
 	.chip-row {
 		display: flex;
+		flex: 1 1 0;
 		align-items: center;
 		gap: 6px;
 		min-width: 0;
 	}
 	.chips {
 		display: flex;
+		/* Width 0 and flex-grow: the list takes what is left and counts for nothing in the track's floor. */
+		flex: 1 1 0;
+		width: 0;
 		gap: 6px;
 		min-width: 0;
 		/* Room for the chips' 3 px drop shadow, which the scroller would clip (the margin keeps the row's height). */
@@ -254,10 +265,48 @@
 		cursor: pointer;
 		color: var(--ink);
 	}
+	@media (max-width: 899px) {
+		.right {
+			gap: 6px;
+		}
+		.clock {
+			padding: 0 10px;
+		}
+		.clock .day {
+			display: none;
+		}
+		/* The time pill's long labels ("LIVE · no new GPS for 3 min") are cut with an ellipsis; its accessible
+		   name and tooltip keep all of it. */
+		.right :global(.pill-button) {
+			max-width: 150px;
+			padding: 0 10px;
+		}
+		.right :global(.pill-button .label) {
+			min-width: 0;
+			overflow: hidden;
+			text-overflow: ellipsis;
+		}
+	}
+	@media (max-width: 699px) {
+		.right :global(.pill-button) {
+			max-width: 108px;
+		}
+		.topbar:not(.phone) .nameplate {
+			height: 40px;
+			padding: 0 14px;
+			border-radius: 999px;
+		}
+		.topbar:not(.phone) h1 {
+			font-size: 17px;
+		}
+	}
+	/* The phone bar has no right side: one column, so no empty column and gap eat the chips' width. */
 	.phone {
 		top: 8px;
 		left: 8px;
 		right: 8px;
+		grid-template-columns: minmax(0, 1fr);
+		column-gap: 0;
 	}
 	.phone .left {
 		flex-direction: column;

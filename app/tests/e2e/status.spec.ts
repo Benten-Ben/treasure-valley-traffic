@@ -44,3 +44,41 @@ test.describe('status chip', () => {
 		expect(text).toContain('Status unknown');
 	});
 });
+
+test.describe('status chip, narrow top bar', () => {
+	test('below 1024 px the chip shows its shape and count, and its name is the whole sentence', { tag: '@status' }, async ({ page }) => {
+		await page.setViewportSize({ width: 800, height: 800 });
+		await stubStatus(page, { sources: { fresh: 1, late: 0, stale: 0, never: 3, failing: 0 }, attention: [], builds: [] });
+		await page.goto('/');
+		await mapReady(page);
+
+		const chip = page.locator('.status .chip');
+		await expect(chip).toBeVisible();
+		// The accessible name carries the headline; the visible text is only the shape and the number.
+		const name = (await chip.getAttribute('aria-label')) ?? '';
+		expect(name).toMatch(/\S/);
+		expect(name).toMatch(/\d/);
+		const visible = (await chip.innerText()).trim();
+		expect(visible).toMatch(/^[●▲■◌]\s*\d+$/);
+		expect(visible).not.toContain(name);
+		await expect(page.getByRole('button', { name })).toBeVisible();
+	});
+
+	test('the "+N" chip stays whole and clear of the right side from 600 to 800 px', { tag: '@status' }, async ({ page }) => {
+		await stubStatus(page, FRESH);
+		await page.setViewportSize({ width: 800, height: 800 });
+		await page.goto('/');
+		await mapReady(page);
+		for (const width of [800, 768, 700, 600]) {
+			await page.setViewportSize({ width, height: 800 });
+			const right = (await page.locator('.topbar .right').boundingBox())!;
+			// Nothing on the right side runs off the screen.
+			expect(right.x + right.width, `${width} px: the right side fits`).toBeLessThanOrEqual(width);
+			const more = page.locator('.topbar .chip.more');
+			if (await more.count()) {
+				const box = (await more.boundingBox())!;
+				expect(box.x + box.width, `${width} px: "+N" ends before the right side starts`).toBeLessThanOrEqual(right.x);
+			}
+		}
+	});
+});
