@@ -38,10 +38,10 @@ describe('the base registry', () => {
 	});
 
 	it('holds the contributions packages added as folders, ordered by id', () => {
-		// Not an exact list: each layer package adds its own contribution, and checks it in its own test.
+		// Not a list of ids: each layer package checks its own contribution in its own folder's test (so no two
+		// packages edit this file), and this test only holds the ground, the first one, as a sample.
 		const ids = BASE_CONTRIBUTIONS.map((c) => c.id);
 		expect(ids).toContain('ground.paint');
-		expect(ids).toContain('hazards.burn_scars');
 		expect([...ids].sort()).toEqual(ids);
 		expect(baseContribution('ground.paint')?.id).toBe('ground.paint');
 		expect(baseContribution('none.such')).toBeUndefined();
