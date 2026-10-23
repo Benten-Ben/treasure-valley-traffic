@@ -126,7 +126,9 @@
 
 <style>
 	/* Two tracks: the left (nameplate and stat chips) takes what the right side leaves, so the chips' row
-	   (and its "+N" chip) can never run under the clock, the time pill, the status chip or Help. */
+	   (and its "+N" chip) stays clear of the clock, the time pill, the status chip and Help. The chip row can
+	   shrink to nothing; the nameplate does not shrink below its own width, so on a very narrow bar the
+	   nameplate can still extend past its track. Check the floor at 700 px before relying on it. */
 	.topbar {
 		position: absolute;
 		top: 12px;
