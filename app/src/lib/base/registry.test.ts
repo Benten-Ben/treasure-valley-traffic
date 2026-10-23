@@ -42,6 +42,7 @@ describe('the base registry', () => {
 		// packages edit this file), and this test only holds the ground, the first one, as a sample.
 		const ids = BASE_CONTRIBUTIONS.map((c) => c.id);
 		expect(ids).toContain('ground.paint');
+		expect(ids).toContain('roads.surfaces');
 		expect([...ids].sort()).toEqual(ids);
 		expect(baseContribution('ground.paint')?.id).toBe('ground.paint');
 		expect(baseContribution('none.such')).toBeUndefined();
