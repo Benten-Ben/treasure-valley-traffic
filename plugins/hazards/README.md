@@ -103,7 +103,7 @@ python3 -m ingest run idl_fire_restrictions nifc_wfigs_incidents nifc_wfigs_peri
 python3 -m ingest serve                      # runs them on their schedules with everything else
 python3 -m ingest.builds                     # is the burn-scars build marked? (the perimeter poller marks it)
 python3 -m ingest burn-scars [--list]        # run the build by hand (never in serve); --dry-run [--on YYYY-MM-DD] to look
-python3 -m ingest wfigs-backfill --load DIR/<UTC time> [--dry-run]    # load the kept Aug-Dec 2025 read into raw.record
+python3 -m ingest wfigs-backfill --load DIR/<UTC time> [--dry-run]    # load a kept read (Aug-Dec 2025, Jul 25-31 2025) into raw.record
 python3 -m unittest discover -s plugins/hazards/tests -t .   # with TVT_TEST_DATABASE_URL, the database tests too
 ```
 
@@ -196,6 +196,11 @@ Jul 31, 2025, about 27,000 acres). The backfill read brought 27 more fires
 2025, 5 cut at the box's edge, about 59,000 acres in the box, under 1 MB with
 the low-zoom copy. A build with nothing new takes about 2 s.
 
+On the scratch copy, Oct 22, 2026 (after the Jul 25–31 read): the read brought
+17 perimeters, 16 of them new versions (RANGE's was held), and 11 new scars in
+the box beside RANGE's, so 95 scars in all, 12 of them from Jul 25–31, 2025;
+the Aug–Dec scars were unchanged by the load.
+
 **The 2025 backfill** ([`ingest/wfigs_backfill.py`](ingest/wfigs_backfill.py)).
 The poller started on Oct 7, 2026, and its first run read what had changed in
 2026, so a fire from late 2025 is held only if its record changed since. The
@@ -227,12 +232,24 @@ NIFC again:
    read's own times, and each version it adds points at it
    (`raw.record.first_fetch`). No lifecycles: these fires are long out.
 
-A fire discovered from Jul 25 to Jul 31, 2025 is after the photo but outside
-the approved window, so it's drawn only if the poller holds it (RANGE is held).
-If the owner approves that week too, it becomes a second window in `WINDOWS`
-beside the first, read once with `--fetch --window 2025-07-25..2025-07-31`;
-the Aug–Dec read still loads as it is.
-The read's folder is kept on the server with the other downloaded sources
+**The second window, Jul 25–31, 2025.** A fire discovered in that week is after
+the photo (last flown Jul 24) but was outside the Aug–Dec window, so it was
+drawn only if the poller held it (RANGE, Jul 31, about 27,000 acres, is held).
+The owner approved that week too (Oct 22, 2026, item 3 of the end-of-wave-1
+decisions in [DECISIONS](../../docs/DECISIONS.md)), so it's a second window in
+`WINDOWS` beside the first, with its own approval, read once with
+`--fetch --one-off --out DIR --window 2025-07-25..2025-07-31`. With two
+windows `--window` is required, and each window is refused a second read
+(`read_at` in `WINDOWS`, or a `provenance.json` for it under `DIR`) unless
+`--read-again`, which needs the owner's OK. **That read was made on Oct 23,
+2026 at 03:57 UTC; don't read again.** It took three requests to the service's
+host (robots.txt with no rules, a count and the read) and brought 17
+perimeters, RANGE's among them, in 446,001 bytes. The Aug–Dec read still loads
+as it was made, and each read is logged as its own fetch of the one-off source
+`nifc_wfigs_perimeters_backfill`; a version the poller already holds (RANGE's)
+is left as it is. Load it the same way, then run the build:
+`wfigs-backfill --load <folder>`, then `burn-scars`.
+The reads' folders are kept on the server with the other downloaded sources
 (`/srv/tvt/work/sources/nifc-wfigs-backfill/`), outside this repository.
 
 **Deploying.** The ingest service applies `0001` at start. The deploy

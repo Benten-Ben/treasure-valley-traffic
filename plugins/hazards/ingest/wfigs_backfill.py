@@ -1,5 +1,5 @@
-"""The approved backfill of fire perimeters for Aug-Dec 2025 (landscape sprint, decision 25: owner, Oct 8, 2026):
-`python3 -m ingest wfigs-backfill`.
+"""The approved backfills of fire perimeters after the ground's photo: Aug-Dec 2025 (landscape sprint, decision 25:
+owner, Oct 8, 2026) and Jul 25-31, 2025 (owner, Oct 22, 2026): `python3 -m ingest wfigs-backfill`.
 
 The perimeter poller (nifc_wfigs_perimeters) started on Oct 7, 2026, and its first run read what had changed in
 2026. A fire from the second half of 2025 is in raw.record only if its record changed in 2026, but the burn scars
@@ -30,10 +30,13 @@ database loads that folder with `--load`, and `--fetch` refuses to read the wind
    (evt.event): these fires are long out, and the poller keeps a fire first seen already out in raw.record only.
 
 The windows are the approvals', fixed here rather than options (WINDOWS). A fire discovered from Jul 25 to Jul 31,
-2025 is after the photo but outside the approved window: it's drawn only if the poller holds it (the RANGE fire,
-Jul 31, is held). If the owner approves that week too, it's a second window added to WINDOWS beside the first, read
-once with `--fetch --window 2025-07-25..2025-07-31`, and each read loads on its own.
+2025 is after the photo but was outside the first window; the owner approved that week too (Oct 22, 2026, item 3 of
+the end-of-wave-1 decisions), so it's a second window beside the first. Each window has its own one read, made with
+`--fetch --window FIRST..LAST` (with two windows, --window is required), and each read loads on its own; the
+Aug-Dec read still loads as it was made. The RANGE fire (Jul 31, about 27,000 acres) was already held through the
+poller: the week's read adds its versions beside that one and leaves it as it is.
 
+    python3 -m ingest wfigs-backfill --fetch --one-off --out DIR --window 2025-07-25..2025-07-31
     python3 -m ingest wfigs-backfill --load /srv/sources/nifc-wfigs-backfill/20261011T1202Z --dry-run
     python3 -m ingest wfigs-backfill --load /srv/sources/nifc-wfigs-backfill/20261011T1202Z
 
@@ -59,6 +62,8 @@ CAP = 400                         # the most features a read may bring
 FEATURES, PROVENANCE = "features.json", "provenance.json"
 APPROVAL = ("owner, Oct 8, 2026: landscape sprint decision 25 ('one small backfill read of the same fire service "
             "for Aug-Dec 2025'); go-ahead to build, Oct 10")
+APPROVAL_JULY = ("owner, Oct 22, 2026: item 3 of the end-of-wave-1 decisions (docs/DECISIONS.md): 'one more "
+                 "fire-perimeter read, for Jul 25-31, 2025'")
 
 # The approved windows, Boise days, both included, each with its approval and, once made, when its one read was made
 # (UTC). A read is checked against the window its own provenance records, so a window approved later is added here
@@ -66,20 +71,22 @@ APPROVAL = ("owner, Oct 8, 2026: landscape sprint decision 25 ('one small backfi
 Window = namedtuple("Window", "first_day last_day approval read_at")
 WINDOWS = [
     Window(date(2025, 8, 1), date(2025, 12, 31), APPROVAL, "2026-10-11T12:02:07Z"),
+    Window(date(2025, 7, 25), date(2025, 7, 31), APPROVAL_JULY, "2026-10-23T03:57:51Z"),
 ]
 AUG_DEC_2025 = WINDOWS[0]
+JUL_25_31_2025 = WINDOWS[1]
 
 SOURCE = {
     "name": "nifc_wfigs_perimeters_backfill",
-    "title": "NIFC WFIGS interagency fire perimeters: the approved backfill read of Aug-Dec 2025",
+    "title": "NIFC WFIGS interagency fire perimeters: the approved backfill reads (Jul 25-31 and Aug-Dec 2025)",
     "url": perimeters.LAYER,
     "access": "one_off",
     "license": perimeters.SOURCE["license"],
     "credit": perimeters.SOURCE["credit"],
-    "notes": "One read of the all-years perimeter service for fires discovered Aug 1 - Dec 31, 2025 (Boise), "
-             f"approved by the owner ({APPROVAL}), made on Oct 11, 2026. Its records are stored as "
-             "nifc_wfigs_perimeters versions; each version it added points (first_fetch) at this source's fetch "
-             "row. plugins/hazards/ingest/wfigs_backfill.py.",
+    "notes": "One read each of the all-years perimeter service for fires discovered Aug 1 - Dec 31, 2025 and "
+             "Jul 25 - 31, 2025 (Boise), approved by the owner (Aug-Dec: " + APPROVAL + "; Jul 25-31: " + APPROVAL_JULY
+             + "). Their records are stored as nifc_wfigs_perimeters versions; each version a read adds points "
+             "(first_fetch) at its own fetch row of this source. plugins/hazards/ingest/wfigs_backfill.py.",
 }
 
 
@@ -291,13 +298,13 @@ def load(conn, folder, source=perimeters.SOURCE["name"], build=burn_scars.BUILD)
 def main(argv=None):
     ap = argparse.ArgumentParser(
         prog="python3 -m ingest wfigs-backfill",
-        description="The approved backfill read of NIFC's fire perimeters for Aug-Dec 2025, and its load into "
-                    "raw.record. The read was made on Oct 11, 2026 and is kept on the server: load that folder "
-                    "(--load); don't read again.")
+        description="The approved backfill reads of NIFC's fire perimeters (Aug-Dec 2025, made on Oct 11, 2026; "
+                    "Jul 25-31, 2025), and their load into raw.record. A read already made is kept on the server: "
+                    "load its folder (--load); don't read again.")
     step = ap.add_mutually_exclusive_group(required=True)
     step.add_argument("--fetch", action="store_true",
-                      help="read the service once for an approved window not yet read (needs --one-off and --out; "
-                           "the Aug-Dec 2025 read is done)")
+                      help="read the service once for an approved window not yet read (needs --one-off, --out and "
+                           "--window; the Aug-Dec 2025 read is done)")
     step.add_argument("--load", metavar="DIR", help="load a read's folder (DIR/<UTC time>) into raw.record")
     ap.add_argument("--one-off", action="store_true",
                     help="confirm this is the one approved read, run by hand (required with --fetch)")
