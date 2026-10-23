@@ -35,7 +35,7 @@
 			<rect x="11.5" y="8" width="3" height="7" rx="1" fill={INK} />
 			<rect x="17.5" y="11" width="3" height="4" rx="1" fill={INK} />
 		</svg>
-		<span><b>▲ The sources disagree</b>: OpenStreetMap and ACHD's rule differ by more than a lane. Click for both counts</span>
+		<span><b>▲ The sources disagree</b>: the lane-count sources differ by more than a lane (OpenStreetMap against ACHD's rule, or the sources ACHD's rule draws on). Click for the counts</span>
 	</li>
 	<li>
 		<svg viewBox="0 0 32 32" width="32" height="32" aria-hidden="true">

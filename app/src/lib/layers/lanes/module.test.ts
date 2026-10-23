@@ -139,4 +139,16 @@ describe('the Lanes module (plan P9)', () => {
 		await lanes.paving({ type: 'paving', kind: 'lot', id: 'w42' });
 		expect(urls.at(-1)).toBe('/api/roads/paving/lot/w42');
 	});
+	it('says whether a reload would bring a rebuilt map: only when the served manifest changed', async () => {
+		const { lanes } = await start();
+		const served = (landscape: unknown, ok = true) => vi.stubGlobal('fetch', () => Promise.resolve({ ok, status: ok ? 200 : 500, json: async () => ({ landscape }) }));
+		served({ status: 'baked', digest: 'a' });
+		expect(await lanes.newerMapReady()).toBe(true);
+		served({ status: 'empty' });
+		expect(await lanes.newerMapReady()).toBe(false);
+		served({ status: 'baked', digest: 'a' }, false);
+		expect(await lanes.newerMapReady()).toBe(false);
+		vi.stubGlobal('fetch', () => Promise.reject(new Error('offline')));
+		expect(await lanes.newerMapReady()).toBe(false);
+	});
 });

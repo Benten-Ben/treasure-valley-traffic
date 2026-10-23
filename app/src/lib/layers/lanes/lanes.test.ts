@@ -13,6 +13,7 @@ import {
 	lanesPhrase,
 	mapIsCurrent,
 	metresFeet,
+	newerMapReady,
 	parseBuild,
 	parsePieceRef,
 	pavingLotId,
@@ -207,5 +208,21 @@ describe('the icon', () => {
 		const paths = [...branch.matchAll(/<path d="([^"]+)"([^>]*)\/>/g)];
 		expect(ARROWS_SPLIT.tone).toBe(paths.find((p) => p[2].includes('opacity="0.2"'))?.[1]);
 		expect(ARROWS_SPLIT.line).toBe(paths.find((p) => !p[2].includes('opacity'))?.[1]);
+	});
+});
+
+describe('a rebuilt map', () => {
+	const baked = (digest?: string, built?: string) => ({ landscape: { status: 'baked', ...(digest ? { digest } : {}), ...(built ? { built } : {}) } });
+	it('a reload helps only when the server holds a different landscape file', () => {
+		expect(newerMapReady(baked('a'), baked('a'))).toBe(false);
+		expect(newerMapReady(baked('a'), baked('b'))).toBe(true);
+		expect(newerMapReady(baked(undefined, '2026-10-20'), baked(undefined, '2026-10-21'))).toBe(true);
+		expect(newerMapReady(baked(undefined, '2026-10-20'), baked(undefined, '2026-10-20'))).toBe(false);
+		expect(newerMapReady({}, baked('a'))).toBe(true);
+	});
+	it('nothing baked now, or an unreadable manifest, is not a reason to reload', () => {
+		expect(newerMapReady(baked('a'), { landscape: { status: 'empty' } })).toBe(false);
+		expect(newerMapReady(baked('a'), null)).toBe(false);
+		expect(newerMapReady(baked('a'), 'x')).toBe(false);
 	});
 });

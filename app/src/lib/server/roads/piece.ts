@@ -71,6 +71,8 @@ interface PieceRow {
 	flags: string[] | null;
 }
 
+const ACHD_RULE_NOTES: ReadonlySet<string> = new Set(['direction', 'other_direction_assumed']);
+
 /** The pure part: one piece's row (and its flagged lane-count disagreement) as the card. */
 export function pieceCard(r: PieceRow, build: string, conflicts: readonly unknown[]): PieceCard {
 	const flags = r.flags ?? [];
@@ -112,7 +114,9 @@ export function pieceCard(r: PieceRow, build: string, conflicts: readonly unknow
 		// The ▲ is the build's own flag; the counts only fill the card in.
 		conflict: flags.includes('conflict') ? conflictInfo(conflicts) : null,
 		material: { value: r.material, estimated: r.material_source !== 'surface' },
-		notes: flags.filter((f) => f in NOTE_WORD),
+		// 'direction' and 'other_direction_assumed' are about ACHD's rule; the build sets them even where OpenStreetMap's
+		// own count won, and then the card must not say the lanes are assumed.
+		notes: flags.filter((f) => f in NOTE_WORD && !(r.lanes_source === 'osm' && ACHD_RULE_NOTES.has(f))),
 		credit: PIECE_CREDIT
 	};
 }

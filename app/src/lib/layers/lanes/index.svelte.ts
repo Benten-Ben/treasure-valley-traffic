@@ -7,7 +7,7 @@ import { PRIORITY, type Interactive, type LayerModule, type LayerStatus, type Se
 import Card from './Card.svelte';
 import def from './def.js';
 import Legend from './Legend.svelte';
-import { CardError, pavingSelection, roadSelection, type LanesSelectionData, type PieceAnswer } from './lanes.js';
+import { CardError, newerMapReady as isNewerMap, pavingSelection, roadSelection, type LanesSelectionData, type PieceAnswer } from './lanes.js';
 import { ARROW_LAYER, CONFLICT_LAYER, LANDSCAPE_SOURCE, ownLayers, OWN_LAYERS, pickablePavingLayers, pickableRoadLayers } from './layers.js';
 import { allImages } from './markers.js';
 
@@ -107,6 +107,16 @@ export class LanesModule implements LayerModule {
 	/** One parking lot's or paving way's card. */
 	paving(d: Extract<LanesSelectionData, { type: 'paving' }>): Promise<PavingCard> {
 		return this.#kept(`paving:${d.kind}:${d.id}`, () => request<PavingCard>(`/api/roads/paving/${d.kind}/${encodeURIComponent(d.id)}`));
+	}
+
+	/** Whether the server now holds a different landscape file than this page loaded (so a reload would bring newer roads). */
+	async newerMapReady(): Promise<boolean> {
+		try {
+			const res = await fetch('/tiles/manifest.json', { cache: 'no-store' });
+			return res.ok && isNewerMap(this.#ctx?.manifest, await res.json());
+		} catch {
+			return false;
+		}
 	}
 
 	summary(): string | null {

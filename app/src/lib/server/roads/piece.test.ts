@@ -88,10 +88,17 @@ describe('the piece card (pure)', () => {
 	});
 
 	it('one-way, the class in words, and only the flags the card words', () => {
-		const c = pieceCard(row({ oneway: -1, highway: 'service', service: 'alley', flags: ['components_exceed', 'direction', 'sidewalk_close'] }) as never, 'b', []);
+		const c = pieceCard(row({ oneway: -1, highway: 'service', service: 'alley', lanes_source: 'default', flags: ['components_exceed', 'direction', 'sidewalk_close'] }) as never, 'b', []);
 		expect(c.oneway).toBe('backward');
 		expect(c.class_word).toBe('Alley');
 		expect(c.notes).toEqual(['direction']);
+	});
+
+	it("ACHD-rule notes are left out where OpenStreetMap's own count won", () => {
+		const osm = pieceCard(row({ lanes_source: 'osm', flags: ['direction', 'other_direction_assumed', 'single_lane'] }) as never, 'b', []);
+		expect(osm.notes).toEqual(['single_lane']);
+		const rule = pieceCard(row({ lanes_source: 'achd_msm', flags: ['other_direction_assumed'] }) as never, 'b', []);
+		expect(rule.notes).toEqual(['other_direction_assumed']);
 	});
 
 	it('a junction fill and an island get a short card with no lane counts', () => {

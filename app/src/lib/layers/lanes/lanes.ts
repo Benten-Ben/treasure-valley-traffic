@@ -9,7 +9,8 @@
  *   itself takes the Master Street Map, ITD's HPMS, OpenStreetMap or COMPASS's centerline, whichever it trusts for
  *   the road's class), then HPMS alone where no ACHD segment lies along the piece; a count nobody gave is
  *   "assumed" (DECISIONS, 2026-10-22, item 9).
- * - **A disagreement is flagged, never smoothed.** Where OpenStreetMap and ACHD's rule differ by more than a lane the
+ * - **A disagreement is flagged, never smoothed.** Where the lane-count sources differ by more than a lane (OpenStreetMap
+ *   against ACHD's rule, or the sources ACHD's rule draws on) the
  *   piece carries a ▲ and the card shows both counts (the build's `lanes_conflict` review row). The ▲ is the build's
  *   flag; nothing here recounts it.
  * - **Estimates say so.** A width counted from the lanes or taken from a class default, a material nobody tagged,
@@ -298,7 +299,25 @@ export function mapIsCurrent(mapBuild: string, current: { id: string; finished_a
 	return Number.isFinite(finished) && finished <= at + 999;
 }
 
-export const BEHIND_MESSAGE = 'The map is a build behind the road data. Reload the page to see the current roads.';
+export const BEHIND_MESSAGE =
+	"The road data was rebuilt after these map tiles were made, so this card can't be matched to the road you clicked. Road cards come back when the map is rebuilt.";
+
+/**
+ * Whether a reload would bring a different landscape file than the one the page loaded: the fresh `manifest.json`
+ * holds a baked landscape whose digest (or, with no digest, build date) differs. The road data is rebuilt before the
+ * map is, so a reload helps only once the bake has been served; until then the card says so and offers no button.
+ */
+export function newerMapReady(loaded: unknown, fresh: unknown): boolean {
+	const entry = (m: unknown): { digest?: unknown; built?: unknown } | null => {
+		const e = m && typeof m === 'object' ? (m as { landscape?: unknown }).landscape : null;
+		return e && typeof e === 'object' && (e as { status?: unknown }).status === 'baked' ? (e as { digest?: unknown; built?: unknown }) : null;
+	};
+	const now = entry(fresh);
+	if (!now) return false;
+	const was = entry(loaded);
+	if (!was) return true;
+	return now.digest !== undefined || was.digest !== undefined ? now.digest !== was.digest : now.built !== was.built;
+}
 
 // -- the card API's route ------------------------------------------------------------------------------------------
 

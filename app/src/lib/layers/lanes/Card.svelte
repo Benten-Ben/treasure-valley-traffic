@@ -19,13 +19,13 @@
 	let answer = $state.raw<PieceAnswer | PavingCard | null>(null);
 	let loading = $state(false);
 	let problem = $state<string | null>(null);
-	let behind = $state(false);
+	let reloadHelps = $state(false);
 
 	$effect(() => {
 		const d = data;
 		answer = null;
 		problem = null;
-		behind = false;
+		reloadHelps = false;
 		loading = true;
 		let live = true;
 		const asked = d.type === 'piece' ? lanes.piece(d) : lanes.paving(d);
@@ -39,8 +39,11 @@
 				if (!live) return;
 				loading = false;
 				if (e instanceof CardError && e.status === 409) {
-					behind = true;
 					problem = e.message;
+					// The reload button only where a reload brings a different map; the road data is rebuilt first.
+					lanes.newerMapReady().then((yes) => {
+						if (live) reloadHelps = yes;
+					});
 				} else if (e instanceof CardError && e.status === 404) problem = d.type === 'piece' ? 'This is no longer in the roads build.' : 'This is no longer in the paving data.';
 				else problem = `Couldn't load its details: ${e instanceof Error ? e.message : e}`;
 			}
@@ -155,7 +158,8 @@
 		<p class="meta" role="status">Loading what we know…</p>
 	{:else if problem}
 		<p class="meta" role="alert">▲ {problem}</p>
-		{#if behind}
+		{#if reloadHelps}
+			<p class="meta">A rebuilt map is ready.</p>
 			<button class="pill" type="button" onclick={() => location.reload()}>Reload the map</button>
 		{/if}
 	{/if}

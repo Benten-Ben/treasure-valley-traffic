@@ -10,8 +10,9 @@
  *   review row that carries both counts;
  * - **their surfaces, an edge and markings** (ids as in the fixture tiles), a junction and an island with no piece.
  *
- * Nothing here is a real record or a real agency's value; the names say "Fixture". Rows are removed by the build and
- * ids they belong to, so a database that also holds real roads rows keeps them (the specs run on a throwaway clone).
+ * Nothing here is a real record or a real agency's value; the names say "Fixture". The seed's ids are bare numbers, so
+ * it **refuses to run** (the spec fails with the reason) on a database that holds a real roads build or real pieces:
+ * run it on a throwaway clone or a database with no roads build (the browser specs' own). It deletes only its own ids.
  */
 import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -42,6 +43,7 @@ export async function seedLanes(): Promise<Seeded> {
 	let previousCurrent: string | null = null;
 	try {
 		const [has] = await sql`select to_regclass('roads.build') is not null as ok`;
+		if (has.ok) await refuseRealRoads(sql);
 		if (!has.ok) {
 			// One transaction, so a failure leaves no half-made schema behind.
 			await sql.begin(async (tx) => {
@@ -85,11 +87,25 @@ export async function seedLanes(): Promise<Seeded> {
 		});
 		return { madeSchema, previousCurrent };
 	} catch (e) {
-		// A failure partway leaves no rows or schema of ours for a later run to keep for good.
-		await cleanLanes({ madeSchema, previousCurrent }).catch(() => {});
+		// A failure partway leaves no rows or schema of ours for a later run to keep for good (but a refusal touched nothing).
+		if (!(e instanceof RealRoadsError)) await cleanLanes({ madeSchema, previousCurrent }).catch(() => {});
 		throw e;
 	} finally {
 		await sql.end();
+	}
+}
+
+class RealRoadsError extends Error {}
+
+/** The seed's ids are bare numbers, so it never runs where a real roads build (or a real piece) could share them. */
+async function refuseRealRoads(sql: postgres.Sql) {
+	const builds = await sql`select id from roads.build where id <> ${BUILD}`;
+	const [pieces] = await sql`select count(*)::int as n from roads.piece where osm_id <> all(${[910001, 910002]})`;
+	if (builds.length || pieces.n) {
+		throw new RealRoadsError(
+			`lanes e2e seed: this database holds a real roads build (${builds.length} build(s), ${pieces.n} piece(s) that are not the seed's). ` +
+				'Run the @lanes spec on a throwaway clone or a database with no roads build; nothing was changed.'
+		);
 	}
 }
 

@@ -5,7 +5,8 @@ import type { LayerDef } from '../types.js';
  * real width the base map draws (`#lib/base/roads`). While it is on:
  *
  * - the base markings show in Clay (ink at 60%) and under Aerial (they read the layer set through the base's `show`);
- * - a ▲ marks every piece where OpenStreetMap's lane count and ACHD's rule differ by more than a lane, and turn
+ * - a ▲ marks every piece where the lane-count sources differ by more than a lane (OpenStreetMap against ACHD's rule, or
+ *   the sources ACHD's rule draws on), and turn
  *   arrows draw from z17.5;
  * - road surfaces, decks, edges, markings and piece lines open a card with the lanes, their source and any
  *   disagreement, the width and how it is known; paving (lots, driveways, service ways, sidewalks) opens its own.
