@@ -19,7 +19,7 @@
 		TYPE_NAME,
 		typedBySpring,
 		heightNote,
-		crownNote,
+		CROWN_NOTE,
 		type TreeDetail,
 		type TreeRow
 	} from './trees.js';
@@ -87,7 +87,7 @@
 	<dt>Height</dt>
 	<dd><span class="num">{metresFeet(height)}</span> <span class="how">{heightNote(year)}</span></dd>
 	<dt>Crown width</dt>
-	<dd><span class="num">{metresFeet(crown)}</span> <span class="how">{crownNote(kind)}</span></dd>
+	<dd><span class="num">{metresFeet(crown)}</span> <span class="how">{CROWN_NOTE}</span></dd>
 	{#if trunk !== null}
 		<dt>Trunk</dt>
 		<dd><span class="num">{Math.round(trunk)} in · {Math.round(trunk * 2.54)} cm</span> <span class="how">diameter, from the inventory</span></dd>

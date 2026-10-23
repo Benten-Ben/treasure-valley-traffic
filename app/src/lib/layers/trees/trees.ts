@@ -536,7 +536,7 @@ export const heightNote = (year = '2023'): string => `measured by the ${year} li
  * How a tree's crown width is told on the card. Every crown is placed from the
  * lidar (a matched tree's too); the species never shapes it.
  */
-export const crownNote = (_kind: TreeKind): string => 'estimated by placement';
+export const CROWN_NOTE = 'estimated by placement';
 
 /** The kinds the legend lists: placed always; catalogued only once a catalogued tree is in view (the catalogue answered). */
 export function legendKinds(counts: Partial<Record<TreeKind, number>>, catalogue = false): TreeKind[] {

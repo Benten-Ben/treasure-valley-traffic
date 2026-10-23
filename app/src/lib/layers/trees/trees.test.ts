@@ -12,7 +12,7 @@ import {
 	CREDIT,
 	CREDIT_LAYER,
 	credits,
-	crownNote,
+	CROWN_NOTE,
 	heightNote,
 	legendCredit,
 	legendKinds,
@@ -344,7 +344,7 @@ describe('what the public card and legend say (a lidar-only table, #351)', () =>
 	});
 
 	it('tells every crown as estimated by placement, a matched tree’s too, and every height as measured', () => {
-		for (const k of KINDS) expect(crownNote(k)).toBe('estimated by placement');
+		expect(CROWN_NOTE).toBe('estimated by placement');
 		expect(heightNote('2023')).toBe('measured by the 2023 lidar');
 	});
 
