@@ -389,7 +389,7 @@ class PhotoStatsTest(unittest.TestCase):
     def test_calibration_compares_the_box_class_window(self):
         with open(os.path.join(self.out, "calibration.json"), encoding="utf-8") as f:
             cal = json.load(f)
-        self.assertEqual(cal["boxes"]["a"], {"skipped": "no classes"})
+        self.assertEqual(cal["boxes"]["a"], {"skipped": "no classes", "lidar": "2019-20 QL2"})   # box a keeps its 2019-20 lidar (#283)
         f_box = cal["boxes"]["f"]
         self.assertGreater(f_box["photo_v1"], 0)
         self.assertGreater(f_box["class_mask"], f_box["photo_v1"] * 0.5)
