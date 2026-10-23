@@ -8,6 +8,7 @@
     {"name": "vrt_gtfs", "module": "ingest.sources.vrt_gtfs", "kind": "source",
      "license": "CC BY 3.0", "credit": "Valley Regional Transit", "republish": "yes"},
     {"name": "vrt_realtime", "module": "ingest.sources.vrt_realtime", "kind": "stream",
+     "stale_after": "1 hour",
      "license": "CC BY 3.0", "credit": "Valley Regional Transit", "republish": "yes"}
   ],
   "tables": [

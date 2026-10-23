@@ -1,5 +1,6 @@
 """Database helpers shared by ingestors: sources, the fetch log, raw record versions."""
 
+import functools
 import hashlib
 import json
 import os
@@ -19,15 +20,30 @@ def now():
     return datetime.now(timezone.utc)
 
 
+@functools.lru_cache(maxsize=1)
+def _plugins():
+    from . import manifest
+    return manifest.find()
+
+
 def ensure_source(conn, s):
-    """Create or update a source's registry row."""
+    """Create or update a source's registry row. A stream's stale_after and fetch_sources
+    (ops.source_status judges it by them) come from its manifest entry, unless s has them."""
+    from . import manifest
+    row = {"schedule": None, "license": None, "credit": None, "notes": None, **s}
+    if "stale_after" not in row:
+        row["stale_after"], row["fetch_sources"] = manifest.stream_staleness(_plugins(), row["name"]) or (None, None)
+    row.setdefault("fetch_sources", None)
     conn.execute(
-        """insert into ops.source (name, title, url, access, schedule, license, credit, notes)
-           values (%(name)s, %(title)s, %(url)s, %(access)s, %(schedule)s, %(license)s, %(credit)s, %(notes)s)
+        """insert into ops.source (name, title, url, access, schedule, license, credit, notes,
+                                   stale_after, fetch_sources)
+           values (%(name)s, %(title)s, %(url)s, %(access)s, %(schedule)s, %(license)s, %(credit)s, %(notes)s,
+                   %(stale_after)s::interval, %(fetch_sources)s)
            on conflict (name) do update set title = excluded.title, url = excluded.url,
              access = excluded.access, schedule = excluded.schedule, license = excluded.license,
-             credit = excluded.credit, notes = excluded.notes""",
-        {"schedule": None, "license": None, "credit": None, "notes": None, **s})
+             credit = excluded.credit, notes = excluded.notes,
+             stale_after = excluded.stale_after, fetch_sources = excluded.fetch_sources""",
+        row)
 
 
 class Fetch:
