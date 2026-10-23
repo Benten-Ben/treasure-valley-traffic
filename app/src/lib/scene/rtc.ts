@@ -61,6 +61,15 @@ export function multiply(out: Float64Array, a: Mat4, b: Mat4): Float64Array {
 }
 
 /**
+ * `mainMatrix · T(origin) · S(k, −k, k)` for an origin of its own (a static batch's, not the map's centre): metres east,
+ * north and up from (mx, my, oz), at the scale `k` (1 / circumference at the origin's latitude), → clip space.
+ */
+export function originMatrix(main: Mat4, mx: number, my: number, oz: number, k: number, out: Float64Array): Float64Array {
+	const ts = new Float64Array([k, 0, 0, 0, 0, -k, 0, 0, 0, 0, k, 0, mx, my, oz * k, 1]);
+	return multiply(out, main, ts);
+}
+
+/**
  * The frame's matrices. `main` is the custom layer's
  * `defaultProjectionData.mainMatrix`; (lng, lat) the map's centre; `oz` the
  * elevation the origin sits at (any value near the scene keeps offsets small);

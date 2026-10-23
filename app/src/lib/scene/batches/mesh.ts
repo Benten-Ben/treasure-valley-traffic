@@ -25,7 +25,7 @@ uniform mat4 u_m;
 vec3 place(vec3 l) { return i_offset + i_bx * l.x + i_by * l.y + i_bz * l.z; }
 `;
 
-const VERTEX = `#version 300 es
+export const MESH_VERTEX = `#version 300 es
 layout(location = 0) in vec3 a_pos;
 layout(location = 1) in vec3 a_normal;
 layout(location = 2) in vec3 a_color;
@@ -59,7 +59,7 @@ void main() {
 	v_alpha = alpha;
 }`;
 
-const FRAGMENT = `#version 300 es
+export const MESH_FRAGMENT = `#version 300 es
 precision highp float;
 in vec3 v_color;
 in float v_alpha;
@@ -89,12 +89,52 @@ precision mediump float;
 out vec4 color;
 void main() { color = vec4(0.0); }`;
 
+/** A mesh's vertex array: its vertices (locations 0–3) and indices, with the vertex array left bound. */
+export function uploadMesh(gl: WebGL2RenderingContext, mesh: Mesh): { vao: WebGLVertexArrayObject; vbo: WebGLBuffer; ibo: WebGLBuffer } {
+	const vao = gl.createVertexArray();
+	if (!vao) throw new Error('no vertex array');
+	gl.bindVertexArray(vao);
+	const vbo = staticBuffer(gl, mesh.vertices);
+	const stride = FLOATS_PER_VERTEX * 4;
+	const vattr = (loc: number, size: number, offset: number) => {
+		gl.enableVertexAttribArray(loc);
+		gl.vertexAttribPointer(loc, size, gl.FLOAT, false, stride, offset * 4);
+	};
+	vattr(0, 3, 0);
+	vattr(1, 3, 3);
+	vattr(2, 3, 6);
+	vattr(3, 1, 9);
+	const ibo = staticBuffer(gl, mesh.indices, gl.ELEMENT_ARRAY_BUFFER);
+	return { vao, vbo, ibo };
+}
+
+/** Point the per-instance attributes (locations 4–10, divisor 1) at `buffer` (the bound vertex array keeps them). */
+export function setInstanceAttribs(gl: WebGL2RenderingContext, buffer: WebGLBuffer): void {
+	gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+	const istride = INSTANCE_FLOATS * 4;
+	const iattr = (loc: number, size: number, offset: number) => {
+		gl.enableVertexAttribArray(loc);
+		gl.vertexAttribPointer(loc, size, gl.FLOAT, false, istride, offset * 4);
+		gl.vertexAttribDivisor(loc, 1);
+	};
+	iattr(4, 3, 0);
+	iattr(5, 3, 3);
+	iattr(6, 3, 6);
+	iattr(7, 3, 9);
+	iattr(8, 4, 12);
+	gl.enableVertexAttribArray(9);
+	gl.vertexAttribIPointer(9, 4, gl.UNSIGNED_INT, istride, 16 * 4);
+	gl.vertexAttribDivisor(9, 1);
+	iattr(10, 1, 20);
+}
+
 interface KindGpu {
 	vao: WebGLVertexArrayObject;
 	vbo: WebGLBuffer;
 	ibo: WebGLBuffer;
 	instances: GrowableBuffer;
 	indexCount: number;
+	source: Mesh;
 }
 
 /** Instance data for one mesh kind this frame. */
@@ -132,45 +172,41 @@ export class MeshBatch {
 
 	constructor(gl: WebGL2RenderingContext, meshes: Record<MeshKind, Mesh>) {
 		this.#gl = gl;
-		this.#program = createProgram(gl, VERTEX, FRAGMENT, [], ['u_m', 'u_light']);
-		for (const [kind, mesh] of Object.entries(meshes) as [MeshKind, Mesh][]) this.#kinds.set(kind, this.#upload(mesh));
+		this.#program = createProgram(gl, MESH_VERTEX, MESH_FRAGMENT, [], ['u_m', 'u_light']);
+		this.sync(meshes);
+	}
+
+	/** Upload the meshes not here yet (a kind registered after the batch was made), under their `mesh.kind`; ones that went are dropped. */
+	sync(meshes: Record<MeshKind, Mesh>): void {
+		for (const [kind, mesh] of Object.entries(meshes) as [MeshKind, Mesh][]) {
+			const old = this.#kinds.get(kind);
+			if (old && old.source === mesh) continue;
+			if (old) this.#free(old);
+			this.#kinds.set(kind, this.#upload(mesh));
+		}
+		for (const [kind, k] of this.#kinds) {
+			if (!(kind in meshes)) {
+				this.#free(k);
+				this.#kinds.delete(kind);
+			}
+		}
+	}
+
+	#free(k: KindGpu): void {
+		const gl = this.#gl;
+		gl.deleteVertexArray(k.vao);
+		gl.deleteBuffer(k.vbo);
+		gl.deleteBuffer(k.ibo);
+		k.instances.destroy();
 	}
 
 	#upload(mesh: Mesh): KindGpu {
 		const gl = this.#gl;
-		const vao = gl.createVertexArray();
-		if (!vao) throw new Error('no vertex array');
-		gl.bindVertexArray(vao);
-		const vbo = staticBuffer(gl, mesh.vertices);
-		const stride = FLOATS_PER_VERTEX * 4;
-		const vattr = (loc: number, size: number, offset: number) => {
-			gl.enableVertexAttribArray(loc);
-			gl.vertexAttribPointer(loc, size, gl.FLOAT, false, stride, offset * 4);
-		};
-		vattr(0, 3, 0);
-		vattr(1, 3, 3);
-		vattr(2, 3, 6);
-		vattr(3, 1, 9);
-		const ibo = staticBuffer(gl, mesh.indices, gl.ELEMENT_ARRAY_BUFFER);
+		const { vao, vbo, ibo } = uploadMesh(gl, mesh);
 		const instances = new GrowableBuffer(gl);
-		gl.bindBuffer(gl.ARRAY_BUFFER, instances.buffer);
-		const istride = INSTANCE_FLOATS * 4;
-		const iattr = (loc: number, size: number, offset: number) => {
-			gl.enableVertexAttribArray(loc);
-			gl.vertexAttribPointer(loc, size, gl.FLOAT, false, istride, offset * 4);
-			gl.vertexAttribDivisor(loc, 1);
-		};
-		iattr(4, 3, 0);
-		iattr(5, 3, 3);
-		iattr(6, 3, 6);
-		iattr(7, 3, 9);
-		iattr(8, 4, 12);
-		gl.enableVertexAttribArray(9);
-		gl.vertexAttribIPointer(9, 4, gl.UNSIGNED_INT, istride, 16 * 4);
-		gl.vertexAttribDivisor(9, 1);
-		iattr(10, 1, 20);
+		setInstanceAttribs(gl, instances.buffer);
 		gl.bindVertexArray(null);
-		return { vao, vbo, ibo, instances, indexCount: mesh.indices.length };
+		return { vao, vbo, ibo, instances, indexCount: mesh.indices.length, source: mesh };
 	}
 
 	/**
@@ -259,12 +295,7 @@ export class MeshBatch {
 		if (this.#probe) gl.deleteProgram(this.#probe.program);
 		if (this.#tf) gl.deleteTransformFeedback(this.#tf);
 		if (this.#tfBuffer) gl.deleteBuffer(this.#tfBuffer);
-		for (const k of this.#kinds.values()) {
-			gl.deleteVertexArray(k.vao);
-			gl.deleteBuffer(k.vbo);
-			gl.deleteBuffer(k.ibo);
-			k.instances.destroy();
-		}
+		for (const k of this.#kinds.values()) this.#free(k);
 		this.#kinds.clear();
 	}
 }

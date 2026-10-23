@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { allMeshes, BUDGETS, BUS, FLOATS_PER_VERTEX, seeded, triangles, TRUNK, type Mesh, type MeshKind } from './meshes.js';
+import { afterEach } from 'vitest';
+import { allMeshes, Builder, BUDGETS, BUS, FLOATS_PER_VERTEX, gpuMeshes, LOD_BUDGET, lodKey, lodMeshes, meshVersion, registerMeshKind, rgb, seeded, triangles, TRUNK, unitBoxMesh, unregisterMeshKind, type Mesh, type MeshKind } from './meshes.js';
 
 /** Mesh budgets (docs/14 §14.8, "Models"): triangle budgets, bounding boxes, index ranges and the tint flag. */
 const meshes = allMeshes();
@@ -277,5 +278,76 @@ describe('meshes', () => {
 			expect(treeColumnMesh().vertices.length).toBe(treeBroadMesh().vertices.length);
 			expect(treeColumnMesh().vertices).not.toEqual(treeBroadMesh().vertices);
 		});
+	});
+});
+
+describe('the mesh-kind registry', () => {
+	const box = (h: number) => () => {
+		const b = new Builder();
+		b.box([-0.5, -0.5, 0], [0.5, 0.5, h], rgb('#9a8f7a'), 1);
+		return b.build('x');
+	};
+	const prism = () => {
+		const b = new Builder();
+		b.box([-0.5, -0.5, 0], [0.5, 0.5, 1], rgb('#9a8f7a'), 1, ['-z']);
+		return b.build('x');
+	};
+	afterEach(() => {
+		for (const k of ['test-post', 'test-shrub', 'test-low']) unregisterMeshKind(k);
+	});
+
+	it('a registered kind joins allMeshes() with its budget, and the version moves', () => {
+		const v = meshVersion();
+		registerMeshKind('test-post', box(1), 12);
+		expect(meshVersion()).toBeGreaterThan(v);
+		expect(allMeshes()['test-post'].kind).toBe('test-post');
+		expect(BUDGETS['test-post']).toBe(12);
+		expect(Object.keys(allMeshes())).toContain('bus');
+		unregisterMeshKind('test-post');
+		expect(allMeshes()['test-post']).toBeUndefined();
+	});
+
+	it('every kind, registered ones included, stays within its budget and every low-detail mesh within 24 triangles', () => {
+		registerMeshKind('test-shrub', box(1), 12, { build: prism, belowPx: 14 });
+		for (const [kind, m] of Object.entries(allMeshes())) expect(triangles(m), kind).toBeLessThanOrEqual(BUDGETS[kind]);
+		const lods = lodMeshes();
+		expect(Object.keys(lods)).toEqual(['test-shrub']);
+		expect(lods['test-shrub'].belowPx).toBe(14);
+		for (const l of Object.values(lods)) expect(triangles(l.mesh)).toBeLessThanOrEqual(LOD_BUDGET);
+		// The GPU gets the low-detail mesh under its own key.
+		expect(gpuMeshes()[lodKey('test-shrub')]).toBe(lods['test-shrub'].mesh);
+		expect(gpuMeshes()['test-shrub']).toBe(allMeshes()['test-shrub']);
+	});
+
+	it('refuses a mesh over its budget, a low-detail mesh over 24 triangles, a built-in name and a bad name', () => {
+		expect(() => registerMeshKind('test-post', box(1), 5)).toThrow(/over its budget/);
+		const fat = () => {
+			const b = new Builder();
+			for (let i = 0; i < 3; i++) b.box([i, 0, 0], [i + 1, 1, 1], rgb('#ffffff'));
+			return b.build('x');
+		};
+		expect(triangles(fat())).toBeGreaterThan(LOD_BUDGET);
+		expect(() => registerMeshKind('test-low', box(1), 12, { build: fat, belowPx: 10 })).toThrow(/low-detail/);
+		expect(() => registerMeshKind('bus', box(1), 300)).toThrow(/built in/);
+		expect(() => registerMeshKind('a:lod', box(1), 12)).toThrow(/bad mesh kind/);
+		expect(allMeshes()['test-post']).toBeUndefined();
+		expect(() => unregisterMeshKind('bus')).toThrow();
+	});
+
+	it('registering a kind again replaces it, and drops a low-detail mesh it no longer has', () => {
+		registerMeshKind('test-shrub', box(1), 12, { build: prism, belowPx: 14 });
+		registerMeshKind('test-shrub', box(2), 12);
+		expect(allMeshes()['test-shrub'].max[2]).toBe(2);
+		expect(lodMeshes()['test-shrub']).toBeUndefined();
+	});
+
+	it('the static batch’s unit box is x and y ±0.5, z 0–1, five faces, in the instance color', () => {
+		const m = unitBoxMesh();
+		expect(triangles(m)).toBe(10);
+		expect(m.min).toEqual([-0.5, -0.5, 0]);
+		expect(m.max).toEqual([0.5, 0.5, 1]);
+		expect(m.kind).toBe('static-box');
+		for (let o = 9; o < m.vertices.length; o += FLOATS_PER_VERTEX) expect(m.vertices[o]).toBe(1);
+		expect(Object.keys(allMeshes())).not.toContain('static-box');
 	});
 });

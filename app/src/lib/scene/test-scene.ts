@@ -1,5 +1,6 @@
 import type { AppCtx } from '#lib/app/context.js';
-import type { LngLatAlt, ProbeRow, Scene, SceneInstance, Vec3 } from './index.js';
+import type { LngLatAlt, ProbeRow, Scene, SceneInstance, StaticSegment, Vec3 } from './index.js';
+import { Builder, registerMeshKind, rgb, unregisterMeshKind } from './meshes.js';
 
 /**
  * The scene's test page (`/?scene-test`, like the overlay's `?overlay-test`):
@@ -38,6 +39,14 @@ export interface SceneTestHandle {
 	placeAt(x: number, y: number): string;
 	/** Remove the grid and any placed instances. */
 	clear(): void;
+	/**
+	 * The budget case (@scene-budget): `trees` tree instances (cap 4,000; 1,000 on a phone), `posts` of a registered
+	 * test kind with a low-detail mesh (cap 1,500 within 300 m, off on a phone) and `segments` static fence segments,
+	 * spread round the view's centre. Replaces any earlier one.
+	 */
+	budget(o?: { trees?: number; posts?: number; segments?: number }): { trees: number; posts: number; segments: number };
+	/** Turn the view round the map's centre a little every frame (the budget case's load). */
+	rotate(on: boolean): void;
 }
 
 const GROUP = 'scene-test';
@@ -203,6 +212,84 @@ export function startSceneTest(app: AppCtx, scene: Scene, count = 1000): SceneTe
 		return id;
 	};
 
+	let spinning = false;
+	const budgetGroups = ['scene-test-trees', 'scene-test-posts', 'scene-test-fences'];
+
+	const budget = (o: { trees?: number; posts?: number; segments?: number } = {}) => {
+		const { trees = 4000, posts = 1500, segments = 1500 } = o;
+		const map = app.map!;
+		const c = map.getCenter();
+		// A seeded scatter over ±350 m, the same on every run.
+		let seed = 12345;
+		const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
+		const spot = (reach: number): [number, number] => move(c.lng, c.lat, (rnd() * 2 - 1) * reach, (rnd() * 2 - 1) * reach);
+		try {
+			unregisterMeshKind('test-post');
+		} catch {
+			/* not registered yet */
+		}
+		// A post: a 12-triangle box, and a 10-triangle one (no underside) when it is under 12 px across.
+		const post = (skip: string[]) => () => {
+			const b = new Builder();
+			b.box([-0.5, -0.5, 0], [0.5, 0.5, 1], rgb('#b08a5a'), 1, skip);
+			return b.build('test-post');
+		};
+		registerMeshKind('test-post', post([]), 12, { build: post(['-z']), belowPx: 12 });
+		const kinds = ['tree-broad', 'tree-cone', 'tree-column'] as const;
+		const forest: SceneInstance[] = [];
+		for (let i = 0; i < trees; i++) {
+			const [lng, lat] = spot(350);
+			forest.push({
+				id: `bt${i}`,
+				mesh: kinds[i % 3],
+				lng,
+				lat,
+				scale: [3 + (i % 4), 3 + (i % 4), 6 + (i % 7)],
+				color: ['#4b7f52', '#5a8f4a', '#3f6f4e'][i % 3],
+				pickRadius: 3,
+				grounded: true,
+				pick: { kind: 'tree', id: `bt${i}`, layer: 'scene-test', title: `Test tree ${i}` }
+			});
+		}
+		const poles: SceneInstance[] = [];
+		for (let i = 0; i < posts; i++) {
+			const [lng, lat] = spot(350);
+			poles.push({ id: `bp${i}`, mesh: 'test-post', lng, lat, scale: [0.4, 0.4, 1.2], color: '#b08a5a', minPx: 3 });
+		}
+		const fences: StaticSegment[] = [];
+		for (let i = 0; i < segments; i++) {
+			const [lng, lat] = spot(350);
+			const heading = rnd() * Math.PI;
+			const [lng2, lat2] = move(lng, lat, Math.sin(heading) * 12, Math.cos(heading) * 12);
+			fences.push({
+				id: `bf${i}`,
+				from: [lng, lat],
+				to: [lng2, lat2],
+				height: i % 5 === 0 ? 2.4 : 1.6,
+				thickness: i % 5 === 0 ? 0.3 : 0.15,
+				look: i % 5 === 0 ? 'solid' : 'open',
+				color: i % 5 === 0 ? '#c9b79c' : '#8a6d46',
+				pick: { kind: 'sprite', id: `bf${i}`, layer: 'scene-test', title: `Test fence ${i}` }
+			});
+		}
+		scene.set('scene-test-trees', forest, { cap: 4000, capPhone: 1000 });
+		scene.set('scene-test-posts', poles, { cap: 1500, capPhone: 0, radiusM: 300 });
+		scene.setStatic('scene-test-fences', fences);
+		return { trees, posts, segments };
+	};
+
+	const rotate = (on: boolean) => {
+		spinning = on;
+		if (!on) return;
+		const step = () => {
+			if (!spinning) return;
+			const map = app.map;
+			if (map) map.jumpTo({ bearing: map.getBearing() + 0.6 });
+			requestAnimationFrame(step);
+		};
+		requestAnimationFrame(step);
+	};
+
 	reset();
 	return {
 		count,
@@ -222,6 +309,10 @@ export function startSceneTest(app: AppCtx, scene: Scene, count = 1000): SceneTe
 			instances = [];
 			base = [];
 			scene.set(GROUP, instances);
-		}
+			spinning = false;
+			for (const g of budgetGroups) scene.remove(g);
+		},
+		budget,
+		rotate
 	};
 }
