@@ -299,7 +299,7 @@ def load(conn, path, force=False, dry_run=False):
     ground's null datum shift, basemap/ground/README.md); the Albers projection itself is undone exactly."""
     from ingest import db
     if not conn.execute("select to_regclass('water.nwi_wetland') is not null").fetchone()[0]:
-        raise LoadError("water.nwi_wetland is missing: apply water 0003 (python3 db/migrate.py)")
+        raise LoadError("water.nwi_wetland is missing: apply water 0004 (python3 db/migrate.py)")
     digest = sha256(path)
     wetlands, projects, skipped = read(path)
     last = conn.execute("select sha256 from water.load where source = 'nwi' order by id desc limit 1").fetchone()

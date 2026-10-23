@@ -2,7 +2,7 @@
 nwi-presence on synthetic files, and the build's conflation of NWI with OSM and NHD on synthetic polygons.
 
 The first classes are standard library only. The database classes run only against a scratch database named by
-TVT_TEST_DATABASE_URL (PostGIS, with water 0003 and core's migrations): the build runs in a transaction that is rolled
+TVT_TEST_DATABASE_URL (PostGIS, with water 0004 and core's migrations): the build runs in a transaction that is rolled
 back; nwi-load commits, so its test cleans up after itself.
 
 Run: python3 -m unittest discover -s plugins -t .

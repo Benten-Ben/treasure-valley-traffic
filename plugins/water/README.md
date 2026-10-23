@@ -217,7 +217,7 @@ layer and its cards are P4-app's; the canal season's data side is
   IDWR covering both is drafted with the private files for the owner to
   send.
 
-### Tables (migrations 0001, 0002 and 0003)
+### Tables (migrations 0001 to 0004)
 
 | Table | What | Licence |
 |---|---|---|
@@ -235,8 +235,8 @@ layer and its cards are P4-app's; the canal season's data side is
 | `water.canal` | one row per named canal (its connected reaches of one name): kind (main canal, canal, lateral, ditch, drain), length, piped length, head reach and structure, source (river, reservoir, canal, unknown), gauge, sources | ODbL |
 | `water.gauge` | each NWPS gauge in the box and the reach, body or canal it measures (OSM-derived ids, matched by OSM's and NHD's names: the strictest input's licence, C3) | ODbL |
 | `water.canal_org`, `water.canal_season` | the IDWR service areas each canal runs through (share of its length; whether its head is in it), and the legal season at its head | **internal** |
-| `water.nwi_project`, `nwi_wetland`, `nwi_presence` | 0003: NWI's mapping projects (image year and source), its vegetated wetlands with their mapping era, and the presence check's shares for the old-mapped ones | public domain |
-| `water.wetland_check` | 0003: every NWI polygon's outcome in each build (kept, flagged, retired or unchecked, the reason, the shares, what stood for a wetland), the retired ones included | ODbL |
+| `water.nwi_project`, `nwi_wetland`, `nwi_presence` | 0004: NWI's mapping projects (image year and source), its vegetated wetlands with their mapping era, and the presence check's shares for the old-mapped ones | public domain |
+| `water.wetland_check` | 0004: every NWI polygon's outcome in each build (kept, flagged, retired or unchecked, the reason, the shares, what stood for a wetland), the retired ones included | ODbL |
 | `water.canal_date` | 0002: the districts' dates as `canal-dates-load` last loaded them from canal_dates.json, one row per entry, with its page and the day it was read | as each entry says |
 
 Evidence lives in `water.reach_evidence`, not `core.source_link`: that
@@ -517,7 +517,7 @@ python plugins/water/build/prepare.py hydroshare --zip $TVT_SOURCES/hydroshare/<
 # the ingest image (standard library; it carries basemap/ground and basemap/landscape's plan for the export)
 python3 -m ingest nhd-load --from DIR/nhd.gpkg              # replaces water.nhd_*; skips a file already loaded
 python3 -m ingest hydroshare-load --from DIR/hydroshare.gpkg
-python3 -m ingest nwi-load --from nwi_mapbox.gpkg [--dry-run]   # the NWI cut kept on the server (water 0003)
+python3 -m ingest nwi-load --from nwi_mapbox.gpkg [--dry-run]   # the NWI cut kept on the server (water 0004)
 python3 -m ingest nwi-presence --from shares.json [--dry-run]   # the worker step's presence shares
 python3 -m ingest wetland-qa [--build N] [--boxes] [--out DIR]  # after water-build; DIR in the private files
 python3 -m ingest osm-load --only water.osm_waterways        # on the valley cut we hold (light)

@@ -1,4 +1,4 @@
--- water 0003: vegetated wetlands (landscape sprint, Oct 2026: issue #309; the owner's answer 2 of Oct 22, the
+-- water 0004: vegetated wetlands (landscape sprint, Oct 2026: issue #309; the owner's answer 2 of Oct 22, the
 -- end-of-wave-1 decisions; the wetlands review).
 --
 -- Inputs, as the National Wetlands Inventory has them (U.S. Fish and Wildlife Service, public domain, republish yes,
