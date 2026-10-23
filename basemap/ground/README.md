@@ -343,7 +343,7 @@ null datum shift.
 | `paving` | `paving` | 2 m |
 | `water` | all water, intermittent included (C6 and the soils design put no condition on it), and NHD's canal and ditch lines | 5 m (beyond half a line's width) |
 | `aeroway` | OSM's aprons, runways, taxiways and helipads drawn as areas; runway and taxiway lines (45 m and 23 m wide ⚠️, or their `width` tag) | 2 m (beyond half a line's width) |
-| `rail` | OSM's rail yards (`landuse=railway`); railway track lines (`rail`, `light_rail`, `narrow_gauge`, `preserved`; sidings too, not trams or tunnels), a 5 m bed per track ⚠️ | 2 m (beyond half a line's width) |
+| `rail` | OSM's rail yards (`landuse=railway`); railway track lines (`rail`, `light_rail`, `narrow_gauge`, `preserved`; sidings too, not trams or tunnels), a 5 m bed per track ⚠️ (times the `tracks` tag, 1 to 6, when a line stands for several) | 2 m (beyond half a line's width) |
 | `developed` | CDL 2025 classes 123 and 124 | none |
 
 Sampling buffers have square ends and mitred corners, a little more than round ones would cover. Aeroway and rail are

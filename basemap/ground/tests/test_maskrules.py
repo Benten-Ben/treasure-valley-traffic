@@ -214,6 +214,9 @@ class LinesTest(unittest.TestCase):
         # The owner's answer 4 (Oct 22): lines, sampled around only. Widths are estimates until calibration.
         self.assertEqual(MR.other_line({"railway": "rail"}), ("rail", "rail", 5.0))
         self.assertEqual(MR.other_line({"railway": "light_rail", "service": "siding"}), ("rail", "light_rail", 5.0))
+        self.assertEqual(MR.other_line({"railway": "rail", "tracks": "2"}), ("rail", "rail", 10.0))
+        self.assertEqual(MR.other_line({"railway": "rail", "tracks": "x"}), ("rail", "rail", 5.0))
+        self.assertEqual(MR.other_line({"railway": "rail", "tracks": "9"}), ("rail", "rail", 5.0))
         self.assertEqual(MR.other_line({"aeroway": "runway"}), ("aeroway", "runway", 45.0))
         self.assertEqual(MR.other_line({"aeroway": "taxiway"}), ("aeroway", "taxiway", 23.0))
         self.assertEqual(MR.other_line({"aeroway": "runway", "width": "30"}), ("aeroway", "runway", 30.0))
