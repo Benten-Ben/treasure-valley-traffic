@@ -445,7 +445,9 @@ photo). The shift is the shrub build's, measured on its trees, unless the recipe
 moves 2 m west, h 1 m east and 0.5 m north, downtown 0.5 m east; the rest not at all ⚠️. Box d's lidar sits about
 2.3 m east of its photo at ground level, but the shift measured on its trees didn't earn its distance, so the recipe
 gives d its own: `"shift": [-2.5, 0.0]` (owner, Oct 22, answer 11 of the end-of-wave-1 decisions; 2.5 m is the
-spike's 2.3 m rounded to the class grid). Box a keeps the shrub build's shift (none).
+spike's 2.3 m rounded to the class grid). Box a keeps the shrub build's shift (none). The classes in the archive
+predate this: until the #281 rebuild they carry d's unshifted alignment, and `report.json` still records
+`shift_from` "shrub build" for d.
 
 ```bash
 python basemap/ground/classes.py build --recipe recipe.json [--box f --archive <another folder>]
@@ -484,8 +486,8 @@ under 6 GB; 18 MB). Each box's classes as a share of its cells with data, %:
 - **Box d with a recipe shift** (a quick look, Oct 15, a partial build outside the archive): with `"shift": [-2.5,
   0.0]`, the spike's ground-level offset (its lidar about 2.3 m east of the photo) rounded to the class grid, d
   agrees with the spike in 91% of cells (80% without): short green grass 92% (81%), short dry grass 85% (66%), pale
-  surfaced ground 91% (73%), dark 97% (89%). The owner decided on Oct 22 that d's recipe takes it, so the next class build moves d
-  2.5 m west.
+  surfaced ground 91% (73%), dark 97% (89%). The owner decided on Oct 22 that d's recipe takes it; the
+  archive's classes stay unshifted until the #281 rebuild measures the agreement.
 - **Box f's tracks** are back: 87,633 cells (2.2 ha) of mapped track turn pale where the photo shows them, 1% of the
   box, against none from the July rule; the rest of f stays short dry grass. Boxes h, i and j gain 4,000-14,000
   track cells each.
