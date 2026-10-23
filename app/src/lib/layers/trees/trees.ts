@@ -14,15 +14,15 @@ import { PRIORITY, type Selection } from '../types.js';
  * - **Farther out** (or without the scene): crown discs, a MapLibre circle
  *   layer sized in metres.
  * - **Kinds** are told apart by tone, as buildings tell measured from
- *   estimated heights (§13.8): catalogued in its full green, placed lighter,
- *   estimated lightest (mixed toward cream, drawn solid: the dither is only
- *   for the disc-to-model crossfade); and by name in the legend, the
+ *   estimated heights (§13.8): catalogued in its full green, placed lighter
+ *   (mixed toward cream, drawn solid: the dither is only for the
+ *   disc-to-model crossfade); and by name in the legend, the
  *   tooltip and the panel, never by color alone.
  */
 
 // --- the API (GET /api/trees, /api/trees/areas, /api/trees/<id>) ------------------------------------
 
-export type TreeKind = 'catalogued' | 'placed' | 'estimated';
+export type TreeKind = 'catalogued' | 'placed';
 export type TreeType = 'broadleaf' | 'conifer' | 'narrow';
 
 /** One tree in a view (GET /api/trees?bbox=w,s,e,n&limit=N): h height, r crown radius (m), a/n the top's shape. */
@@ -42,6 +42,8 @@ export interface TreesInView {
 	trees: TreeRow[];
 	/** More trees are in the box than `limit`: these are the tallest. */
 	truncated: boolean;
+	/** The private catalogue's tables answer here (the owner's site only): catalogued trees, and the City's credit, can appear. */
+	catalogue: boolean;
 }
 
 /** Where trees are built (GET /api/trees/areas). */
@@ -90,7 +92,7 @@ export interface TreeDetail {
 	log: TreeLogEntry[];
 }
 
-export const KINDS: readonly TreeKind[] = ['catalogued', 'placed', 'estimated'];
+export const KINDS: readonly TreeKind[] = ['catalogued', 'placed'];
 export const TYPES: readonly TreeType[] = ['broadleaf', 'conifer', 'narrow'];
 
 // --- drawing ---------------------------------------------------------------------------------------
@@ -104,8 +106,14 @@ export const DISCS = 'trees-discs';
  * discs stop at z15 once the models take over.
  */
 export const CREDIT_LAYER = 'trees-credit';
-/** The map's attribution while Trees is on (the conifer cue's Sentinel-2 images are Copernicus data, §19.3). */
-export const CREDIT = 'Trees: USGS 3DEP lidar, City of Boise, US Forest Service; contains modified Copernicus Sentinel data 2025';
+/**
+ * The map's attribution while Trees is on (the conifer cue's Sentinel-2 images are Copernicus data, §19.3). The City
+ * of Boise is named only once the catalogue answered (`TreesInView.catalogue`); the public table holds lidar-found
+ * trees alone.
+ */
+export function treeCredit(catalogue = false): string {
+	return `Trees: USGS 3DEP lidar${catalogue ? ', City of Boise' : ''}; contains modified Copernicus Sentinel data 2025`;
+}
 /** The credit Copernicus asks for, on a tree the spring Sentinel-2 image typed. */
 export const SENTINEL2_CREDIT = 'Contains modified Copernicus Sentinel data 2025';
 /** The scene's group of tree models. */
@@ -113,11 +121,11 @@ export const TREES_3D = 'trees-3d';
 
 /**
  * Tone by kind (§19.1): how much cream is mixed into the tree's green (in
- * OKLab). Catalogued its own green, placed a quarter lighter, estimated half
+ * OKLab). Catalogued its own green, placed a quarter lighter
  * (with the discs' dark edge, its legend swatch keeps 3:1 against the card).
  * Every kind draws solid, as buildings show estimates in a lighter tone.
  */
-export const KIND_TONE: Record<TreeKind, number> = { catalogued: 0, placed: 0.25, estimated: 0.5 };
+export const KIND_TONE: Record<TreeKind, number> = { catalogued: 0, placed: 0.25 };
 
 /** The model for each type (#lib/scene/meshes.ts). */
 export const MESH_OF_TYPE: Record<TreeType, MeshKind> = { broadleaf: 'tree-broad', conifer: 'tree-cone', narrow: 'tree-column' };
@@ -196,7 +204,7 @@ export const treeColor = (id: string, type: TreeType, kind: TreeKind): string =>
 };
 
 export const TYPE_NAME: Record<TreeType, string> = { broadleaf: 'Broadleaf tree', conifer: 'Conifer', narrow: 'Narrow tree' };
-export const KIND_WORD: Record<TreeKind, string> = { catalogued: 'Catalogued', placed: 'Placed', estimated: 'Estimated' };
+export const KIND_WORD: Record<TreeKind, string> = { catalogued: 'Catalogued', placed: 'Placed' };
 
 /** What a click on the tree selects (the card fetches the rest). */
 export function treeSelection(t: TreeRow): Selection {
@@ -206,7 +214,7 @@ export function treeSelection(t: TreeRow): Selection {
 		layer: 'trees',
 		title: TYPE_NAME[t.type],
 		fact: `${fmtM(t.h)} tall · ${KIND_WORD[t.kind].toLowerCase()}`,
-		// The tooltip's source: the lidar, and the inventory and Urban Tree Database where they apply.
+		// The tooltip's source: the lidar, and the inventory where it applies.
 		source: credits(t.kind, t.kind === 'placed' ? null : 'boise')
 			.map((c) => c.replace(' (McPherson, van Doorn & Peper 2016)', ''))
 			.join(' · '),
@@ -424,12 +432,10 @@ export function kindText(kind: TreeKind, year = '2023', catalogue = 'City of Boi
 			return `In the ${catalogue}'s inventory, measured by the ${year} lidar`;
 		case 'placed':
 			return `Found in the ${year} lidar; position and crown estimated by placement`;
-		case 'estimated':
-			return `In the ${catalogue === 'City of Boise' ? 'City' : catalogue}'s inventory but not seen in the ${year} lidar; sized from its species and trunk diameter`;
 	}
 }
 
-/** The panel's title: the species' common name for catalogued and estimated trees (when the catalogue is here), else the type. */
+/** The panel's title: the species' common name for a catalogued tree (when the catalogue is here), else the type. */
 export function treeTitle(d: Pick<TreeDetail, 'kind' | 'type' | 'catalogue'>): string {
 	const name = d.kind !== 'placed' ? d.catalogue?.common_name?.trim() : null;
 	return name || TYPE_NAME[d.type];
@@ -461,8 +467,8 @@ export function howWeKnow(d: Pick<TreeDetail, 'kind' | 'type' | 'fit' | 'lidar' 
 		const off = num(f.trunk_to_crown_m);
 		if (off !== null)
 			out.push(off < 0.5 ? 'The crown sits right over the trunk point in the inventory.' : `The crown's top is ${off.toFixed(1)} m from the trunk point in the inventory (crowns lean and grow away from neighbours).`);
-		out.push("Its crown width comes from its species' size for its trunk, checked against the lidar.");
-	} else if (d.kind === 'placed') {
+		out.push("Its position and crown were estimated by placement: the crown that best explains the lidar's canopy there.");
+	} else {
 		out.push(`Its height is measured by the ${year} lidar.`);
 		out.push("Its position and crown were estimated by placement: the crown that best explains the lidar's canopy there.");
 		const sd = num(f.width_vs_typical_sd);
@@ -471,10 +477,6 @@ export function howWeKnow(d: Pick<TreeDetail, 'kind' | 'type' | 'fit' | 'lidar' 
 		if (f.crowded === true) out.push('It stands in a cluster, so its crown meets its neighbours high up.');
 		if (typedBySpring(d))
 			out.push("It's a conifer because its crown is green over the snow in an early-April 2025 Sentinel-2 image, when broadleaf trees are still bare.");
-	} else {
-		out.push(`The ${year} lidar doesn't show it (planted after the flight, or under 3 m), so its height and crown are estimated from its species and trunk diameter (US Forest Service Urban Tree Database, Boise).`);
-		const there = num(f.lidar_height_there_m);
-		if (f.under_taller_crown === true) out.push(`It stands under a taller tree's crown${there !== null ? ` (the lidar there is ${fmtM(there)})` : ''}.`);
 	}
 	return out;
 }
@@ -483,7 +485,6 @@ export function howWeKnow(d: Pick<TreeDetail, 'kind' | 'type' | 'fit' | 'lidar' 
 export const EVENT_NAMES: Record<string, string> = {
 	measured: 'Measured by lidar',
 	placed: 'Placed from the lidar',
-	estimated: 'Sized from species and trunk',
 	matched: 'Matched to the inventory',
 	catalogued: 'Matched to the inventory',
 	removed: 'Gone from newer lidar',
@@ -519,20 +520,44 @@ export function dateText(s: string | null | undefined): string | null {
 	return t.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC' });
 }
 
-/** The trunk's diameter in inches: the catalogue's, else the one an estimate was sized from. */
+/** The trunk's diameter in inches: the catalogue's, else the one the build recorded. */
 export function trunkIn(d: Pick<TreeDetail, 'catalogue' | 'fit'>): number | null {
 	return num(d.catalogue?.dbh_in) ?? num(d.fit?.dbh_in);
 }
 
 /**
- * The panel's credits by kind: the lidar always; the City for catalogued and
- * estimated trees; the Urban Tree Database for estimated ones; Copernicus for
+ * The panel's credits by kind: the lidar always; the City for a catalogued
+ * tree; Copernicus for
  * a tree the spring Sentinel-2 image typed (spring: typedBySpring).
  */
 export function credits(kind: TreeKind, catalogue: string | null, year = '2023', spring = false): string[] {
 	const out = [`USGS 3DEP lidar (${year})`];
 	if (kind !== 'placed') out.push(`${catalogue ? (CATALOGUE_NAME[catalogue] ?? catalogue) : 'City of Boise'} tree inventory`);
-	if (kind === 'estimated') out.push('US Forest Service Urban Tree Database (McPherson, van Doorn & Peper 2016)');
 	if (spring && kind === 'placed') out.push(SENTINEL2_CREDIT);
 	return out;
+}
+
+/** How a tree's height is told on the card: the lidar measured it, for every kind. */
+export const heightNote = (year = '2023'): string => `measured by the ${year} lidar`;
+
+/**
+ * How a tree's crown width is told on the card. Every crown is placed from the
+ * lidar (a matched tree's too); the species never shapes it.
+ */
+export const CROWN_NOTE = 'estimated by placement';
+
+/** The kinds the legend lists: placed always; catalogued only once a catalogued tree is in view (the catalogue answered). */
+export function legendKinds(counts: Partial<Record<TreeKind, number>>, catalogue = false): TreeKind[] {
+	return KINDS.filter((k) => k !== 'catalogued' || catalogue || (counts.catalogued ?? 0) > 0);
+}
+
+/** The legend's credit line; the City's inventory is named only when the catalogue answered. */
+export function legendCredit(catalogued: boolean): string {
+	return `Our own trees: heights from USGS 3DEP lidar (2023); ${catalogued ? "catalogued trees from the City of Boise's inventory; " : ''}conifers over the mountains' April snow from a spring Sentinel-2 image (contains modified Copernicus Sentinel data 2025).`;
+}
+
+/** What the legend shows for a view: the kinds listed and the credit line, from the view's counts and the API's catalogue flag. */
+export function legendFor(counts: Partial<Record<TreeKind, number>>, catalogue: boolean): { kinds: TreeKind[]; credit: string } {
+	const kinds = legendKinds(counts, catalogue);
+	return { kinds, credit: legendCredit(kinds.includes('catalogued')) };
 }

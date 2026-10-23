@@ -23,12 +23,13 @@ const tree = (id: string, v: View): TreeRow => ({ id, kind: 'placed', type: 'bro
 function fakeMap() {
 	const handlers = new Map<string, Set<(e: object) => void>>();
 	const layers = new Map<string, { id: string; layout?: Record<string, unknown> }>();
-	const sources = new Map<string, { data: GeoJSON.FeatureCollection; setData(d: GeoJSON.FeatureCollection): void }>();
+	const sources = new Map<string, { data: GeoJSON.FeatureCollection; attribution?: string; setData(d: GeoJSON.FeatureCollection): void }>();
 	let view: View = V1;
 	const map = {
-		addSource(id: string, spec: { data: GeoJSON.FeatureCollection }) {
+		addSource(id: string, spec: { data: GeoJSON.FeatureCollection; attribution?: string }) {
 			sources.set(id, {
 				data: spec.data,
+				attribution: spec.attribution,
 				setData(d) {
 					this.data = d;
 				}
@@ -67,6 +68,7 @@ function fakeMap() {
 			for (const f of handlers.get('moveend') ?? []) f({});
 		},
 		/** The ids of the trees the discs show now. */
+		attribution: () => sources.get(SOURCE)?.attribution,
 		shown: () => (sources.get(SOURCE)?.data.features ?? []).map((f) => String(f.properties?.id)),
 		layers
 	};
@@ -75,12 +77,12 @@ function fakeMap() {
 
 /** A fake API: areas at once; each /api/trees request waits until the test answers it, and answers even after it was called off. */
 function fakeApi() {
-	const requests: { url: string; signal: AbortSignal; answer: (trees: TreeRow[]) => void }[] = [];
+	const requests: { url: string; signal: AbortSignal; answer: (trees: TreeRow[], catalogue?: boolean) => void }[] = [];
 	const ok = (body: unknown) => ({ ok: true, status: 200, json: async () => body }) as unknown as Response;
 	const fetch = vi.fn((url: string, init?: RequestInit) => {
 		if (url === '/api/trees/areas') return Promise.resolve(ok({ areas: [{ area: 'c', bounds: [-116.3, 43.5, -116.1, 43.7], trees: 2, built_at: null }] }));
 		return new Promise<Response>((resolve) => {
-			requests.push({ url, signal: init!.signal!, answer: (trees) => resolve(ok({ trees, truncated: false })) });
+			requests.push({ url, signal: init!.signal!, answer: (trees, catalogue = false) => resolve(ok({ trees, truncated: false, catalogue })) });
 		});
 	});
 	return { fetch, requests };
@@ -126,6 +128,25 @@ describe('the Trees module asks for the view’s trees (docs/19 §19.6)', () => 
 		await vi.advanceTimersByTimeAsync(FETCH_DEBOUNCE_MS);
 	};
 
+	it('credits the City and lists the catalogue only once the API says the catalogue answers', async () => {
+		// The first answer (a public install: no flag) credits the lidar alone.
+		expect(map.attribution()).toBe('Trees: USGS 3DEP lidar; contains modified Copernicus Sentinel data 2025');
+		expect(trees.view.catalogue).toBe(false);
+		await moveTo(V2);
+		api.requests[1].answer([tree('v2', V2)], true);
+		await settle();
+		expect(trees.view.catalogue).toBe(true);
+		expect(map.attribution()).toBe('Trees: USGS 3DEP lidar, City of Boise; contains modified Copernicus Sentinel data 2025');
+		expect(map.attribution()).not.toContain('Forest Service');
+		// An answer without it takes the City back out.
+		await moveTo(V1);
+		await moveTo({ ...V1, zoom: 15, center: [V1.center[0] + 0.01, V1.center[1]] });
+		api.requests[api.requests.length - 1].answer([tree('v3', V1)], false);
+		await settle();
+		expect(trees.view.catalogue).toBe(false);
+		expect(map.attribution()).not.toContain('City of Boise');
+	});
+
 	it('a late answer for a view left behind doesn’t replace the trees of the view it came back to', async () => {
 		await moveTo(V2);
 		expect(api.requests).toHaveLength(2);
@@ -151,7 +172,7 @@ describe('the Trees module asks for the view’s trees (docs/19 §19.6)', () => 
 		await settle();
 		expect(map.shown()).toEqual([]);
 		expect(trees.view.shown).toBe(0);
-		expect(trees.view.kinds).toEqual({ catalogued: 0, placed: 0, estimated: 0 });
+		expect(trees.view.kinds).toEqual({ catalogued: 0, placed: 0 });
 	});
 
 	it('a late answer doesn’t land once zoomed out past the discs', async () => {

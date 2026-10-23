@@ -7,14 +7,14 @@
 		DISC_EDGE,
 		fmtCount,
 		KIND_WORD,
-		KINDS,
+		legendFor,
 		TREE_GREENS,
 		TREE_TONES,
 		type TreeKind
 	} from './trees.js';
 
 	/**
-	 * The Trees legend (docs/19 §19.6): the three kinds, each drawn as the map
+	 * The Trees legend (docs/19 §19.6): the kinds in view, each drawn as the map
 	 * draws it (by tone, with the discs' dark edge) and named, never told by
 	 * color alone; the three
 	 * shapes; when the view's trees were cut to the tallest; and where trees are
@@ -27,20 +27,36 @@
 
 	const ABOUT: Record<TreeKind, string> = {
 		catalogued: "in the City's inventory, measured by lidar",
-		placed: 'found in the lidar; crown placed',
-		estimated: 'in the inventory, not in the lidar; sized from species'
+		placed: 'found in the lidar; crown placed'
 	};
-	const LOOK: Record<TreeKind, string> = { catalogued: 'full green', placed: 'lighter', estimated: 'lightest' };
+	const LOOK: Record<TreeKind, string> = { catalogued: 'full green', placed: 'lighter' };
+	/**
+	 * The map's boxes send every tree as placed; only a tree's card says it is catalogued. So when the catalogue
+	 * flag alone lists the entry (no catalogued tree in view), it says how to find one, with no tone and no count.
+	 */
+	const inView = (k: TreeKind) => k !== 'catalogued' || view.kinds.catalogued > 0;
+	/** Catalogued shows once the catalogue answered (the API's flag) or a catalogued tree is in view. */
+	const legend = $derived(legendFor(view.kinds, view.catalogue));
+	const kinds = $derived(legend.kinds);
 </script>
 
 <p class="legend-title">Trees</p>
 <ul class="keys">
-	{#each KINDS as k (k)}
+	{#each kinds as k (k)}
 		<li>
 			<svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true">
-				<circle cx="10" cy="10" r="7.5" fill={TREE_TONES.broadleaf[k][1]} stroke={DISC_EDGE} stroke-width="1" />
+				{#if inView(k)}
+					<circle cx="10" cy="10" r="7.5" fill={TREE_TONES.broadleaf[k][1]} stroke={DISC_EDGE} stroke-width="1" />
+				{:else}
+					<!-- Listed by the catalogue flag alone: the map draws no tree in this tone, so no fill. -->
+					<circle class="unfilled" cx="10" cy="10" r="7.5" fill="none" stroke={DISC_EDGE} stroke-width="1" stroke-dasharray="2 2" />
+				{/if}
 			</svg>
-			<span><b>{KIND_WORD[k]}</b> ({LOOK[k]}): {ABOUT[k]}{#if view.shown}{' '}<span class="num">({fmtCount(view.kinds[k])})</span>{/if}</span>
+			{#if inView(k)}
+				<span><b>{KIND_WORD[k]}</b> ({LOOK[k]}): {ABOUT[k]}{#if view.shown}{' '}<span class="num">({fmtCount(view.kinds[k])})</span>{/if}</span>
+			{:else}
+				<span><b>{KIND_WORD[k]}</b>: in the City's inventory, measured by lidar; a tree's card says when it is one</span>
+			{/if}
 		</li>
 	{/each}
 </ul>
@@ -90,7 +106,7 @@
 		{/each}
 	</div>
 {/if}
-<p class="credit">Our own trees: heights from USGS 3DEP lidar (2023); catalogued trees from the City of Boise's inventory; estimated sizes from the US Forest Service's Urban Tree Database; conifers over the mountains' April snow from a spring Sentinel-2 image (contains modified Copernicus Sentinel data 2025).</p>
+<p class="credit">{legend.credit}</p>
 
 <style>
 	li {

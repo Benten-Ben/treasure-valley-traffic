@@ -9,9 +9,13 @@ import { TREE } from './icons.js';
 import {
 	builtText,
 	contains,
-	CREDIT,
 	CREDIT_LAYER,
 	credits,
+	CROWN_NOTE,
+	heightNote,
+	legendCredit,
+	legendFor,
+	legendKinds,
 	dateText,
 	discCollection,
 	discOpacity,
@@ -20,7 +24,10 @@ import {
 	eventDetail,
 	eventName,
 	howWeKnow,
+	EVENT_NAMES,
 	KIND_TONE,
+	KIND_WORD,
+	KINDS,
 	kindText,
 	lidarYear,
 	metresToPx,
@@ -34,6 +41,7 @@ import {
 	treeColor,
 	treeGreen,
 	treeInstance,
+	treeCredit,
 	treeLayers,
 	treeSelection,
 	treesUrl,
@@ -66,14 +74,13 @@ describe('a tree as a 3D model (docs/19 §19.6)', () => {
 		expect(i.alt).toBeUndefined();
 	});
 
-	it('is its full green when catalogued, lighter when placed, lightest when estimated, and solid in every kind', () => {
-		expect(KIND_TONE).toEqual({ catalogued: 0, placed: 0.25, estimated: 0.5 });
+	it('is its full green when catalogued, lighter when placed, and solid in every kind', () => {
+		expect(KIND_TONE).toEqual({ catalogued: 0, placed: 0.25 });
 		const id = 'c-7-9';
 		expect(treeInstance(T({ id, kind: 'catalogued' })).color).toBe(treeGreen(id, 'broadleaf'));
 		expect(treeInstance(T({ id, kind: 'placed' })).color).toBe(treeColor(id, 'broadleaf', 'placed'));
-		expect(treeInstance(T({ id, kind: 'estimated' })).color).toBe(treeColor(id, 'broadleaf', 'estimated'));
 		// Drawn solid: the engine's dither is only for the crossfade.
-		for (const kind of ['catalogued', 'placed', 'estimated'] as const) expect(treeInstance(T({ kind })).opacity).toBe(1);
+		for (const kind of ['catalogued', 'placed'] as const) expect(treeInstance(T({ kind })).opacity).toBe(1);
 		// And dithers in with the zoom, as the 3D cameras do.
 		expect(treeInstance(T({ kind: 'placed' }), 0.5).opacity).toBe(0.5);
 		expect(modelFade(14.6)).toBe(0);
@@ -91,11 +98,10 @@ describe('a tree as a 3D model (docs/19 §19.6)', () => {
 		expect(i.id).toBe(`${TREE_PREFIX}c-1-2`);
 		expect(i.pick).toMatchObject({ kind: 'tree', id: 'c-1-2', layer: 'trees', title: 'Broadleaf tree', at: [-116.2, 43.62] });
 		expect(i.pick?.data).toBe(t);
-		expect(treeSelection(T({ type: 'conifer', h: 9.24, kind: 'estimated' })).fact).toBe('9.2 m tall · estimated');
+		expect(treeSelection(T({ type: 'conifer', h: 9.24, kind: 'placed' })).fact).toBe('9.2 m tall · placed');
 		// The tooltip credits what the kind rests on.
 		expect(treeSelection(T({ kind: 'placed' })).source).toBe('USGS 3DEP lidar (2023)');
 		expect(treeSelection(T({ kind: 'catalogued' })).source).toBe('USGS 3DEP lidar (2023) · City of Boise tree inventory');
-		expect(treeSelection(T({ kind: 'estimated' })).source).toBe('USGS 3DEP lidar (2023) · City of Boise tree inventory · US Forest Service Urban Tree Database');
 		// Trees rank under streets (crowns line them) and over the plain sprites.
 		expect(PRIORITY.tree).toBeLessThan(PRIORITY.street);
 		expect(PRIORITY.tree).toBeGreaterThan(PRIORITY.sprite);
@@ -135,13 +141,12 @@ describe('the trees’ colors keep to the color budget (docs/14 §14.3)', () => 
 			expect(t.catalogued).toEqual([...TREE_GREENS[type]]);
 			for (let k = 0; k < 3; k++) {
 				expect(deltaE(t.catalogued[k], t.placed[k])).toBeGreaterThanOrEqual(8);
-				expect(deltaE(t.placed[k], t.estimated[k])).toBeGreaterThanOrEqual(8);
-				for (const g of PLAIN) expect(deltaE(t.estimated[k], g), `${t.estimated[k]} vs ${g}`).toBeGreaterThanOrEqual(10);
+				for (const g of PLAIN) expect(deltaE(t.placed[k], g), `${t.placed[k]} vs ${g}`).toBeGreaterThanOrEqual(10);
 			}
 		}
 		expect(contrast('#3f4f2e', '#fffbf4')).toBeGreaterThanOrEqual(3);
 		// The same tree is the same color on its disc, its model and its panel.
-		expect(discCollection([T({ id: 'q', kind: 'estimated' })]).features[0].properties!.c).toBe(treeInstance(T({ id: 'q', kind: 'estimated' })).color);
+		expect(discCollection([T({ id: 'q', kind: 'placed' })]).features[0].properties!.c).toBe(treeInstance(T({ id: 'q', kind: 'placed' })).color);
 	});
 
 	it('conifers are the darkest; each type’s greens vary only a little', () => {
@@ -157,8 +162,8 @@ describe('the trees’ colors keep to the color budget (docs/14 §14.3)', () => 
 
 describe('crown discs (farther out, or without the scene)', () => {
 	it('carry each tree’s radius and its color in its kind’s tone', () => {
-		const fc = discCollection([T({ id: 'a', kind: 'estimated', r: 3.5 })]);
-		expect(fc.features[0].properties).toMatchObject({ id: 'a', kind: 'estimated', r: 3.5, c: treeColor('a', 'broadleaf', 'estimated') });
+		const fc = discCollection([T({ id: 'a', kind: 'placed', r: 3.5 })]);
+		expect(fc.features[0].properties).toMatchObject({ id: 'a', kind: 'placed', r: 3.5, c: treeColor('a', 'broadleaf', 'placed') });
 		expect(fc.features[0].geometry.coordinates).toEqual([-116.2, 43.62]);
 	});
 
@@ -197,7 +202,14 @@ describe('crown discs (farther out, or without the scene)', () => {
 		expect((credit.layer as { maxzoom?: number }).maxzoom).toBeUndefined();
 		expect((credit.layer as { filter?: unknown }).filter).toEqual(['==', ['get', 'kind'], '']);
 		expect((credit.layer.paint as Record<string, unknown>)['circle-radius']).toBe(0);
-		expect(CREDIT).toBe('Trees: USGS 3DEP lidar, City of Boise, US Forest Service; contains modified Copernicus Sentinel data 2025');
+		expect(treeCredit(false)).toBe('Trees: USGS 3DEP lidar; contains modified Copernicus Sentinel data 2025');
+	});
+
+	it('names the City in the attribution only when the catalogue answered, and never the US Forest Service', () => {
+		expect(treeCredit()).toBe(treeCredit(false));
+		expect(treeCredit(true)).toBe('Trees: USGS 3DEP lidar, City of Boise; contains modified Copernicus Sentinel data 2025');
+		expect(treeCredit(false)).not.toContain('City of Boise');
+		for (const c of [true, false]) expect(treeCredit(c)).not.toContain('Forest Service');
 	});
 });
 
@@ -256,14 +268,12 @@ describe('the words (the legend and the tree panel)', () => {
 	it('explains each kind in plain words', () => {
 		expect(kindText('catalogued')).toBe("In the City of Boise's inventory, measured by the 2023 lidar");
 		expect(kindText('placed')).toBe('Found in the 2023 lidar; position and crown estimated by placement');
-		expect(kindText('estimated')).toBe("In the City's inventory but not seen in the 2023 lidar; sized from its species and trunk diameter");
 		expect(lidarYear(detail())).toBe('2023');
 		expect(lidarYear(detail({ lidar: null, log: [{ at: '2021-05-01T00:00:00Z', event: 'measured', detail: {} }] }))).toBe('2021');
 	});
 
 	it('titles a tree by its species when the catalogue is here, else by its type', () => {
 		expect(treeTitle(detail({ catalogue: cat }))).toBe('Test linden (synthetic)');
-		expect(treeTitle(detail({ kind: 'estimated', catalogue: cat }))).toBe('Test linden (synthetic)');
 		expect(treeTitle(detail())).toBe('Broadleaf tree');
 		expect(treeTitle(detail({ kind: 'placed', type: 'narrow' }))).toBe('Narrow tree');
 		expect(treeTitle(detail({ type: 'conifer' }))).toBe('Conifer');
@@ -275,10 +285,11 @@ describe('the words (the legend and the tree panel)', () => {
 		expect(placed).toContain('estimated by placement');
 		expect(placed).toContain('1.2 standard deviations wider');
 		expect(placed).toContain('cluster');
-		const est = howWeKnow(detail({ kind: 'estimated', lidar: null, fit: { under_taller_crown: true, lidar_height_there_m: 21.6 } })).join(' ');
-		expect(est).toContain("doesn't show it");
-		expect(est).toContain('under a taller tree');
-		expect(est).toContain('22 m');
+		// A matched crown is placed from the lidar like any other: never "from its species".
+		const cataloguedWords = howWeKnow(detail({ kind: 'catalogued', fit: { trunk_to_crown_m: 0.2 } })).join(' ');
+		expect(cataloguedWords).toContain('estimated by placement');
+		expect(cataloguedWords).not.toMatch(/species/i);
+		expect(howWeKnow(detail({ kind: 'placed' })).join(' ')).not.toMatch(/species|estimated from/i);
 	});
 
 	it('says when the spring Sentinel-2 image made a placed tree a conifer, and only then', () => {
@@ -303,10 +314,10 @@ describe('the words (the legend and the tree panel)', () => {
 	it('names the log’s events and sums up each', () => {
 		expect(eventName('measured')).toBe('Measured by lidar');
 		expect(eventName('placed')).toBe('Placed from the lidar');
-		expect(eventName('estimated')).toBe('Sized from species and trunk');
+		expect(EVENT_NAMES.estimated).toBeUndefined();
 		expect(eventName('something_new')).toBe('Something new');
 		expect(eventDetail({ at: '', event: 'measured', detail: { height_m: 26.83, crown_width_m: 18.9 } })).toBe('27 m tall, crown 19 m wide');
-		expect(eventDetail({ at: '', event: 'estimated', detail: { height_m: 5.06, crown_width_m: 5.39, dbh_in: 7 } })).toBe('5.1 m tall, crown 5.4 m wide, trunk 7 in');
+		expect(eventDetail({ at: '', event: 'placed', detail: { height_m: 5.06, crown_width_m: 5.39, dbh_in: 7 } })).toBe('5.1 m tall, crown 5.4 m wide, trunk 7 in');
 	});
 
 	it('reads dates without moving a day, and the trunk from the catalogue or the estimate', () => {
@@ -314,20 +325,56 @@ describe('the words (the legend and the tree panel)', () => {
 		expect(dateText('2023-10-24T12:00:00Z')).toBe('Oct 24, 2023');
 		expect(dateText(null)).toBeNull();
 		expect(trunkIn(detail({ catalogue: cat }))).toBe(14);
-		expect(trunkIn(detail({ kind: 'estimated', fit: { dbh_in: 7 } }))).toBe(7);
+		expect(trunkIn(detail({ kind: 'placed', fit: { dbh_in: 7 } }))).toBe(7);
 		expect(trunkIn(detail())).toBeNull();
 	});
 
-	it('credits the lidar always, the City for catalogued and estimated trees, the Urban Tree Database for estimated ones', () => {
+	it('credits the lidar always, the City for catalogued trees', () => {
 		expect(credits('placed', null)).toEqual(['USGS 3DEP lidar (2023)']);
 		// Copernicus for a tree the spring Sentinel-2 image typed
 		expect(credits('placed', null, '2023', true)).toEqual(['USGS 3DEP lidar (2023)', SENTINEL2_CREDIT]);
 		expect(SENTINEL2_CREDIT).toBe('Contains modified Copernicus Sentinel data 2025');
 		expect(credits('catalogued', 'boise', '2023', true)).not.toContain(SENTINEL2_CREDIT);
 		expect(credits('catalogued', 'boise')).toEqual(['USGS 3DEP lidar (2023)', 'City of Boise tree inventory']);
-		const est = credits('estimated', 'boise');
-		expect(est).toHaveLength(3);
-		expect(est[2]).toContain('Urban Tree Database');
+		expect(credits('catalogued', 'boise').join(' ')).not.toMatch(/Urban Tree Database/);
+	});
+});
+
+describe('what the public card and legend say (a lidar-only table, #351)', () => {
+	it('never names an estimated kind', () => {
+		expect(KINDS).toEqual(['catalogued', 'placed']);
+		expect(Object.keys(KIND_WORD)).toEqual(['catalogued', 'placed']);
+		expect(Object.keys(KIND_TONE)).toEqual(['catalogued', 'placed']);
+		expect(Object.keys(TREE_TONES.broadleaf)).toEqual(['catalogued', 'placed']);
+		for (const k of KINDS) expect(kindText(k)).not.toMatch(/estimated from|sized from|species/i);
+		expect(legendCredit(true)).not.toMatch(/estimated|Urban Tree Database/i);
+		expect(legendCredit(false)).not.toMatch(/estimated|Urban Tree Database/i);
+	});
+
+	it('tells every crown as estimated by placement, a matched tree’s too, and every height as measured', () => {
+		expect(CROWN_NOTE).toBe('estimated by placement');
+		expect(heightNote('2023')).toBe('measured by the 2023 lidar');
+	});
+
+	it('lists catalogued trees in the legend, and the City’s inventory in its credit, only when the catalogue answered', () => {
+		expect(legendKinds({ catalogued: 0, placed: 5 })).toEqual(['placed']);
+		expect(legendKinds({ placed: 5 })).toEqual(['placed']);
+		expect(legendKinds({ catalogued: 1, placed: 5 })).toEqual(['catalogued', 'placed']);
+		expect(legendKinds({ placed: 5 }, true)).toEqual(['catalogued', 'placed']);
+		expect(legendCredit(false)).not.toContain("City of Boise's inventory");
+		expect(legendCredit(true)).toContain("catalogued trees from the City of Boise's inventory");
+	});
+
+	it('wires the API’s catalogue flag to the legend: the entry and the City’s credit appear with it, on no tree in view', () => {
+		const withFlag = legendFor({ catalogued: 0, placed: 5 }, true);
+		expect(withFlag.kinds).toEqual(['catalogued', 'placed']);
+		expect(withFlag.credit).toContain("catalogued trees from the City of Boise's inventory");
+		const pub = legendFor({ catalogued: 0, placed: 5 }, false);
+		expect(pub.kinds).toEqual(['placed']);
+		expect(pub.credit).not.toContain('City of Boise');
+		// A catalogued tree in view also lists the entry and credits the City.
+		expect(legendFor({ catalogued: 2, placed: 0 }, false).kinds).toContain('catalogued');
+		expect(legendFor({ catalogued: 2, placed: 0 }, false).credit).toContain('City of Boise');
 	});
 });
 
