@@ -22,14 +22,14 @@ const CATEGORIES = ['action', 'minor', 'moderate', 'major'] as const;
 const asCategory = (v: unknown): GaugeFlood['category'] | null => (CATEGORIES as readonly string[]).includes(String(v)) ? (v as GaugeFlood['category']) : null;
 
 /**
- * The newest reading we hold for a gauge. The `like` on `source_id` can't use `raw.record`'s index under a
- * non-C collation, so it reads every NWPS observation we hold (about 3,500 new rows a day). A water-plugin migration
- * adding an index on the record's `lid` and `t` fixes it: issue #363.
+ * The newest reading we hold for a gauge. The lookup is by the record's own `lid` and `t`, which water 0003's partial
+ * index (`record_nwps_gauge_reading`) serves. The `like` keeps the gauge's metadata record (source_id with no `@`,
+ * no `t`) out of the result; `t is not null` keeps it out of the order too (nulls sort first under `desc`).
  */
 export async function latestReading(sql: Sql, lid: string): Promise<GaugeReading | null> {
 	const [r] = await sql`
 		select payload from raw.record
-		where source = 'nwps_gauges' and source_id like ${lid + '@%'}
+		where source = 'nwps_gauges' and payload->>'lid' = ${lid} and payload->>'t' is not null and source_id like ${lid + '@%'}
 		order by payload->>'t' desc limit 1`;
 	const p = r?.payload as { pe?: string | null; t?: string; primary?: number | null; secondary?: number | null; units?: (string | null)[] } | undefined;
 	if (!p?.t) return null;
