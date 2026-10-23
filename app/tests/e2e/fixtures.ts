@@ -19,6 +19,15 @@ import { mapReady as waitForMap } from '../../scripts/net.mjs';
 
 export { expect };
 
+/**
+ * The timeout multiplier the config applies to the fixed timeouts (TVT_E2E_SLOW,
+ * playwright.config.ts). Poll literals in specs are not scaled by it.
+ */
+export const slowFactor = (() => {
+	const n = Number(process.env.TVT_E2E_SLOW);
+	return Number.isFinite(n) && n > 0 ? n : 1;
+})();
+
 export const env = () => ({
 	tilesDir: process.env.TILES_DIR ?? '',
 	framesDir: process.env.FRAMES_DIR ?? '',
