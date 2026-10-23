@@ -3,8 +3,32 @@ import { execFileSync } from 'node:child_process';
 import { appendFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { Archive, cadenceClass, isJpeg, jpegSize, localDay, parseIndexRow, previousDay } from './archive.js';
 import { GRAY_16x8, TEAL_24x8, sha } from './live-fixtures.test-util.js';
+
+// scripts/ is outside src's type check, so load the harness helpers dynamically, as mvt.db.test.ts loads ./mvt.js.
+const harness: {
+	localSettings(main: string): Record<string, string>;
+	mainCheckout(): string;
+} = await import(pathToFileURL(join(import.meta.dirname, '..', '..', '..', 'scripts', 'harness-env.mjs')).href);
+const configuredPython = process.env.TVT_PYTHON || harness.localSettings(harness.mainCheckout()).TVT_PYTHON;
+/** The interpreter the ingest-side test runs: TVT_PYTHON, the checkout's harness.env, then python3. */
+const python = configuredPython || 'python3';
+const pythonConfigured = Boolean(configuredPython);
+
+function hasPsycopg(interpreter: string): boolean {
+	try {
+		execFileSync(interpreter, ['-c', 'import psycopg'], { stdio: 'ignore' });
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+// Without a configured interpreter, skip (with a reason) when python3 lacks psycopg. A configured one never skips.
+const skipReason =
+	!pythonConfigured && !hasPsycopg(python) ? 'needs a python3 with psycopg: set TVT_PYTHON' : '';
 
 // 12:00 MDT on Oct 6, 2026: local day 2026-10-06, yesterday 2026-10-05.
 const NOW = Date.parse('2026-10-06T18:00:00Z');
@@ -149,13 +173,14 @@ describe('Archive.services', () => {
 		expect(a.counts.reads - reads).toBe(2);
 	});
 
-	it("reads the file ingest's capture stream writes", async () => {
+	it("reads the file ingest's capture stream writes", async (ctx) => {
+		if (skipReason) ctx.skip(skipReason);
 		// ingest/sources/idaho511_frames.py's own writer, so the two sides can't drift apart.
 		const repo = join(import.meta.dirname, '..', '..', '..', '..');
 		const py =
 			'import sys; from ingest.sources.idaho511_frames import write_status; ' +
 			'write_status(sys.argv[1], "key_cameras", 50, [656, 674], paused_low_disk=True, now=float(sys.argv[2]))';
-		execFileSync('python3', ['-c', py, root, String(NOW / 1000 - 10)], { cwd: repo });
+		execFileSync(python, ['-c', py, root, String(NOW / 1000 - 10)], { cwd: repo });
 		expect(await new Archive({ root }).services(NOW)).toEqual([
 			{ tag: 'key_cameras', cadenceS: 50, imageIds: [656, 674], heartbeat: NOW / 1000 - 10, pausedLowDisk: true, alive: true }
 		]);

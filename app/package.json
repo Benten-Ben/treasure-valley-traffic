@@ -20,11 +20,13 @@
 		"preview:wp": "node scripts/e2e-server.mjs"
 	},
 	"devDependencies": {
+		"@mapbox/vector-tile": "3.0.0",
 		"@playwright/test": "1.56.1",
 		"@sveltejs/adapter-node": "^6.0.0",
 		"@sveltejs/kit": "^3.0.0",
 		"@sveltejs/vite-plugin-svelte": "^7.2.0",
 		"@types/node": "^24.19.1",
+		"pbf": "5.1.2",
 		"phosphor-svelte": "^3.1.0",
 		"svelte": "^5.57.1",
 		"svelte-check": "^4.6.0",
