@@ -43,11 +43,20 @@ const segDist = (x: number, y: number, [x1, y1, x2, y2]: [number, number, number
 const discs = (page: Page): Promise<{ id: string; x: number; y: number; r: number }[]> => page.evaluate(() => (globalThis as any).__tvtTrees?.discs() ?? []);
 const selection = (page: Page) => page.evaluate(() => (globalThis as any).__tvt.layers.selection);
 
-/** Console errors with their messages (an Error argument prints only as "Error" otherwise). */
+/**
+ * Console errors with their messages (an Error argument prints only as "Error" otherwise), and the
+ * "map error detail" warnings beside them (source, tile and URL), so a failure names what failed (#368).
+ */
 async function keepErrors(page: Page) {
 	await page.addInitScript(() => {
 		const w = globalThis as any;
 		w.__errors = [];
+		w.__details = [];
+		const warn = console.warn.bind(console);
+		console.warn = (...a: unknown[]) => {
+			if (String(a[0]).startsWith('map error detail')) w.__details.push(a.map(String).join(' '));
+			warn(...a);
+		};
 		const orig = console.error.bind(console);
 		console.error = (...a: unknown[]) => {
 			w.__errors.push(a.map((x) => (x instanceof Error ? `${x.name}: ${x.message}` : String(x))).join(' '));
@@ -55,7 +64,12 @@ async function keepErrors(page: Page) {
 		};
 	});
 }
-const errorsOf = (page: Page): Promise<string[]> => page.evaluate(() => (globalThis as any).__errors ?? []);
+const errorsOf = (page: Page): Promise<string[]> =>
+	page.evaluate(() => {
+		const w = globalThis as any;
+		const errors: string[] = w.__errors ?? [];
+		return errors.length ? [...errors, ...(w.__details ?? [])] : errors;
+	});
 
 let seeded: Seeded | null = null;
 
