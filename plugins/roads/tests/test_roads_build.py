@@ -536,6 +536,22 @@ class BuildTest(unittest.TestCase):
         ways = self.q(f"select id, layer from ({next(l for l in E.LAYERS if l.name == 'paving_ways').sql}) q order by 1")
         self.assertEqual(ways, [(3001, 0), (3002, 0), (3003, 0)])
 
+    def test_the_paving_layers_credit_the_cdl_the_live_tables_rest_on(self):
+        import tempfile
+        from plugins.roads.ingest import export as E
+        # The build ran before any developed build was loaded (its inputs have no cdl); one was loaded since.
+        self.conn.execute("update roads.build set inputs = (select jsonb_agg(i) from jsonb_array_elements(inputs) i "
+                          "where i->>'name' <> 'cdl') where current")
+        self.conn.execute("update roads.developed_build set cdl_year = 2026, cdl_sha256 = repeat('1', 64) where current")
+        with tempfile.TemporaryDirectory() as archive:
+            m = E.export(self.conn, archive, build="20261011T000000Z")
+            by = {lay.name: lay for lay in m.layers}
+            self.assertEqual(by["paving_lots"]["inputs"], ["osm", "cdl_paving"])
+            self.assertIn("USDA NASS Cropland Data Layer 2025", by["paving_lots"]["credit"])
+            self.assertEqual(m.inputs["cdl_paving"]["version"], "2026 " + "1" * 64)
+            self.assertNotIn("cdl_paving", by["lines"]["inputs"])
+            self.assertEqual(by["lines"]["republish"], "internal")
+
     def test_the_lines_carry_the_width_the_surface_is_drawn_at(self):
         from plugins.roads.ingest import export as E
         lines = next(lay for lay in E.LAYERS if lay.name == "lines")

@@ -155,6 +155,28 @@ def manifest_inputs(build_inputs):
     return [{k: str(i[k]) for k in keys if i.get(k) not in (None, "")} for i in build_inputs]
 
 
+def paving_inputs(conn, inputs):
+    """The paving layers' osm and cdl inputs from the live tables (roads.osm_paving's extract, roads.developed_build's
+    current year), not from the build's, which can be older: the materials were remeasured after it. Returns
+    {"osm": name, "cdl": name, "extra": [entries]}: the names the paving layers list, and the entries to add to
+    the manifest where they differ from the build's own (named osm_paving, cdl_paving)."""
+    from . import developed
+    md5 = (conn.execute("select md5 from ops.osm_consumer where consumer = 'roads.osm_paving'").fetchone()
+           if conn.execute("select to_regclass('ops.osm_consumer') is not null").fetchone()[0] else None)
+    live = {i["name"]: i for i in manifest_inputs(B.inputs(conn, md5[0] if md5 else None, developed.current(conn)))
+            if i["name"] in ("osm", "cdl")}
+    if md5 is None:
+        live.pop("osm", None)              # no extract recorded for the paving: the build's own stands
+    built = {i["name"]: i for i in inputs}
+    out = {"extra": []}
+    for name, entry in live.items():
+        if name in built and all(entry.get(k) == built[name].get(k) for k in ("version", "credit", "licence")):
+            continue
+        out[name] = f"{name}_paving"
+        out["extra"].append({**entry, "name": out[name]})
+    return out
+
+
 def prune(archive, keep=KEEP):
     """Remove all but the newest `keep` finished roads exports. Returns the builds removed."""
     gone = M.builds(archive, "roads")[:-keep] if keep > 0 else []
@@ -182,6 +204,9 @@ def export(conn, archive, build=None, layers=LAYERS):
 def _export(conn, archive, build, layers):
     build_id, build_inputs, _ = current_build(conn)
     inputs = manifest_inputs(build_inputs)
+    paving = paving_inputs(conn, inputs)
+    built_names = [i["name"] for i in inputs]       # what the road layers rest on
+    inputs += paving.pop("extra")
     names = [i["name"] for i in inputs]
     folder = M.export_dir(archive, "roads", build or M.build_id())
     os.makedirs(folder)
@@ -195,7 +220,9 @@ def _export(conn, archive, build, layers):
             with open(path, "wb") as f:
                 f.write(bytes(blob))
             specs.append({"name": lay.name, "file": f"{lay.name}.fgb", "format": "FlatGeobuf",
-                          "geometry": lay.geometry, "inputs": [n for n in lay.inputs if n in names] or names,
+                          "geometry": lay.geometry, "inputs": ([paving.get(n, n) for n in lay.inputs if paving.get(n, n) in names] or names)
+                          if lay.name.startswith("paving_")
+                          else [n for n in lay.inputs if n in built_names] or built_names,
                           "base": True, "minzoom": lay.minzoom,
                           "maxzoom": lay.maxzoom, "title": lay.title,
                           "note": f"roads build {build_id}" + (f"; {lay.note}" if lay.note else "")})
