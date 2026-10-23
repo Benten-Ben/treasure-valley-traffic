@@ -27,10 +27,12 @@ const ground: BaseContribution = {
 	layers: [
 		// The valley-wide file: z8 to its maxzoom 15, overzoomed above (z16 included).
 		{ id: 'ground-paint', type: 'raster', slot: 'ground', rank: 0, valley: GROUND_PAINT, aerial: 'hide' },
-		// The sharper file around the ten boxes, from `detail.minzoom` (17 today; basemap/ground/spec.json).
-		{ id: 'ground-detail', type: 'raster', slot: 'ground', rank: 5, detail: true, minzoom: 17, valley: GROUND_PAINT, aerial: 'hide' }
+		// The sharper file around the ten boxes, from `detail.minzoom`, which the layer takes from the manifest (`contributionLayer`).
+		{ id: 'ground-detail', type: 'raster', slot: 'ground', rank: 5, detail: true, valley: GROUND_PAINT, aerial: 'hide' }
 	],
 	suppresses: { groups: ['landcover'] },
+	// A short placeholder: the ground's full credit (inputs included) is the manifest's `ground.attribution`, which the
+	// map's attribution control already shows; contribution credits in the Base menu (S3b) should read it too.
 	credit: 'Ground: USDA NRCS soils and NAIP; © OpenStreetMap contributors'
 };
 

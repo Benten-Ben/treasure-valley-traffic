@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import type { LayerSpecification } from 'maplibre-gl';
 import { DRAPED_TYPES } from '#lib/map/order.js';
-import { contributionStatus, syncContributions, type SyncMap } from '#lib/map/flavors.js';
+import { contributionLayer, contributionStatus, syncContributions, type SyncMap } from '#lib/map/flavors.js';
 import { basemapReady, buildStyle, PROTOMAPS_GROUPS, type BasemapManifest } from '#lib/map/style.js';
 import { BASE_CONTRIBUTIONS, baseContribution } from '#lib/base/registry.js';
 import ground from './ground.base.js';
@@ -82,7 +82,7 @@ describe('the painted ground contribution', () => {
 		expect(ground.looks).toBe('valley');
 		expect(ground.layers.map((l) => [l.id, l.slot, l.rank, l.type, l.aerial, l.detail ?? false, l.minzoom ?? null])).toEqual([
 			['ground-paint', 'ground', 0, 'raster', 'hide', false, null],
-			['ground-detail', 'ground', 5, 'raster', 'hide', true, 17]
+			['ground-detail', 'ground', 5, 'raster', 'hide', true, null]
 		]);
 		for (const l of ground.layers) expect(DRAPED_TYPES.has(l.type)).toBe(true);
 	});
@@ -123,6 +123,9 @@ describe('the painted ground contribution', () => {
 		expect(ids.indexOf('ground-paint')).toBeGreaterThan(ids.indexOf('earth'));
 		expect(map.getLayer('ground-paint')).toMatchObject({ source: 'ground', type: 'raster' });
 		expect(map.getLayer('ground-detail')).toMatchObject({ source: 'groundDetail', minzoom: 17 });
+		// The start zoom is the manifest's, not a copy: a rebuild at z16 moves it.
+		const z16 = { ...built, ground: { ...painted, detail: { ...painted.detail, minzoom: 16 } } } as BasemapManifest;
+		expect(contributionLayer(ground, ground.layers[1], state('valley'), z16)).toMatchObject({ minzoom: 16 });
 		expect(vis(map, 'ground-paint')).toBe('visible');
 		for (const id of PROTOMAPS_GROUPS.landcover) if (map.getLayer(id)) expect(vis(map, id), id).toBe('none');
 		// Once: asking again adds nothing.

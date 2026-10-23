@@ -518,7 +518,8 @@ function targets(res) {
 	const d = res.S1?.default?.median;
 	if (d) {
 		add('cold first load ≤ 6 MB (default view)', `${MB(d.bytes)} MB`, d.bytes <= 6e6);
-		add('cold first load ≤ 50 requests', d.requests, d.requests <= 50);
+		// Requests are reported, not gated: DECISIONS Oct 22 (chunk B, item 5) replaced the 50-request target with bytes and timings.
+		add('cold first load requests (reported, no limit)', d.requests, true);
 		add('0 duplicate byte ranges', d.duplicates, d.duplicates === 0);
 		add('data fetches start before the first DEM response', `${d.firstDataStartS?.toFixed(2)} s vs ${d.firstDemResponseS?.toFixed(2)} s`,
 			d.firstDataStartS !== null && d.firstDemResponseS !== null && d.firstDataStartS < d.firstDemResponseS);
