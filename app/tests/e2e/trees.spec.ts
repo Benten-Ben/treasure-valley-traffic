@@ -121,7 +121,7 @@ test.describe('trees', () => {
 
 		// A placed tree's panel, too: its kind in words, its crown "estimated by placement".
 		const placedTree = await placed(page);
-		const pt = placedTree.find((p) => /^c-/.test(p.id) && clear(p) && uncovered(placedTree)(p));
+		const pt = placedTree.find((p) => /^c-/.test(p.id) && !seeded!.faked.includes(p.id) && clear(p) && uncovered(placedTree)(p));
 		if (pt) {
 			await page.mouse.click(pt.x, pt.y);
 			await expect.poll(async () => (await selection(page))?.id).toBe(pt.id);

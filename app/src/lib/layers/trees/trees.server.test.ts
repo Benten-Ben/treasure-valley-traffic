@@ -19,7 +19,7 @@ interface Seen {
 let seen: Seen[];
 
 /** A fake postgres.js: answers by the query's text; records each query with its values. */
-function fakeSql(o: { trees?: boolean; catalogue?: boolean; rows?: Record<string, unknown>[]; catRow?: Record<string, unknown> | null } = {}): Sql {
+function fakeSql(o: { trees?: boolean; catalogue?: boolean; rows?: Record<string, unknown>[]; catRow?: Record<string, unknown> | null; matchBuild?: string } = {}): Sql {
 	const catRow = {
 		catalogue: 'boise',
 		match_fit: { trunk_to_crown_m: 2.44, gain: 31.5 },
@@ -59,6 +59,8 @@ function fakeSql(o: { trees?: boolean; catalogue?: boolean; rows?: Record<string
 			return [
 				{ at: new Date('2023-10-24T12:00:00Z'), event: 'placed', detail: { height_m: 26.83, crown_width_m: 18.9 } }
 			];
+		// the match and its events are tied to the build that made them: another build's rows don't answer
+		if (text.includes('city_trees.') && text.includes('build_id = $') && !values.includes(o.matchBuild ?? 'test-build')) return [];
 		if (text.includes('from city_trees.tree_event'))
 			return [{ at: new Date('2026-10-08T15:32:14Z'), event: 'matched', detail: { trunk_to_crown_m: 2.44 } }];
 		if (text.includes('from city_trees.tree_match')) return o.catRow === null ? [] : [o.catRow ?? catRow];
@@ -184,7 +186,10 @@ describe('GET /api/trees/<id>', () => {
 		expect(log.text).toContain('order by at desc');
 		expect(log.values).toEqual(['c-1-2']);
 		const cat = seen.find((s) => s.text.includes('from city_trees.tree_match'))!;
-		expect(cat.values).toEqual(['c-1-2']);
+		expect(cat.values).toEqual(['c-1-2', 'test-build']);
+		expect(cat.text).toContain('m.build_id = $');
+		const ev = seen.find((s) => s.text.includes('from city_trees.tree_event'))!;
+		expect(ev.values).toEqual(['c-1-2', 'test-build']);
 		expect(cat.text).toContain('join city_trees.tree c on c.catalogue_id = m.catalogue_id');
 		expect(cat.text).toContain('where m.tree_id = $');
 		// Dates as plain dates, so they never move a day by time zone.
@@ -206,6 +211,14 @@ describe('GET /api/trees/<id>', () => {
 		expect(d?.kind).toBe('placed');
 		expect(d?.log).toHaveLength(1);
 		expect(seen.some((s) => s.text.includes('from city_trees.tree_event'))).toBe(false);
+	});
+
+	it("gives catalogue: null when the match is from another build than the tree's (a rebuild reused the id)", async () => {
+		const d = await treeDetail(fakeSql({ catalogue: true, matchBuild: 'older-build' }), 'c-1-2');
+		expect(d?.catalogue).toBeNull();
+		expect(d?.kind).toBe('placed');
+		expect(d?.fit).toEqual({ width_vs_typical_sd: 0.2 });
+		expect(d?.log).toHaveLength(1);
 	});
 
 	it('is null (a 404) before the trees migration', async () => {

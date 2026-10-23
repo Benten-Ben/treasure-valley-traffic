@@ -41,8 +41,9 @@ inventory, never here. The inventory is an input to the build, not a source of r
   3 m or taller within 1.5 m is matched to the crown that best explains the lidar there, and that crown is fixed before
   the placer runs.
 - **A matched crown is written like any placed tree**: kind `placed`, a placed id (`<area>-<x>-<y>`), typed and fitted
-  from its own profile and the spring cue, a `placed` log event. Nothing says it was matched. A conifer genus that
-  restricted the crown's shape to the conifer curves is read as broadleaf when typing it, so the type carries no genus.
+  from its own profile and the spring cue, a `placed` log event. Nothing says it was matched. The anchor only fixes where
+  the crown is: the match tries all three width curves, as the placer does for any seed, so the genus never picks the
+  curve, the shape or the type (a test builds the same crown with a broadleaf and a conifer genus and compares the rows).
 - **The side file `anchors.jsonl`** (build folder, only with `--anchors`) holds what is the inventory's: for each matched
   crown its public tree id, the anchor's source and id, the trunk-to-crown offset and the fit's gain; for each anchor the
   lidar doesn't show (planted after the flight, under a taller crown, or under 3 m) the whole estimated tree, sized from
@@ -63,7 +64,7 @@ log events and the diameter and offset keys; their areas are short until rebuilt
 3. Production gets 1 and 2 through the runbook ([deploy/README.md](../../deploy/README.md)); the scratch database and the
    dumps made from it hold none of the old rows or fields once it is migrated and refreshed.
 
-A consequence: a matched crown's type no longer comes from the genus, and a tree the lidar doesn't show is not in
+A consequence: a matched crown's size, shape and type no longer come from the genus, and a tree the lidar doesn't show is not in
 `trees.tree`, so the public layer and tiles show neither; the owner's site shows a matched crown's inventory entry (the
 app looks it up through the private plugin's `city_trees.tree_match`).
 

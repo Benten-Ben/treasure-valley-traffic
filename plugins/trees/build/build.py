@@ -10,7 +10,7 @@ Then `python3 -m ingest trees-load --build <dir>` loads it.
 1. Anchored trees first (when --anchors is given: a CSV of an inventory's trunk points, anchors.py). An anchor planted
    before the lidar flight whose trunk point has a crown 3 m or taller within 1.5 m is matched to that crown: it is
    centred within 2.5 m of the trunk point where it best explains the lidar, sized from the crown model for its height
-   and type (the genus says conifer or broadleaf). It is fixed: the placer builds around it. Otherwise the anchor is an
+   and any width curve (the genus doesn't choose one). It is fixed: the placer builds around it. Otherwise the anchor is an
    estimated tree, sized from Boise's measured trees of its genus (Urban Tree Database) by trunk diameter. A matched
    crown is written like any placed tree (a public tree found in the lidar); the link to its anchor and the estimated
    trees go to anchors.jsonl, which only the private plugin that owns the inventory loads.
@@ -433,8 +433,8 @@ def main(argv=None):
         under = exp_h is not None and an["H"] > max(1.8 * exp_h, exp_h + 6)     # the crown above is another tree's
         an["under"] = under
         if an["H"] >= pl.tree_h and not under and valid[min(max(y, 0), h.shape[0] - 1), min(max(x, 0), h.shape[1] - 1)]:
-            types = ["conifer", "narrow"] if an["conifer"] else ["broadleaf", "narrow"]
-            g, t = pl.best_near(y, x, an["H"], types, TRUNK_REACH_CELLS, overlap=False)
+            # every width curve, as for any seed: the genus doesn't pick the curve, or the public row would show it
+            g, t = pl.best_near(y, x, an["H"], pl.m.types, TRUNK_REACH_CELLS, overlap=False)
             if t is not None:
                 t["fixed"] = True; t["anchor"] = an; t["gain"] = g
                 pl.add(t); n_cat += 1
@@ -465,13 +465,13 @@ def main(argv=None):
         ground = float(dtm[gy, gx]) if not bad[gy, gx] else None
         common = {"lon": lon, "lat": lat, "ground_m": ground, "height_m": round(t["H"], 2),
                   "crown_radius_m": round(t["R"] * PX, 2), "crown_a": round(t["a"], 3), "crown_n": round(t["n"], 3), "lidar": a.lidar}
-        # Every crown is written the same way, whether or not an anchor sits at it: a tree found in the lidar, typed and
-        # fitted from its own profile (and the spring cue). What an anchor decided before that (the genus' width curve)
-        # is not kept: a conifer curve is read as broadleaf, so the type can't carry the inventory's genus.
+        # Every crown is written the same way, whether or not an anchor sits at it: a tree found in the lidar, sized,
+        # shaped and typed from its own profile (and the spring cue). An anchor only fixes where the crown is; its genus
+        # never reaches the width curve or the type, so nothing in the public row tells a matched crown from a placed one.
         tid = f"{a.area}-{int(round(x_m))}-{int(round(y_m))}"
         spring = seasons.cue(x_m, y_m, t["R"] * PX) if seasons else None
         an = t.get("anchor")
-        typ, fit = type_placed(h, dict(t, type="broadleaf") if an and t["type"] == "conifer" else t, model, spring)
+        typ, fit = type_placed(h, t, model, spring)
         tr = {"id": tid, "kind": "placed", "type": typ, **common, "fit": fit}
         ev = {"at": flight_at, "event": "placed",
               "detail": {"lidar": a.lidar, "height_m": round(t["H"], 2), "crown_width_m": round(2 * t["R"] * PX, 2),

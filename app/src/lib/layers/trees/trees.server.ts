@@ -121,7 +121,8 @@ export async function treeAreas(sql: Sql): Promise<{ areas: TreeArea[] }> {
  * One tree with its log (newest first) and, when the private tables are here and the tree was matched to a catalogue
  * entry, that entry (the tree then reads as catalogued, with the match's fit and its private log events); null when
  * there's no such tree. The public tables hold no catalogue id, so the lookup goes through the private plugin's
- * `city_trees.tree_match`, keyed by our tree id.
+ * `city_trees.tree_match`, keyed by our tree id and the build that made the tree: ids are rounded positions, so after a
+ * rebuild an old match must not attach to whatever crown now has its id.
  */
 export async function treeDetail(sql: Sql, id: string): Promise<TreeDetail | null> {
 	const has = await schema(sql);
@@ -141,7 +142,7 @@ export async function treeDetail(sql: Sql, id: string): Promise<TreeDetail | nul
 			       c.installed::text as installed, c.last_verified::text as last_verified, c.condition, c.site_type
 			from city_trees.tree_match m
 			join city_trees.tree c on c.catalogue_id = m.catalogue_id
-			where m.tree_id = ${id} and m.catalogue = 'boise'`;
+			where m.tree_id = ${id} and m.catalogue = 'boise' and m.build_id = ${t.build_id}`;
 		if (c) {
 			catalogue = {
 				catalogue: String(c.catalogue),
@@ -158,7 +159,7 @@ export async function treeDetail(sql: Sql, id: string): Promise<TreeDetail | nul
 			kind = 'catalogued';
 			fit = { ...fit, ...((c.match_fit ?? {}) as Record<string, unknown>) };
 			const own = await sql`
-				select at, event, detail from city_trees.tree_event where tree_id = ${id}`;
+				select at, event, detail from city_trees.tree_event where tree_id = ${id} and build_id = ${t.build_id}`;
 			log = [...log, ...own].sort((a, b) => +new Date(b.at) - +new Date(a.at) || String(a.event).localeCompare(String(b.event)));
 		}
 	}

@@ -65,6 +65,16 @@ class BuildWithAnchorsTest(unittest.TestCase):
         cls.out = os.path.join(d, "c-test")
         cls.build_it(["--area", "c", "--dsm", os.path.join(d, "dsm.tif"), "--dtm", os.path.join(d, "dtm.tif"),
                  "--anchors", cls.csv, "--lidar-date", "2023-10-24", "--out", cls.out])
+        # the same crown and trunk point with a conifer genus: the public row must not show it
+        cls.csv_pine = os.path.join(d, "anchors-pine.csv")
+        with open(cls.csv_pine, "w", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(["source", "source_id", "lon", "lat", "genus", "trunk_in", "installed_ms"])
+            lon, lat = lonlat(CROWN_E + 0.5, CROWN_S - 0.4)
+            w.writerow([SOURCE, CROWN_ID, lon, lat, "pinus", 14, ""])
+        cls.pine = os.path.join(d, "c-pine")
+        cls.build_it(["--area", "c", "--dsm", os.path.join(d, "dsm.tif"), "--dtm", os.path.join(d, "dtm.tif"),
+                 "--anchors", cls.csv_pine, "--lidar-date", "2023-10-24", "--out", cls.pine])
         cls.plain = os.path.join(d, "c-plain")
         cls.build_it(["--area", "c", "--dsm", os.path.join(d, "dsm.tif"), "--dtm", os.path.join(d, "dtm.tif"),
                  "--lidar-date", "2023-10-24", "--out", cls.plain])
@@ -98,6 +108,23 @@ class BuildWithAnchorsTest(unittest.TestCase):
         counts = json.load(open(os.path.join(self.out, "build.json")))["counts"]
         self.assertEqual(counts["trees"], 1)
         self.assertFalse({"catalogued", "estimated"} & set(counts))
+
+    def test_a_conifer_genus_leaves_no_trace_in_the_public_row(self):
+        import build
+        def row(folder):
+            feats = json.load(open(os.path.join(folder, "trees.geojson")))["features"]
+            self.assertEqual(len(feats), 1)
+            return feats[0]["properties"]
+        pine, broad = row(self.pine), row(self.out)
+        self.assertEqual(pine, broad)                            # the genus decides nothing the public row shows
+        # a matched crown is sized, shaped and typed like a placed one: its shape belongs to the curve that sized it
+        model = build.model_for(json.load(open(os.path.join(build.MODEL_DIR, "crown_model.json"))))
+        curve = pine["fit"]["width_curve"]
+        self.assertIn((pine["crown_a"], pine["crown_n"]),
+                      [(round(a, 3), round(n, 3)) for a, n in model.shapes[curve]])
+        # the pine's anchor matched the crown (it is not an estimated tree)
+        import anchors
+        self.assertEqual([r["kind"] for r in anchors.read(self.pine)], ["matched"])
 
     def test_the_public_loader_accepts_the_public_files(self):
         from plugins.trees.ingest import load
