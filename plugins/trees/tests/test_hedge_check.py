@@ -125,7 +125,11 @@ class DatabaseTest(unittest.TestCase):
         import psycopg
         with psycopg.connect(DB_URL) as conn:
             try:
-                if conn.execute("select to_regclass('fences.fence')").fetchone()[0] is None:
+                if conn.execute("select to_regclass('fences.fence')").fetchone()[0] is not None:
+                    # the fences plugin's real table (more columns, an id rule, a fence_type column): its own
+                    # tests read it (plugins/fences/tests); this one stands in for a database without it
+                    self.skipTest("the fences plugin is installed")
+                else:
                     self.assertIsNone(hedge_check.hedges_from_fences(conn))      # not there yet: the caller says so
                     conn.execute("create schema fences")
                     conn.execute("create table fences.fence (fence_id text primary key, kind text, type text,"

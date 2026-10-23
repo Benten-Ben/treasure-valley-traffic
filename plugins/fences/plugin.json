@@ -1,0 +1,20 @@
+{
+  "name": "fences",
+  "title": "Fences: mapped fences, walls, guard rails, hedges and gates from OpenStreetMap",
+  "depends": [],
+  "visibility": "public",
+  "order": 69,
+  "sources": [
+    {"name": "osm_barriers", "module": "ingest.sources.osm_barriers", "kind": "manual",
+     "license": "ODbL", "credit": "© OpenStreetMap contributors", "republish": "yes"}
+  ],
+  "tables": ["fences.fence", "fences.gate"],
+  "osm_consumers": [
+    {"source": "osm_barriers",
+     "tags": ["nw/barrier"],
+     "geometry": ["point", "linestring"],
+     "tables": ["fences.fence", "fences.gate"]}
+  ],
+  "storage": "Small. OpenStreetMap (osm_barriers): about 1,300 mapped fence, wall, guard rail and hedge lines (about 270 km) and a few hundred gates and bollards in the valley box, a few MB with indexes, versioned in place (no raw.record copies); it grows only by changed OSM versions, at each hand-downloaded extract. Each load adds one core.layer_version row for the 'fences.lines' layer.",
+  "ethics": "OpenStreetMap is ODbL: credit \"© OpenStreetMap contributors\", and anything published from it stays ODbL. Geofabrik's robots.txt disallows scripted downloads, so the extract is downloaded by hand and nothing here makes a network request. Only what contributors have mapped is here, and most backyard fences aren't mapped: the layer is never a count of fences, and a mapped fence never says where a lot ends (decision of Oct 8, 2026). Hedges are stored for the shrubs' hedge check and not drawn as fences. Private people's properties are not the subject: these are map features of the road network's surroundings, with no names or owners."
+}
