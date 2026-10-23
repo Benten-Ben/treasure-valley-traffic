@@ -31,7 +31,10 @@ done
 
 # Does GraphQL query text name the board (or the viewer)?
 query_for_login() {
-  case "$1" in *projectV2*|*ProjectV2*|*projectsV2*|*projectV2Item*|*projectItems*|*viewer*) return 0 ;; esac
+  case "$1" in *projectV2*|*ProjectV2*|*projectsV2*|*projectV2Item*|*projectItems*) return 0 ;; esac
+  # the root `viewer` field only: not `reviewer`, `requestedReviewer` or an object's `viewerCanUpdate`
+  local word='(^|[^A-Za-z0-9_])viewer[[:space:]]*[{(]'
+  [[ $1 =~ $word ]] && return 0
   return 1
 }
 # One `-f/-F/--field/--raw-field` value, NAME=VALUE: only a field named query counts.

@@ -262,6 +262,8 @@ class WrapperRoutingTest(unittest.TestCase):
                      ("issue", "edit", "9", "--add-project", "X"), ("issue", "edit", "9", "--remove-project=X"),
                      # the user's own identity
                      ("api", "user"), ("api", "/user"), ("api", "graphql", "-f", "query=query{viewer{login}}"),
+                     ("api", "graphql", "-f", "query=query {\n  viewer {\n    login\n  }\n}"),
+                     ("api", "graphql", "-f", "query={viewer(x:1){login}}"),
                      ("api", "graphql", "-F", "query=@" + queryfile), ("api", "graphql", "--field=query=@" + queryfile),
                      ("api", "graphql", "-F", "query=@" + missing),
                      ("issue", "list", "--assignee", "@me"), ("issue", "list", "--assignee=@me"),
@@ -293,6 +295,11 @@ class WrapperRoutingTest(unittest.TestCase):
                      ("api", "repos/o/r/issues/9/comments", "-f", "body=see projectItems"),
                      ("api", "repos/o/r/issues/9/comments", "-F", "body=@me"),
                      ("api", "graphql", "-F", "query=@" + os.path.join(self.dir, "ok.graphql")),
+                     # `viewer` inside another word, or an object's viewer* field, isn't the root viewer
+                     ("api", "graphql", "-f", "query={repository(owner:\"o\",name:\"r\"){pullRequest(number:1){"
+                      "reviewRequests(first:5){nodes{requestedReviewer{__typename}}}}}}"),
+                     ("api", "graphql", "-f", "query=mutation{requestReviews(input:{pullRequestId:\"x\",userIds:[]}){clientMutationId}}"),
+                     ("api", "graphql", "-f", "query={repository(owner:\"o\",name:\"r\"){issue(number:1){viewerCanUpdate}}}"),
                      ("issue", "list", "--search", "@media in:title"),
                      ("issue", "list", "--assignee=bob,alice"), ("issue", "list", "-a", "bob"), ("issue", "list", "-abob"),
                      ("issue", "view", "5", "--json", "title,number"), ("issue", "view", "5", "--json=title"),
