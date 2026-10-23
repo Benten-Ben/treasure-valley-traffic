@@ -10,13 +10,14 @@
 #     (app/tests/e2e/README.md).
 #
 # Make the `ci` job the required status check: it is the one name that reports for every run, including
-# docs-only changes (which skip the Python and front-end jobs). Draft PRs skip the whole workflow, and a skipped
-# required check reads as passed, so a draft is gated by being merged only when it is ready, not by this check.
+# docs-only changes (which skip the Python and front-end jobs). Draft PRs run the whole workflow too. Skipping
+# them would leave a skipped `ci` on the head commit, which a required check reads as passed, so a merge right
+# after "ready for review" would go through before the real run had reported.
 name: CI
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+    types: [opened, synchronize, reopened]
   push:
     branches: [main]
   workflow_dispatch:
@@ -36,7 +37,6 @@ env:
 jobs:
   scope:
     name: Scope
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
@@ -139,7 +139,7 @@ jobs:
   ci:
     name: ci
     needs: [scope, public, python, app]
-    if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
+    if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:
