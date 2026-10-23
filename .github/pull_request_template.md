@@ -11,4 +11,4 @@ Closes #
 
 **Not done / known issues:**
 
-**Made by:** <coordinator, or the unit's role and model and effort, and the workflow run id>
+**Made by:** <coordinator, or the unit's role>, <model and effort>
