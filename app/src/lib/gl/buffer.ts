@@ -28,6 +28,17 @@ export class GrowableBuffer {
 		gl.bufferSubData(gl.ARRAY_BUFFER, 0, data, 0, length);
 	}
 
+	/**
+	 * Upload only floats [from, to) of `data`, which holds `length` floats in all and was uploaded whole before. Falls
+	 * back to a whole upload when the buffer has to grow.
+	 */
+	uploadRange(data: Float32Array, from: number, to: number, length = data.length): void {
+		if (length * 4 > this.#bytes) return this.upload(data, length);
+		const gl = this.gl;
+		gl.bindBuffer(gl.ARRAY_BUFFER, this.buffer);
+		gl.bufferSubData(gl.ARRAY_BUFFER, from * 4, data, from, to - from);
+	}
+
 	destroy(): void {
 		this.gl.deleteBuffer(this.buffer);
 	}

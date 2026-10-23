@@ -64,6 +64,12 @@ function lengthM(s: StaticSegment): number {
 /** Maps a Mercator point and an absolute drawn height to CSS px; false when it is behind the camera. */
 export type Projector = (mx: number, my: number, z: number, out: { x: number; y: number; w: number }) => boolean;
 
+/**
+ * Size: measured with 1,500 segments (`@scene-budget`). The GPU copy takes only the boxes a grounding slice or a hover
+ * wrote, so a frame's upload follows the slice, not the layer; the first upload and the slices' ground reads still grow
+ * with the count. B-fences should keep a view to a few thousand segments (about 10 boxes each when open) and cut by
+ * tile or distance beyond that; there is no hard cap in the batch.
+ */
 export class StaticData {
 	readonly segments: StaticSegment[];
 	/** The batch's origin: the middle of its bounding box (lng, lat), Mercator and 1 / circumference there. */
@@ -90,8 +96,11 @@ export class StaticData {
 	readonly first: Uint32Array;
 	readonly count: Uint32Array;
 	readonly #colors: [number, number, number][];
-	#keys: string[] | null = null;
-	#hover = -1;
+	#keys: Map<string, number[]> | null = null;
+	#hover: readonly number[] = [];
+	/** The boxes [dirtyFrom, dirtyTo) written since the GPU copy last took them (empty: from >= to). */
+	dirtyFrom = 0;
+	dirtyTo = 0;
 	#pass: { epoch: number; cursor: number } | null = null;
 	#zeroed = false;
 	/** East and north metres from the origin of each segment's ends: e0, n0, e1, n1. */
@@ -196,7 +205,8 @@ export class StaticData {
 		const exag = this.exag;
 		const a = this.f32;
 		const u = this.u32;
-		const hoverIdx = this.#hover;
+		if (i1 > i0) this.markDirty(this.first[i0], this.first[i1 - 1] + this.count[i1 - 1]);
+		const hoverIdx = this.#hover.length ? new Set(this.#hover) : null;
 		for (let i = i0; i < i1; i++) {
 			const g = this.segments[i];
 			const [r, gr, b] = this.#colors[i];
@@ -213,7 +223,7 @@ export class StaticData {
 			const ue = len > 1e-6 ? de / len : 1;
 			const un = len > 1e-6 ? dn / len : 0;
 			const th = g.thickness;
-			const hover = i === hoverIdx ? 1 : 0;
+			const hover = hoverIdx?.has(i) ? 1 : 0;
 			let o = this.first[i] * INSTANCE_FLOATS;
 			const put = (cx: number, cy: number, cz: number, bx: [number, number, number], by: [number, number, number], bz: number) => {
 				a[o] = cx;
@@ -263,21 +273,43 @@ export class StaticData {
 
 	/** Tint the segment whose selection has this key (the picker's hover); '' clears it. True when the buffer changed. */
 	setHover(key: string): boolean {
-		let idx = -1;
+		let idx: readonly number[] = [];
 		if (key) {
-			this.#keys ??= this.segments.map((s) => (s.pick ? selectionKey(s.pick) : ''));
-			idx = this.#keys.indexOf(key);
+			if (!this.#keys) {
+				this.#keys = new Map();
+				this.segments.forEach((s, i) => {
+					if (!s.pick) return;
+					const k = selectionKey(s.pick);
+					const list = this.#keys!.get(k);
+					if (list) list.push(i);
+					else this.#keys!.set(k, [i]);
+				});
+			}
+			idx = this.#keys.get(key) ?? [];
 		}
-		if (idx === this.#hover) return false;
-		const set = (i: number, v: number) => {
-			if (i < 0) return;
-			for (let b = 0; b < this.count[i]; b++) this.f32[(this.first[i] + b) * INSTANCE_FLOATS + 20] = v;
+		if (idx === this.#hover || (idx.length === 0 && this.#hover.length === 0)) return false;
+		const set = (list: readonly number[], v: number) => {
+			for (const i of list) {
+				for (let b = 0; b < this.count[i]; b++) this.f32[(this.first[i] + b) * INSTANCE_FLOATS + 20] = v;
+				this.markDirty(this.first[i], this.first[i] + this.count[i]);
+			}
 		};
 		set(this.#hover, 0);
 		set(idx, 1);
 		this.#hover = idx;
 		this.version++;
 		return true;
+	}
+
+	/** Note that boxes [from, to) changed, for the next upload. */
+	markDirty(from: number, to: number): void {
+		if (this.dirtyFrom >= this.dirtyTo) {
+			this.dirtyFrom = from;
+			this.dirtyTo = to;
+		} else {
+			this.dirtyFrom = Math.min(this.dirtyFrom, from);
+			this.dirtyTo = Math.max(this.dirtyTo, to);
+		}
 	}
 
 	/**
@@ -349,7 +381,11 @@ export class StaticBatch {
 		let g = this.#data.get(d);
 		if (!g) this.#data.set(d, (g = { buffer: new GrowableBuffer(gl), version: -1 }));
 		if (g.version !== d.version) {
-			g.buffer.upload(d.f32, d.boxes * INSTANCE_FLOATS);
+			const all = d.boxes * INSTANCE_FLOATS;
+			// A GPU copy that exists takes only the boxes written since (a grounding slice, a hover); a new one takes all.
+			if (g.version < 0) g.buffer.upload(d.f32, all);
+			else if (d.dirtyFrom < d.dirtyTo) g.buffer.uploadRange(d.f32, d.dirtyFrom * INSTANCE_FLOATS, Math.min(d.dirtyTo, d.boxes) * INSTANCE_FLOATS, all);
+			d.dirtyFrom = d.dirtyTo = 0;
 			g.version = d.version;
 		}
 		const p = this.#program;

@@ -588,7 +588,8 @@ export function registerMeshKind(kind: MeshKind, build: () => Mesh, budget: numb
 	BUDGETS[kind] = budget;
 	if (low) lods.set(kind, low);
 	else lods.delete(kind);
-	built = null;
+	// Keep the meshes already built (a batch compares them by identity and would upload them all again).
+	if (built) built = { ...built, [kind]: mesh };
 	version++;
 }
 
@@ -599,7 +600,10 @@ export function unregisterMeshKind(kind: MeshKind): void {
 	delete MESHES[kind];
 	delete BUDGETS[kind];
 	lods.delete(kind);
-	built = null;
+	if (built) {
+		built = { ...built };
+		delete built[kind];
+	}
 	version++;
 }
 

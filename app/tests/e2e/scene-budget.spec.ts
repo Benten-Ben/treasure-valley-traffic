@@ -63,7 +63,7 @@ test.describe('scene budget', () => {
 		// The shrub-like kind keeps to its 300 m radius: the scatter reaches 350 m, so some of it is dropped; the trees' cap of 4,000 drops none.
 		expect(s.droppedByGroup['scene-test-posts'] ?? 0).toBeGreaterThan(0);
 		expect(s.droppedByGroup['scene-test-trees'] ?? 0).toBe(0);
-		expect(s.p95Ms).toBeLessThanOrEqual(SCENE_JS_P95_MS);
+		expect.soft(s.p95Ms).toBeLessThanOrEqual(SCENE_JS_P95_MS);
 		expect(consoleErrors.filter((m) => !/could not be decoded/.test(m))).toEqual([]);
 	});
 

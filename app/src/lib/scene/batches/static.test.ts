@@ -248,3 +248,23 @@ describe('static batch: lazy picking', () => {
 		expect(box(d, 0).hover).toBe(1);
 	});
 });
+
+describe('static batch: shared selections and dirty ranges', () => {
+	it('hover tints every leg that shares one selection, and clears them all', () => {
+		const shared = sel('fence');
+		const d = new StaticData([seg('a', 0, 0, 10, { pick: shared }), seg('other', 0, 20, 10), seg('b', 10, 0, 10, { pick: shared })]);
+		d.ground(() => 0, 1, 1);
+		expect(d.setHover(selectionKey(shared))).toBe(true);
+		expect([box(d, 0).hover, box(d, 1).hover, box(d, 2).hover]).toEqual([1, 0, 1]);
+		expect(d.setHover('')).toBe(true);
+		expect([box(d, 0).hover, box(d, 2).hover]).toEqual([0, 0]);
+	});
+
+	it('a grounding slice marks only its own boxes dirty', () => {
+		const d = new StaticData([seg('a', 0, 0, 10), seg('b', 0, 20, 10), seg('c', 0, 40, 10)]);
+		d.ground(() => 0, 1, 1);
+		d.dirtyFrom = d.dirtyTo = 0;
+		d.rebuildRange(1, 2);
+		expect([d.dirtyFrom, d.dirtyTo]).toEqual([1, 2]);
+	});
+});

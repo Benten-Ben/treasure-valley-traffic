@@ -307,6 +307,14 @@ describe('the mesh-kind registry', () => {
 		expect(allMeshes()['test-post']).toBeUndefined();
 	});
 
+	it('registering or removing a kind keeps the built-in meshes as the same objects', () => {
+		const before = allMeshes().bus;
+		registerMeshKind('test-post', box(1), 12);
+		expect(allMeshes().bus).toBe(before);
+		unregisterMeshKind('test-post');
+		expect(allMeshes().bus).toBe(before);
+	});
+
 	it('every kind, registered ones included, stays within its budget and every low-detail mesh within 24 triangles', () => {
 		registerMeshKind('test-shrub', box(1), 12, { build: prism, belowPx: 14 });
 		for (const [kind, m] of Object.entries(allMeshes())) expect(triangles(m), kind).toBeLessThanOrEqual(BUDGETS[kind]);
