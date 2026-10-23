@@ -189,6 +189,10 @@ class DatabaseTest(unittest.TestCase):
             if not c.execute("select to_regclass('trails.matched_line') is not null "
                              "and to_regclass('ops.build_pending') is not null").fetchone()[0]:
                 raise unittest.SkipTest("apply trails 0001 and migrations 0019-0021")
+            # The setUp deletes raw.record rows for these sources, which the scratch build role may not do.
+            if not c.execute("select has_table_privilege(current_user, 'raw.record', 'DELETE')").fetchone()[0]:
+                raise unittest.SkipTest("the database role can't delete from raw.record (scratch build role); "
+                                        "run these as the owner on a test database")
 
     def setUp(self):
         self.conn = self.psycopg.connect(DB_URL)
