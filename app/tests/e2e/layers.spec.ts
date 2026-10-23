@@ -41,8 +41,12 @@ const ALL = ['cameras', 'streets', 'transit'];
 const TITLE: Record<string, string> = { streets: 'Streets', transit: 'Transit', cameras: 'Cameras' };
 
 /** Every layer loaded (the first idle prefetches the ones that are off). */
+/** Ready or stale, or a layer this place can't load (not built here: the first idle never prefetches it). */
+const loadedOrUnavailable = (i: { status: Record<string, string>; unavailable?: Record<string, string> }) =>
+	Object.entries(i.status).every(([id, s]) => s === 'ready' || s === 'stale' || (s === 'idle' && Boolean(i.unavailable?.[id])));
+
 async function allLoaded(page: Page) {
-	await expect.poll(async () => Object.values((await info(page)).status).every((s) => s === 'ready' || s === 'stale'), { timeout: 60_000 }).toBe(true);
+	await expect.poll(async () => loadedOrUnavailable(await info(page)), { timeout: 60_000 }).toBe(true);
 }
 
 /**

@@ -44,8 +44,12 @@ const CLAY_HIDDEN = ['address_label', 'pois', 'roads_oneway', 'roads_labels_mino
 const GROUND = { valley: '#eee7da', clay: '#f3ede2' };
 
 /** Every layer loaded (the first idle prefetches the ones that are off). */
+/** Ready or stale, or a layer this place can't load (not built here: the first idle never prefetches it). */
+const loadedOrUnavailable = (i: { status: Record<string, string>; unavailable?: Record<string, string> }) =>
+	Object.entries(i.status).every(([id, s]) => s === 'ready' || s === 'stale' || (s === 'idle' && Boolean(i.unavailable?.[id])));
+
 async function allLoaded(page: Page) {
-	await expect.poll(async () => Object.values((await info(page)).status).every((s) => s === 'ready' || s === 'stale'), { timeout: 90_000 }).toBe(true);
+	await expect.poll(async () => loadedOrUnavailable(await info(page)), { timeout: 90_000 }).toBe(true);
 }
 
 /** One pixel of the drawn map (read inside a render, while the drawing buffer is valid). */
