@@ -233,7 +233,7 @@ describe('picking', () => {
 		p.begin();
 		const a = p.slot();
 		Object.assign(a, { x: 10, y: 10, r: 5, w: 1, pick: bus, priority: 1 });
-		a.own.set([10, 0, 10, 20]);
+		[a.own[0], a.own[1], a.own[2], a.own[3]] = [10, 0, 10, 20];
 		a.seg = a.own;
 		p.commit();
 		expect(p.size).toBe(1);
