@@ -258,7 +258,8 @@ sampler.
 | `lands` | Forest orders (Region 4) and IDPR's route closures and area restrictions | — | public, IDPR aggregates |
 | `weather` | Aviation Weather Center METARs for the ring's airports | — | public |
 | `wildlife` | IDFG's roadkill reports (about 9,300 in the ring), sensitive-species rules before anything public | — | public, aggregates only |
-| `farm` | AgriMet's daily crop water use (ET) for six Treasure Valley stations | — | public |
+| `soils` | The NRCS soil survey (SSURGO, ten survey areas) for the map box: the soil card, the Soils layer, and the ground's base, with each soil type's colour and texture measured from the NAIP photo (Sentinel-2 parts for the statistics) | — | public |
+| `farm` | AgriMet's daily crop water use (ET) for six Treasure Valley stations; the crop fields from USDA NASS's Crop Sequence Boundaries and Cropland Data Layer (estimated fields with their crops, certainty, July greenness and whether built over), and the crop class for the ground | — | public |
 | `sky` | SWPC's aurora nowcast (OVATION) and 1-minute Kp | — | public |
 
 The dependencies are what the ingest code needs (step 1): the intersection
