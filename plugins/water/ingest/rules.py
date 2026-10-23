@@ -167,7 +167,12 @@ def reach_minzoom(kind, *, intermittent=False, order=None, visibility=None, name
     return min(z, MAX_Z)
 
 
-def body_minzoom(kind, area_m2):
+def body_minzoom(kind, area_m2, thin=False):
+    """A body's first zoom. A wetland draws as tufts from z14, or thinned tufts from z15 (thin: older mapping), later
+    for a small one (wetlands.wetland_minzoom)."""
+    if kind == "wetland":
+        from . import wetlands
+        return wetlands.wetland_minzoom(area_m2, thin)
     if kind in BODY_KIND_Z:
         return BODY_KIND_Z[kind]
     for least, z in BODY_AREA_Z:

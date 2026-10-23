@@ -180,6 +180,7 @@ layer and its cards are P4-app's; the canal season's data side is
 | `osm_waterways` | OpenStreetMap consumer | waterways, water areas, wetlands, springs, reservoirs and basins, swimming pools (decision 2b) | ODbL; "© OpenStreetMap contributors" | yes |
 | `idwr_irrigation_orgs` | every 30 days | IDWR's irrigation organizations: 59 service areas touching the box, without the `Owner` field | none stated (IDWR's disclaimer); credit IDWR | **internal** |
 | `idwr_season_of_use` | every 90 days | IDWR's season of use: the legal irrigation season's 4 zones touching the box | none stated (IDWR's disclaimer); credit IDWR | **internal** |
+| `nwi` | by hand | FWS National Wetlands Inventory: the 13,753 vegetated palustrine wetlands of the eight HU8 watersheds touching the box (October 2026 release, cut to the box) | public domain; credit "U.S. Fish and Wildlife Service, National Wetlands Inventory" | yes |
 | `canal_dates` | by hand | the districts' canal dates, in the versioned [`ingest/canal_dates.json`](ingest/canal_dates.json) (empty until the owner asks for the lookups) | facts, each cited to the district's page | yes, unless an entry says otherwise |
 
 - **NHD**: the HU4 zip was downloaded once more on Oct 11 with the owner's
@@ -216,7 +217,7 @@ layer and its cards are P4-app's; the canal season's data side is
   IDWR covering both is drafted with the private files for the owner to
   send.
 
-### Tables (migrations 0001 and 0002)
+### Tables (migrations 0001, 0002 and 0003)
 
 | Table | What | Licence |
 |---|---|---|
@@ -234,6 +235,8 @@ layer and its cards are P4-app's; the canal season's data side is
 | `water.canal` | one row per named canal (its connected reaches of one name): kind (main canal, canal, lateral, ditch, drain), length, piped length, head reach and structure, source (river, reservoir, canal, unknown), gauge, sources | ODbL |
 | `water.gauge` | each NWPS gauge in the box and the reach, body or canal it measures (OSM-derived ids, matched by OSM's and NHD's names: the strictest input's licence, C3) | ODbL |
 | `water.canal_org`, `water.canal_season` | the IDWR service areas each canal runs through (share of its length; whether its head is in it), and the legal season at its head | **internal** |
+| `water.nwi_project`, `nwi_wetland`, `nwi_presence` | 0003: NWI's mapping projects (image year and source), its vegetated wetlands with their mapping era, and the presence check's shares for the old-mapped ones | public domain |
+| `water.wetland_check` | 0003: every NWI polygon's outcome in each build (kept, flagged, retired or unchecked, the reason, the shares, what stood for a wetland), the retired ones included | ODbL |
 | `water.canal_date` | 0002: the districts' dates as `canal-dates-load` last loaded them from canal_dates.json, one row per entry, with its page and the day it was read | as each entry says |
 
 Evidence lives in `water.reach_evidence`, not `core.source_link`: that
@@ -346,6 +349,45 @@ fails on the feature; names export as '' and canals as 0.
 
 A trial bake on scratch (Oct 11, `--threads 1`, about a minute): 17.5 MB,
 z8–16, the largest tile 21 KB at z10 and under 2 KB at z16.
+
+### Wetlands
+
+Vegetated wetlands are bodies of kind `wetland` ([`ingest/wetlands.py`](ingest/wetlands.py); the owner's answer 2 of
+Oct 22, issue #309). The National Wetlands Inventory is the only source that maps wetlands as wetlands across the
+box, but over the valley floor it dates from July 1981, so those polygons are checked against today's land first.
+It is **not a legal (regulatory) wetland boundary**; every card says so.
+
+- **Loading** (`nwi-load --from nwi_mapbox.gpkg`, standard library): the vegetated palustrine polygons only (Cowardin
+  class EM, SS or FO first: 13,753 of 23,797), each with the mapping project that holds its point. Its `era` is
+  `recent` (imagery of 1999 or later: 12,178), `old` (July 1981 or 1983 photos: 1,572), `interim` (the "Scalable"
+  product: 3) or `unknown` (none). NWI's ponds, lakes and riverine polygons are not kept: the bodies and reaches already
+  draw that water. Hydric soils stay a row on the soils card.
+- **The presence check** applies to `old` and `interim` polygons. A worker step (rasterio, on the ground's grid, from
+  mask v0's exact roofs, roads and paving, the held CDL clips and CSB's eight yearly codes) writes five shares per
+  polygon to a JSON file, which `nwi-presence --from` loads (the file's format is in the module's docstring). The
+  rules are `wetlands.presence()`: retired as `built` (built half or more, or a quarter with CDL developed at half and
+  no support); retired as `farmed` (cultivated half or more, no support), or flagged `farmed_supported` with support;
+  flagged `hay_pasture` (half or more); otherwise kept. Support is CDL wetland classes over a quarter of the
+  polygon, or an OSM wetland or NHD marsh overlapping it. CDL class 121 counts for nothing. The thresholds are the
+  review's first guesses, to be tuned on the ten boxes (the Greenbelt strip's roof share first). **An old polygon with
+  no shares yet is `unchecked` and not drawn.**
+- **Conflation** (water-build, [`ingest/build.py`](ingest/build.py) `WETLANDS`): where OSM and NWI outline one wetland
+  (they overlap half or more of the smaller of the two) OSM's outline is drawn with NWI's class and regime
+  (`geometry_from` `osm`, confirmed); NWI alone is drawn from its own outline (`geometry_from` `nwi`), minus any OSM
+  wetland it only partly overlaps; NHD's marshes are evidence where an NWI or OSM wetland covers half of them, and
+  draw alone otherwise. `thin` marks the older mapping (the 1981-83 and interim polygons that passed, and NHD's marsh
+  alone): thinned tufts from z15, where the rest are tufts from z14.
+- **Generalisation, per zoom, for the bake's byte budget:** NWI outlines are simplified to 1 m, NWI-only polygons under
+  60 m² are dropped, and a wetland draws from the first zoom at which it covers about 20 pixels (z14 or z15 at the
+  earliest, z16 at the latest). Measured on the Oct 23 cut: the 12,178 recent polygons, simplified, are about 6 MB as
+  FlatGeobuf (22.5 MB unsimplified), and 6,825 of the drawn ones start at z14, 4,391 at z15 and 934 at z16. The bake's
+  budget binds per z16 tile of the downtown box (basemap/landscape/spec.json), where wetlands are sparse.
+- **Checks and the QA sheet:** `wetland-qa [--build N] [--boxes] [--out DIR]` prints the outcome counts of the old
+  polygons (per test box with `--boxes`) and writes `qa-old-mapped.csv`, the retired first, for the owner's QA sheet;
+  `--out` is a folder in the private files, never the repository. Retired polygons stay in `water.wetland_check` with
+  the reason and the shares.
+- **Credit:** "Wetlands: U.S. Fish and Wildlife Service, National Wetlands Inventory" wherever NWI's classes or outlines
+  show; the bodies layer's manifest lists `nwi` as an input beside OSM and NHD.
 
 ### The canal season
 
@@ -475,6 +517,9 @@ python plugins/water/build/prepare.py hydroshare --zip $TVT_SOURCES/hydroshare/<
 # the ingest image (standard library; it carries basemap/ground and basemap/landscape's plan for the export)
 python3 -m ingest nhd-load --from DIR/nhd.gpkg              # replaces water.nhd_*; skips a file already loaded
 python3 -m ingest hydroshare-load --from DIR/hydroshare.gpkg
+python3 -m ingest nwi-load --from nwi_mapbox.gpkg [--dry-run]   # the NWI cut kept on the server (water 0003)
+python3 -m ingest nwi-presence --from shares.json [--dry-run]   # the worker step's presence shares
+python3 -m ingest wetland-qa [--build N] [--boxes] [--out DIR]  # after water-build; DIR in the private files
 python3 -m ingest osm-load --only water.osm_waterways        # on the valley cut we hold (light)
 python3 -m ingest run idwr_irrigation_orgs idwr_season_of_use
 python3 -m ingest water-build [--dry-run]
