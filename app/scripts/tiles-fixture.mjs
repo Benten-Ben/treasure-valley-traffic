@@ -14,7 +14,7 @@
  *
  *   --ground painted|flat|none   the ground entry: painted (the default), a flat one with a reason, or none (the
  *                                real manifest's ground entry, if any, is left alone)
- *   --out DIR                    the work folder (default: <main>/data/dev/tiles-fixture/<ground>)
+ *   --out DIR                    the work folder (default: <main>/data/dev/<package>/tiles-fixture/<ground>)
  *
  * The harness lets an environment value win over its own default (harness-env.mjs), so TILES_DIR points the
  * app and the specs at the work folder. Run it again after changing a file in basemap/landscape/fixtures/.
