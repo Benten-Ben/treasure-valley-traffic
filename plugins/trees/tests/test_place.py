@@ -63,7 +63,7 @@ class PlacerTest(unittest.TestCase):
         R = m.radius_cells(15, "broadleaf")
         s = dome((120, 120), 60, 60, 15, R).astype(np.float32)
         pl = Placer(s, np.ones(s.shape, bool), m, theta=0.2, lam=20)
-        # a catalogue says there are two trees, the second one 4 cells off: both stay
+        # an anchor says there are two trees, the second one 4 cells off: both stay
         for x in (60, 64):
             t = {"y": 60.0, "x": float(x), "H": 15.0, "R": R, "type": "broadleaf", "a": 0.77, "n": 1.64, "fixed": True}
             pl.add(t)

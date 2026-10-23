@@ -12,7 +12,7 @@ The surface the placed crowns explain is their upper envelope E (the lidar only 
 3. Keep the tree only if it lowers the error by at least lam (a per-tree cost, so noise doesn't become trees).
 4. When the seeds run out, look for leftover unexplained blobs bigger than the smallest crown and seed them; repeat.
 5. Repair: per tree, try deleting, moving, resizing, reshaping, splitting into two and merging with a neighbour; keep any
-   change that lowers error + lam * trees + the size costs. Up to a few sweeps. Trees marked "fixed" (catalogued trees,
+   change that lowers error + lam * trees + the size costs. Up to a few sweeps. Trees marked "fixed" (trees matched to an anchor,
    placed first by the build) are never touched or merged.
 
 Pure numpy/scipy; no I/O here. Coordinates are (row, col) in cells; distances in cells unless named _m."""
@@ -161,8 +161,8 @@ class Placer:
         return float((np.abs(S - E0) - np.abs(S - E1))[V].sum())
 
     def best_near(self, y, x, H, types, reach, overlap=True):
-        """The best crown centred within `reach` cells of (y, x) (a catalogued tree's trunk point): any of `types`, any
-        allowed width and shape. overlap=False skips the overlap rule (a catalogue says the tree exists)."""
+        """The best crown centred within `reach` cells of (y, x) (an anchor's trunk point): any of `types`, any
+        allowed width and shape. overlap=False skips the overlap rule (an anchor says the tree exists)."""
         best = (-math.inf, None)
         for typ in types:
             for k in self.m.scales():

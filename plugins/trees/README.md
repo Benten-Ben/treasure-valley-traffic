@@ -1,6 +1,6 @@
 # trees
 
-Every tree we can find in the lidar, catalogued trees first ([docs/19](../../docs/19-trees.md)), and the shrubs
+Every tree we can find in the lidar ([docs/19](../../docs/19-trees.md)), and the shrubs
 ([§19.8](../../docs/19-trees.md#198-shrubs)).
 
 - `model/crown_model.json`: how wide a crown is for its height and type, and the shape of its top, fitted on the 137 lone
@@ -8,7 +8,7 @@ Every tree we can find in the lidar, catalogued trees first ([docs/19](../../doc
   fitted here on the Boise trees in the US Forest Service's Urban Tree Database (McPherson, van Doorn & Peper 2016,
   RDS-2016-0005; "can be used without additional permissions or fees", with that citation).
 - `build/place.py`: the crown placer. `build/build.py`: builds one area in the worker image (NumPy, SciPy, rasterio):
-  catalogued trees first (from a catalogue's trunk points, when given), then the placer, then a repair pass. A placed
+  anchored trees first (from an inventory's trunk points, when given), then the placer, then a repair pass. A placed
   tree is narrow by the narrow rule, not by the width curve that sized it: its crown falls 45-95% of its height within
   3 m of an even top that is its own (under 2 m above its height) and 8.3 m or higher (docs/19 §19.3). Otherwise it is
   a conifer when the spring cue sees an evergreen crown: with `--spring` and `--summer` (the early-April and July 2025
@@ -19,14 +19,53 @@ Every tree we can find in the lidar, catalogued trees first ([docs/19](../../doc
   it is broadleaf, or conifer where the conifer curve sized it
   (`KEEP_WIDTH_CONIFER`, pending the owner). The fit keeps the curve, the crown's profile and its spring cue. It writes
   `trees.geojson`, `log.jsonl` and `build.json` (with the Sentinel-2 files' sha256 and the sources it read) to a build
-  folder.
-- `python3 -m ingest trees-load --build DIR` loads a build: the area's trees are replaced, its log events added.
-- Tables: `trees.build`, `trees.tree`, `trees.tree_log` (migrations/0001_trees.sql).
+  folder: crowns found in the lidar, nothing from an inventory (see "Anchors" below).
+- `python3 -m ingest trees-load --build DIR` loads a build: the area's trees are replaced, its log events added. It takes
+  a fixed set of fields and refuses a build that carries any other (`ingest/load.py`).
+- Tables: `trees.build`, `trees.tree`, `trees.tree_log` (migrations/0001_trees.sql; 0003 removed the inventory's rows
+  and fields).
 - Sources (`plugin.json`, each a manual source with a module stating its licence and credit, in `ingest/sources/`):
   the USGS 3DEP lidar (public domain), Sentinel-2 (Copernicus: "Contains modified Copernicus Sentinel data 2025"), USDA
   NAIP (public domain; the shrubs' near-infrared) and OpenStreetMap's hedges (ODbL; the shrubs' hedge check, docs/19
-  §19.8). The build never reads a catalogue unless
+  §19.8). The build never reads an inventory unless
   `--anchors` names one.
+
+## Anchors: what an inventory may and may not leave here
+
+The public tables hold only trees found in the lidar (owner, Oct 22, 2026). An inventory's tree ids, trunk points,
+genus, trunk diameters, planting dates and the link from a tree to its entry belong to the private plugin that owns the
+inventory, never here. The inventory is an input to the build, not a source of rows:
+
+- `--anchors FILE` is a CSV of trunk points (`source, source_id, lon, lat, genus, trunk_in, installed_ms`; the private
+  plugin writes it). The build uses them to find crowns: an anchor planted before the flight whose trunk point has a crown
+  3 m or taller within 1.5 m is matched to the crown that best explains the lidar there, and that crown is fixed before
+  the placer runs.
+- **A matched crown is written like any placed tree**: kind `placed`, a placed id (`<area>-<x>-<y>`), typed and fitted
+  from its own profile and the spring cue, a `placed` log event. Nothing says it was matched. A conifer genus that
+  restricted the crown's shape to the conifer curves is read as broadleaf when typing it, so the type carries no genus.
+- **The side file `anchors.jsonl`** (build folder, only with `--anchors`) holds what is the inventory's: for each matched
+  crown its public tree id, the anchor's source and id, the trunk-to-crown offset and the fit's gain; for each anchor the
+  lidar doesn't show (planted after the flight, under a taller crown, or under 3 m) the whole estimated tree, sized from
+  its genus and trunk diameter (`model/utd_boise.json`, the US Forest Service's Urban Tree Database). Format and checks:
+  `build/anchors.py`. The file is inventory data: it stays in the archive. The public loader never reads it, and the
+  private plugin loads it with `city-trees-load` after `trees-load` for the same build.
+- `build.json` records that anchors were used (`params.sources`: "anchors") and nothing of them; its counts hold no
+  anchor counts. The loader's field list (`TREE_FIELDS`, `FIT_FIELDS`, `EVENTS`) is the fence: an old-format build, or
+  one that let anything else in, is refused whole, and the table's check (`kind = 'placed'`) refuses any other kind
+  whatever loads it.
+
+Rebuilding after migration 0003 (it deletes the trees that came from an inventory under the old two extra kinds, their
+log events and the diameter and offset keys; their areas are short until rebuilt):
+
+1. Apply the migrations (`python3 db/migrate.py`): `trees/0003`, then the private plugin's `city_trees/0002`.
+2. For each area, rebuild with `--anchors` (the private plugin's `city-trees-anchors --bbox ... --out FILE` writes the
+   CSV), then `python3 -m ingest trees-load --build DIR`, then `python3 -m ingest city-trees-load --build DIR`.
+3. Production gets 1 and 2 through the runbook ([deploy/README.md](../../deploy/README.md)); the scratch database and the
+   dumps made from it hold none of the old rows or fields once it is migrated and refreshed.
+
+A consequence: a matched crown's type no longer comes from the genus, and a tree the lidar doesn't show is not in
+`trees.tree`, so the public layer and tiles show neither; the owner's site shows a matched crown's inventory entry (the
+app looks it up through the private plugin's `city_trees.tree_match`).
 
 The settings were calibrated on the North End's city street trees on Oct 8 (overlap limit 0.2: 76% of 941 street trees
 found within 3 m, the fewest extra trees, and a closer rebuild of the lidar than any height-only rule).
@@ -87,13 +126,15 @@ from the land-cover spike's experiments on the ten test areas (Oct 8).
 Licence: our own data, from public inputs only (USGS 3DEP lidar, USDA NAIP, and farm's crop cover: USDA NASS CSB and
 CDL, public domain, and Sentinel-2, Copernicus): licence Copernicus, republish yes, credited to the U.S. Geological
 Survey's 3D Elevation Program and USDA NAIP plus the crop cover's credits (each build's `credit`, in
-`trees.shrub_build` and `trees.shrub_area`). Nothing here reads a tree catalogue.
+`trees.shrub_build` and `trees.shrub_area`). Nothing here reads a tree inventory.
 
 ## Tests
 
-`python3 -m unittest plugins.trees.tests.test_load plugins.trees.tests.test_shrubs_load plugins.trees.tests.test_hedge_check`
+`python3 -m unittest plugins.trees.tests.test_load plugins.trees.tests.test_anchors plugins.trees.tests.test_shrubs_load plugins.trees.tests.test_hedge_check`
 (standard library; with `TVT_TEST_DATABASE_URL` naming a PostGIS database, the loading and the hedge check run too,
-inside a transaction that is rolled back). The placer's, the narrow rule's, the spring cue's and the shrubs' tests need
+inside a transaction that is rolled back; `test_load` proves the loader refuses the inventory's fields and that the
+migrated table has no such column and takes no other kind). `test_build_anchors` runs the build end to end with anchors
+(worker image) and checks the public files hold none of them. The placer's, the narrow rule's, the spring cue's and the shrubs' tests need
 the worker image (NumPy, SciPy, rasterio, pyproj, PDAL, GDAL), where a skip counts as a failure. On the VM:
 `worker-test -C <checkout> plugins.trees.tests.test_place plugins.trees.tests.test_narrow plugins.trees.tests.test_spring
-plugins.trees.tests.test_shrubs plugins.trees.tests.test_cloud plugins.trees.tests.test_build_shrubs`.
+plugins.trees.tests.test_shrubs plugins.trees.tests.test_cloud plugins.trees.tests.test_build_shrubs plugins.trees.tests.test_build_anchors`.

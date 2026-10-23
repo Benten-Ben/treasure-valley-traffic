@@ -2,18 +2,22 @@ import type { Box, TreeArea, TreeCatalogue, TreeDetail, TreeLogEntry, TreeRow, T
 
 /**
  * The trees API (docs/19 §19.4, §19.6), from the public plugin's tables
- * (`trees.tree`, `trees.tree_log`, `trees.build`) and, on the owner's own
- * site only, the private catalogue (`city_trees.tree`, the City of Boise's
- * inventory), joined by catalogue id:
+ * (`trees.tree`, `trees.tree_log`, `trees.build`: trees found in the lidar,
+ * nothing from an inventory) and, on the owner's own site only, the private
+ * catalogue (`city_trees.tree`, the City of Boise's inventory). The public
+ * tables hold no catalogue id; the private plugin's `city_trees.tree_match`
+ * links a tree's id to the catalogue entry it was matched to (and
+ * `city_trees.tree_event` holds the log events that came from the match):
  *
  * - `GET /api/trees?bbox=w,s,e,n&limit=N`: the trees whose point is in the
  *   box, tallest first (limit 4,000 by default, 8,000 at most);
  * - `GET /api/trees/areas`: where trees are built;
  * - `GET /api/trees/<id>`: one tree, its catalogue entry when the private
- *   table is here, and its log, newest first.
+ *   tables are here and the tree was matched (it then reads as catalogued, with
+ *   the match's fit and events), and its log, newest first.
  *
  * Before the plugin's migration (an older database) nothing is built: empty
- * lists, never a 500. Without the private table, `catalogue` is null.
+ * lists, never a 500. Without the private tables, `catalogue` is null.
  */
 
 /** A postgres.js tagged template, or a test's stand-in. */
@@ -49,7 +53,7 @@ export function parseLimit(raw: string | null): number {
 export interface Schema {
 	/** The plugin's tables (migration 0001_trees). */
 	trees: boolean;
-	/** The private catalogue (the city_trees plugin, the owner's site only). */
+	/** The private catalogue and its links to our trees (the city_trees plugin, the owner's site only). */
 	catalogue: boolean;
 }
 
@@ -58,7 +62,8 @@ export async function schema(sql: Sql): Promise<Schema> {
 	const [r] = await sql`
 		select to_regclass('trees.tree') is not null and to_regclass('trees.build') is not null
 		       and to_regclass('trees.tree_log') is not null as trees,
-		       to_regclass('city_trees.tree') is not null as catalogue`;
+		       (to_regclass('city_trees.tree') is not null and to_regclass('city_trees.tree_match') is not null
+		        and to_regclass('city_trees.tree_event') is not null) as catalogue`;
 	return { trees: Boolean(r?.trees), catalogue: Boolean(r?.catalogue) };
 }
 
@@ -112,28 +117,34 @@ export async function treeAreas(sql: Sql): Promise<{ areas: TreeArea[] }> {
 	};
 }
 
-/** The private table each catalogue's attributes live in. */
-const CATALOGUE_TABLES: Record<string, string> = { boise: 'city_trees.tree' };
-
-/** One tree with its log (newest first) and, when the private table is here, its catalogue entry; null when there's no such tree. */
+/**
+ * One tree with its log (newest first) and, when the private tables are here and the tree was matched to a catalogue
+ * entry, that entry (the tree then reads as catalogued, with the match's fit and its private log events); null when
+ * there's no such tree. The public tables hold no catalogue id, so the lookup goes through the private plugin's
+ * `city_trees.tree_match`, keyed by our tree id.
+ */
 export async function treeDetail(sql: Sql, id: string): Promise<TreeDetail | null> {
 	const has = await schema(sql);
 	if (!has.trees) return null;
 	const [t] = await sql`
-		select tree_id, area, kind, type, height_m, crown_radius_m, ground_m, lidar, fit, build_id, catalogue, catalogue_id
+		select tree_id, area, kind, type, height_m, crown_radius_m, ground_m, lidar, fit, build_id
 		from trees.tree where tree_id = ${id}`;
 	if (!t) return null;
-	const log = await sql`
+	let log = await sql`
 		select at, event, detail from trees.tree_log where tree_id = ${id} order by at desc, event`;
 	let catalogue: TreeCatalogue | null = null;
-	if (has.catalogue && t.catalogue && t.catalogue_id && CATALOGUE_TABLES[t.catalogue] === 'city_trees.tree') {
+	let kind = t.kind;
+	let fit = (t.fit ?? {}) as Record<string, unknown>;
+	if (has.catalogue) {
 		const [c] = await sql`
-			select catalogue_id, common_name, genus, species, dbh_in, installed::text as installed,
-			       last_verified::text as last_verified, condition, site_type
-			from city_trees.tree where catalogue_id = ${t.catalogue_id}`;
-		if (c)
+			select m.catalogue, m.fit as match_fit, c.catalogue_id, c.common_name, c.genus, c.species, c.dbh_in,
+			       c.installed::text as installed, c.last_verified::text as last_verified, c.condition, c.site_type
+			from city_trees.tree_match m
+			join city_trees.tree c on c.catalogue_id = m.catalogue_id
+			where m.tree_id = ${id} and m.catalogue = 'boise'`;
+		if (c) {
 			catalogue = {
-				catalogue: String(t.catalogue),
+				catalogue: String(c.catalogue),
 				catalogue_id: String(c.catalogue_id),
 				common_name: c.common_name ?? null,
 				genus: c.genus ?? null,
@@ -144,17 +155,23 @@ export async function treeDetail(sql: Sql, id: string): Promise<TreeDetail | nul
 				condition: c.condition ?? null,
 				site_type: c.site_type ?? null
 			};
+			kind = 'catalogued';
+			fit = { ...fit, ...((c.match_fit ?? {}) as Record<string, unknown>) };
+			const own = await sql`
+				select at, event, detail from city_trees.tree_event where tree_id = ${id}`;
+			log = [...log, ...own].sort((a, b) => +new Date(b.at) - +new Date(a.at) || String(a.event).localeCompare(String(b.event)));
+		}
 	}
 	return {
 		id: String(t.tree_id),
 		area: String(t.area),
-		kind: t.kind,
+		kind,
 		type: t.type,
 		height_m: Number(t.height_m),
 		crown_radius_m: Number(t.crown_radius_m),
 		ground_m: num(t.ground_m),
 		lidar: t.lidar ?? null,
-		fit: (t.fit ?? {}) as Record<string, unknown>,
+		fit,
 		build_id: String(t.build_id),
 		catalogue,
 		log: log.map(

@@ -42,7 +42,7 @@ outline, licence, republish, credit, inputs with their sizes and sha256, setting
 score) and why.tif (uint8 per cell: 1 shrub, 2 speck, 3 skirt, 4 gap, 5 crop; 0 elsewhere; for image sheets).
 
 Sources and credit: USGS 3D Elevation Program lidar and USDA NAIP (public domain), and the crop cover's own inputs
-(farm's: CSB and CDL, public domain, and Sentinel-2, Copernicus). Nothing here reads a tree catalogue."""
+(farm's: CSB and CDL, public domain, and Sentinel-2, Copernicus). Nothing here reads a tree inventory."""
 import argparse
 import datetime as dt
 import json
