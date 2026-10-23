@@ -7,14 +7,15 @@
 		DISC_EDGE,
 		fmtCount,
 		KIND_WORD,
-		KINDS,
+		legendCredit,
+		legendKinds,
 		TREE_GREENS,
 		TREE_TONES,
 		type TreeKind
 	} from './trees.js';
 
 	/**
-	 * The Trees legend (docs/19 §19.6): the three kinds, each drawn as the map
+	 * The Trees legend (docs/19 §19.6): the kinds in view, each drawn as the map
 	 * draws it (by tone, with the discs' dark edge) and named, never told by
 	 * color alone; the three
 	 * shapes; when the view's trees were cut to the tallest; and where trees are
@@ -27,15 +28,17 @@
 
 	const ABOUT: Record<TreeKind, string> = {
 		catalogued: "in the City's inventory, measured by lidar",
-		placed: 'found in the lidar; crown placed',
-		estimated: 'in the inventory, not in the lidar; sized from species'
+		placed: 'found in the lidar; crown placed'
 	};
-	const LOOK: Record<TreeKind, string> = { catalogued: 'full green', placed: 'lighter', estimated: 'lightest' };
+	const LOOK: Record<TreeKind, string> = { catalogued: 'full green', placed: 'lighter' };
+	/** Catalogued shows only once the catalogue answered: a catalogued tree is in view. */
+	const kinds = $derived(legendKinds(view.kinds));
+	const catalogued = $derived(kinds.includes('catalogued'));
 </script>
 
 <p class="legend-title">Trees</p>
 <ul class="keys">
-	{#each KINDS as k (k)}
+	{#each kinds as k (k)}
 		<li>
 			<svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true">
 				<circle cx="10" cy="10" r="7.5" fill={TREE_TONES.broadleaf[k][1]} stroke={DISC_EDGE} stroke-width="1" />
@@ -90,7 +93,7 @@
 		{/each}
 	</div>
 {/if}
-<p class="credit">Our own trees: heights from USGS 3DEP lidar (2023); catalogued trees from the City of Boise's inventory; estimated sizes from the US Forest Service's Urban Tree Database; conifers over the mountains' April snow from a spring Sentinel-2 image (contains modified Copernicus Sentinel data 2025).</p>
+<p class="credit">{legendCredit(catalogued)}</p>
 
 <style>
 	li {

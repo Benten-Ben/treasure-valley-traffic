@@ -18,14 +18,16 @@
 		trunkIn,
 		TYPE_NAME,
 		typedBySpring,
+		heightNote,
+		crownNote,
 		type TreeDetail,
 		type TreeRow
 	} from './trees.js';
 
 	/**
 	 * The tree panel (docs/19 §19.6, the UI v2 card pattern): the species'
-	 * common name (or the type), the kind in plain words, its sizes (estimated
-	 * ones say so), the catalogue's trunk diameter, planting date, last
+	 * common name (or the type), the kind in plain words, its sizes (the crown's
+	 * says it is placed), the catalogue's trunk diameter, planting date, last
 	 * verification and condition when known, how we know, the log (newest
 	 * first) and the credits for its kind.
 	 */
@@ -71,11 +73,6 @@
 	const trunk = $derived(detail ? trunkIn(detail) : null);
 	const cat = $derived(detail?.catalogue ?? null);
 	const species = $derived(cat && (cat.genus || cat.species) ? [cat.genus, cat.species].filter(Boolean).join(' ') : null);
-	/** Which sizes are estimates, in words (docs/14: estimated things say so). */
-	const heightNote = $derived(kind === 'estimated' ? 'estimated from its species and trunk' : `measured by the ${year} lidar`);
-	const crownNote = $derived(
-		kind === 'estimated' ? 'estimated from its species and trunk' : kind === 'placed' ? 'estimated by placement' : 'from its species, checked against the lidar'
-	);
 </script>
 
 <h2>{title}</h2>
@@ -88,9 +85,9 @@
 <p class="explain">{kindText(kind, year, catalogueName)}.</p>
 <dl class="facts">
 	<dt>Height</dt>
-	<dd><span class="num">{metresFeet(height)}</span> <span class="how">{heightNote}</span></dd>
+	<dd><span class="num">{metresFeet(height)}</span> <span class="how">{heightNote(year)}</span></dd>
 	<dt>Crown width</dt>
-	<dd><span class="num">{metresFeet(crown)}</span> <span class="how">{crownNote}</span></dd>
+	<dd><span class="num">{metresFeet(crown)}</span> <span class="how">{crownNote(kind)}</span></dd>
 	{#if trunk !== null}
 		<dt>Trunk</dt>
 		<dd><span class="num">{Math.round(trunk)} in · {Math.round(trunk * 2.54)} cm</span> <span class="how">diameter, from the inventory</span></dd>

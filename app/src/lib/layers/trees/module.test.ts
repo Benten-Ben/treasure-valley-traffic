@@ -151,7 +151,7 @@ describe('the Trees module asks for the view’s trees (docs/19 §19.6)', () => 
 		await settle();
 		expect(map.shown()).toEqual([]);
 		expect(trees.view.shown).toBe(0);
-		expect(trees.view.kinds).toEqual({ catalogued: 0, placed: 0, estimated: 0 });
+		expect(trees.view.kinds).toEqual({ catalogued: 0, placed: 0 });
 	});
 
 	it('a late answer doesn’t land once zoomed out past the discs', async () => {

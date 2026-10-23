@@ -92,7 +92,7 @@ export class TreesModule implements LayerModule {
 	error = $state<string | null>(null);
 	updatedAt = $state<number | null>(null);
 	areas = $state.raw<TreeArea[]>([]);
-	view = $state.raw<TreesView>({ mode: 'far', kinds: { catalogued: 0, placed: 0, estimated: 0 }, shown: 0, truncated: false, capped: false, cap: SCENE_CAP, here: true, problem: null });
+	view = $state.raw<TreesView>({ mode: 'far', kinds: { catalogued: 0, placed: 0 }, shown: 0, truncated: false, capped: false, cap: SCENE_CAP, here: true, problem: null });
 	Legend = Legend;
 	Card = Card;
 	interactive: Interactive[] = [
@@ -260,7 +260,7 @@ export class TreesModule implements LayerModule {
 		const map = this.#scope?.map;
 		(map?.getSource(SOURCE) as GeoJSONSource | undefined)?.setData(discCollection(data.trees));
 		this.#syncScene();
-		const kinds: Record<TreeKind, number> = { catalogued: 0, placed: 0, estimated: 0 };
+		const kinds: Record<TreeKind, number> = { catalogued: 0, placed: 0 };
 		for (const t of data.trees) kinds[t.kind]++;
 		this.updatedAt = Date.now();
 		this.view = { ...this.view, kinds, shown: data.trees.length, truncated: data.truncated, capped: this.#capped };
