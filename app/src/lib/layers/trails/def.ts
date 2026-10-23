@@ -1,7 +1,6 @@
 import { layerVersion } from '#lib/contracts/layer-tiles.js';
 import { prefetch } from '../prefetch.js';
 import type { LayerDef } from '../types.js';
-import { TRAILS } from './icons.js';
 
 /** The status API (taken at boot by `prefetch`, and again by the module); here, not in trails.ts, so the always-loaded def doesn't pull that file in. */
 export const STATUS_URL = '/api/trails/status';
@@ -17,7 +16,6 @@ export const STATUS_URL = '/api/trails/status';
 const def: LayerDef = {
 	id: 'trails',
 	title: 'Trails',
-	icon: TRAILS,
 	order: 60,
 	group: 'landscape',
 	suppresses: ['paths'],

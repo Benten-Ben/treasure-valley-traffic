@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { layerIcon } from '#lib/layers/icons.js';
 	import { onDestroy, type Component } from 'svelte';
 	import type { AppCtx } from '#lib/app/context.js';
 	import type { LayerDef } from '#lib/layers/types.js';
@@ -124,7 +125,7 @@
 			onclick={() => activate(() => why === true && manager.toggle(d.id))}
 		>
 			<span class="icon">
-				<Icon icon={d.icon} size={24} />
+				<Icon icon={layerIcon(d)} size={24} />
 				{#if busy}<span class="ring" aria-hidden="true"></span>{/if}
 				{#if status === 'error' || status === 'stale'}<span class="warn" aria-hidden="true">▲</span>{/if}
 			</span>

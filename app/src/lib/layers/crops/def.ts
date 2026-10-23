@@ -1,7 +1,6 @@
 import { layerVersion } from '#lib/contracts/layer-tiles.js';
 import { prefetch } from '../prefetch.js';
 import type { LayerDef } from '../types.js';
-import { GRAINS } from './icons.js';
 import { FIELDS_LAYER, PLUGIN } from './tiles.js';
 
 /** The crop year and the edition behind it (small; the layer needs it to build its switcher). */
@@ -17,7 +16,6 @@ export const YEAR_URL = '/api/farm/year';
 const def: LayerDef = {
 	id: 'crops',
 	title: 'Crop fields',
-	icon: GRAINS,
 	order: 70,
 	group: 'landscape',
 	offUnder: ['transit'],

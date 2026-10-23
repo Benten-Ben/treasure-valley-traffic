@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { layerIcon } from '#lib/layers/icons.js';
 	import type { AppCtx } from '#lib/app/context.js';
 	import PanelBoundary from '#lib/components/PanelBoundary.svelte';
 	import type { LayerId } from '#lib/layers/types.js';
@@ -34,7 +35,7 @@
 			{@const open = expanded === d.id}
 			<section class="legend card" class:open aria-label="{d.title} legend">
 				<button class="row" aria-expanded={open} onclick={() => expand(d.id)}>
-					<Icon icon={d.icon} size={18} />
+					<Icon icon={layerIcon(d)} size={18} />
 					<span class="name">{d.title}</span>
 					{#if status === 'loading' || status === 'idle'}
 						<span class="state" role="status"><span class="spin" aria-hidden="true"></span>{d.loadingText ?? 'Loading…'}</span>

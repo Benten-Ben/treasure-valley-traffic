@@ -89,6 +89,9 @@ export interface LayersInfo {
 	shown: LayerId[];
 	status: Record<string, LayerStatus>;
 	errors: Record<string, string | null>;
+	/** Layers this place can't load (their data isn't built here): the reason, as the layer's button says it. The
+	 * first idle never prefetches them, so they stay idle. */
+	unavailable: Record<string, string>;
 	/** The Base look wants Clay (Clay, or Auto with a layer on that doesn't keep Valley). */
 	clay: boolean;
 	/** The flavor the map is drawn in now (a mode keeps the one it found). */
@@ -296,9 +299,12 @@ export class LayerManager {
 	info(): LayersInfo {
 		const status: Record<string, LayerStatus> = {};
 		const errors: Record<string, string | null> = {};
+		const unavailable: Record<string, string> = {};
 		for (const d of this.defs) {
 			status[d.id] = this.status(d.id);
 			errors[d.id] = this.error(d.id);
+			const why = this.available(d.id);
+			if (why !== true) unavailable[d.id] = why;
 		}
 		const sel = this.#ctx.selection.current;
 		const ready = (id: LayerId) => ['ready', 'stale'].includes(this.status(id));
@@ -307,6 +313,7 @@ export class LayerManager {
 			shown: [...this.#shown],
 			status,
 			errors,
+			unavailable,
 			clay: this.#wantsClay(),
 			flavor: this.#map ? flavorKit().appliedFlavor(this.#map) : 'valley',
 			selection: sel ? { kind: sel.kind, id: sel.id, layer: sel.layer, title: sel.title } : null,
