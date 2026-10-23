@@ -241,6 +241,34 @@ class RasterizeTest(unittest.TestCase):
         self.assertEqual(m.layer("ground")["sha256"], M.sha256_of(lay.path))
 
 
+ACTIVATE_D = "/opt/conda/etc/conda/activate.d"
+
+
+@unittest.skipIf(np is None, "needs the worker image (its conda activation)")
+class ProjNetworkOffTest(unittest.TestCase):
+    """The image's activation ends with PROJ_NETWORK=OFF (ingest/Dockerfile.worker, #285): conda's PROJ script sets it ON,
+    and our zz- script must still run after it, whatever a later micromamba or proj package does."""
+
+    def run_activated(self, then):
+        """`then` in a shell that has sourced the image's activation scripts in order, starting from PROJ_NETWORK=ON."""
+        import glob
+        import subprocess
+        scripts = sorted(glob.glob(os.path.join(ACTIVATE_D, "*.sh")))
+        self.assertTrue(any(os.path.basename(s) == "zz-proj-network-off.sh" for s in scripts), scripts)
+        run = "".join(f". {s} >/dev/null 2>&1; " for s in scripts) + then
+        env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "PROJ_NETWORK": "ON",
+               "CONDA_PREFIX": os.environ.get("CONDA_PREFIX", "/opt/conda"), "HOME": "/tmp"}
+        return subprocess.run(["sh", "-c", run], capture_output=True, text=True, env=env)
+
+    def test_the_activation_scripts_leave_proj_network_off(self):
+        self.assertEqual(self.run_activated('printf %s "$PROJ_NETWORK"').stdout, "OFF")
+
+    def test_pyproj_sees_the_network_off(self):
+        import sys
+        out = self.run_activated(f'exec {sys.executable} -c "import pyproj.network as n; print(n.is_network_enabled())"')
+        self.assertEqual(out.stdout.strip(), "False", out.stderr)
+
+
 @unittest.skipIf(np is None, "needs the worker image (GDAL)")
 class HeaderAgreesWithGdalTest(unittest.TestCase):
     """fgb.py reads GDAL's FlatGeobuf as GDAL does (and PostGIS's: test_manifest.py's fixtures)."""

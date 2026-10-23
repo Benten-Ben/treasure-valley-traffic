@@ -55,7 +55,8 @@ def _gdal():
     gdal.UseExceptions()
     ogr.UseExceptions()
     osr.UseExceptions()
-    # Never fetch PROJ grids (the worker image turns PROJ's network on): UTM 11N to Web Mercator needs none.
+    # Never fetch PROJ grids (the worker image sets PROJ_NETWORK=OFF too; this holds whatever the environment says):
+    # UTM 11N to Web Mercator needs none.
     osr.SetPROJEnableNetwork(False)
     gdal.SetConfigOption("PROJ_NETWORK", "OFF")
     os.environ["PROJ_NETWORK"] = "OFF"
