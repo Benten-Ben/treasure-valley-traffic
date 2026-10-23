@@ -70,19 +70,31 @@ def match(points, centres, reach):
     return out
 
 
-def check_private_dir(private, out, archives=()):
-    """Refuse a place for anchors.jsonl that the public side can see: inside the build folder (or holding it), or inside
-    any of the archive folders given (production's archive is mounted into scratch jobs). Raises ValueError."""
+# Where the project keeps its private files, and production's archive, on the server. The guard names them itself and
+# does not depend on the container's environment (a docker run has none of $TVT_ARCHIVE unless it was passed in).
+PRIVATE_ROOT = "/srv/tvt/private"
+PROD_ARCHIVE = "/srv/tvt/archive"
+
+
+def check_private_dir(private, out, archives=(), private_root=None):
+    """Refuse a place for anchors.jsonl that the public side can see. Every path is taken with its symlinks resolved.
+    Refused: inside the build folder (or holding it); under production's archive (/srv/tvt/archive) or under any of the
+    archive folders given (the environment's, as an extra check); and anywhere outside the private root
+    (/srv/tvt/private, or private_root when given). Raises ValueError."""
     def inside(a, b):
         a, b = os.path.realpath(a), os.path.realpath(b)
         return a == b or a.startswith(b.rstrip(os.sep) + os.sep)
+    root = private_root or PRIVATE_ROOT
     if inside(private, out) or inside(out, private):
         raise ValueError(f"--private-out {private} and the build folder {out} must be separate folders: "
                          f"the inventory's side file never goes beside the public files")
-    for arc in archives:
+    for arc in (PROD_ARCHIVE, *archives):
         if arc and inside(private, arc):
             raise ValueError(f"--private-out {private} is under the archive {arc}: scratch jobs can read it. "
                              f"Use the project's private files")
+    if not inside(private, root):
+        raise ValueError(f"--private-out {private} is outside the private files ({root}; --private-root names another): "
+                         f"the inventory's side file goes only there")
 
 
 def write(folder, records):

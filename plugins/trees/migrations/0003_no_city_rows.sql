@@ -9,7 +9,8 @@
 --     (boise-...) and every one that carries a trunk diameter or a trunk-to-crown offset or says 'estimated'; and the
 --     same keys from the fits that remain (no log event that carries one is left to strip);
 --   * the columns catalogue and catalogue_id, their index and the check that tied them to kind;
---   * the build records' counts of catalogued and estimated trees and their inventory sources.
+--   * the build records' counts of catalogued and estimated trees (their tree count becomes the placed count) and
+--     their inventory sources.
 -- The areas that held such trees are empty or short until they are rebuilt (build.py --anchors, trees-load here, then
 -- the private plugin's load): the runbook is in plugins/trees/README.md. Not reversible.
 
@@ -32,7 +33,8 @@ ALTER TABLE trees.tree DROP COLUMN IF EXISTS catalogue_id;
 ALTER TABLE trees.tree ADD CONSTRAINT tree_kind_check CHECK (kind = 'placed');
 
 UPDATE trees.build
-   SET counts = counts - 'catalogued' - 'estimated',
+   SET counts = CASE WHEN counts ? 'placed' THEN jsonb_set(counts - 'catalogued' - 'estimated', '{trees}', counts -> 'placed')
+                     ELSE counts - 'catalogued' - 'estimated' END,   -- the build's tree count is what it placed, not the inventory's
        params = CASE WHEN jsonb_typeof(params -> 'sources') = 'array'
                      THEN jsonb_set(params, '{sources}',
                             COALESCE((SELECT jsonb_agg(e) FROM jsonb_array_elements(params -> 'sources') e

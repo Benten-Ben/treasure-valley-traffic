@@ -355,8 +355,10 @@ def main(argv=None):
     ap.add_argument("--dtm", required=True)
     ap.add_argument("--mask", help="building mask (.npy, the DSM's grid)")
     ap.add_argument("--anchors", help="an inventory's trunk points (CSV: " + ", ".join(anchor_file.CSV_FIELDS) + "); see anchors.py")
-    ap.add_argument("--private-out", help="with --anchors: the folder for anchors.jsonl, outside --out and outside "
-                                          "$TVT_ARCHIVE (the private files, never a folder the scratch jobs can read)")
+    ap.add_argument("--private-out", help="with --anchors: the folder for anchors.jsonl, under the private root and "
+                                          "outside --out and the archive (never a folder the scratch jobs can read)")
+    ap.add_argument("--private-root", help="the private files' folder that --private-out must be under "
+                                           "(default " + anchor_file.PRIVATE_ROOT + ")")
     ap.add_argument("--lidar", default="USGS 3DEP QL1 lidar", help="the survey's name, for the log")
     ap.add_argument("--lidar-date", help="the flight date (YYYY-MM-DD); later plantings are not matched to a crown")
     ap.add_argument("--theta", type=float, default=0.2, help="overlap limit (share of the smaller crown); 0.2 calibrated Oct 8")
@@ -375,7 +377,8 @@ def main(argv=None):
     if a.anchors:
         try:
             anchor_file.check_private_dir(a.private_out, a.out,
-                                          [os.environ.get(v) for v in ("TVT_ARCHIVE", "TVT_PROD_ARCHIVE")])
+                                          [os.environ.get(v) for v in ("TVT_ARCHIVE", "TVT_PROD_ARCHIVE")],
+                                          a.private_root)
         except ValueError as e:
             ap.error(str(e))
     t0 = time.time(); started = dt.datetime.now(dt.timezone.utc)

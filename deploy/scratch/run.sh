@@ -229,7 +229,7 @@ exec 5>&-
 
 # The container. The tree is the code (/repo); TVT_ARCHIVE is this database's scratch archive
 # (exports, inboxes and load state: it follows the database, a refresh replaces it); production's
-# archive, the downloaded sources and the cold drive are read-only, the scratch dumps hidden.
+# archive (but for its trees/), the downloaded sources and the cold drive are read-only, the scratch dumps hidden.
 ctr=tvt-scratch-$name
 docker container inspect "$ctr" >/dev/null 2>&1 && die "a container named $ctr already exists (docker rm -f $ctr if it's left over)"
 args=(run --rm --init --name "$ctr" --label tvt.scratch=job --label "tvt.scratch.name=$name"
@@ -241,6 +241,10 @@ args=(run --rm --init --name "$ctr" --label tvt.scratch=job --label "tvt.scratch
 	-v "$tree":/repo -v "$ARCHIVES/$db":/srv/archive -v "$PROD_ARCHIVE":/srv/archive-prod:ro
 	-v "$WORK/sources":/srv/sources:ro -w /repo)
 [ $offline = 1 ] || args+=(--network "$SCRATCH_OUT_NET")
+# Production's trees/ holds builds from the City of Boise's inventory (the pre-#277 format): hidden under an empty
+# read-only tmpfs, as deploy/bin/sheets never mounts it. Nothing to hide (and no mount point to make in a read-only
+# mount) when production has no trees/ folder.
+[ ! -d "$PROD_ARCHIVE/trees" ] || args+=(--mount "type=tmpfs,destination=/srv/archive-prod/trees,tmpfs-size=1m,tmpfs-mode=0555")
 [ -n "${HEAVY_LABEL:-}" ] && args+=(--label "$HEAVY_LABEL")       # so heavy's deadline stops it too
 if [ -n "$COLD_MOUNT" ] && [ -n "$COLD_MARKER" ] && [ -e "$COLD_MARKER" ]; then
 	args+=(-v "$COLD_MOUNT:$COLD_MOUNT:ro" -e "TVT_COLD=$COLD_MOUNT")

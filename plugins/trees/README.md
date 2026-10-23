@@ -46,10 +46,12 @@ inventory, never here. The inventory is an input to the build, not a source of r
   ids, fits, types, events and order), and `build.json` differs only in its times. A test builds one area with and
   without anchors and compares them, and with a conifer genus and a broadleaf one, and with two anchors under one
   crown. Nothing in a public row, its order or its id tells a crown that has an anchor from one that has none.
-- **The side file `anchors.jsonl`** is written to `--private-out`, never to the build folder and never anywhere under
-  `$TVT_ARCHIVE` or `$TVT_PROD_ARCHIVE` (the build stops before any work if the folder is inside the build folder or
-  the archive, or holds the build folder): scratch jobs mount production's archive, so a file there is readable by
-  them. Use the project's private files on the server. It holds what is the inventory's: for each matched crown its
+- **The side file `anchors.jsonl`** is written to `--private-out`, never to the build folder. The build stops before any
+  work when that folder, with symlinks resolved, is inside the build folder or holds it, is under production's archive
+  (`/srv/tvt/archive`) or under `$TVT_ARCHIVE` or `$TVT_PROD_ARCHIVE` when those are set, or is outside the private
+  root (`/srv/tvt/private`, or the folder `--private-root` names): scratch jobs mount production's archive, so a file
+  there is readable by them. The guard names those paths itself and does not depend on the container's environment.
+  Use the project's private files on the server. It holds what is the inventory's: for each matched crown its
   public tree id, the anchor's source and id, and the trunk-to-crown offset; for each anchor with no such crown (planted
   after the flight, under a taller crown, under 3 m, or with no crown near it) the whole estimated tree, sized from its
   genus and trunk diameter (`model/utd_boise.json`, the US Forest Service's Urban Tree Database). Format and checks:
@@ -68,28 +70,53 @@ private plugin's match table, keyed by the crown's id).
 `0003_no_city_rows.sql` deletes the trees that came from an inventory (the old `catalogued` and `estimated` kinds and
 any tree with an entry), their log events and the diameter and offset keys, drops columns, and adds the kind check. It
 is **not reversible**, and the `ingest` service applies it on start, so it runs as soon as the release that carries it is
-deployed. Nothing is backed up today ([DECISIONS](../../docs/DECISIONS.md)). So, in this order:
+deployed. Nothing is backed up today ([DECISIONS](../../docs/DECISIONS.md)). So, in this order. Every long command runs
+under `/srv/tvt/work/bin/heavy` ([deploy/README.md](../../deploy/README.md), "Heavy jobs"), with a deadline inside the
+day window (06:00-23:15 Boise, never in the nightly roll-up's hours) and a runtime that fits it; `heavy` refuses a
+command outside the window. Compose runs from `/srv/tvt/repo/deploy` without `-f`.
 
 0. **Ordering with the private plugin.** Its match tables and loader (the private branch for #277, rebased on the private
    repository's `main`) go onto the server first: merged, copied to the private plugins' folder (readable by the
    group), and its manifest checked (a bad private manifest crash-loops `ingest`). Until the private tables exist the
    owner's site shows no inventory entries; the public site never does.
-1. **Pick the window** as for any `ingest` restart ([deploy/README.md](../../deploy/README.md), "Updating"): not
-   between 00:00 and 04:00 local.
-2. **Back up the trees schema** (check the free space first, `df -h`):
-   `docker compose exec -T db pg_dump -U tvt -Fc -n trees tvt > ~/tvt-before-trees-0003-$(date +%F).dump`. Keep it in
-   the private files, not the archive: it holds the old inventory-derived rows. It is the only way back (reloading a
-   build made before this change is not one, because the loader now refuses its fields).
-3. **Deploy**: push `main` to the server's repository, then `docker compose up -d --build ingest`. Check
-   `docker compose logs ingest | grep -i migrat`: `trees/0003_no_city_rows.sql`, then the private plugin's own.
-4. **Rebuild each area** that held inventory trees: `build.py --anchors FILE --private-out <private files>/trees/<build>`
-   (the private plugin writes the CSV), `python3 -m ingest trees-load --build DIR`, then the private plugin's load for
-   the same build. Until then those areas are short the matched and estimated trees. Keep `--out` in the archive and
-   `--private-out` outside it.
-5. **Way back** (before step 4, if something is wrong): `git checkout` the previous release on the server and rebuild
-   `ingest`, then in one transaction `delete from ops.schema_migration where name = 'trees/0003_no_city_rows.sql'`
+1. **Pick the window** as for any `ingest` restart ([deploy/README.md](../../deploy/README.md), "Updating"), in the day
+   window above. List the trees builds that exist now: they are the old format, and step 7 moves exactly these:
+   `ls "$TVT_ARCHIVE/trees" > <private files>/trees-builds-before-0003.txt`.
+2. **Back up the trees schema** (check the free space first, `df -h`), under `heavy` with the dump under `timeout` (the
+   deadline cannot reach a command run inside the database's container):
+   `/srv/tvt/work/bin/heavy --deadline HH:MM --runtime 20 --peak 1 "trees dump (0003)" sh -c 'docker exec tvt-db-1 timeout -k 60 $((HEAVY_DEADLINE_EPOCH - $(date +%s))) pg_dump -U tvt -Fc -n trees tvt' > <private files>/tvt-before-trees-0003-$(date +%F).dump`.
+   Keep it in the private files, not the archive: it holds the old inventory-derived rows. It is the only way back
+   (reloading a build made before this change is not one, because the loader now refuses its fields).
+3. **Rebuild each affected area's public trees first, with the new `build.py` and no `--anchors`.** It needs neither the
+   private plugin nor the inventory: the public files are byte for byte those of a build with anchors. One heavy job per
+   area, in the worker image: `/srv/tvt/work/bin/heavy --deadline HH:MM --runtime MIN --peak GB "trees <area> (0003)" docker run --rm --memory 6g --memory-swap 6g --cpus 2 ... tvt-worker python plugins/trees/build/build.py --area <area> --dsm ... --dtm ... --out $TVT_ARCHIVE/trees/<new build name>`
+   (a name no old build has; the area's lidar products and the options its earlier build used; `build.py --help`). Do it before the deploy so the
+   public layer never shows gaps where the City's crowns were.
+4. **Deploy and load straight after.** Push `main` to the server's repository, then rebuild the services that read the
+   trees tables together, so no old image queries the dropped columns: `docker compose up -d --build ingest app` (and
+   `app-next` as well when `compose.preview.yml` is switched on). Check
+   `docker compose logs ingest | grep -i migrat`: `trees/0003_no_city_rows.sql`, then the private plugin's own. Then at
+   once, for each build from step 3, under `heavy` with `compose.load.yml` (deploy/README.md):
+   `docker compose -f docker-compose.yml -f compose.private.yml -f compose.load.yml run --rm --no-deps -e DATABASE_URL ingest python3 -m ingest trees-load --build DIR`.
+   Until a build is loaded, that area's trees are the migration's leftovers: the old lidar-found rows, with gaps where
+   the matched inventory trees were. Keep that window as short as the steps allow (load straight after the deploy). Then
+   check that the app answers: `curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8080/api/trees/<id>` is `200`
+   for a placed tree (take one with `docker compose exec -T db psql -U tvt tvt -Atc "select tree_id from trees.tree limit 1"`)
+   and a tree's card opens on the map.
+5. **Private matching, after, separately** (it changes nothing public): rebuild each area again with
+   `--anchors FILE --private-out <private files>/trees/<build>` (the private plugin writes the CSV; add
+   `--private-root` only if the private files are not at `/srv/tvt/private`), under `heavy` as in step 3 with `--out` a
+   scratch folder (the public files are the same as step 3's, so `trees-load` is not run again), then the private
+   plugin's load for that build. Until it is done the owner's site shows no inventory entries.
+6. **Way back** (before step 7, if something is wrong): `git checkout` the previous release on the server and rebuild
+   `ingest` and `app`, then in one transaction `delete from ops.schema_migration where name = 'trees/0003_no_city_rows.sql'`
    and `pg_restore -c -n trees` the dump from step 2 (it recreates `trees` as it was, shrubs included).
-6. **After production is migrated**: refresh the scratch database so it holds none of the old rows, and remove the two
+7. **Old-format builds out of the archive** (after the loads are checked): the dump, not these folders, is the way back.
+   Move the folders listed in step 1 to the private files and check that nothing old-format is left under the archive:
+   `while read b; do mv "$TVT_ARCHIVE/trees/$b" <private files>/trees-old-builds/; done < <private files>/trees-builds-before-0003.txt`, then
+   `grep -rlE '"(catalogue|catalogue_id|dbh_in|trunk_to_crown_m)"|"kind": ?"(catalogued|estimated)"|boise-' "$TVT_ARCHIVE/trees"`
+   prints nothing. Scratch jobs also see an empty `trees/` in production's archive (`deploy/scratch/run.sh`).
+8. **After production is migrated**: refresh the scratch database so it holds none of the old rows, and remove the two
    dumps made before (the coordinator's step, under the scratch rules).
 
 The settings were calibrated on the North End's city street trees on Oct 8 (overlap limit 0.2: 76% of 941 street trees

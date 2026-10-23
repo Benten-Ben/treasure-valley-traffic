@@ -69,17 +69,48 @@ class AnchorsFileTest(unittest.TestCase):
 
     def test_a_private_folder_must_be_apart_from_the_build_and_the_archive(self):
         with tempfile.TemporaryDirectory() as d:
-            out, arc = os.path.join(d, "archive", "trees", "b"), os.path.join(d, "archive")
+            out, arc, root = os.path.join(d, "archive", "trees", "b"), os.path.join(d, "archive"), os.path.join(d, "private")
             os.makedirs(out)
-            anchors.check_private_dir(os.path.join(d, "private", "b"), out, [arc, None])          # fine
+            anchors.check_private_dir(os.path.join(root, "b"), out, [arc, None], root)          # fine
             for private in (out, os.path.join(out, "x"), os.path.join(arc, "trees", "p"), arc, os.path.join(d, "archive", "..", "archive", "q")):
                 with self.assertRaises(ValueError, msg=private):
-                    anchors.check_private_dir(private, out, [arc])
+                    anchors.check_private_dir(private, out, [arc], root)
             with self.assertRaises(ValueError):                      # a folder that holds the build
-                anchors.check_private_dir(os.path.join(d, "archive"), out, [])
+                anchors.check_private_dir(os.path.join(d, "archive"), out, [], root)
             os.symlink(arc, os.path.join(d, "link"))                  # a link into the archive is the archive
             with self.assertRaises(ValueError):
-                anchors.check_private_dir(os.path.join(d, "link", "q"), os.path.join(d, "o"), [arc])
+                anchors.check_private_dir(os.path.join(d, "link", "q"), os.path.join(d, "o"), [arc], root)
+
+    def test_the_documented_paths_are_judged_with_no_environment_and_no_folders_given(self):
+        # what a docker run without $TVT_ARCHIVE passes in: no archives, the default private root
+        out = "/srv/tvt/archive/trees/b"
+        with self.assertRaises(ValueError):
+            anchors.check_private_dir("/srv/tvt/archive/city_trees/x", out)           # under production's archive
+        with self.assertRaises(ValueError):
+            anchors.check_private_dir("/srv/tvt/archive/city_trees/x", "/tmp/o", [])
+        with self.assertRaises(ValueError):
+            anchors.check_private_dir("/srv/tvt/work/x", "/tmp/o")                    # outside the private root
+        with self.assertRaises(ValueError):
+            anchors.check_private_dir("/srv/tvt/private-other/x", "/tmp/o")           # a name that only starts like it
+        anchors.check_private_dir("/srv/tvt/private/trees/b", out)                    # under it: fine
+        # the archive rule on its own, with a root wide enough to hold it
+        with self.assertRaises(ValueError):
+            anchors.check_private_dir("/srv/tvt/archive/city_trees/x", "/tmp/o", [], "/srv/tvt")
+        anchors.check_private_dir("/srv/tvt/private/x", "/tmp/o", [], "/srv/tvt")
+        anchors.check_private_dir("/srv/tvt/private/trees/b", out, [None, ""])
+
+    def test_a_link_into_the_archive_is_refused_even_from_the_private_root(self):
+        with tempfile.TemporaryDirectory() as d:
+            root, arc = os.path.join(d, "private"), os.path.join(d, "archive")
+            os.makedirs(root); os.makedirs(arc)
+            os.symlink(arc, os.path.join(root, "trees"))                   # looks private, is the archive
+            with self.assertRaises(ValueError):
+                anchors.check_private_dir(os.path.join(root, "trees", "b"), os.path.join(d, "o"), [arc], root)
+        # production's archive by its fixed path: a link to it from anywhere
+        with tempfile.TemporaryDirectory() as d:
+            os.symlink(anchors.PROD_ARCHIVE, os.path.join(d, "l"))
+            with self.assertRaises(ValueError):
+                anchors.check_private_dir(os.path.join(d, "l", "q"), os.path.join(d, "o"), [], "/")
 
     def test_refuses_a_line_without_a_known_kind_or_a_key(self):
         for bad in ({"kind": "placed", "tree_id": "x", "source": "s", "source_id": "1"},

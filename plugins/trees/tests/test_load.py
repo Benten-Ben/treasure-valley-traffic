@@ -200,7 +200,7 @@ class MigrationCleanUpTest(unittest.TestCase):
                 self.assertFalse(cols & {"catalogue", "catalogue_id"})
                 self.assertEqual(conn.execute("select count(*) from pg_indexes where schemaname = 'trees' and indexname = 'tree_catalogue_idx'").fetchone()[0], 0)
                 b = conn.execute("select counts, params from trees.build where build_id = 'c-old'").fetchone()
-                self.assertEqual(b[0], {"trees": 5, "placed": 2})
+                self.assertEqual(b[0], {"trees": 2, "placed": 2})
                 self.assertEqual([x["source"] for x in b[1]["sources"]], ["trees/usgs_3dep_lidar", "trees/sentinel2"])
                 self.assertEqual(b[1]["theta"], 0.2)
                 self.assertEqual(conn.execute("select counts, params from trees.build where build_id = 'c-bare'").fetchone(), ({}, {}))

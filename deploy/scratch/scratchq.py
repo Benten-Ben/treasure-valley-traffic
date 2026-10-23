@@ -138,7 +138,7 @@ def check_mount(spec, roots):
 
     Read-write: a folder under a folder of the work folder (not bin/, scratch/, e2e/,
     worker-test*/ or sources/), or under the cold drive's vm/ (not the scratch dumps).
-    Read-only as well: production's archive, the downloaded sources, the cold drive (not the
+    Read-only as well: production's archive (but not its trees/, nor the archive's root, which holds it), the downloaded sources, the cold drive (not the
     scratch dumps), the scratch archive. Never: private files, secrets, or a folder that
     holds any of those (a parent of one is refused because it isn't inside an allowed root)."""
     parts = spec.split(":")
@@ -157,6 +157,11 @@ def check_mount(spec, roots):
             raise Refused(f"--mount {src}: private files stay out of scratch jobs")
     work, scratch = roots.get("work"), roots.get("scratch_root")
     cold, dumps, prod = roots.get("cold_mount"), roots.get("dump_root"), roots.get("prod_archive")
+    if prod:                                            # production's trees/ holds builds from the City's inventory
+        trees = os.path.join(os.path.realpath(prod), "trees")
+        if _inside(src, trees) or _inside(trees, src):
+            raise Refused(f"--mount {src}: production's trees archive ({trees}) holds builds from the City's inventory; "
+                          "it isn't mounted, nor a folder holding it")
     for root in (work, cold, prod):                     # a private or secrets folder below a root
         if root and _inside(src, root):
             below = set(src[len(root.rstrip("/")):].split("/"))

@@ -98,6 +98,8 @@ class BuildWithAnchorsTest(unittest.TestCase):
     @classmethod
     def build_it(cls, argv):
         import build
+        if "--private-out" in argv and "--private-root" not in argv:
+            argv = argv + ["--private-root", os.path.join(cls.tmp.name, "private")]
         build.main(argv)
 
     @classmethod
@@ -205,6 +207,13 @@ class BuildWithAnchorsTest(unittest.TestCase):
                 self.build_it(base + ["--private-out", os.path.join(d, "archive", "trees", "p"), "--out", os.path.join(d, "o")])
         finally:
             del os.environ["TVT_ARCHIVE"]
+        # no environment at all: a folder outside the private root is refused, and so is production's archive
+        self.assertNotIn("TVT_ARCHIVE", os.environ)
+        for private in (os.path.join(d, "elsewhere", "p"), "/srv/tvt/archive/city_trees/p"):
+            with self.assertRaises(SystemExit, msg=private):
+                self.build_it(base + ["--private-out", private, "--private-root", os.path.join(d, "private"), "--out", os.path.join(d, "o")])
+            with self.assertRaises(SystemExit, msg=private):
+                self.build_it(base + ["--private-out", private, "--out", os.path.join(d, "o")])
         self.assertFalse(os.path.exists(os.path.join(d, "x")))        # refused before any work
 
     def test_without_anchors_there_is_no_anchors_file(self):

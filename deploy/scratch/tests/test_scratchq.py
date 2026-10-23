@@ -134,7 +134,7 @@ class Mounts(unittest.TestCase):
         self.p = lambda *a: os.path.join(r, *a)
         for d in ("work/bin", "work/e2e/slots", "work/worker-test", "work/sources/cdl", "work/landcover/run1",
                   "work/scratch/archive/tvt/osm", "work/scratch/secrets", "work/scratch/trees/s1", "work/scratch/bin",
-                  "cold/vm/scratch/20261011T0839Z", "cold/vm/lidar-work", "cold/lidar/laz", "prod/osm",
+                  "cold/vm/scratch/20261011T0839Z", "cold/vm/lidar-work", "cold/lidar/laz", "prod/osm", "prod/trees/b1",
                   "srv/private/secrets", "srv/plugins-private/x"):
             os.makedirs(self.p(d))
         open(self.p("work", "heavy.lock"), "w").close()
@@ -163,6 +163,13 @@ class Mounts(unittest.TestCase):
         for src in ("work/sources/cdl", "prod/osm", "cold/lidar/laz", "work/scratch/archive/tvt"):
             self.assertTrue(self.ok(src, ro=True)[2], src)
             self.refused(src, why="read-only only")
+
+    def test_production_trees_archive_never_mounts_nor_a_folder_holding_it(self):
+        for src in ("prod/trees", "prod/trees/b1", "prod"):
+            self.refused(src, ro=True, why="trees archive")
+        os.symlink(self.p("prod/trees"), self.p("work/landcover/viatrees"))
+        self.refused("work/landcover/viatrees", ro=True, why="trees archive")
+        self.assertEqual(self.ok("prod/osm", ro=True)[0], self.p("prod/osm"))        # the rest of the archive still does
 
     def test_the_tools_locks_and_secrets_never_mount(self):
         for src in ("work/bin", "work/e2e", "work/e2e/slots", "work/worker-test", "work/scratch", "work/scratch/bin",
