@@ -67,6 +67,9 @@ class Layer:
         if doc.get("type") != "FeatureCollection" or not isinstance(meta, dict):
             raise FixtureError(f"{sid}: a FeatureCollection with a 'tvt' member")
         self.meta = meta
+        for key in ("fields", "geometry"):
+            if key not in meta:
+                raise FixtureError(f"{sid}: the 'tvt' member needs {key!r}")
         self.fields = dict(meta["fields"])
         self.minzoom = max(int(meta.get("minzoom", plan.MINZOOM)), plan.MINZOOM)
         self.maxzoom = min(int(meta.get("maxzoom", plan.MAXZOOM)), plan.MAXZOOM)
@@ -411,7 +414,8 @@ def write_landscape(out, layers):
     ys = [p[1] for lay in layers for f in lay.features for p in _positions(f["geometry"]["coordinates"])]
     bounds = (min(xs), min(ys), max(xs), max(ys))
     zooms = (min(z for z, _, _ in tiles), max(z for z, _, _ in tiles))
-    fields = {"int": "Number", "double": "Number", "float": "Number", "bool": "Boolean", "string": "String"}
+    fields = {t: "Number" for t in plan.fgb.INTEGER_TYPES}
+    fields.update({"double": "Number", "float": "Number", "bool": "Boolean", "string": "String"})
     sizes = {k: len(v) for k, v in tiles.items()}
     # The entry is checked, then put in the file's own metadata (tvt.landscape), as the bake does.
     entry = landscape_entry(layers, digest, zooms, sizes)

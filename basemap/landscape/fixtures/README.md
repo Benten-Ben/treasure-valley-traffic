@@ -12,7 +12,7 @@ cd app
 TILES_DIR=$(node scripts/tiles-fixture.mjs --ground painted) npm run test:e2e -- --grep @water   # @water once #19 lands
 ```
 
-`tiles-fixture.mjs` writes a work folder (`data/dev/tiles-fixture/<ground>/` in the main checkout, git-ignored) with
+`tiles-fixture.mjs` writes a work folder (`data/dev/<package>/tiles-fixture/<ground>/` in the main checkout (`local` outside the workflow), git-ignored) with
 symlinks to every file in the harness's `TILES_DIR`, the fixture files, and a `manifest.json` that is the real one
 plus the fixture's `landscape` and `ground` entries. `--ground` is `painted` (the default), `flat` (an entry with a
 reason) or `none` (the real manifest's ground entry stays). Run it again after changing a file here.

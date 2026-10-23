@@ -22,7 +22,7 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { APP_DIR, harnessEnv, mainCheckout, localSettings } from './harness-env.mjs';
+import { APP_DIR, harnessEnv, mainCheckout, localSettings, packageName } from './harness-env.mjs';
 
 const MARKER = '.tiles-fixture';
 const GROUNDS = ['painted', 'flat', 'none'];
@@ -48,7 +48,7 @@ function main() {
 	}
 	const main = mainCheckout();
 	const tiles = harnessEnv().TILES_DIR;
-	const work = resolve(args.out || join(main, 'data', 'dev', 'tiles-fixture', args.ground));
+	const work = resolve(args.out || join(main, 'data', 'dev', packageName() ?? 'local', 'tiles-fixture', args.ground));
 	if (work === tiles) throw new Error('the work folder is TILES_DIR itself');
 
 	// Only a folder this script made (or an empty one) is cleared.

@@ -238,6 +238,29 @@ class Fixture(unittest.TestCase):
         finally:
             shutil.rmtree(folder, ignore_errors=True)
 
+    def test_a_long_field_and_a_missing_member(self):
+        folder = tempfile.mkdtemp(prefix="tvt-fixture-")
+        try:
+            doc = {"type": "FeatureCollection",
+                   "tvt": {"geometry": "Point", "fields": {"id": "long", "n": "ulong"}, "minzoom": 14,
+                           "maxzoom": 16, "licence": "ODbL-1.0", "republish": "yes", "credit": ["© Somebody"]},
+                   "features": [{"type": "Feature", "properties": {"id": 1, "n": 5},
+                                 "geometry": {"type": "Point", "coordinates": [-116.2, 43.615]}}]}
+            with open(os.path.join(folder, "paving.marks.geojson"), "w", encoding="utf-8") as f:
+                json.dump(doc, f)
+            out = tempfile.mkdtemp(prefix="tvt-fixture-")
+            try:
+                self.assertIn("paving.marks", F.build(out, "none", fixtures=folder)["landscape"]["layers"])
+            finally:
+                shutil.rmtree(out, ignore_errors=True)
+            del doc["tvt"]["fields"]
+            with open(os.path.join(folder, "paving.marks.geojson"), "w", encoding="utf-8") as f:
+                json.dump(doc, f)
+            with self.assertRaises(F.FixtureError):
+                F.read_layers(folder)
+        finally:
+            shutil.rmtree(folder, ignore_errors=True)
+
     def test_a_new_layer_file_joins_the_bake(self):
         folder = tempfile.mkdtemp(prefix="tvt-fixture-")
         try:
