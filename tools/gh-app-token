@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Prints an installation token for the agents' GitHub App (see tools/lib/gh_app_token.py and
+# docs/agent-work.md, "The agents' GitHub App"). Exit 1 when not configured, 2 on error.
+exec python3 -I "$(cd "$(dirname "$0")" && pwd)/lib/gh_app_token.py" "$@"

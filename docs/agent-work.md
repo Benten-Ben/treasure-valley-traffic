@@ -58,6 +58,55 @@ xhigh.
 - **Server work** follows the existing rules: the scratch database for unmerged code, `heavy` with a deadline for heavy
   jobs, and the night window around the camera roll-up ([deploy/README.md](../deploy/README.md)).
 
+## The agents' GitHub App
+
+Agents don't act as the owner on GitHub. Since Oct 22 (owner: "yes set up the agents App for TVT") they use the owner's
+`bens-agents` GitHub App, the same App the owner's other projects use, with tokens scoped to this repository alone. Their PRs,
+comments and issue edits show as the App's bot, and they spend the App's own API budget instead of the owner's.
+
+- **How it works:** `tools/gh-app-token` mints a one-hour installation token from the App's private key and caches it.
+  `tools/agent-bin/gh` is a `gh` wrapper that puts that token in `GH_TOKEN` for ordinary calls.
+- **How agents use it:** each Bash call an agent makes starts a fresh shell, so an exported `PATH` doesn't last between
+  calls. Build units call the wrapper by its path in the main checkout (`<main checkout>/tools/agent-bin/gh` in place
+  of `gh`; one copy, never a worktree's), and the coordinator's build-unit prompts give the absolute path. In a
+  long-lived shell, putting `tools/agent-bin` first on `PATH` works too, and two copies on `PATH` are harmless (the
+  wrapper never runs another `*/agent-bin/gh`). `tools/board` and the status sync always use the login, whatever
+  `PATH` holds.
+- **What stays on the owner's login:**
+  - the board (a Project on a personal account, which an App can't reach): `tools/board` and
+    `tools/board_status_sync.py` use the login themselves, and the wrapper catches these by name: `gh project`; gh's
+    project flags (`--project`, `--add-project`, `--remove-project`, and `-p` on `issue|pr create|edit`); and GraphQL
+    query text naming `projectV2`, `projectsV2`, `projectV2Item`, `projectItems` or `viewer`, given as
+    `-f|-F|--field|--raw-field query=...` or `query=@file` (the file is read; an unreadable one goes to the login);
+  - the owner's own identity: `@me` as a whole token (`--assignee @me`, `--assignee=@me,bob`, `-a@me`, `assignee:@me`
+    in a search, `@me` in a comma list) and `gh api user` or `gh api /user`. Body, title and other field text is never checked, so a body that
+    says "@media" or "projectItems" stays on the App;
+  - `--json` field lists naming `projectItems` (a Project item list the App can't read);
+  - `gh auth`, and approvals (`gh pr review`), which are the owner's own act; `-R`/`--repo` before the subcommand
+    (`gh pr -R o/r review`) changes nothing;
+  - any call made with `TVT_GH_AS_USER=1`.
+- **Tokens already in the environment:** a `GH_TOKEN` the caller set (no `TVT_GH_APP_TOKEN=1` beside it) is the
+  caller's own and is kept, even with `TVT_GH_AS_USER=1`. A token the wrapper set is marked with `TVT_GH_APP_TOKEN=1`;
+  when a wrapped `gh` runs another program that calls `gh` again (an extension, a `!` alias), the marked token is
+  dropped for a call that routes to the login and kept for the App's calls. Such a nested call (`TVT_GH_WRAPPED=1`) is
+  never given a token: it mints and sets nothing.
+- **When the App is unavailable:** not configured (the wrapper finds no config file): the login, silently. Configured
+  but failing (exit 2): the login, with one line on stderr, `agent-bin/gh: the App token isn't available
+  (gh-app-token exit 2); using the login`; the token and `gh-app-token`'s own messages are never printed.
+- **Configuration:** `~/.config/tvt/gh-app.env` (mode 600, never in the repository) names the App, its installation and
+  the private key's path, with `TVT_GH_APP_REPOS=treasure-valley-traffic`. The cache is `~/.cache/tvt/`. Never print a
+  token, the key or the ids into a chat, a prompt or the repository.
+- **Check:**
+
+  ```bash
+  tools/gh-app-token >/dev/null && echo ok
+  GH_TOKEN=$(tools/gh-app-token) gh api /installation/repositories --jq '.repositories[].full_name'   # this repository alone
+  ```
+
+  Tests: `python3 -m unittest tools.test_gh_app_token`.
+- **Off switch:** `TVT_GH_AS_USER=1` for one call or one shell. Moving the config file aside turns the App off
+  everywhere: the wrapper then falls back to the login silently.
+
 ## Testing
 
 - Builders run only the tests their change touches: unit tests, `npm run check` and `npm test` behind the build lock,

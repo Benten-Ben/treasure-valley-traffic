@@ -1,0 +1,134 @@
+#!/usr/bin/env bash
+# gh for agents: GitHub calls run on the agents' GitHub App token (its own rate limit), not the
+# account's login. Call it by its path, or put this directory first on PATH (docs/agent-work.md, "The agents'
+# GitHub App"). Falls back to the login when the app isn't configured or its token can't be minted.
+# Calls that must stay on the login:
+#   - the board (GitHub Projects on a personal account, which an app can't reach): tools/board and
+#     tools/board_status_sync.py use the login themselves, and these are caught by name: `gh project`, gh's project
+#     flags (--project, --add-project, --remove-project, and -p on issue|pr create|edit), GraphQL query text
+#     (-f/-F/--field/--raw-field query=..., or query=@file, which is read) naming projectV2, ProjectV2, projectsV2,
+#     projectV2Item, projectItems or viewer;
+#   - anything naming a user's own identity: "@me" as a whole token (--assignee @me, assignee:@me in a search,
+#     @me in a comma list) and `gh api user`; body and title text is never checked;
+#   - `gh auth`, and approvals (`gh pr review`), which are a person's act;
+#   - `--json projectItems` (a Project item list the App can't read);
+#   - any call made with TVT_GH_AS_USER=1, or with a GH_TOKEN the caller set (kept as theirs). A token this wrapper
+#     set (marked by TVT_GH_APP_TOKEN=1) is dropped when a call routes to the login and kept for the App's calls.
+# Several copies of this wrapper on PATH are harmless: the real gh search skips every */agent-bin directory,
+# and TVT_GH_WRAPPED=1 (set just before exec) turns a nested call into a plain exec of the real gh: it still drops
+# a marked App token for a call that routes to the login, but mints and sets nothing.
+here=$(cd "$(dirname "$0")" && pwd)
+real=""
+IFS=: read -ra dirs <<< "$PATH"
+for d in "${dirs[@]}"; do
+  [ -n "$d" ] || continue
+  r=$(cd "$d" 2>/dev/null && pwd) || continue
+  [ "$r" = "$here" ] && continue
+  case "$r" in */agent-bin) continue ;; esac
+  [ -x "$r/gh" ] && { real="$r/gh"; break; }
+done
+[ -n "$real" ] || { echo "agent-bin/gh: no real gh on PATH" >&2; exit 127; }
+
+# Does GraphQL query text name the board (or the viewer)?
+query_for_login() {
+  case "$1" in *projectV2*|*ProjectV2*|*projectsV2*|*projectV2Item*|*projectItems*) return 0 ;; esac
+  # the root `viewer` field only: not `reviewer`, `requestedReviewer` or an object's `viewerCanUpdate`
+  local word='(^|[^A-Za-z0-9_])viewer[[:space:]]*[{(]'
+  [[ $1 =~ $word ]] && return 0
+  return 1
+}
+# One `-f/-F/--field/--raw-field` value, NAME=VALUE: only a field named query counts.
+field_for_login() {
+  case "$1" in query=*) ;; *) return 1 ;; esac
+  local q=${1#query=} f
+  case "$q" in
+    @*)
+      f=${q#@}
+      [ "$f" != - ] && [ -f "$f" ] && [ -r "$f" ] || return 0   # a query we can't read goes to the login
+      q=$(cat "$f" 2>/dev/null) || return 0 ;;
+  esac
+  query_for_login "$q"
+}
+# "@me" as a whole token: the argument, a search qualifier (assignee:@me), or a comma-list item, also as the value
+# of --flag=VALUE, NAME=VALUE or an attached short flag (-a@me).
+is_me() {
+  local v=$1
+  case "$v" in
+    *:@me|*:@me\ *|*:@me,*) return 0 ;;
+    -[!-]?*) v=${v#-?}; v=${v#=} ;;
+    *=*) v=${v#*=} ;;
+  esac
+  case "$v" in @me|@me,*|*,@me|*,@me,*) return 0 ;; esac
+  return 1
+}
+# A --json field list naming the Project items (a comma-list item).
+json_for_login() {
+  case ",$1," in *,projectItems,*) return 0 ;; esac
+  return 1
+}
+# Does this call belong on the login? (0 = yes)
+for_login() {
+  local cmd="" sub="" a prev="" edit=0 api=0 skip=0
+  # the command and its subcommand: the first two words that are not flags (or the value of -R/--repo/--hostname),
+  # so `gh pr -R o/r review` is still `pr review`
+  for a in "$@"; do
+    if [ "$skip" = 1 ]; then skip=0; continue; fi
+    case "$a" in -R|--repo|--hostname) skip=1; continue ;; -*) continue ;; esac
+    if [ -z "$cmd" ]; then cmd=$a; else sub=$a; break; fi
+  done
+  case "$cmd" in auth|project) return 0 ;; esac
+  [ "$cmd $sub" = "pr review" ] && return 0
+  case "$cmd $sub" in "issue create"|"issue edit"|"pr create"|"pr edit") edit=1 ;; esac
+  [ "$cmd" = api ] && api=1
+  for a in "$@"; do
+    if [ -n "$prev" ]; then
+      [ "$prev" = field ] && field_for_login "$a" && return 0
+      [ "$prev" = json ] && json_for_login "$a" && return 0
+      prev=""; continue
+    fi
+    case "$a" in
+      --project|--project=*|--add-project|--add-project=*|--remove-project|--remove-project=*) return 0 ;;
+      -p|-p?*) [ "$edit" = 1 ] && return 0 ;;
+    esac
+    case "$a" in
+      --json) prev=json; continue ;;
+      --json=*) json_for_login "${a#--json=}" && return 0; continue ;;
+    esac
+    case "$a" in
+      # text and values that are never checked (their values come next, or after the =)
+      -b|--body|-t|--title|--body-file|-q|--jq|--template|-H|--header|-X|--method|--hostname|--input|--cache) prev=skip; continue ;;
+      --body=*|--title=*|--body-file=*|--jq=*|--template=*|--header=*|--method=*|--hostname=*|--input=*|--cache=*) continue ;;
+      -b?*|-t?*|-q?*) continue ;;
+    esac
+    if [ "$api" = 1 ]; then
+      case "$a" in
+        -f|-F|--field|--raw-field) prev=field; continue ;;
+        --field=*) field_for_login "${a#--field=}" && return 0; continue ;;
+        --raw-field=*) field_for_login "${a#--raw-field=}" && return 0; continue ;;
+        -f?*|-F?*) field_for_login "${a#-?}" && return 0; continue ;;
+        user|/user) return 0 ;;
+      esac
+    else
+      case "$a" in -F) prev=skip; continue ;; -F?*) continue ;; esac   # gh issue|pr: --body-file
+    fi
+    is_me "$a" && return 0
+  done
+  return 1
+}
+
+as_user=0
+if [ "${TVT_GH_AS_USER:-}" = 1 ] || for_login "$@"; then as_user=1; fi
+[ -n "${GH_TOKEN:-}" ] || unset TVT_GH_APP_TOKEN
+if [ -n "${GH_TOKEN:-}" ]; then
+  # Our own token inherited from a wrapped gh's child: right for the App's calls, wrong for the login's.
+  if [ "$as_user" = 1 ] && [ "${TVT_GH_APP_TOKEN:-}" = 1 ]; then unset GH_TOKEN TVT_GH_APP_TOKEN; fi
+elif [ "$as_user" = 0 ] && [ "${TVT_GH_WRAPPED:-}" != 1 ]; then
+  tok=$("$here/../gh-app-token" 2>/dev/null); rc=$?
+  if [ "$rc" = 0 ] && [ -n "$tok" ]; then
+    export GH_TOKEN="$tok" TVT_GH_APP_TOKEN=1
+  elif [ "$rc" != 0 ] && [ "$rc" != 1 ]; then
+    echo "agent-bin/gh: the App token isn't available (gh-app-token exit $rc); using the login" >&2
+  fi
+fi
+export TVT_GH_WRAPPED=1
+exec "$real" "$@"

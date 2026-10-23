@@ -21,6 +21,22 @@ import time
 from collections import Counter
 
 REPO_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def use_login() -> None:
+    """The board is a Project on a personal account, which the agents' App can't reach: always call the real gh on
+    the login. Drop an App token a wrapped gh left in GH_TOKEN, and every */agent-bin directory from PATH (a wrapper
+    from another project may be on it and doesn't know TVT_GH_AS_USER)."""
+    os.environ["TVT_GH_AS_USER"] = "1"
+    if os.environ.get("TVT_GH_APP_TOKEN") == "1":
+        os.environ.pop("GH_TOKEN", None)
+        os.environ.pop("TVT_GH_APP_TOKEN", None)
+    os.environ["PATH"] = os.pathsep.join(
+        d for d in os.environ.get("PATH", "").split(os.pathsep) if d and os.path.basename(d.rstrip("/")) != "agent-bin")
+
+
+use_login()
+
 QUERY = ("query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){issue(number:$n){number state "
          "labels(first:30){nodes{name}} blockedBy(first:50){nodes{state}} subIssuesSummary{total completed} "
          "projectItems(first:5){nodes{id project{number} fieldValueByName(name:\"Status\"){... on ProjectV2ItemFieldSingleSelectValue{name}}}}}}}")
