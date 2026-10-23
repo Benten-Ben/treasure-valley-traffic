@@ -139,6 +139,27 @@ class CheckPublicTest(unittest.TestCase):
         finally:
             os.remove(pats)
 
+    def test_require_patterns_exits_3_on_an_empty_list(self):
+        import contextlib, io
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        text, empty, full, bom_empty, bom_full = (
+            os.path.join(d, n) for n in ("t.txt", "empty.txt", "full.txt", "bom_empty.txt", "bom_full.txt"))
+        for path, body in ((text, "Goal: draw the trails layer.\n"), (empty, "# none yet\n\n"), (full, "example-host\n"),
+                           (bom_empty, "\ufeff# none yet\n\n"), (bom_full, "\ufeffexample-host\n")):
+            with open(path, "w", encoding="utf-8", newline="") as f:
+                f.write(body)
+        def run(*extra):
+            with contextlib.redirect_stdout(io.StringIO()):
+                return check_public.main(["--text", text, *extra])
+        self.assertEqual(run("--patterns", empty, "--require-patterns"), 3)
+        self.assertEqual(run("--patterns", empty), 0)  # without the flag an empty list still passes
+        self.assertEqual(run("--patterns", full, "--require-patterns"), 0)
+        # a UTF-8 BOM (some Windows editors) is not part of the first line
+        self.assertEqual(run("--patterns", bom_empty, "--require-patterns"), 3)
+        self.assertEqual(len(check_public.load_patterns(bom_full)), 1)
+        self.assertEqual(check_public.check_text("ssh to example-host\n", check_public.load_patterns(bom_full))[0][0], 1)
+
     def test_main_exit_status(self):
         self.assertEqual(check_public.main(["--root", self.root]), 0)
         self.write("data/x.csv", "1")

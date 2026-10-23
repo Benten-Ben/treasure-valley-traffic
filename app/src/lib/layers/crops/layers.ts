@@ -3,7 +3,7 @@ import type { SlottedLayer } from '#lib/map/order.js';
 import { INK } from '#lib/map/color.js';
 import { EDGE, EDGE_ESTIMATED, FILL, GROUPS, GROUP_NAME, LETTER, PATTERN_INK, type CropGroup } from './palette.js';
 import { GROWTH_KEYS, imageId, type GrowthKey } from './patterns.js';
-import { FIELDS_FROM, MVT_LAYER } from './tiles.js';
+import { FIELDS_FROM, hasCut, MVT_LAYER } from './tiles.js';
 
 /**
  * The Crop fields layer's style layers (landscape sprint plan §3.4 K1-K2, §3.5; P3-app). Pure: the module
@@ -130,6 +130,8 @@ const growthPattern = (): Expr => ['match', ['get', 's'], ...GROWTH_KEYS.flatMap
  */
 export const OFF_RANGE: [number, number] = [22, 24];
 export function loRange(s: Pick<CropState, 'year' | 'current'>, forYear: boolean, minzoom = 0): [number, number] {
+	// An earlier year with no z8-10 cut draws nothing here (neither another year's dissolves nor the current one's).
+	if (s.year !== s.current && !hasCut(s.year)) return OFF_RANGE;
 	return forYear === (s.year !== s.current) ? [minzoom, FIELDS_FROM] : OFF_RANGE;
 }
 
@@ -170,7 +172,8 @@ export function cropLayers(s: CropState): CropLayers {
 		{ slot: 'areas', layer: fill(ID.fillLoYear, loYear(), fillColorLo(), cropFilterLo(), FILL_OPACITY), ...clay },
 		{ slot: 'areas', layer: fill(ID.fill, field, fillColorField(s), cropFilterField(s), FILL_OPACITY), ...clay }
 	];
-	const copy = { areaFill: true as const, aerial: 'only' as const };
+	// Clay too: the patterns and hatches over them are Clay's, and a colour-only fill over the photo breaks "never colour alone".
+	const copy = { areaFill: true as const, aerial: 'only' as const, looks: 'clay' as const };
 	const copies: Slotted[] = [
 		{ slot: 'land', layer: fill(ID.copyLo, lo(), fillColorLo(), cropFilterLo(), COPY_OPACITY), ...copy },
 		{ slot: 'land', layer: fill(ID.copyLoYear, loYear(), fillColorLo(), cropFilterLo(), COPY_OPACITY), ...copy },

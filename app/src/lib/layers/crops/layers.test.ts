@@ -57,7 +57,7 @@ describe('the Crop fields style layers', () => {
 		const l = cropLayers(STATE);
 		for (const x of l.areas) expect(x, x.layer.id).toMatchObject({ slot: 'areas', areaFill: true, looks: 'clay' });
 		for (const x of l.copies) expect(x, x.layer.id).toMatchObject({ slot: 'land', areaFill: true, aerial: 'only' });
-		for (const x of l.copies) expect(x.looks).toBeUndefined(); // the copies are Aerial's, whichever flavor
+		for (const x of l.copies) expect(x.looks).toBe('clay'); // with the patterns over them, which are Clay's
 		for (const x of l.land) expect(x, x.layer.id).toMatchObject({ slot: 'land', areaFill: true, looks: 'clay' });
 		expect(l.labels.map((x) => x.layer.id)).toEqual([ID.label]);
 		expect(l.labels[0].slot).toBe('labels');
@@ -75,7 +75,7 @@ describe('the Crop fields style layers', () => {
 		const flags = slotFlags(map);
 		expect(flags.get(ID.fill)).toMatchObject({ areaFill: true, looks: 'clay', owner: 'crops' });
 		expect(flags.get(ID.copy)).toMatchObject({ areaFill: true, aerial: 'only', owner: 'crops' });
-		expect(flags.get(ID.copy)?.looks).toBeUndefined();
+	expect(flags.get(ID.copy)?.looks).toBe('clay');
 		expect(flags.size).toBe(ALL_IDS.length);
 	});
 
@@ -127,6 +127,13 @@ describe('the Crop fields style layers', () => {
 		const lo = spec(ID.fillLo).filter!;
 		expect(passes(lo, { g: 'hay' }, 9)).toBe(true);
 		expect(passes(lo, { s: 'built_over' }, 9)).toBe(false); // the growth rows have no group
+	});
+
+	it('draw no z8-10 dissolves for an earlier year without a cut', () => {
+		const none = { ...STATE, year: 2017 };
+		for (const id of [ID.fillLo, ID.fillLoYear, ID.copyLo, ID.copyLoYear, ID.patternLo, ID.patternLoYear]) {
+			expect([spec(id, none).minzoom, spec(id, none).maxzoom], id).toEqual(OFF_RANGE);
+		}
 	});
 
 	it('draw the current year\'s dissolves from the fields tiles, and an earlier year\'s from its own source, moving the other out of every zoom', () => {

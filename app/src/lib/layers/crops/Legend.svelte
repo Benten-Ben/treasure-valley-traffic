@@ -44,6 +44,8 @@
 	</svg>
 {/snippet}
 
+<p class="note">Crop fields draw on the Clay look (Auto picks it); on the Valley map they stay hidden.</p>
+
 <p class="sub">Year</p>
 <div class="chips" role="group" aria-label="Crop year">
 	{#each crops.years as y (y)}
