@@ -53,7 +53,7 @@ class ManifestTest(unittest.TestCase):
 
     def test_osm_street_s_entry(self):
         c = consumer("osm_street")
-        self.assertEqual(c.tags, ("w/highway=residential,unclassified,living_street,road,busway,service",))
+        self.assertEqual(c.tags, ("w/highway=residential,unclassified,unclassified_link,living_street,road,busway,service",))
         self.assertEqual((c.geometry, c.tables), (("linestring",), ("roads.osm_street",)))
         self.assertEqual(osm_street.TABLE, "roads.osm_street")
         self.assertIn("roads.osm_street", roads().manifest["tables"])

@@ -102,11 +102,30 @@ class PartitionTest(unittest.TestCase):
             ({"highway": "construction"}, None), ({"highway": "platform"}, None), ({"highway": "corridor"}, None),
             ({"highway": "residential", "area": "yes"}, None), ({"highway": "primary", "area": "yes"}, None),
             ({"highway": "steps", "footway": "sidewalk"}, T),       # the sidewalk rule is for footway, path, cycleway
+            ({"highway": "unclassified_link"}, S), ({"highway": "unclassified_link", "lanes": "1"}, V),
+            ({"highway": "unclassified_link", "area": "yes"}, None),                # a street drawn as an area
+            ({"highway": "raceway"}, P), ({"highway": "raceway", "area": "yes"}, P),
+            ({"highway": "raceway", "lanes": "2"}, V), ({"highway": "raceway", "turn:lanes": "through"}, V),
+            ({"highway": "escape"}, P),
+            ({"highway": "residential", "area": "yes"}, None), ({"highway": "unclassified", "area": "yes"}, None),
+            ({"highway": "primary", "area": "yes"}, None), ({"highway": "service", "area": "yes"}, P),
+            ({"highway": "corridor"}, None), ({"highway": "elevator"}, None),
             ({"building": "yes"}, None), ({}, None),
         ]
         for tags, want in cases:
             with self.subTest(tags):
                 self.assertEqual(ox.owner(tags), want)
+
+    def test_ownerless_built_ways_are_only_the_named_area_streets(self):
+        built = [{"highway": "residential", "area": "yes"}, {"highway": "unclassified", "area": "yes"},
+                 {"highway": "primary", "area": "yes"}, {"highway": "unclassified_link", "area": "yes"},
+                 {"highway": "bus_guideway"}, {"highway": "proposed"}, {"highway": "corridor"},
+                 {"highway": "elevator"}, {"highway": "raceway"}, {"highway": "residential"}, {"building": "yes"}]
+        self.assertEqual(ox.count_ownerless(built), Counter({"area:residential": 1, "area:unclassified": 1,
+                                                             "area:primary": 1, "area:unclassified_link": 1,
+                                                             "bus_guideway": 1}))
+        self.assertIsNone(ox.ownerless_built({"highway": "proposed"}))
+        self.assertEqual(ox.ownerless_built({"highway": "bus_guideway"}), "bus_guideway")
 
     def test_every_owner_is_named_and_left_overs_say_why(self):
         self.assertEqual(ox.OWNERS, (V, S, P, T))
@@ -788,7 +807,7 @@ class MainTest(unittest.TestCase):
             code, text = self.run_main("--list")
         self.assertEqual(code, 0)
         self.assertIn("roads.osm_street", text)
-        self.assertIn("w/highway=residential,unclassified,living_street,road,busway,service", text)
+        self.assertIn("w/highway=residential,unclassified,unclassified_link,living_street,road,busway,service", text)
 
 
 # ---- the real pipeline (osmium) --------------------------------------------

@@ -52,8 +52,9 @@ named get only the highway ways the partition gives them, so no way is drawn
 twice. The 12 lane-tagged cycleways, tracks and pedestrian ways osm_valley
 already keeps are the named exception (`named_exception()`): they stay
 osm_valley's, and trails reads them through a view. No way has two owners;
-some have none (unbuilt and indoor ways, roads drawn as areas, raceways:
-`unowned_reason()`).
+some have none (unbuilt and indoor ways, roads drawn as areas: `unowned_reason()`).
+A raceway or escape ramp goes to osm_paving; a raceway with lanes or turn tags stays
+osm_valley's (its keep rule runs first).
 
 The partition holds only while its owners hold the same extract: a way that
 gained a lanes tag would otherwise be in core.osm_way and roads.osm_street
@@ -132,11 +133,13 @@ def keep_way(tags):
 
 # ---- the partition (plan C10) ----------------------------------------------
 
-STREET_CLASSES = {"residential", "unclassified", "living_street", "road", "busway"}
+STREET_CLASSES = {"residential", "unclassified", "unclassified_link", "living_street", "road", "busway"}
+PAVED_OTHER = {"raceway", "escape"}   # built surfaces drawn by material; never routed (Oct 22, answer 9)
 PAVING_FOOTWAYS = {"sidewalk", "crossing", "access_aisle", "traffic_island"}   # footway=*
 WALKWAYS = {"footway", "path", "cycleway"}
 PATH_CLASSES = {"track", "path", "footway", "cycleway", "bridleway", "steps", "pedestrian"}
 OWNERS = ("osm_valley", "osm_street", "osm_paving", "osm_paths")
+AREA_STREET_CLASSES = {"residential", "unclassified", "unclassified_link", "primary"}   # drawn as areas: no owner
 LEADER = OWNERS[0]          # the others load only the extract it holds
 
 
@@ -144,13 +147,14 @@ def owner(tags):
     """The consumer that owns a highway way, by its tags alone, or None (not a highway way, not
     built, or nothing we draw). In this order:
       1. osm_valley's keep rule (major roads and every way tagged with lanes), unchanged;
-      2. osm_street: residential, unclassified, living_street, road and busway, and alleys
-         (highway=service + service=alley), unless drawn as an area (area=yes);
+      2. osm_street: residential, unclassified, unclassified_link, living_street, road and
+         busway, and alleys (highway=service + service=alley), unless drawn as an area (area=yes);
       3. osm_paving: footway=sidewalk|crossing|access_aisle|traffic_island on a footway, path
-         or cycleway, and every other service way;
+         or cycleway, every other service way, and raceway and escape (osm_valley keeps a raceway
+         with lanes or turn tags, by rule 1; the rest are paving);
       4. osm_paths: track, path, the other footways, cycleway, bridleway, steps, pedestrian.
     Left over: unbuilt and non-way values (proposed, construction, platform, ...), roads and
-    streets drawn as areas, and values none of these take (corridor, elevator, raceway, ...)."""
+    streets drawn as areas, and values none of these take (corridor, elevator, ...)."""
     hw = tags.get("highway")
     if not hw:
         return None
@@ -161,7 +165,7 @@ def owner(tags):
     area = tags.get("area") == "yes"
     if not area and (hw in STREET_CLASSES or (hw == "service" and tags.get("service") == "alley")):
         return "osm_street"
-    if (hw in WALKWAYS and tags.get("footway") in PAVING_FOOTWAYS) or hw == "service":
+    if (hw in WALKWAYS and tags.get("footway") in PAVING_FOOTWAYS) or hw == "service" or hw in PAVED_OTHER:
         return "osm_paving"
     if hw in PATH_CLASSES:
         return "osm_paths"
@@ -178,6 +182,36 @@ def unowned_reason(tags):
     if tags.get("area") == "yes" and (hw in ROADS):
         return f"a road drawn as an area (highway={hw}, area=yes)"
     return f"not drawn (highway={hw})"
+
+
+# Built values that no owner takes on purpose: a corridor or an elevator is indoor, and NOT_ROADS
+# are unbuilt or not ways at all. Everything else built that has no owner is a gap to close.
+INDOOR_OR_NONBUILT = NOT_ROADS | {"corridor", "elevator"}
+
+
+def ownerless_built(tags):
+    """The reason a built highway way has no owner, or None: an area-drawn road (named, expected)
+    or a gap (the count the real-extract check reports must be 0 apart from the named areas)."""
+    hw = tags.get("highway")
+    if not hw or owner(tags) or hw in INDOOR_OR_NONBUILT:
+        return None
+    if tags.get("area") == "yes" and hw in AREA_STREET_CLASSES:
+        return None
+    return hw
+
+
+def count_ownerless(tags_list):
+    """Counter of highway values for built ways with no owner (ownerless_built), for the
+    real-extract check. Area-drawn streets are counted apart under 'area:<highway>'."""
+    counts = Counter()
+    for tags in tags_list:
+        hw = ownerless_built(tags)
+        if hw is None:
+            if tags.get("highway") and not owner(tags) and tags.get("highway") not in INDOOR_OR_NONBUILT:
+                counts[f"area:{tags['highway']}"] += 1
+            continue
+        counts[hw] += 1
+    return counts
 
 
 def named_exception(tags):

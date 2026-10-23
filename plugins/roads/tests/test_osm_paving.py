@@ -70,7 +70,7 @@ def as_dict(row, columns):
 class ManifestTest(unittest.TestCase):
     def test_the_entry(self):
         c = consumer()
-        self.assertEqual(c.tags, ("w/highway=service,footway,path,cycleway", "a/amenity=parking,parking_space",
+        self.assertEqual(c.tags, ("w/highway=service,footway,path,cycleway,raceway,escape", "a/amenity=parking,parking_space",
                                   "n/highway=crossing", "n/crossing", "n/kerb"))
         self.assertEqual(c.geometry, ("point", "linestring", "polygon"))
         self.assertEqual(c.tables, (pv.WAYS, pv.LOTS, pv.NODES))
