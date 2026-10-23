@@ -27,6 +27,9 @@ import type { Selection } from '../types.js';
 
 export const SOURCE_NAME = 'OpenStreetMap, City of Boise Parks & Recreation (Ridge to Rivers)';
 export const CREDIT_OSM = '© OpenStreetMap contributors';
+export const CREDIT_CITY = 'City of Boise Parks & Recreation (Ridge to Rivers; Greenbelt)';
+/** A way carrying the City's status, or an agency line: both credits (the way is OpenStreetMap's, the status the City's). */
+export const CREDIT_BOTH = `${CREDIT_CITY} · ${CREDIT_OSM}`;
 
 // -- colors ---------------------------------------------------------------------------------------------------------
 
@@ -117,8 +120,13 @@ const expr = (e: unknown) => e as Expr;
 const SEV: Expr = expr(['coalesce', ['feature-state', 'sev'], 'none']);
 const sevIs = (...names: string[]): Expr => expr(['in', SEV, ['literal', names]]);
 const only = (sev: Sev): Expr => expr(['case', ['==', SEV, sev], 1, 0]);
-/** Plain open lines also draw where nothing says (no status yet, a failed status, a line with no row): never a cream halo on its own. */
-const openOrNone: Expr = expr(['case', sevIs('open', 'none'), 1, 0]);
+/** An agency line that is a trail (R2R's, not a Greenbelt closure or detour). */
+const IS_TRAIL: Expr = expr(['==', ['coalesce', ['get', 'kind'], 'trail'], 'trail']);
+/**
+ * Plain open lines also draw where nothing says (no status yet, a failed status, a line with no row): never a cream halo on its
+ * own. Only a trail does: a closure or a detour with no state known is not drawn as a walkable line, and has no halo either.
+ */
+const openOrNone: Expr = expr(['case', ['all', sevIs('none'), IS_TRAIL], 1, ['==', SEV, 'open'], 1, 0]);
 
 
 /**
@@ -257,7 +265,7 @@ export function trailLayers(): SlottedLayer[] {
 		line(L.halo, SRC.paths, SL.paths, { minzoom: ZOOMS.minzoom, filter: NOT_INFORMAL }, { 'line-cap': 'round' }, { 'line-color': CREAM, 'line-opacity': 0.7, 'line-width': lineWidth(1, 2.4) }),
 		line(L.haloAgency, SRC.agency, SL.agency, { minzoom: ZOOMS.minzoom }, { 'line-cap': 'round' }, {
 			'line-color': CREAM,
-			'line-opacity': ['case', ['==', SEV, 'ended'], 0, 0.7],
+			'line-opacity': ['case', ['==', SEV, 'ended'], 0, ['all', sevIs('none'), ['!', IS_TRAIL]], 0, 0.7],
 			'line-width': lineWidth(1, 2.4)
 		}),
 		// Ways: plain (no status, open, not evaluated), then a layer per state from z13. Below z13 the ways are the network, plain.
@@ -532,7 +540,8 @@ export function waySelection(f: PickedFeature, status: Statuses): Selection | nu
 		layer: 'trails',
 		title: name ?? (informal ? 'Informal path' : `Unnamed ${kindWord(kind).toLowerCase()}`),
 		fact: informal ? INFORMAL_WORDS : sev && sev !== 'open' ? LOOKS[sev].word : kindWord(kind),
-		source: CREDIT_OSM,
+		// A state word is the City's (the way itself is OpenStreetMap's): credit both once a status is shown.
+		source: sev ? CREDIT_BOTH : CREDIT_OSM,
 		data: { type: 'way', id, props: p, sev } satisfies TrailData
 	};
 }
@@ -552,7 +561,8 @@ export function lineSelection(f: PickedFeature, status: Statuses): Selection | n
 		layer: 'trails',
 		title: name ?? (kind === 'detour' ? 'Detour' : kind === 'closure' ? 'Closure' : 'Trail'),
 		fact: s ? stateWord(s.state, s.label) : kindWord('path'),
-		source: 'City of Boise Parks & Recreation',
+		// The line is the City's; where it draws along a way, the geometry is OpenStreetMap's (ODbL).
+		source: CREDIT_BOTH,
 		data: { type: 'line', id, props: p, sev: s?.sev ?? null } satisfies TrailData
 	};
 }

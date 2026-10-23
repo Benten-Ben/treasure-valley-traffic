@@ -12,6 +12,7 @@ import { STATUS_URL } from './def.js';
 import { statusImages } from './images.js';
 import Legend from './Legend.svelte';
 import {
+	CREDIT_CITY,
 	CREDIT_OSM,
 	HIT_AGENCY,
 	HIT_WAYS,
@@ -41,7 +42,7 @@ import {
 
 /** Ask for the status again this often while the layer is on, ms (the pollers run every 30 and 60 minutes). */
 export const POLL_MS = 5 * 60_000;
-export const CREDIT_CITY = 'City of Boise Parks & Recreation (Ridge to Rivers; Greenbelt)';
+export { CREDIT_CITY };
 const DETAILS_KEPT = 40;
 
 const FALLBACK_CREDIT: Record<(typeof TILE_LAYERS)[number], string> = { paths: CREDIT_OSM, routes: CREDIT_OSM, agency: `${CREDIT_CITY} · ${CREDIT_OSM}` };
@@ -185,6 +186,8 @@ export class TrailsModule implements LayerModule {
 
 	#take(s: TrailStatus) {
 		this.trail = s;
+		// A card kept from before this poll may say what the map no longer does: ask again on the next open.
+		this.#details.clear();
 		this.#byWay = new globalThis.Map(Object.entries(s.ways).map(([id, sev]) => [Number(id), sev]));
 		this.#hiddenWays = new globalThis.Set(s.hidden);
 		this.#byLine = new globalThis.Map(

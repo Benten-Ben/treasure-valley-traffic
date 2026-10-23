@@ -23,7 +23,7 @@ import type { TileId } from '../road-tiles.js';
  * - **`routes` takes its route's name, kind and network** from `trails.osm_route`, which `route_line` doesn't
  *   carry.
  * - **`agency` is the City's** (Ridge to Rivers and the Greenbelt), republish aggregates: its tiles are for
- *   the owner's tailnet map, and a public build leaves them out. They carry the line's id, kind, name and
+ *   the owner's tailnet map, and a public build leaves them out, with /api/trails/status and the card routes (/api/trails/way/<id>, /api/trails/line/<id>). They carry the line's id, kind, name and
  *   the part of it drawn, never its state: the state comes from `/api/trails/status` by feature-state, and
  *   the tile login is refused `agency_state` (deploy/tvt_tiles.sql). The City's source ids and attributes
  *   are not in them.

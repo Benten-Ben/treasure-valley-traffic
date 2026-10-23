@@ -303,6 +303,24 @@ describe('the Trails module', () => {
 		t.destroy();
 	});
 
+	it('asks again for a card’s details after a status poll, so a reopened card agrees with the map', async () => {
+		const t = make();
+		await t.mount(ctx);
+		calls.length = 0;
+		answer = () => Promise.resolve(ok({ id: 9500000001, lines: [{ state: 'dry' }] }));
+		await t.detail('way', 9500000001);
+		await t.detail('way', 9500000001);
+		expect(calls).toEqual(['/api/trails/way/9500000001']);
+		// A poll lands (the status is new): the kept details go.
+		answer = () => Promise.resolve(ok(status()));
+		await (globalThis as unknown as { __tvtTrails: { refresh(): Promise<void> } }).__tvtTrails.refresh();
+		calls.length = 0;
+		answer = () => Promise.resolve(ok({ id: 9500000001, lines: [{ state: 'muddy' }] }));
+		expect(await t.detail('way', 9500000001)).toEqual({ id: 9500000001, lines: [{ state: 'muddy' }] });
+		expect(calls).toEqual(['/api/trails/way/9500000001']);
+		t.destroy();
+	});
+
 	it('removes everything it added when it is destroyed', async () => {
 		const t = make();
 		await t.mount(ctx);

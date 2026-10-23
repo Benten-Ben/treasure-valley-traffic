@@ -13,7 +13,8 @@ import { CREDIT, LICENSE, type Severity, type Sql } from './status.js';
  *
  * A way that is not drawn (closed to the public, a canal bank) has no card: its row is not returned, so
  * the layer never describes what it does not draw (plan C18). The City's rows are internal (republish
- * aggregates), like the status API and the tailnet map that shows them. Before the plugin's migration
+ * aggregates), like the status API and the tailnet map that shows them: a public build leaves both card routes
+ * out (plugins/trails/README.md, "What the map reads"), since each returns one City row at a time. Before the plugin's migration
  * both answer null (the route says 404), never a 500.
  */
 

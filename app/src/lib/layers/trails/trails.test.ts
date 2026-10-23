@@ -21,6 +21,7 @@ import {
 	kindWord,
 	L,
 	LOOKS,
+	CREDIT_BOTH,
 	lineSelection,
 	lineSev,
 	lineWidth,
@@ -185,11 +186,11 @@ describe('the style layers', () => {
 	it('draw one plain umber agency line where no state is known (a failed or late status), not a bare halo', () => {
 		const ref = latest as unknown as Record<string, Record<string, unknown>> & { default?: Record<string, Record<string, unknown>> };
 		const spec = (ref.paint_line ?? ref.default!.paint_line)['line-opacity'];
-		const opacityOf = (id: string, zoom: number, state: Record<string, unknown>): number => {
+		const opacityOf = (id: string, zoom: number, state: Record<string, unknown>, properties: Record<string, unknown> = { kind: 'trail' }): number => {
 			const layer = all.find((l) => l.layer.id === id)!.layer as { paint: Record<string, unknown> };
 			const parsed = createPropertyExpression(layer.paint['line-opacity'] as never, 'line-opacity', spec as never);
 			if (parsed.result !== 'success') throw new Error(JSON.stringify(parsed.value));
-			return parsed.value.evaluate({ zoom }, { type: 'LineString', properties: {} } as never, state) as number;
+			return parsed.value.evaluate({ zoom }, { type: 'LineString', properties } as never, state) as number;
 		};
 		const agencyIds = [agencyLayer('open'), agencyLayer('not_evaluated'), ...DASHED.map(agencyLayer)];
 		for (const zoom of [10, 12, 14]) {
@@ -200,6 +201,12 @@ describe('the style layers', () => {
 			for (const sev of ['open', 'not_evaluated', ...DASHED]) expect(agencyIds.filter((id) => opacityOf(id, zoom, { sev }) > 0), `${sev} z${zoom}`).toEqual([agencyLayer(sev as Sev)]);
 			expect(agencyIds.filter((id) => opacityOf(id, zoom, { sev: 'ended' }) > 0)).toEqual([]);
 			expect(opacityOf(L.haloAgency, zoom, { sev: 'ended' })).toBe(0);
+			// A closure or a detour with no state known draws nothing (no walkable-looking line, no halo): only a trail falls back to plain.
+			for (const kind of ['closure', 'detour']) {
+				expect(agencyIds.filter((id) => opacityOf(id, zoom, {}, { kind }) > 0), `${kind} z${zoom}`).toEqual([]);
+				expect(opacityOf(L.haloAgency, zoom, {}, { kind })).toBe(0);
+				expect(agencyIds.filter((id) => opacityOf(id, zoom, { sev: 'closed' }, { kind }) > 0)).toEqual([agencyLayer('closed')]);
+			}
 		}
 	});
 
@@ -372,9 +379,13 @@ describe('the status as feature-state', () => {
 });
 
 describe('selections', () => {
-	it('opens a way as a trail selection with its name, its state and the OpenStreetMap credit', () => {
+	it('opens a way as a trail selection with its name and its state, credited to the City for the state and OpenStreetMap for the way', () => {
 		const sel = waySelection({ id: 9500000001, properties: { kind: 'path', name: 'Example Ridge Trail', informal: false } }, status({ way: () => 'closed' }));
-		expect(sel).toMatchObject({ kind: 'trail', id: 'way:9500000001', layer: 'trails', title: 'Example Ridge Trail', fact: 'Closed', source: '© OpenStreetMap contributors' });
+		expect(sel).toMatchObject({ kind: 'trail', id: 'way:9500000001', layer: 'trails', title: 'Example Ridge Trail', fact: 'Closed', source: CREDIT_BOTH });
+		expect(sel!.source).toContain('City of Boise');
+		expect(sel!.source).toContain('© OpenStreetMap contributors');
+		// A way with no state is OpenStreetMap's alone.
+		expect(waySelection({ id: 8, properties: { kind: 'path' } }, status())!.source).toBe('© OpenStreetMap contributors');
 		expect(sel!.data).toMatchObject({ type: 'way', id: 9500000001, sev: 'closed' });
 	});
 
@@ -387,7 +398,7 @@ describe('selections', () => {
 
 	it('opens an agency line by its line id, in the agency’s words', () => {
 		const sel = lineSelection({ id: 7, properties: { kind: 'trail', name: 'Example Gulch' } }, status({ line: () => ({ sev: 'closed', label: 'CLOSED', state: 'closed', name: 'Example Gulch' }) }));
-		expect(sel).toMatchObject({ kind: 'trail', id: 'line:7', title: 'Example Gulch', fact: 'CLOSED', source: 'City of Boise Parks & Recreation' });
+		expect(sel).toMatchObject({ kind: 'trail', id: 'line:7', title: 'Example Gulch', fact: 'CLOSED', source: CREDIT_BOTH });
 		expect(sel!.data).toMatchObject({ type: 'line', id: 7, sev: 'closed' });
 		expect(lineSelection({ id: 7, properties: { kind: 'detour' } }, status())!.title).toBe('Detour');
 	});

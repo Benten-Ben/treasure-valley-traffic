@@ -60,7 +60,7 @@
 	<p class="note" role="alert">▲ {trails.error}</p>
 {/if}
 <p class="credit">
-	Ways and routes © OpenStreetMap contributors. Status: City of Boise Parks &amp; Recreation (Ridge to Rivers; Greenbelt closures). The City's lines are shown here as aggregates, not republished.
+	Ways and routes © OpenStreetMap contributors. Status: City of Boise Parks &amp; Recreation (Ridge to Rivers; Greenbelt closures). The City's lines are shown per trail on this private map only (no licence stated; not republished).
 </p>
 
 <style>

@@ -5,8 +5,8 @@
 	import {
 		CREDIT_OSM,
 		dateText,
-		INFORMAL_WORDS,
 		kindWord,
+		lineSev,
 		LOOKS,
 		stateWord,
 		surfaceText,
@@ -65,7 +65,9 @@
 
 	const surface = $derived(way ? surfaceText(way) : null);
 	const width = $derived(way ? widthText(way) : null);
-	const sev = $derived<Sev | null>(way ? worstSev(way.lines) : line ? (line.severity ?? null) : null);
+	const sev = $derived<Sev | null>(way ? worstSev(way.lines) : line ? lineSev(line) : null);
+	/** The City's status is on the card (a row listed, even a partial or ended one), so its credit and the advice note are too. */
+	const credited = $derived(Boolean(way?.lines.length) || line !== null);
 	const areaProps = $derived((data.type === 'area' ? data.props : {}) as Record<string, unknown>);
 
 	/** The look's line, drawn as the map draws it (the dash is the state, not the color). */
@@ -96,7 +98,7 @@
 		</span>
 	</p>
 	{#if way?.informal || (data.type === 'way' && data.props.informal === true)}
-		<p class="explain" data-informal>{INFORMAL_WORDS.replace(/^./, (c) => c.toUpperCase())}. Ridge to Rivers and the City do not list it.</p>
+		<p class="explain" data-informal>Tagged informal in OpenStreetMap; not an official trail.</p>
 	{/if}
 
 	{#if way}
@@ -170,7 +172,7 @@
 		<p class="meta" role="alert">▲ {problem}</p>
 	{/if}
 	<p class="credit">
-		{CREDIT_OSM}{#if sev || line}. Status: City of Boise Parks &amp; Recreation (Ridge to Rivers; Greenbelt). Ridge to Rivers' statuses are advice, not closure orders.{/if}
+		{CREDIT_OSM}{#if credited}. Status: City of Boise Parks &amp; Recreation (Ridge to Rivers; Greenbelt). Ridge to Rivers' statuses are advice, not closure orders.{/if}
 		{#if (way?.surface_default === 'Ridge to Rivers trail')} Dirt is assumed where a Ridge to Rivers trail runs along an untagged way.{/if}
 	</p>
 {/if}
