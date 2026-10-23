@@ -162,9 +162,9 @@ class BoardPublicGateTest(unittest.TestCase):
         self.assertEqual(bad.returncode, 2, bad.stderr)  # the mechanical checks still are
 
     def test_an_empty_explicit_list_refuses(self):
-        for text in ("", "# only a comment\n\n   \n"):
+        for text in ("", "# only a comment\n\n   \n", "\ufeff# only a comment, saved with a BOM\n\n"):
             empty = os.path.join(self.dir, "empty.txt")
-            with open(empty, "w") as f:
+            with open(empty, "w", encoding="utf-8", newline="") as f:
                 f.write(text)
             out = self.board("new", "Document the quoting rules", env={"TVT_PRIVATE_PATTERNS": empty})
             self.assertEqual(out.returncode, 2, out.stderr)
@@ -175,15 +175,16 @@ class BoardPublicGateTest(unittest.TestCase):
 
     def test_an_empty_default_list_refuses_in_a_checkout_and_in_a_linked_worktree(self):
         top = self.checkout("main", with_list=True)
-        with open(os.path.join(top, "data", "dev", "private-patterns.txt"), "w") as f:
-            f.write("# nothing yet\n\n")
         wt = self.worktree(top)
-        for script_top in (top, wt):
-            out = self.default_board(script_top, "new", "Document the quoting rules")
-            self.assertEqual(out.returncode, 2, out.stderr)
-            self.assertIn("pattern list is empty", out.stderr)
-            self.assertIn("private-patterns.txt", out.stderr)
-            self.assertEqual(self.calls(), [], "gh must not be called at all")
+        for body in ("# nothing yet\n\n", "\ufeff# nothing yet\n\n"):  # the second saved with a BOM
+            with open(os.path.join(top, "data", "dev", "private-patterns.txt"), "w", encoding="utf-8", newline="") as f:
+                f.write(body)
+            for script_top in (top, wt):
+                out = self.default_board(script_top, "new", "Document the quoting rules")
+                self.assertEqual(out.returncode, 2, out.stderr)
+                self.assertIn("pattern list is empty", out.stderr)
+                self.assertIn("private-patterns.txt", out.stderr)
+                self.assertEqual(self.calls(), [], "gh must not be called at all")
 
     def test_none_still_opts_out_when_the_default_list_is_empty(self):
         top = self.checkout("main", with_list=True)

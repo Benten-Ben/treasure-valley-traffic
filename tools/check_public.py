@@ -118,7 +118,7 @@ def load_patterns(path):
     if not path or not os.path.exists(path):
         return []
     out = []
-    with open(path, encoding="utf-8") as f:
+    with open(path, encoding="utf-8-sig") as f:  # -sig: a BOM from a Windows editor is not part of the first pattern
         for line in f:
             line = line.strip()
             if line and not line.startswith("#"):
