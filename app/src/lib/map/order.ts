@@ -1,5 +1,6 @@
 import type { BackgroundLayerSpecification, LayerSpecification } from 'maplibre-gl';
 import type { LayerId } from '#lib/layers/types.js';
+import type { FlavorName } from './flavors.js';
 
 /**
  * Layer order (docs/14 §14.8, "Layer order").
@@ -81,6 +82,12 @@ export interface SlottedLayer {
 	 * Its owner's def can name layers it goes off under (`LayerDef.offUnder`).
 	 */
 	areaFill?: true;
+	/**
+	 * The base flavor it draws in, as a base contribution's `looks` (plus `'clay'`, for fills that need
+	 * Clay's pale ground, like the crop fills): `'both'` (the default), `'clay'` or `'valley'`. The manager
+	 * hides it in the other flavor.
+	 */
+	looks?: 'both' | 'clay' | 'valley';
 }
 
 /**
@@ -126,6 +133,7 @@ export function setRank(map: object, layerId: string, rank: number): void {
 export interface SlotFlags {
 	aerial?: 'only' | 'hide';
 	areaFill?: true;
+	looks?: 'clay' | 'valley';
 	/** The tray layer whose module added it; absent for a layer added without saying (then only `aerial` applies). */
 	owner?: LayerId;
 }
@@ -149,13 +157,14 @@ export function addSlotted(
 	add: (layer: LayerSpecification, before?: string) => void,
 	owner?: LayerId
 ): void {
-	for (const { slot, layer, aerial, areaFill } of layers) {
+	for (const { slot, layer, aerial, areaFill, looks: wanted } of layers) {
 		add(layer, beforeSlot(map, slot, rank));
 		setRank(map, layer.id, rank);
-		if (aerial || areaFill) {
+		const looks = wanted === 'clay' || wanted === 'valley' ? wanted : undefined;
+		if (aerial || areaFill || looks) {
 			let flags = FLAGS.get(map);
 			if (!flags) FLAGS.set(map, (flags = new Map()));
-			flags.set(layer.id, { aerial, areaFill, owner });
+			flags.set(layer.id, { aerial, areaFill, looks, owner });
 		}
 	}
 }
@@ -167,12 +176,15 @@ export interface SlotGate {
 	fillOwner: LayerId | null;
 	/** Owners whose area fills are off now (their `offUnder` layer is on). */
 	fillsOff: ReadonlySet<LayerId>;
+	/** The flavor the map is drawn in (or going to, in a crossfade); with it, `looks` is applied. */
+	flavor?: FlavorName;
 }
 
 /** Whether a flagged layer may draw now (its owner's own visibility is separate: both must allow). */
 export function slotAllowed(f: SlotFlags, gate: SlotGate): boolean {
 	if (f.aerial === 'only' && !gate.aerial) return false;
 	if (f.aerial === 'hide' && gate.aerial) return false;
+	if (f.looks && gate.flavor && f.looks !== gate.flavor) return false;
 	if (f.areaFill && f.owner) return gate.fillOwner === f.owner && !gate.fillsOff.has(f.owner);
 	return true;
 }
