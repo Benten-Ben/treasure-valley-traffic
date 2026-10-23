@@ -1,7 +1,17 @@
+import type { DataMeta } from '#lib/contracts/meta.js';
+import { layerVersion } from '#lib/contracts/layer-tiles.js';
 import { prefetch } from '../prefetch.js';
 import type { LayerDef } from '../types.js';
 import { WALL } from './icons.js';
-import { linesUrl } from './fences.js';
+
+/** The data's API path; here, not in fences.ts, so the always-loaded def doesn't pull that file (the 3D batch, the style) into the initial bundle. */
+const URL_PATH = '/api/fences/lines';
+
+/** The data's URL, with the version /api/meta reports when it has one (immutable then). */
+export function linesUrl(meta: Pick<DataMeta, 'versions'> | null | undefined): string {
+	const v = layerVersion(meta, 'fences', 'lines');
+	return v ? `${URL_PATH}?v=${encodeURIComponent(v)}` : URL_PATH;
+}
 
 /**
  * Fences (plan §4.2 P10): the fences, walls, retaining walls, guard rails and jersey barriers mapped in

@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path';
 import { validateStyleMin } from '@maplibre/maplibre-gl-style-spec';
 import { describe, expect, it } from 'vitest';
 import { PRIORITY } from '../types.js';
+import def from './def.js';
 import { WALL } from './icons.js';
 import {
 	buildSegments,
@@ -47,6 +48,27 @@ describe('the data URL', () => {
 	it("credits OpenStreetMap, the build's own credit when it has one", () => {
 		expect(creditOf(null)).toBe('© OpenStreetMap contributors');
 		expect(creditOf({ layers: { 'fences.lines': { credit: '© OpenStreetMap contributors' } } } as never)).toBe('© OpenStreetMap contributors');
+	});
+});
+
+describe('the always-loaded def', () => {
+	it('imports only what the initial bundle already holds: not fences.ts, the palette or the scene (a layer loads lazily)', () => {
+		const src = readFileSync(join(__dirname, 'def.ts'), 'utf8');
+		const imports = [...src.matchAll(/^import (?!type\b)[^;]*from '([^']+)'/gm)].map((m) => m[1]);
+		expect(imports.sort()).toEqual(['#lib/contracts/layer-tiles.js', '../prefetch.js', './icons.js']);
+	});
+
+	it('prefetches exactly the URL the module takes', async () => {
+		const meta = { versions: { layers: { 'fences.lines': 'v7' } } } as never;
+		const seen: string[] = [];
+		const real = globalThis.fetch;
+		globalThis.fetch = ((u: string) => (seen.push(u), Promise.resolve(new Response('{}')))) as never;
+		try {
+			def.prefetch!({ meta } as never);
+		} finally {
+			globalThis.fetch = real;
+		}
+		expect(seen).toEqual([linesUrl(meta)]);
 	});
 });
 

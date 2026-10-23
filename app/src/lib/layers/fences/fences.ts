@@ -1,11 +1,14 @@
 import type { MapGeoJSONFeature } from 'maplibre-gl';
 import type { DataMeta } from '#lib/contracts/meta.js';
-import { layerCredit, layerVersion } from '#lib/contracts/layer-tiles.js';
+import { layerCredit } from '#lib/contracts/layer-tiles.js';
 import { INK } from '#lib/map/color.js';
 import type { SlottedLayer } from '#lib/map/order.js';
 import type { StaticSegment } from '#lib/scene/batches/static.js';
 import { PRIORITY, type Selection } from '../types.js';
+import { linesUrl } from './def.js';
 import { ESTIMATED, HALO, POST } from './palette.js';
+
+export { linesUrl };
 
 /**
  * The Fences layer's pure parts (plan §4.2 P10): the style of the 2D line, the 3D segments built from the same
@@ -13,7 +16,6 @@ import { ESTIMATED, HALO, POST } from './palette.js';
  * backyard fences aren't mapped yet, and a mapped fence never says where anyone's land ends.
  */
 
-export const URL_PATH = '/api/fences/lines';
 export const SOURCE = 'fences-lines';
 /** The scene group of the 3D batch. */
 export const GROUP = 'fences';
@@ -28,12 +30,6 @@ export const WALLS_FROM_ZOOM = 15.5;
 /** The scene is asked for a little before the walls show. */
 export const SCENE_FROM_ZOOM = 15.2;
 export const FALLBACK_CREDIT = '© OpenStreetMap contributors';
-
-/** The data's URL, with the version /api/meta reports when it has one (immutable then). */
-export function linesUrl(meta: Pick<DataMeta, 'versions'> | null | undefined): string {
-	const v = layerVersion(meta, 'fences', 'lines');
-	return v ? `${URL_PATH}?v=${encodeURIComponent(v)}` : URL_PATH;
-}
 
 /** The credit the map shows while the layer is on. */
 export function creditOf(meta: Pick<DataMeta, 'layers'> | null | undefined): string {
