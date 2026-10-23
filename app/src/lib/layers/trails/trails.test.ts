@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import { validateStyleMin } from '@maplibre/maplibre-gl-style-spec';
+import { createPropertyExpression, latest, validateStyleMin } from '@maplibre/maplibre-gl-style-spec';
 import { ANCHORS, DRAPED_TYPES, insertSlotted } from '#lib/map/order.js';
 import { INK } from '#lib/map/materials.js';
 import type { AgencyState, TrailStatus } from '#lib/server/trails/status.js';
@@ -45,6 +45,7 @@ import {
 	widthText,
 	worstSev,
 	countsText,
+	type Sev,
 	type Statuses
 } from './trails.js';
 
@@ -179,6 +180,27 @@ describe('the style layers', () => {
 		const paint = (all.find((l) => l.layer.id === L.ways)!.layer as { paint: Record<string, unknown> }).paint;
 		const opacity = paint['line-opacity'] as unknown[];
 		expect(opacity.slice(0, 5)).toEqual(['step', ['zoom'], 1, DETAIL_ZOOM, expect.anything()]);
+	});
+
+	it('draw one plain umber agency line where no state is known (a failed or late status), not a bare halo', () => {
+		const ref = latest as unknown as Record<string, Record<string, unknown>> & { default?: Record<string, Record<string, unknown>> };
+		const spec = (ref.paint_line ?? ref.default!.paint_line)['line-opacity'];
+		const opacityOf = (id: string, zoom: number, state: Record<string, unknown>): number => {
+			const layer = all.find((l) => l.layer.id === id)!.layer as { paint: Record<string, unknown> };
+			const parsed = createPropertyExpression(layer.paint['line-opacity'] as never, 'line-opacity', spec as never);
+			if (parsed.result !== 'success') throw new Error(JSON.stringify(parsed.value));
+			return parsed.value.evaluate({ zoom }, { type: 'LineString', properties: {} } as never, state) as number;
+		};
+		const agencyIds = [agencyLayer('open'), agencyLayer('not_evaluated'), ...DASHED.map(agencyLayer)];
+		for (const zoom of [10, 12, 14]) {
+			// No feature-state: the halo is there, so exactly one umber layer must be too (open).
+			expect(opacityOf(L.haloAgency, zoom, {})).toBeGreaterThan(0);
+			expect(agencyIds.filter((id) => opacityOf(id, zoom, {}) > 0), `z${zoom}`).toEqual([agencyLayer('open')]);
+			// Each known state still draws its own one layer; an ended row draws nothing, halo included.
+			for (const sev of ['open', 'not_evaluated', ...DASHED]) expect(agencyIds.filter((id) => opacityOf(id, zoom, { sev }) > 0), `${sev} z${zoom}`).toEqual([agencyLayer(sev as Sev)]);
+			expect(agencyIds.filter((id) => opacityOf(id, zoom, { sev: 'ended' }) > 0)).toEqual([]);
+			expect(opacityOf(L.haloAgency, zoom, { sev: 'ended' })).toBe(0);
+		}
 	});
 
 	it('give each state its own dash, and no two the same (K8: each dash has its word)', () => {
@@ -334,12 +356,18 @@ describe('the status as feature-state', () => {
 	it('shows a way carrying several lines in the worst state', () => {
 		const lines = [
 			{ severity: 'open', source: 'r2r_trails', paints: true },
-			{ severity: 'closed', source: 'boise_greenbelt_closures', paints: false },
+			{ severity: 'closed', source: 'boise_greenbelt_closures', paints: true },
 			{ severity: null, source: 'r2r_trails', paints: true }
 		] as const;
 		expect(worstSev(lines)).toBe('closed');
 		expect(worstSev([])).toBeNull();
 		expect(worstSev([{ severity: null, source: 'boise_greenbelt_closures', paints: true }])).toBeNull();
+	});
+
+	it('leaves a line along only part of a way out of the headline, as the map does', () => {
+		const part = { severity: 'closed', source: 'boise_greenbelt_closures', paints: false } as const;
+		expect(worstSev([part])).toBeNull();
+		expect(worstSev([part, { severity: 'caution', source: 'r2r_trails', paints: true }])).toBe('caution');
 	});
 });
 
@@ -362,6 +390,18 @@ describe('selections', () => {
 		expect(sel).toMatchObject({ kind: 'trail', id: 'line:7', title: 'Example Gulch', fact: 'CLOSED', source: 'City of Boise Parks & Recreation' });
 		expect(sel!.data).toMatchObject({ type: 'line', id: 7, sev: 'closed' });
 		expect(lineSelection({ id: 7, properties: { kind: 'detour' } }, status())!.title).toBe('Detour');
+	});
+
+	it('opens nothing the map hides: an informal way near a closure, or an agency row that has ended', () => {
+		const hid = status({ hidden: (id) => id === 6 });
+		expect(waySelection({ id: 6, properties: { kind: 'path', informal: true } }, hid)).toBeNull();
+		expect(waySelection({ id: 7, properties: { kind: 'path', informal: true } }, hid)).not.toBeNull();
+		// A paved tread is a base layer: still clickable.
+		expect(pavedSelection({ properties: { id: 6, kind: 'cycleway', material: 'asphalt' } }, false, hid)).toMatchObject({ id: 'way:6' });
+		const ended = status({ line: () => ({ sev: null, label: null, state: 'ended', name: 'Example Closure' }) });
+		expect(lineSelection({ id: 7, properties: { kind: 'closure' } }, ended)).toBeNull();
+		// A line the status doesn't know still opens (it draws plain).
+		expect(lineSelection({ id: 7, properties: { kind: 'trail' } }, status())).not.toBeNull();
 	});
 
 	it('opens a paved tread as the way it is, and a paved area as paving', () => {

@@ -89,6 +89,7 @@ export class TrailsModule implements LayerModule {
 	#timer: ReturnType<typeof setInterval> | undefined;
 	#applied = new Map<string, StateEntry>();
 	#byWay = new globalThis.Map<number, Sev>();
+	#hiddenWays = new globalThis.Set<number>();
 	#byLine = new globalThis.Map<number, { sev: Sev | null; label: string | null; state: string; name: string | null }>();
 	#details = new globalThis.Map<string, Promise<unknown>>();
 	/** When the newest poll of Ridge to Rivers or the Greenbelt landed (epoch ms), for the legend’s “as of”. */
@@ -105,7 +106,8 @@ export class TrailsModule implements LayerModule {
 	statusRequests = 0;
 	readonly #statuses: Statuses = {
 		way: (id) => this.#byWay.get(id) ?? null,
-		line: (id) => this.#byLine.get(id) ?? null
+		line: (id) => this.#byLine.get(id) ?? null,
+		hidden: (id) => this.#hiddenWays.has(id)
 	};
 
 	async mount(ctx: AppCtx): Promise<void> {
@@ -184,6 +186,7 @@ export class TrailsModule implements LayerModule {
 	#take(s: TrailStatus) {
 		this.trail = s;
 		this.#byWay = new globalThis.Map(Object.entries(s.ways).map(([id, sev]) => [Number(id), sev]));
+		this.#hiddenWays = new globalThis.Set(s.hidden);
 		this.#byLine = new globalThis.Map(
 			s.agencies.filter((a) => a.line_id !== null).map((a) => [a.line_id!, { sev: lineSev(a), label: a.label, state: a.state, name: a.name }])
 		);

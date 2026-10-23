@@ -117,6 +117,8 @@ const expr = (e: unknown) => e as Expr;
 const SEV: Expr = expr(['coalesce', ['feature-state', 'sev'], 'none']);
 const sevIs = (...names: string[]): Expr => expr(['in', SEV, ['literal', names]]);
 const only = (sev: Sev): Expr => expr(['case', ['==', SEV, sev], 1, 0]);
+/** Plain open lines also draw where nothing says (no status yet, a failed status, a line with no row): never a cream halo on its own. */
+const openOrNone: Expr = expr(['case', sevIs('open', 'none'), 1, 0]);
 
 
 /**
@@ -168,8 +170,8 @@ function line(id: string, source: string, sourceLayer: string, o: LineOptions, l
 	} as LayerSpecification;
 }
 
-/** A state's look as paint: its color, dashes, width and the feature-state opacity that picks the features in this state. */
-function stateLine(sev: Sev, id: string, source: string, sourceLayer: string, o: LineOptions): LayerSpecification {
+/** A state's look as paint: its color, dashes, width and the feature-state opacity that picks the features in this state (`plain`: open also takes the features with no state). */
+function stateLine(sev: Sev, id: string, source: string, sourceLayer: string, o: LineOptions, plain = false): LayerSpecification {
 	const look = LOOKS[sev];
 	return line(
 		id,
@@ -177,7 +179,7 @@ function stateLine(sev: Sev, id: string, source: string, sourceLayer: string, o:
 		sourceLayer,
 		o,
 		{ 'line-cap': look.cap },
-		{ 'line-color': UMBER, 'line-width': lineWidth(look.width), 'line-opacity': only(sev), ...(look.dash ? { 'line-dasharray': [...look.dash] } : {}) }
+		{ 'line-color': UMBER, 'line-width': lineWidth(look.width), 'line-opacity': plain && sev === 'open' ? openOrNone : only(sev), ...(look.dash ? { 'line-dasharray': [...look.dash] } : {}) }
 	);
 }
 
@@ -287,7 +289,8 @@ export function trailLayers(): SlottedLayer[] {
 			}
 		),
 		// The agencies' lines: every state, over all zooms (below z13 they are the whole line, from z13 what no way shows).
-		stateLine('open', agencyLayer('open'), SRC.agency, SL.agency, { minzoom: ZOOMS.minzoom }),
+		// Open also draws a line with no state, so a failed or late status leaves plain umber lines, never bare halos.
+		stateLine('open', agencyLayer('open'), SRC.agency, SL.agency, { minzoom: ZOOMS.minzoom }, true),
 		line(
 			agencyLayer('not_evaluated'),
 			SRC.agency,
@@ -478,10 +481,11 @@ export function widthText(c: Pick<WayCard, 'width_m' | 'width_from'>): { text: s
 	return { text: metresFeet(c.width_m), how: c.width_from === 'osm' ? 'tagged in OpenStreetMap' : 'estimated from the kind of way' };
 }
 
-/** The strictest of the lines' severities on a way (a way carrying several shows the worst). */
+/** The strictest of the severities of the lines that paint the way (a way carrying several shows the worst; a line along only part of it, like the map, doesn't count). */
 export function worstSev(lines: readonly { severity: Severity | null; source: string; paints: boolean }[]): Sev | null {
 	let best: Sev | null = null;
 	for (const l of lines) {
+		if (!l.paints) continue;
 		const sev = lineSev(l);
 		if (!sev) continue;
 		if (best === null || SEVERITY_ORDER.indexOf(sev) < SEVERITY_ORDER.indexOf(best)) best = sev;
@@ -508,11 +512,15 @@ const idOf = (f: PickedFeature): number => Number(f.id ?? f.properties?.id);
 export interface Statuses {
 	way(id: number): Sev | null;
 	line(id: number): { sev: Sev | null; label: string | null; state: string; name: string | null } | null;
+	/** True for an informal way the status hides (near a closure): the map doesn't draw it, so a click can't open it. */
+	hidden?(id: number): boolean;
 }
 
 export function waySelection(f: PickedFeature, status: Statuses): Selection | null {
 	const id = idOf(f);
 	if (!Number.isFinite(id) || id <= 0) return null;
+	// What the map hides can't be clicked (a hit line ignores opacity).
+	if (status.hidden?.(id)) return null;
 	const p = f.properties ?? {};
 	const sev = status.way(id);
 	const kind = String(p.kind ?? 'path');
@@ -534,6 +542,8 @@ export function lineSelection(f: PickedFeature, status: Statuses): Selection | n
 	if (!Number.isFinite(id) || id <= 0) return null;
 	const p = f.properties ?? {};
 	const s = status.line(id);
+	// A row the City has ended draws nothing, so it opens nothing.
+	if (s && s.sev === null) return null;
 	const name = (typeof p.name === 'string' && p.name) || s?.name || null;
 	const kind = String(p.kind ?? 'trail');
 	return {
@@ -549,7 +559,8 @@ export function lineSelection(f: PickedFeature, status: Statuses): Selection | n
 
 /** A paved tread or area from the base layers (`trails.paved_paths` and `paved_areas`): clickable only while Trails is on. */
 export function pavedSelection(f: PickedFeature, area: boolean, status: Statuses): Selection | null {
-	if (!area) return waySelection({ id: f.id ?? f.properties?.id as number, properties: { ...f.properties, surface: 'paved' } }, status);
+	// A paved tread is a base layer, drawn whatever the status hides.
+	if (!area) return waySelection({ id: f.id ?? f.properties?.id as number, properties: { ...f.properties, surface: 'paved' } }, { ...status, hidden: undefined });
 	const id = idOf(f);
 	if (!Number.isFinite(id)) return null;
 	const p = f.properties ?? {};
