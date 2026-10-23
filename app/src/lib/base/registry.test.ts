@@ -37,9 +37,14 @@ describe('the base registry', () => {
 		expect("import { x } from '#lib/layers/scenery.js';").not.toMatch(re);
 	});
 
-	it('holds no contribution yet; later packages add theirs as folders', () => {
-		expect(BASE_CONTRIBUTIONS).toEqual([]);
-		expect(baseContribution('roads.surfaces')).toBeUndefined();
+	it('holds the contributions packages added as folders, ordered by id', () => {
+		// Not a list of ids: each layer package checks its own contribution in its own folder's test (so no two
+		// packages edit this file), and this test only holds the ground, the first one, as a sample.
+		const ids = BASE_CONTRIBUTIONS.map((c) => c.id);
+		expect(ids).toContain('ground.paint');
+		expect([...ids].sort()).toEqual(ids);
+		expect(baseContribution('ground.paint')?.id).toBe('ground.paint');
+		expect(baseContribution('none.such')).toBeUndefined();
 	});
 
 	it('is well formed for whatever is registered: ids, unique layers, draped types, known slots', () => {

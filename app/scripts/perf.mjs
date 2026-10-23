@@ -14,6 +14,12 @@
  *   S5  60 s of playback with no input                       (needs __tvt.map, WP1)
  *   S6  camera → Calibrate → Back: return-leg requests for tiles loaded before, and the view
  *   S7  a 30-minute soak with everything on (only when named) (needs __tvt.map, WP1)
+ *   S1valley  the painted ground's first load (landscape plan v3 §4.2 G1a): a cold load at the default view
+ *       (z10, pitch 45, 1280 x 800, no layers) with the Base look set to Valley. Fails when the requests to the
+ *       ground's files (basemap/ground/spec.json "budget") pass 0.6 MB or 14, when none is made (the ground did
+ *       not load: is TILES_DIR's ground painted?), or when the page passes 6 MB. S1 (Clay) fails on any ground
+ *       request. It measures whatever ground TILES_DIR holds: the fixture
+ *       (TILES_DIR=$(node scripts/tiles-fixture.mjs --ground painted)), G1a's tiles, G1b's later.
  *   S1flat  fix 8's "flat, then tilt" first visit: a cold load at the default
  *       centre and zoom with pitch 0, then a tilt to 45 once settled; compare
  *       its bytes, requests and time to settle with S1's default view
@@ -45,12 +51,12 @@
  * JS and JSON at their gzip size (scripts/net.mjs).
  */
 import { spawn, execFileSync } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { chromium } from '@playwright/test';
 import { APP_DIR, CHROMIUM_ARGS, harnessEnv, lockedArgs } from './harness-env.mjs';
-import { firstAt, MB, mapReady, recordNetwork, summarize } from './net.mjs';
+import { budgetBytes, firstAt, MB, mapReady, recordNetwork, summarize } from './net.mjs';
 
 const argv = process.argv.slice(2);
 const flag = (n) => argv.includes(n);
@@ -83,6 +89,14 @@ const VIEWS = {
 const ROUND_TRIP_VIEW = withQuery('/#14/43.6150/-116.2023/20/50');
 /** fix 8's flat first visit: the manifest's default centre and zoom (data/tiles/manifest.json), pitch 0. */
 const FLAT_VIEW = withQuery('/#10/43.6000/-116.4000/0/0');
+/** The ground's first-load budget (basemap/ground/spec.json "budget"): its files' bytes and requests at the default view. */
+const GROUND_BUDGET = JSON.parse(readFileSync(resolve(APP_DIR, '..', 'basemap', 'ground', 'spec.json'), 'utf8')).budget;
+/** The first-load view the budget is measured at: the manifest's centre and zoom, pitch 45, no layer on. */
+const VALLEY_VIEW = withQuery('/#map=10/43.6/-116.4/0/45&layers=none');
+/** The saved Base look (`look: 'map'` is Valley), set before the page's own scripts run. */
+const VALLEY_LOOK = JSON.stringify({ look: 'map', buildings: true, terrain: true, labels: 'full' });
+/** A request to one of the ground's files (`ground-<digest>.pmtiles`, `ground-detail-<digest>.pmtiles`). */
+const isGround = (x) => /^ground-/.test(x.url.replace(/[?#].*$/, '').split('/').pop());
 const LAYER_KEYS = [['streets', '2'], ['transit', '4'], ['cameras', '7']];
 
 const median = (xs) => {
@@ -161,6 +175,8 @@ function loadRecord(net, t0, ready) {
 		firstDataStartS: firstAt(net.entries, (x) => x.kind === 'api' && !x.url.includes('/api/meta'), t0),
 		firstDemResponseS: firstAt(net.entries, (x) => x.kind === 'terrain', t0, 'responseAt'),
 		settledMs: ready.settledMs,
+		groundRequests: net.entries.filter((x) => isGround(x) && !x.fromCache && !x.failed).length,
+		groundBytes: net.entries.filter((x) => isGround(x) && !x.fromCache && !x.failed).reduce((a, x) => a + budgetBytes(x), 0),
 		byKind: s.byKind
 	};
 }
@@ -195,6 +211,34 @@ async function S1(browser, base) {
 		out[name] = { median: medians(list), byKind: list.at(-1).byKind, runs: list.map(({ byKind, requestList, ...r }) => r), requests: list.at(-1).requestList };
 	}
 	return out;
+}
+
+/** The ground's first load: Base set to Valley, the default view, no layer on (see the header). */
+async function S1valley(browser, base) {
+	const list = [];
+	for (let i = 0; i < runs; i++) {
+		const { context, page } = await newPage(browser, base);
+		await context.addInitScript((look) => {
+			try {
+				localStorage.setItem('tvt:v2:base', look);
+			} catch {
+				/* storage blocked: the run then measures Clay, and the ground target says so */
+			}
+		}, VALLEY_LOOK);
+		const net = await recordNetwork(page, { throttle: THROTTLE });
+		await page.goto(VALLEY_VIEW);
+		const ready = await mapReady(page);
+		await net.settle();
+		const t0 = Math.min(...net.entries.map((x) => x.start));
+		const r = loadRecord(net, t0, ready);
+		r.requestList = requestList(net.entries, base);
+		list.push(r);
+		await net.detach();
+		await context.close();
+		log(`S1valley run ${i + 1}: ground ${r.groundRequests} requests, ${MB(r.groundBytes)} MB; page ${r.requests} requests, ${MB(r.bytes)} MB`);
+	}
+	return { median: medians(list), byKind: list.at(-1).byKind, runs: list.map(({ byKind, requestList, ...r }) => r),
+		requests: list.at(-1).requestList.filter((x) => isGround({ url: x.url })) };
 }
 
 async function S1flat(browser, base) {
@@ -465,7 +509,7 @@ async function S7(browser, base) {
 	return { samples, heapGrowthMB: +(samples.at(-1).heapMB - samples[0].heapMB).toFixed(1) };
 }
 
-const SCENARIOS = { S1, S2, S3, S4, S5, S6, S7, S1flat };
+const SCENARIOS = { S1, S2, S3, S4, S5, S6, S7, S1flat, S1valley };
 
 /** §14.9 targets this harness can check today (budget mode). */
 function targets(res) {
@@ -474,10 +518,22 @@ function targets(res) {
 	const d = res.S1?.default?.median;
 	if (d) {
 		add('cold first load ≤ 6 MB (default view)', `${MB(d.bytes)} MB`, d.bytes <= 6e6);
-		add('cold first load ≤ 50 requests', d.requests, d.requests <= 50);
+		// Requests are reported, not gated: DECISIONS Oct 22 (chunk B, item 5) replaced the 50-request target with bytes and timings.
+		add('cold first load requests (reported, no limit)', d.requests, true);
 		add('0 duplicate byte ranges', d.duplicates, d.duplicates === 0);
 		add('data fetches start before the first DEM response', `${d.firstDataStartS?.toFixed(2)} s vs ${d.firstDemResponseS?.toFixed(2)} s`,
 			d.firstDataStartS !== null && d.firstDemResponseS !== null && d.firstDataStartS < d.firstDemResponseS);
+	}
+	// Clay is flat in v1: its first load never asks for the ground.
+	if (res.S1?.default) add('Clay first load: 0 requests to the ground', res.S1.default.runs.map((r) => r.groundRequests).join(', '), res.S1.default.runs.every((r) => r.groundRequests === 0));
+	const v = res.S1valley;
+	if (v) {
+		const b = GROUND_BUDGET.valleyDefault;
+		const runs = v.runs;
+		add('Valley first load: the ground loads (at least 1 request to its files)', runs.map((r) => r.groundRequests).join(', '), runs.every((r) => r.groundRequests > 0));
+		add(`Valley first load: ground files ≤ ${MB(b.maxBytes)} MB`, runs.map((r) => `${MB(r.groundBytes)} MB`).join(', '), runs.every((r) => r.groundBytes <= b.maxBytes));
+		add(`Valley first load: ground files ≤ ${b.maxRequests} requests`, runs.map((r) => r.groundRequests).join(', '), runs.every((r) => r.groundRequests <= b.maxRequests));
+		add('Valley first load: page ≤ 6 MB', runs.map((r) => `${MB(r.bytes)} MB`).join(', '), runs.every((r) => r.bytes <= 6e6));
 	}
 	add('every request same-origin', offsite.length, offsite.length === 0);
 	for (const [layer, r] of Object.entries(res.S3 ?? {})) add(`toggling loaded ${layer}: 0 requests`, r.median.warmRequests, r.median.warmRequests === 0);

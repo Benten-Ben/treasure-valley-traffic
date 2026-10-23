@@ -74,6 +74,7 @@
 	<button
 		type="button"
 		class="chip card num"
+		aria-label={chip.headline}
 		onpointerenter={(e) => show(e.currentTarget)}
 		onpointerleave={() => tooltip.hide()}
 		onfocus={(e) => show(e.currentTarget)}
@@ -81,6 +82,7 @@
 	>
 		<span class="shape" style:color={chip.color} aria-hidden="true">{chip.shape}</span>
 		<span class="words">{chip.headline}</span>
+		{#if chip.count !== null}<span class="count" aria-hidden="true">{chip.count}</span>{/if}
 	</button>
 	<span class="sr-only" aria-live="polite">{announce}</span>
 </span>
@@ -94,6 +96,19 @@
 		font: inherit;
 		cursor: default;
 		white-space: nowrap;
+	}
+	/* Below 1024 px the right side is too wide for the sentence: the shape and the number stay (the shape carries
+	   the level, never colour alone); the full sentence is the accessible name and the tooltip. */
+	.count {
+		display: none;
+	}
+	@media (max-width: 1023px) {
+		.words {
+			display: none;
+		}
+		.count {
+			display: inline;
+		}
 	}
 	.shape {
 		font-size: 1.05em;

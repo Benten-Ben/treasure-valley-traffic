@@ -26,7 +26,9 @@
  * - `polled`: each source's last good poll, the legend's "as of".
  *
  * The City's rows have no licence (republish aggregates): internal, like the
- * tailnet map that shows them. Before the plugin's migration it answers
+ * tailnet map that shows them: a public build leaves this
+ * route, the card routes (/api/trails/way/<id> and /api/trails/line/<id>, which list a way's City rows) and the
+ * agency tiles out. Before the plugin's migration it answers
  * empty, never a 500. `no-cache` with an ETag: the map asks again on the
  * pollers' cadence, and an unchanged answer is a 304.
  */

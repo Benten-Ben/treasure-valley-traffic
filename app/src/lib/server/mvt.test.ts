@@ -561,3 +561,73 @@ describe('the SQL a definition makes', () => {
 		expect(mvt.DEADLINE_MS).toBeGreaterThan(o.connection.statement_timeout);
 	});
 });
+
+describe('versionOf: a layer that takes another layer\'s version', () => {
+	const FIELDS: TileLayerDef = { plugin: 'farm', layer: 'crop_fields', minzoom: 8, maxzoom: 14, parts: [{ name: 'f', sources: [{ minzoom: 8, maxzoom: 14, table: 'farm.crop_fields' }] }] };
+	const YEAR: TileLayerDef = { plugin: 'farm', layer: 'crop_year_2018', minzoom: 8, maxzoom: 10, versionOf: 'crop_fields', cut: async () => new Uint8Array() };
+
+	it('is checked: a layer name that is not itself and is defined in the same plugin, one hop', () => {
+		expect(tileLayerProblems(YEAR)).toEqual([]);
+		expect(tileLayerProblems({ ...YEAR, versionOf: 'Crop/Fields' }).join('; ')).toContain('versionOf');
+		expect(tileLayerProblems({ ...YEAR, versionOf: 'crop_year_2018' }).join('; ')).toContain('names the layer itself');
+		const log = vi.fn();
+		const r = buildRegistry(
+			{
+				'./farm/tiles.ts': { default: [FIELDS, YEAR, { ...YEAR, layer: 'crop_year_2019' }, { ...YEAR, layer: 'crop_year_2020', versionOf: 'crop_year_2019' }, { ...YEAR, layer: 'crop_year_2021', versionOf: 'nothing' }] }
+			},
+			log
+		);
+		expect([...r.keys()].sort()).toEqual(['farm.crop_fields', 'farm.crop_year_2018', 'farm.crop_year_2019']);
+		const logged = log.mock.calls.flat().join('\n');
+		expect(logged).toMatch(/crop_year_2020 .*takes another's version/);
+		expect(logged).toMatch(/crop_year_2021 .*versionOf nothing: no such layer in farm/);
+	});
+
+	it("asks for the shared layer's version, and keeps and tags its own tiles under its own name", async () => {
+		const versions: Record<string, string | null> = { 'farm.crop_fields': 'f1' };
+		const asked: string[] = [];
+		const cut = vi.fn(async (def: TileLayerDef) => ({ mvt: fakeMvt(def, T), version: versions[mvt.versionKey(def)] ?? null }));
+		const s = layerTileServer({
+			version: async (id) => (asked.push(id), versions[id] ?? null),
+			cut,
+			log: vi.fn()
+		});
+		const res = await s.respond(YEAR, T, 'f1', 'gzip');
+		expect(asked).toEqual(['farm.crop_fields']);
+		expect(res.headers.get('cache-control')).toBe(IMMUTABLE);
+		expect(res.headers.get('etag')).toBe('"farm.crop_year_2018-f1-gz"');
+		expect(gunzipSync(new Uint8Array(await res.arrayBuffer()))).toEqual(Buffer.from(fakeMvt(YEAR, T)));
+		// The field layer's tile for the same place is another tile; a second year is too.
+		await s.respond(FIELDS, T, 'f1', 'gzip');
+		await s.respond({ ...YEAR, layer: 'crop_year_2019' }, T, 'f1', 'gzip');
+		expect(cut).toHaveBeenCalledTimes(3);
+		await s.respond(YEAR, T, 'f1', 'gzip');
+		expect(cut).toHaveBeenCalledTimes(3);
+		// A new build of the shared layer is a new version for every layer that takes it.
+		versions['farm.crop_fields'] = 'f2';
+		const next = await s.respond(YEAR, T, 'f2', 'gzip');
+		expect(next.headers.get('etag')).toBe('"farm.crop_year_2018-f2-gz"');
+		expect(cut).toHaveBeenCalledTimes(4);
+		// No version row for the shared layer: nothing is served for either.
+		versions['farm.crop_fields'] = null;
+		expect((await s.respond(YEAR, { ...T, x: 1 }, null, 'gzip')).headers.get('x-tile-status')).toBe('unversioned');
+	});
+
+	it("reads the shared layer's version row in the cut, not its own name's", async () => {
+		const calls: [string, unknown[]][] = [];
+		const unsafe = (text: string, params: unknown[]) => {
+			calls.push([text, params]);
+			return Promise.resolve([{ mvt: Buffer.from('t'), version: 'f1' }]) as unknown as postgres.PendingQuery<postgres.Row[]>;
+		};
+		const tx = { unsafe } as unknown as postgres.TransactionSql;
+		const sql = { unsafe, begin: async (_o: string, fn: (tx: postgres.TransactionSql) => unknown) => fn(tx) } as unknown as postgres.Sql;
+		const signal = new AbortController().signal;
+		expect(mvt.versionKey(YEAR)).toBe('farm.crop_fields');
+		expect(mvt.versionKey(FIELDS)).toBe('farm.crop_fields');
+		expect((await cutLayerTile(sql, YEAR, T, signal)).version).toBe('f1');
+		expect(calls[0][1]).toEqual(['farm.crop_fields']);
+		const parts: TileLayerDef = { ...FIELDS, layer: 'crop_year_x', versionOf: 'crop_fields' };
+		await cutLayerTile(sql, parts, T, signal);
+		expect(calls[1][1]).toEqual([12, 760, 1490, 'farm.crop_fields']);
+	});
+});

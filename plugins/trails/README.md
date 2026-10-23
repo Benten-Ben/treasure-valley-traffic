@@ -318,7 +318,9 @@ detour, open, then not_evaluated), the hidden informal ways, R2R's counts and
 each source's last poll. Empty before this migration; `no-cache` with an
 ETag. On scratch its queries take about 10 ms and 45 ms. The City's rows are
 internal, like the tailnet map that shows them: a public build must leave the
-status and the `trails.agency` tiles out, or show aggregates only.
+status, the `trails.agency` tiles and the two card routes out
+(`GET /api/trails/way/<id>`, whose `lines[]` lists the City's rows on a way, and
+`GET /api/trails/line/<id>`, one City row), or show aggregates only.
 
 ## Not built here
 
