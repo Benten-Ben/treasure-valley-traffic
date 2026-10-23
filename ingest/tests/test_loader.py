@@ -90,7 +90,7 @@ class RegistryTest(unittest.TestCase):
 
     def test_the_plugins(self):
         self.assertEqual(sorted(p.name for p in ours()),
-                         ["air", "cameras", "conditions", "development", "farm", "flow", "hazards", "intersections",
+                         ["air", "cameras", "conditions", "development", "farm", "fences", "flow", "hazards", "intersections",
                           "lands", "roads", "safety", "sky", "soils", "trails", "transit", "trees", "water", "weather",
                           "wildlife"])
 
@@ -122,7 +122,7 @@ class RegistryTest(unittest.TestCase):
                           "farm-fields-load", "hydroshare-load", "match-intersections", "match-routes", "nhd-load",
                           "roads-build", "roads-developed-load", "roads-export", "rollup", "route-colors",
                           "segment-match", "shrubs-hedge-check", "shrubs-load", "soils-export", "soils-load",
-                          "soils-photo-load", "trails-match", "transit-progress", "transit-ribbons", "trees-load",
+                          "soils-photo-load", "trails-export", "trails-match", "transit-progress", "transit-ribbons", "trees-load",
                           "water-build", "water-export", "wfigs-backfill"])
         self.assertFalse(set(registry.COMMANDS) & (set(BUILTINS) | set(CORE_COMMANDS)))
         for name in registry.COMMANDS:
