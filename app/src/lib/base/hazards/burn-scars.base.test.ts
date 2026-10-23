@@ -26,6 +26,7 @@ describe('the burn-scar base contribution', () => {
 		expect(layerShown(contribution, char, { ...off, flavor: 'clay' })).toBe(false);
 		expect(layerShown(contribution, char, { ...off, aerial: true })).toBe(false);
 		expect(layerShown(contribution, stipple, { ...off, aerial: true })).toBe(false);
+		expect(layerShown(contribution, stipple, { ...off, flavor: 'clay' })).toBe(false);
 	});
 
 	it('sits in the ground slot above the ground, with the fade as data', () => {

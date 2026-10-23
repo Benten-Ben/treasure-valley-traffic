@@ -41,6 +41,8 @@ describe('the base registry', () => {
 		// Not an exact list: each layer package adds its own contribution, and checks it in its own test.
 		const ids = BASE_CONTRIBUTIONS.map((c) => c.id);
 		expect(ids).toContain('ground.paint');
+		expect(ids).toContain('hazards.burn_scars');
+		expect(ids).toContain('roads.surfaces');
 		expect([...ids].sort()).toEqual(ids);
 		expect(baseContribution('ground.paint')?.id).toBe('ground.paint');
 		expect(baseContribution('none.such')).toBeUndefined();

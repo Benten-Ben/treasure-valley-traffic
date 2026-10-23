@@ -11,7 +11,7 @@ const CHAR = '#5E5750';
 /** The stipple's image, generated at run time (self-hosted, no file): a 8×8 tile with two dots. */
 const STIPPLE = 'hazards-burn-stipple';
 
-/** Four-by-four pixel dots on an 8×8 transparent tile, in the char colour. */
+/** Two single-pixel dots on an 8×8 transparent tile, in the char colour. */
 function stippleImage(): { width: number; height: number; data: Uint8Array } {
 	const width = 8;
 	const height = 8;
@@ -63,7 +63,13 @@ const contribution: BaseContribution = {
 		} catch {
 			// The map may be torn down already; the stipple then simply isn't drawn.
 		}
-		return () => {};
+		return () => {
+			try {
+				if (map.hasImage(STIPPLE)) map.removeImage(STIPPLE);
+			} catch {
+				// The map may be torn down already; there is then no image left to remove.
+			}
+		};
 	}
 };
 
