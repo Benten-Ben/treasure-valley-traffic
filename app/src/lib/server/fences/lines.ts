@@ -36,11 +36,11 @@ export interface FenceProps {
 	/** `osm:w<way id>`. */
 	id: string;
 	type: FenceType;
-	/** Solid or see-through, read from the tags (⚠️ a reading, not a survey). */
+	/** Solid or see-through, read from the tags ((caution) a reading, not a survey). */
 	look: 'solid' | 'open';
 	/** Height in metres. */
 	h: number;
-	/** `tagged`: the height is in OpenStreetMap; `default`: estimated by type (⚠️). */
+	/** `tagged`: the height is in OpenStreetMap; `default`: estimated by type ((caution)). */
 	hs: 'tagged' | 'default';
 	/** Material, as tagged. */
 	m: string | null;

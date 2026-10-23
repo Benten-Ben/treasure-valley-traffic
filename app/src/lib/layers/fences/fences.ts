@@ -233,7 +233,7 @@ export const colorOf = (hs: FenceProps['hs']) => (hs === 'tagged' ? POST : ESTIM
 /**
  * A wall that holds earth back, drawn so its face looks to its low side. OpenStreetMap draws a retaining wall with the
  * lower ground on the right of the line's direction (as a cliff), so the box stands half its thickness to the left of
- * the line, which puts its right face on the mapped line. (⚠️ a reading of the tag convention, not a survey.)
+ * the line, which puts its right face on the mapped line. ((caution) a reading of the tag convention, not a survey.)
  */
 export function shiftedLeft(from: [number, number], to: [number, number], metres: number): { from: [number, number]; to: [number, number] } {
 	const cos = Math.cos(((from[1] + to[1]) / 2) * DEG);
