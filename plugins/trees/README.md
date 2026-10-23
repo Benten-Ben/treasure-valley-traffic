@@ -69,7 +69,9 @@ private plugin's match table, keyed by the crown's id).
 ### Runbook: migration 0003 on production
 
 `0003_no_city_rows.sql` deletes the trees that came from an inventory (the old `catalogued` and `estimated` kinds and
-any tree with an entry), their log events and the diameter and offset keys, and adds the kind check. It keeps the columns `catalogue` and
+any tree with an entry), their log events and the diameter and offset keys, and adds the kind check. It also removes
+`counts.types` from the build records that held such trees (it was a split over all their trees, the inventory's genus
+typing included), so a build row no longer gives the inventory's count; a rebuild records a fresh one. It keeps the columns `catalogue` and
 `catalogue_id`, empty, with a check that each is NULL, so an app image built before this change (the live app is
 pinned) still runs its queries and gets nothing City-derived; a later migration drops them once every app image is past
 this change. It is **not reversible**, and the `ingest` service applies it on start, so it runs as soon as the release that carries it is

@@ -171,8 +171,12 @@ class MigrationCleanUpTest(unittest.TestCase):
                 conn.execute("insert into trees.build (build_id, area, started_at, params, counts) values ('c-old', 'c', now(), %s, %s)",
                              (json.dumps({"theta": 0.2, "sources": [{"source": "trees/usgs_3dep_lidar"}, {"source": "catalogue"},
                                                                      {"source": "urban_tree_database"}, {"source": "trees/sentinel2"}]}),
-                              json.dumps({"trees": 5, "catalogued": 2, "estimated": 1, "placed": 2})))
+                              json.dumps({"trees": 5, "catalogued": 2, "estimated": 1, "placed": 2, "surface_mae_m": 0.4,
+                                          "types": {"broadleaf": 3, "conifer": 2, "narrow": 0}})))
                 conn.execute("insert into trees.build (build_id, area, started_at, params, counts) values ('c-bare', 'c', now(), '{}', '{}')")
+                clean = {"trees": 3, "types": {"broadleaf": 2, "conifer": 1, "narrow": 0}, "surface_mae_m": 0.3}   # a build that held no inventory trees
+                conn.execute("insert into trees.build (build_id, area, started_at, params, counts) values ('c-clean', 'c', now(), %s, %s)",
+                             (json.dumps({"sources": [{"source": "trees/usgs_3dep_lidar"}]}), json.dumps(clean)))   # its row is updated (sources), its counts are not
                 self.old_tree(conn, "c-1-1", fit={"crowded": False, "dbh_in": 14, "trunk_to_crown_m": 0.8})   # keeps, minus the keys
                 self.old_tree(conn, "c-2-2", fit={"crowded": True})                                           # keeps as it is
                 self.old_tree(conn, "c-3-3", kind="catalogued", catalogue="boise")                            # goes
@@ -211,10 +215,12 @@ class MigrationCleanUpTest(unittest.TestCase):
                         conn.execute(f"update trees.tree set {col} = 'x' where tree_id = 'c-1-1'")
                 self.assertEqual(conn.execute("select count(*) from pg_indexes where schemaname = 'trees' and indexname = 'tree_catalogue_idx'").fetchone()[0], 0)
                 b = conn.execute("select counts, params from trees.build where build_id = 'c-old'").fetchone()
-                self.assertEqual(b[0], {"trees": 2, "placed": 2})
+                # the inventory's count is gone, and so is the split by type taken over every tree the build held
+                self.assertEqual(b[0], {"trees": 2, "placed": 2, "surface_mae_m": 0.4})
                 self.assertEqual([x["source"] for x in b[1]["sources"]], ["trees/usgs_3dep_lidar", "trees/sentinel2"])
                 self.assertEqual(b[1]["theta"], 0.2)
                 self.assertEqual(conn.execute("select counts, params from trees.build where build_id = 'c-bare'").fetchone(), ({}, {}))
+                self.assertEqual(conn.execute("select counts from trees.build where build_id = 'c-clean'").fetchone()[0], clean)   # its split by type is its own
                 with self.assertRaises(psycopg.errors.CheckViolation), conn.transaction():
                     conn.execute(f"insert into trees.tree (tree_id, area, kind, type, geom, height_m, crown_radius_m, build_id)"
                                  f" values ('c-5-5', 'c', 'catalogued', 'broadleaf', {self.OLD_POINT}, 9, 3, 'c-old')")

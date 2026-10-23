@@ -13,8 +13,9 @@
 --     change, which still selects them, keeps working and gets nothing City-derived), their index and the check that tied
 --     them to kind; a check now refuses any value in them, so nothing can write those fields again (a later migration
 --     drops the columns once every app image is past this change);
---   * the build records' counts of catalogued and estimated trees (their tree count becomes the placed count) and
---     their inventory sources.
+--   * the build records' counts of catalogued and estimated trees (their tree count becomes the placed count), the
+--     counts by type of a build that held them (they were taken over all its trees, so the inventory's genus typing is
+--     in them and they can't be recomputed from what remains), and their inventory sources.
 -- The areas that held such trees are short until they are rebuilt (build.py without --anchors, then trees-load here;
 -- the private plugin's matching and load come after, separately, and change nothing public): the runbook is in
 -- plugins/trees/README.md. Applied before those rebuilds load, the only effect is those transient gaps. Not reversible.
@@ -40,8 +41,10 @@ ALTER TABLE trees.tree ADD CONSTRAINT tree_no_city_fields_check CHECK (catalogue
 ALTER TABLE trees.tree ADD CONSTRAINT tree_kind_check CHECK (kind = 'placed');
 
 UPDATE trees.build
-   SET counts = CASE WHEN counts ? 'placed' THEN jsonb_set(counts - 'catalogued' - 'estimated', '{trees}', counts -> 'placed')
-                     ELSE counts - 'catalogued' - 'estimated' END,   -- the build's tree count is what it placed, not the inventory's
+   SET counts = CASE WHEN counts ? 'catalogued' OR counts ? 'estimated'
+                     THEN CASE WHEN counts ? 'placed' THEN jsonb_set(counts - 'catalogued' - 'estimated' - 'types', '{trees}', counts -> 'placed')
+                               ELSE counts - 'catalogued' - 'estimated' - 'types' END   -- the tree count is what it placed; the split by type was over every tree it held
+                     ELSE counts END,
        params = CASE WHEN jsonb_typeof(params -> 'sources') = 'array'
                      THEN jsonb_set(params, '{sources}',
                             COALESCE((SELECT jsonb_agg(e) FROM jsonb_array_elements(params -> 'sources') e
