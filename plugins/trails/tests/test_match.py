@@ -189,10 +189,25 @@ class DatabaseTest(unittest.TestCase):
             if not c.execute("select to_regclass('trails.matched_line') is not null "
                              "and to_regclass('ops.build_pending') is not null").fetchone()[0]:
                 raise unittest.SkipTest("apply trails 0001 and migrations 0019-0021")
+            # The setUp deletes raw.record rows for these sources, which the scratch build role may not do.
+            if not c.execute("select has_table_privilege(current_user, 'raw.record', 'DELETE')").fetchone()[0]:
+                raise unittest.SkipTest("the database role can't delete from raw.record (scratch build role); "
+                                        "run these as the owner on a test database")
 
     def setUp(self):
         self.conn = self.psycopg.connect(DB_URL)
         c = self.conn
+        try:
+            self._clean_slate(c)
+        except self.psycopg.errors.InsufficientPrivilege as e:
+            # Any table the setUp touches may be off limits to the role (the scratch build role can't write all of them).
+            self.conn.rollback()
+            self.conn.close()
+            self.skipTest("the database role lacks a privilege this setUp needs "
+                          f"({str(e).splitlines()[0]}); run these as the owner on a test database")
+        self.fetch0 = c.execute("select coalesce(max(id), 0) from ops.fetch").fetchone()[0]
+
+    def _clean_slate(self, c):
         for s in (r2r.SOURCE, gb.SOURCE, osm_paths.SOURCE, match.SOURCE):
             db.ensure_source(c, s)
         # A clean slate inside the transaction (rolled back): no other trails, lines or marks.
@@ -208,7 +223,6 @@ class DatabaseTest(unittest.TestCase):
                     "delete from ops.osm_consumer where consumer = 'trails.osm_paths'",
                     "delete from ops.build_pending where build = 'trails-match'"):
             c.execute(sql)
-        self.fetch0 = c.execute("select coalesce(max(id), 0) from ops.fetch").fetchone()[0]
 
     def tearDown(self):
         self.conn.rollback()

@@ -305,7 +305,18 @@ class RealDataTest(unittest.TestCase):
         if cls.conn.execute("select to_regclass('core.transit_ribbon')").fetchone()[0] is None:
             raise unittest.SkipTest("migration 0006 isn't applied to this database")
         cls.inputs = tr.load_inputs(cls.conn)
+        if not cls.inputs["shapes"]:
+            cls.conn.rollback()
+            raise unittest.SkipTest("no VRT shapes in this database (the real-data checks need the feed's shapes loaded)")
+        # A route with no fix in DORMANT_DAYS is dormant and left out of the build. Skip only when that leaves no
+        # route with a shape to draw (a database whose recent positions cover no route, or none at all).
         cls.dormant = tr.dormant_routes(cls.conn)
+        live = {s["route_id"] for s in cls.inputs["shapes"] if s["route_id"] not in cls.dormant}
+        if not live:
+            cls.conn.rollback()
+            cls.conn.close()
+            raise unittest.SkipTest(f"every route with a shape is dormant (no fix in {tr.DORMANT_DAYS} days), "
+                                    "so the build has nothing to draw; the real-data checks need recent positions")
         t0 = time.monotonic()
         cls.res = tr.build(cls.inputs["shapes"], cls.inputs["order"], cls.inputs["stored"], cls.inputs["hubs"],
                            cls.dormant, cls.inputs["pinned"])

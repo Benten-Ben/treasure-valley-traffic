@@ -446,6 +446,9 @@ class DatabaseTest(unittest.TestCase):
     def setUp(self):
         self.conn = self.psycopg.connect(DB_URL)
         osm.db.ensure_source(self.conn, osm.SOURCE)
+        # Own state, whatever the database holds: the real extract's ways are set inactive for this
+        # transaction only (rolled back in tearDown), so the shrink guard and the matching see just this test's ways.
+        self.conn.execute("update core.osm_way set active = false where active")
         # The layout's origin, in UTM 11N: an empty spot 45 km from the nearest ACHD segment.
         self.x0, self.y0 = self.conn.execute(
             "select ST_X(p), ST_Y(p) from (select ST_Transform(ST_SetSRID(ST_MakePoint(-116.95, 43.05), 4326), 26911) p) q"

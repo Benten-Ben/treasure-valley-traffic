@@ -115,12 +115,13 @@ class OnADatabase(unittest.TestCase):
     def setUp(self):
         self.psql = shutil.which("psql")
         if not self.psql:
-            self.fail("no psql on PATH")
+            self.skipTest("no psql on PATH")
         with subprocess.Popen([self.psql, self.url, "-X", "-At", "-c",
                                "select rolsuper from pg_roles where rolname = current_user"],
                               stdout=subprocess.PIPE, text=True) as p:
             if p.stdout.read().strip() != "t":
-                self.fail("TVT_TEST_DATABASE_URL must log in as a superuser (the test makes the role)")
+                self.skipTest("TVT_TEST_DATABASE_URL doesn't log in as a superuser (the test makes the role); "
+                              "run these with a superuser URL on a test cluster")
 
     def run_sql(self, body):
         """Run the fixture, then body, in one transaction that's rolled back. (stdout+stderr, code)"""
