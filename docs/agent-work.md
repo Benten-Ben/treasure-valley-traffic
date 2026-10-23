@@ -55,6 +55,23 @@ xhigh.
   on the laptop; it is git-ignored, so it is not published.
 - **Keep work resumable.** State lives in issues, branches and worktrees. Workflow scripts and helpers live in the
   git-ignored `data/dev/wf/`, never in a temporary folder.
+- **The scripts there** (git-ignored, since they hold the laptop's paths; run each with the Workflow tool's `scriptPath`):
+  - `units.js` takes `{units: [{issue, tier, precheck?, models?, review_lens?, pr?, head?}]}` and runs each issue as a
+    build unit at its tier: precheck (Haiku low; a unit with open questions stops there for the coordinator's answers),
+    build to a draft PR with `Closes #n` (the builder claims the issue first), one review, one skeptic fix, and for the
+    critical tier the whole-PR review (three Opus-high lenses and a skeptic) and a second fix. `pr` and `head` start a
+    unit at the review, for a PR whose build stopped early. Agents call GitHub through the App wrapper by its path.
+  - `critical-review.js` is the whole-PR review on its own.
+  - `fix-critical.js` takes a PR, the commit its review saw and the coordinator's written decisions (a brief file), and
+    runs a fixer, then two Opus-high verifiers (each confirmed finding rebuilt; regressions in the fix diff) and a
+    skeptic, with one more fix and verification round if needed. A verifier that returns nothing counts as a finding.
+  - `verify-fixes.js` is that verification alone, for fix rounds a batch ran without one.
+  - `quiet-specs3.sh <worktree>:<package>:<grep>[:fixture]` runs browser specs one set at a time behind the browser
+    lock, only while the laptop's load is under 12, each checkout built once per commit; `fixture` serves the
+    synthetic landscape tiles. Counts go to `data/dev/quiet-specs.log`, and each run's whole output beside its package.
+  - The merge routine (`merge-fn.sh`) merges a PR only at the reviewed head, after the public check on its added lines,
+    its body and its comments.
+  The completion notice of each run gives its agents and tokens, for the evidence below.
 - **Server work** follows the existing rules: the scratch database for unmerged code, `heavy` with a deadline for heavy
   jobs, and the night window around the camera roll-up ([deploy/README.md](../deploy/README.md)).
 
