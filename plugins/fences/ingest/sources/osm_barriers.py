@@ -128,8 +128,9 @@ def height(type_, tags):
 
 
 def look(type_, tags):
-    """'solid' or 'open' ⚠️: by type, and for a fence by its fence_type or material."""
-    if type_ in SOLID_TYPES:
+    """'solid' or 'open' ⚠️: by type or barrier value (a city_wall is type 'other'), and for a fence by its
+    fence_type or material."""
+    if type_ in SOLID_TYPES or tags.get("barrier") in SOLID_TYPES:
         return "solid"
     if type_ == "fence" and (_norm(tags.get("fence_type")) in SOLID_FENCES or _norm(tags.get("material")) in SOLID_FENCES):
         return "solid"

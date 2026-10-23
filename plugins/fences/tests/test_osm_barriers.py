@@ -107,6 +107,8 @@ class RuleTest(unittest.TestCase):
             self.assertEqual(look(t, {}), "solid", t)
         self.assertEqual(look("guard_rail", {}), "open")
         self.assertEqual(look("other", {}), "open")
+        self.assertEqual(look("other", {"barrier": "city_wall"}), "solid")
+        self.assertEqual(look("other", {"barrier": "cable_barrier"}), "open")
         self.assertEqual(look("fence", {}), "open")
         self.assertEqual(look("fence", {"fence_type": "chain_link"}), "open")
         self.assertEqual(look("fence", {"fence_type": "wood"}), "solid")
@@ -278,6 +280,7 @@ class DatabaseTest(unittest.TestCase):
         from plugins.trees.ingest import hedge_check
         osm_barriers.consume(self.conn, FakeRun(self.features()))
         got = hedge_check.hedges_from_fences(self.conn)
+        self.assertEqual([i for i, _ in got], [f"osm:w{self.BASE + 3}"])          # setUp made the real hedges inactive
         mine = [(i, g) for i, g in got if i == f"osm:w{self.BASE + 3}"]
         self.assertEqual(len(mine), 1)
         self.assertEqual(mine[0][1]["type"], "LineString")
