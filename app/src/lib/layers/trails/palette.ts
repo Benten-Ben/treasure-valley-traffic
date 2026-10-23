@@ -9,9 +9,9 @@ import { CREAM, UMBER, UMBER_TEXT } from './trails.js';
 export const palette: Palette = {
 	id: 'trails',
 	colors: [
-		{ name: 'trail umber', valley: UMBER, use: 'every trail line, in both looks' },
-		{ name: 'trail halo', valley: CREAM, use: 'a cream halo under the lines, over the ground band' },
-		{ name: 'trail names', valley: UMBER_TEXT, use: 'names along trails and routes, on a cream halo' }
+		{ name: 'trail umber', valley: UMBER, use: 'line: every trail line, in both looks' },
+		{ name: 'trail halo', valley: CREAM, use: 'line halo: a cream halo under the lines, over the ground band' },
+		{ name: 'trail names', valley: UMBER_TEXT, use: 'label: names along trails and routes, on a cream halo' }
 	]
 };
 
