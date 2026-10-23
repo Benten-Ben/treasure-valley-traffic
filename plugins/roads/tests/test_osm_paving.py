@@ -6,7 +6,7 @@ gives it exactly the shared fixture's paving ways; the CDL's source entry and co
 (kinds, material and the land rule, widths, markings and rail crossings), the rows and their
 links, measured shares applied to them, and reading a developed-land build (developed_build.py
 writes synthetic ones). Database tests run only against a scratch database named by
-TVT_TEST_DATABASE_URL (with roads 0002), inside a transaction that is rolled back: loading a
+TVT_TEST_DATABASE_URL (with roads 0005), inside a transaction that is rolled back: loading a
 build, measuring in PostGIS, a load with and without developed land, measuring again after a new
 build, and what the tables refuse. With osmium-tool, the synthetic fixture (fixtures/
 osm_paving.osm: invented ids, names and coordinates) goes through the loader's smart cut and this
@@ -70,7 +70,7 @@ def as_dict(row, columns):
 class ManifestTest(unittest.TestCase):
     def test_the_entry(self):
         c = consumer()
-        self.assertEqual(c.tags, ("w/highway=service,footway,path,cycleway", "a/amenity=parking,parking_space",
+        self.assertEqual(c.tags, ("w/highway=service,footway,path,cycleway,raceway,escape", "a/amenity=parking,parking_space",
                                   "n/highway=crossing", "n/crossing", "n/kerb"))
         self.assertEqual(c.geometry, ("point", "linestring", "polygon"))
         self.assertEqual(c.tables, (pv.WAYS, pv.LOTS, pv.NODES))
@@ -148,6 +148,8 @@ class RulesTest(unittest.TestCase):
         self.assertEqual(pv.way_kind({"highway": "service", "service": "emergency_access"}), "emergency_access")
         self.assertEqual(pv.way_kind({"highway": "path", "footway": "sidewalk"}), "sidewalk")
         self.assertEqual(pv.way_kind({"highway": "cycleway", "footway": "crossing"}), "crossing")
+        self.assertEqual(pv.way_kind({"highway": "raceway"}), "raceway")
+        self.assertEqual(pv.way_kind({"highway": "escape"}), "escape")
         self.assertEqual(pv.lot_kind({"amenity": "parking"}), "lot")
         self.assertEqual(pv.lot_kind({"amenity": "parking_space"}), "space")
         self.assertIsNone(pv.lot_kind({"amenity": "bench"}))
@@ -155,6 +157,20 @@ class RulesTest(unittest.TestCase):
         self.assertEqual(pv.node_kind({"crossing": "unmarked", "kerb": "lowered"}), "crossing")   # a crossing first
         self.assertEqual(pv.node_kind({"kerb": "flush"}), "kerb")
         self.assertIsNone(pv.node_kind({"highway": "traffic_signals"}))
+
+    def test_raceways_and_escape_ramps_have_no_default_material(self):
+        for kind in ("raceway", "escape"):
+            self.assertEqual(pv.kind_default(kind), (None, False))
+            self.assertEqual(pv.material(kind, {}, 1.0), ("unknown", None))          # even on developed land
+            self.assertEqual(pv.material(kind, {"surface": "asphalt"}), ("asphalt", "surface"))
+            self.assertEqual(pv.material(kind, {"surface": "paved"}), ("concrete", "surface"))
+
+    def test_raceway_and_escape_rows(self):
+        for n, hw, est in ((21, "raceway", 10.0), (22, "escape", 6.0)):
+            row = as_dict(pv.way_row(way(n, highway=hw)), pv.WAY_COLUMNS)
+            self.assertEqual((row["kind"], row["highway"], row["material"], row["material_source"], row["width_est_m"],
+                              row["width_source"]), (hw, hw, "unknown", None, est, "default"))
+            self.assertEqual(osm_extract.owner({"highway": hw}), "osm_paving")
 
     def test_material_from_the_surface_tag(self):
         for tags, want in [({"surface": "asphalt"}, "asphalt"), ({"surface": "Concrete"}, "concrete"),
@@ -198,6 +214,9 @@ class RulesTest(unittest.TestCase):
         self.assertEqual(pv.width("parking_aisle", {}), (None, 7.0, "default"))
         self.assertEqual(pv.width("parking_aisle", {"oneway": "yes"}), (None, 4.5, "default"))
         self.assertEqual(pv.width("service", {"width": "wide"}), (None, 5.5, "default"))
+        self.assertEqual(pv.width("raceway", {}), (None, 10.0, "default"))        # ⚠️ estimates
+        self.assertEqual(pv.width("escape", {}), (None, 6.0, "default"))
+        self.assertEqual(pv.width("raceway", {"width": "12"}), (12.0, 12.0, "tagged"))
         self.assertEqual(set(pv.WIDTHS), set(pv.KIND_DEFAULTS) - {"lot", "space"})
 
     def test_markings(self):
@@ -457,7 +476,7 @@ class FakeRun:
 LAND_WEST, LAND_SOUTH, LAND_SPLIT, LAND_NORTH = -116.62, 42.99, -116.275, 43.62
 
 
-@unittest.skipUnless(DB_URL, "set TVT_TEST_DATABASE_URL to a scratch database (with roads 0002)")
+@unittest.skipUnless(DB_URL, "set TVT_TEST_DATABASE_URL to a scratch database (with roads 0005)")
 class DatabaseTest(unittest.TestCase):
     """Everything here runs in one transaction that is rolled back. Every active row is retired
     first (rolled back too), so a load's rows are the active ones; synthetic ids start far above
@@ -610,6 +629,20 @@ class DatabaseTest(unittest.TestCase):
                 with self.assertRaises(self.psycopg.errors.CheckViolation):
                     pv.consume(self.conn, FakeRun([{**way(6, **tags), "osm_id": self.BASE + 6}]))
                 self.conn.execute("rollback to savepoint s")
+
+    def test_raceways_and_escape_ramps_are_stored(self):
+        """The two highway values 0005 added: rows load, and the service-kinds check still holds."""
+        features = [{**way(31, highway="raceway", surface="asphalt"), "osm_id": self.BASE + 31},
+                    {**way(32, highway="escape"), "osm_id": self.BASE + 32}]
+        pv.consume(self.conn, FakeRun(features))
+        self.assertEqual(self.conn.execute("""select osm_id - %s, kind, highway, material, material_source, width_est_m
+                                              from roads.osm_paving where active order by 1""", (self.BASE,)).fetchall(),
+                         [(31, "raceway", "raceway", "asphalt", "surface", 10.0),
+                          (32, "escape", "escape", "unknown", None, 6.0)])
+        self.conn.execute("savepoint s")
+        with self.assertRaises(self.psycopg.errors.CheckViolation):          # a raceway is not a service way
+            self.conn.execute("update roads.osm_paving set kind = 'service' where osm_id = %s", (self.BASE + 31,))
+        self.conn.execute("rollback to savepoint s")
 
     def test_the_alleys_the_partition_gives_the_paving(self):
         """An alley tagged area=yes, closed (as osmium gives it: a closed line) or not, and one whose

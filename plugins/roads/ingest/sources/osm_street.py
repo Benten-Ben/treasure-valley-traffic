@@ -13,7 +13,7 @@ core.osm_way and roads.osm_street always split one extract's ways between
 them; a build that reads both calls osm_extract.check_partition() first.
 
 What it keeps: the highway ways core's partition gives it (osm_extract.owner),
-by tags alone: residential, unclassified, living_street, road and busway, and
+by tags alone: residential, unclassified, unclassified_link, living_street, road and busway, and
 alleys (highway=service + service=alley), unless drawn as an area. osm_valley
 keeps any of them tagged with lanes (core.osm_way, unchanged), so each way has
 one owner. Lines only, with every way that has a node in the valley box kept
@@ -42,12 +42,13 @@ SOURCE = {
     "schedule": None,   # loaded by hand: Geofabrik's robots.txt disallows scripted downloads (Oct 6, 2026)
     "license": "ODbL",
     "credit": "© OpenStreetMap contributors",
-    "notes": "A consumer of the OpenStreetMap loader (python3 -m ingest osm-load): residential, unclassified, "
+    "notes": "A consumer of the OpenStreetMap loader (python3 -m ingest osm-load): residential, unclassified (links too), "
              "living street, road and busway ways and alleys that osm_valley doesn't keep, cut to the valley box. "
              "roads.osm_street, its own table (ODbL), versioned in place.",
 }
 
 TABLE = "roads.osm_street"
+STORED_AS = {"unclassified_link": "unclassified"}   # a link of an unclassified road draws and matches as one
 COLUMNS = [("osm_id", "bigint"), ("highway", "text"), ("service", "text"), ("name", "text"), ("ref", "text"),
            ("oneway", "text"), ("width_m", "real"), ("surface", "text"), ("access", "text"), ("maxspeed", "text"),
            ("layer", "smallint"), ("bridge", "boolean"), ("tunnel", "boolean"), ("tags", "jsonb"),
@@ -62,7 +63,8 @@ def parse_tunnel(v):
 def street_row(f):
     """One feature (osm_extract's dict) as a row: COLUMNS' values, then the geometry as GeoJSON."""
     tags = f["tags"]
-    return (f["osm_id"], tags["highway"], _text(tags.get("service")) if tags["highway"] == "service" else None,
+    highway = STORED_AS.get(tags["highway"], tags["highway"])      # the raw value stays in tags
+    return (f["osm_id"], highway, _text(tags.get("service")) if tags["highway"] == "service" else None,
             _text(tags.get("name")), _text(tags.get("ref")), effective_oneway(tags), parse_width(tags.get("width")),
             _text(tags.get("surface")), _text(tags.get("access")), _text(tags.get("maxspeed")),
             parse_layer(tags.get("layer")), parse_bridge(tags.get("bridge")), parse_tunnel(tags.get("tunnel")),

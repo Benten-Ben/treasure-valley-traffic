@@ -102,17 +102,35 @@ class PartitionTest(unittest.TestCase):
             ({"highway": "construction"}, None), ({"highway": "platform"}, None), ({"highway": "corridor"}, None),
             ({"highway": "residential", "area": "yes"}, None), ({"highway": "primary", "area": "yes"}, None),
             ({"highway": "steps", "footway": "sidewalk"}, T),       # the sidewalk rule is for footway, path, cycleway
+            ({"highway": "unclassified_link"}, S), ({"highway": "unclassified_link", "lanes": "1"}, V),
+            ({"highway": "unclassified_link", "area": "yes"}, None),                # a street drawn as an area
+            ({"highway": "raceway"}, P), ({"highway": "raceway", "area": "yes"}, P),
+            ({"highway": "raceway", "lanes": "2"}, V), ({"highway": "raceway", "turn:lanes": "through"}, V),
+            ({"highway": "escape"}, P), ({"highway": "unclassified", "area": "yes"}, None),
+            ({"highway": "service", "area": "yes"}, P), ({"highway": "elevator"}, None),
             ({"building": "yes"}, None), ({}, None),
         ]
         for tags, want in cases:
             with self.subTest(tags):
                 self.assertEqual(ox.owner(tags), want)
 
+    def test_ownerless_built_ways_are_only_the_named_area_streets(self):
+        built = [{"highway": "residential", "area": "yes"}, {"highway": "unclassified", "area": "yes"},
+                 {"highway": "primary", "area": "yes"}, {"highway": "unclassified_link", "area": "yes"},
+                 {"highway": "bus_guideway"}, {"highway": "proposed"}, {"highway": "corridor"},
+                 {"highway": "elevator"}, {"highway": "raceway"}, {"highway": "residential"}, {"building": "yes"}]
+        self.assertEqual(ox.count_ownerless(built), Counter({"area:residential": 1, "area:unclassified": 1,
+                                                             "area:primary": 1, "area:unclassified_link": 1,
+                                                             "bus_guideway": 1}))
+        self.assertIsNone(ox.ownerless_built({"highway": "proposed"}))
+        self.assertEqual(ox.ownerless_built({"highway": "bus_guideway"}), "bus_guideway")
+
     def test_every_owner_is_named_and_left_overs_say_why(self):
         self.assertEqual(ox.OWNERS, (V, S, P, T))
         self.assertIn("not built", ox.unowned_reason({"highway": "proposed"}))
         self.assertIn("as an area", ox.unowned_reason({"highway": "residential", "area": "yes"}))
         self.assertIn("not drawn", ox.unowned_reason({"highway": "corridor"}))
+        self.assertIn("as an area", ox.unowned_reason({"highway": "unclassified_link", "area": "yes"}))
         self.assertIsNone(ox.unowned_reason({"highway": "residential"}))
         self.assertIsNone(ox.unowned_reason({"waterway": "canal"}))
 
@@ -754,6 +772,32 @@ class MainTest(unittest.TestCase):
                 code = e.code
         return code, out.getvalue() + err.getvalue()
 
+    def test_count_ownerless_reads_the_cut_and_loads_nothing(self):
+        def line(i, **tags):
+            return json.dumps({"type": "Feature", "id": f"w{i}", "geometry": {"type": "LineString", "coordinates": []},
+                               "properties": {"@type": "way", "@id": i, **tags}})
+        ways = [line(1, highway="residential"), line(2, highway="residential", area="yes"),
+                line(3, highway="raceway"), line(4, highway="unclassified_link"), line(5, highway="corridor"),
+                line(6, highway="bus_guideway"), line(7, building="yes")]
+
+        def fake_osmium(cmd):
+            with open(cmd[cmd.index("--output") + 1], "w", encoding="utf-8") as f:
+                f.write("\n".join(ways) + "\n")
+            return ""
+
+        with tempfile.TemporaryDirectory() as d:
+            self.assertRaises(RuntimeError, ox.count_ownerless_in_cut, os.path.join(d, ox.CUT_DIR))             # no cut yet
+            os.makedirs(os.path.join(d, ox.CUT_DIR))
+            open(os.path.join(d, ox.CUT_DIR, ox.CUT_NAME), "w").close()
+            with mock.patch.object(ox, "osmium", fake_osmium), mock.patch.object(ox, "archive_dir", return_value=d):
+                lines = []
+                counts = ox.count_ownerless_in_cut(os.path.join(d, ox.CUT_DIR), out=lines.append)
+                self.assertEqual(counts, Counter({"area:residential": 1, "bus_guideway": 1}))
+                self.assertIn("6 highway ways", lines[0])
+                with mock.patch.object(ox.db, "connect", side_effect=AssertionError("no database")):
+                    code, text = self.run_main("--count-ownerless")
+        self.assertEqual(code, 0)
+
     def test_it_needs_to_be_told_which_extract(self):
         code, text = self.run_main()
         self.assertEqual(code, 2)
@@ -788,7 +832,7 @@ class MainTest(unittest.TestCase):
             code, text = self.run_main("--list")
         self.assertEqual(code, 0)
         self.assertIn("roads.osm_street", text)
-        self.assertIn("w/highway=residential,unclassified,living_street,road,busway,service", text)
+        self.assertIn("w/highway=residential,unclassified,unclassified_link,living_street,road,busway,service", text)
 
 
 # ---- the real pipeline (osmium) --------------------------------------------

@@ -54,11 +54,11 @@
      "geometry": ["point", "linestring"],
      "tables": ["core.osm_way", "core.osm_lane", "core.osm_node", "core.segment_match"]},
     {"source": "osm_street",
-     "tags": ["w/highway=residential,unclassified,living_street,road,busway,service"],
+     "tags": ["w/highway=residential,unclassified,unclassified_link,living_street,road,busway,service"],
      "geometry": ["linestring"],
      "tables": ["roads.osm_street"]},
     {"source": "osm_paving",
-     "tags": ["w/highway=service,footway,path,cycleway", "a/amenity=parking,parking_space", "n/highway=crossing",
+     "tags": ["w/highway=service,footway,path,cycleway,raceway,escape", "a/amenity=parking,parking_space", "n/highway=crossing",
               "n/crossing", "n/kerb"],
      "geometry": ["point", "linestring", "polygon"],
      "tables": ["roads.osm_paving", "roads.osm_parking", "roads.osm_walk_node"]}

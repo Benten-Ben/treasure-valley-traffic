@@ -3,6 +3,7 @@
     python3 -m ingest osm-load --inbox                 # the newest extract in $TVT_ARCHIVE/osm/inbox/
     python3 -m ingest osm-load --file PATH             # an extract anywhere (copied into the archive)
     python3 -m ingest osm-load --archived              # the newest extract in the archive again
+    python3 -m ingest osm-load --count-ownerless       # built highway ways in the valley cut that no consumer owns
     python3 -m ingest osm-load --only roads.osm_street # one consumer (on the newest archived extract,
                                                        # unless --inbox or --file says otherwise)
     python3 -m ingest osm-load --cut-only              # just make the valley cut (S5a's mask reads it)
@@ -52,8 +53,9 @@ named get only the highway ways the partition gives them, so no way is drawn
 twice. The 12 lane-tagged cycleways, tracks and pedestrian ways osm_valley
 already keeps are the named exception (`named_exception()`): they stay
 osm_valley's, and trails reads them through a view. No way has two owners;
-some have none (unbuilt and indoor ways, roads drawn as areas, raceways:
-`unowned_reason()`).
+some have none (unbuilt and indoor ways, roads drawn as areas: `unowned_reason()`).
+A raceway or escape ramp goes to osm_paving; a raceway with lanes or turn tags stays
+osm_valley's (its keep rule runs first).
 
 The partition holds only while its owners hold the same extract: a way that
 gained a lanes tag would otherwise be in core.osm_way and roads.osm_street
@@ -132,11 +134,13 @@ def keep_way(tags):
 
 # ---- the partition (plan C10) ----------------------------------------------
 
-STREET_CLASSES = {"residential", "unclassified", "living_street", "road", "busway"}
+STREET_CLASSES = {"residential", "unclassified", "unclassified_link", "living_street", "road", "busway"}
+PAVED_OTHER = {"raceway", "escape"}   # built surfaces drawn by material; never routed (Oct 22, answer 9)
 PAVING_FOOTWAYS = {"sidewalk", "crossing", "access_aisle", "traffic_island"}   # footway=*
 WALKWAYS = {"footway", "path", "cycleway"}
 PATH_CLASSES = {"track", "path", "footway", "cycleway", "bridleway", "steps", "pedestrian"}
 OWNERS = ("osm_valley", "osm_street", "osm_paving", "osm_paths")
+AREA_STREET_CLASSES = {"residential", "unclassified", "unclassified_link", "primary"}   # drawn as areas: no owner
 LEADER = OWNERS[0]          # the others load only the extract it holds
 
 
@@ -144,13 +148,14 @@ def owner(tags):
     """The consumer that owns a highway way, by its tags alone, or None (not a highway way, not
     built, or nothing we draw). In this order:
       1. osm_valley's keep rule (major roads and every way tagged with lanes), unchanged;
-      2. osm_street: residential, unclassified, living_street, road and busway, and alleys
-         (highway=service + service=alley), unless drawn as an area (area=yes);
+      2. osm_street: residential, unclassified, unclassified_link, living_street, road and
+         busway, and alleys (highway=service + service=alley), unless drawn as an area (area=yes);
       3. osm_paving: footway=sidewalk|crossing|access_aisle|traffic_island on a footway, path
-         or cycleway, and every other service way;
+         or cycleway, every other service way, and raceway and escape (osm_valley keeps a raceway
+         with lanes or turn tags, by rule 1; the rest are paving);
       4. osm_paths: track, path, the other footways, cycleway, bridleway, steps, pedestrian.
     Left over: unbuilt and non-way values (proposed, construction, platform, ...), roads and
-    streets drawn as areas, and values none of these take (corridor, elevator, raceway, ...)."""
+    streets drawn as areas, and values none of these take (corridor, elevator, ...)."""
     hw = tags.get("highway")
     if not hw:
         return None
@@ -161,7 +166,7 @@ def owner(tags):
     area = tags.get("area") == "yes"
     if not area and (hw in STREET_CLASSES or (hw == "service" and tags.get("service") == "alley")):
         return "osm_street"
-    if (hw in WALKWAYS and tags.get("footway") in PAVING_FOOTWAYS) or hw == "service":
+    if (hw in WALKWAYS and tags.get("footway") in PAVING_FOOTWAYS) or hw == "service" or hw in PAVED_OTHER:
         return "osm_paving"
     if hw in PATH_CLASSES:
         return "osm_paths"
@@ -175,9 +180,61 @@ def unowned_reason(tags):
         return None
     if hw in NOT_ROADS:
         return f"not built or not a way (highway={hw})"
-    if tags.get("area") == "yes" and (hw in ROADS):
+    if tags.get("area") == "yes" and (hw in ROADS or hw in AREA_STREET_CLASSES):
         return f"a road drawn as an area (highway={hw}, area=yes)"
     return f"not drawn (highway={hw})"
+
+
+# Built values that no owner takes on purpose: a corridor or an elevator is indoor, and NOT_ROADS
+# are unbuilt or not ways at all. Everything else built that has no owner is a gap to close.
+INDOOR_OR_NONBUILT = NOT_ROADS | {"corridor", "elevator"}
+
+
+def ownerless_built(tags):
+    """The count key for a built highway way with no owner, or None (it has one, or it's indoor or
+    unbuilt): 'area:<highway>' for an area-drawn street (named, expected), else the highway value,
+    a gap the real-extract check must not find (apart from the named areas)."""
+    hw = tags.get("highway")
+    if not hw or owner(tags) or hw in INDOOR_OR_NONBUILT:
+        return None
+    if tags.get("area") == "yes" and hw in AREA_STREET_CLASSES:
+        return f"area:{hw}"
+    return hw
+
+
+def count_ownerless(tags_list):
+    """Counter of ownerless_built keys over the built ways, for the real-extract check."""
+    return Counter(key for key in map(ownerless_built, tags_list) if key)
+
+
+def count_ownerless_in_cut(cut_dir, out=print):
+    """Count the built highway ways with no owner in the valley cut (`osm-load --count-ownerless`,
+    run by hand; it loads nothing): the keys of ownerless_built(), over the ways osmium exports as
+    lines or areas. The real-extract check for the partition. Returns the Counter."""
+    cut = os.path.join(cut_dir, CUT_NAME)
+    if not os.path.isfile(cut):
+        raise RuntimeError(f"no valley cut at {cut} (make it with --cut-only)")
+    counts, total = Counter(), 0
+    with tempfile.TemporaryDirectory() as work:
+        config, lines = os.path.join(work, "export.json"), os.path.join(work, "ways.geojsonseq")
+        write_json(config, {"attributes": {"type": True, "id": True}, "linear_tags": True, "area_tags": False})
+        osmium(["osmium", "export", "--config", config, "--output-format", "geojsonseq", "--format-option",
+                "print_record_separator=false", "--geometry-types", "linestring,polygon", "--add-unique-id", "type_id",
+                "--no-progress", "--overwrite", "--output", lines, cut])
+        with open(lines, encoding="utf-8") as f:
+            for line in f:
+                if '"highway"' not in line:
+                    continue
+                feature = parse_export_line(line)
+                if feature and feature["type"] == "w":
+                    total += 1
+                    key = ownerless_built(feature["tags"])
+                    if key:
+                        counts[key] += 1
+    out(f"{total} highway ways in the cut; {sum(counts.values())} built ones with no owner")
+    for key, n in sorted(counts.items()):
+        out(f"  {key}: {n}")
+    return counts
 
 
 def named_exception(tags):
@@ -1016,12 +1073,17 @@ def main(argv=None):
                     help=f"just make the valley cut, in $TVT_ARCHIVE/osm/cut/ (heavy: {CUT_MEMORY})")
     ap.add_argument("--make-cut", action="store_true",
                     help="make the valley cut if it's missing (heavy); a run with osm_valley due makes it anyway")
+    ap.add_argument("--count-ownerless", action="store_true",
+                    help="count the built highway ways in the valley cut that no consumer owns (loads nothing)")
     ap.add_argument("--list", action="store_true", help="list the consumers and the extract each loaded last")
     args = ap.parse_args(argv)
 
     every = consumers()
     if args.list:
         list_consumers(every)
+        return 0
+    if args.count_ownerless:
+        count_ownerless_in_cut(os.path.join(archive_dir(), CUT_DIR))
         return 0
     if not (args.inbox or args.file or args.archived or args.only or args.cut_only):
         ap.error("say which extract: --inbox, --file PATH or --archived (or --only, --cut-only, --list)")

@@ -53,7 +53,7 @@ class ManifestTest(unittest.TestCase):
 
     def test_osm_street_s_entry(self):
         c = consumer("osm_street")
-        self.assertEqual(c.tags, ("w/highway=residential,unclassified,living_street,road,busway,service",))
+        self.assertEqual(c.tags, ("w/highway=residential,unclassified,unclassified_link,living_street,road,busway,service",))
         self.assertEqual((c.geometry, c.tables), (("linestring",), ("roads.osm_street",)))
         self.assertEqual(osm_street.TABLE, "roads.osm_street")
         self.assertIn("roads.osm_street", roads().manifest["tables"])
@@ -92,6 +92,14 @@ class RowTest(unittest.TestCase):
         self.assertEqual(json.loads(values["tags"])["name"], "  Bridge   Lane ")        # tags as tagged
         self.assertEqual(json.loads(row[-1])["type"], "LineString")
         self.assertEqual(len(row), len(osm_street.COLUMNS) + 1)
+
+    def test_an_unclassified_link_is_stored_as_unclassified(self):
+        row = osm_street.street_row(self.feature(11, highway="unclassified_link", name="Ramp"))
+        values = dict(zip([c for c, _ in osm_street.COLUMNS], row))
+        self.assertEqual((values["highway"], values["service"]), ("unclassified", None))
+        self.assertEqual(json.loads(values["tags"])["highway"], "unclassified_link")        # the raw value is kept
+        plain = osm_street.street_row(self.feature(12, highway="unclassified"))
+        self.assertEqual(plain[1], "unclassified")
 
     def test_alleys_and_tunnels(self):
         alley = dict(zip([c for c, _ in osm_street.COLUMNS],
@@ -151,6 +159,11 @@ class DatabaseTest(unittest.TestCase):
         self.assertEqual((stats["unchanged"], stats["retired"]), (1, 1))
         self.assertEqual(self.conn.execute("select active from roads.osm_street where osm_id = %s",
                                            (self.BASE + 2,)).fetchone()[0], False)
+
+    def test_an_unclassified_link_is_stored(self):
+        osm_street.consume(self.conn, FakeRun([self.feature(5, -116.31, highway="unclassified_link")]))
+        self.assertEqual(self.conn.execute("select highway, tags->>'highway' from roads.osm_street where osm_id = %s",
+                                           (self.BASE + 5,)).fetchone(), ("unclassified", "unclassified_link"))
 
     def test_the_table_refuses_what_the_partition_never_gives_it(self):
         with self.assertRaises(self.psycopg.errors.CheckViolation):
