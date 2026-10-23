@@ -3,9 +3,11 @@
  * JavaScript bundle budgets (docs/14 §14.9, "Targets"), from the production
  * build in .svelte-kit/output (run `npm run build` first):
  *
- * - initial JS ≤ 330 KB gzip: SvelteKit's start and app entries plus the
- *   nodes of the `/` route and everything they import statically (the
- *   MapLibre worker is listed separately);
+ * - initial JS ≤ 360 KB gzip (restated from 330 KB on Oct 22, DECISIONS
+ *   2026-10-22 item 5; a ratchet: a PR may add at most its order's stated
+ *   allowance, and a follow-up trims back toward 330 KB): SvelteKit's start
+ *   and app entries plus the nodes of the `/` route and everything they
+ *   import statically (the MapLibre worker is listed separately);
  * - each layer chunk (a dynamic import from src/lib/layers/) ≤ 30 KB brotli;
  * - the scene chunk (src/lib/scene/) ≤ 40 KB gzip.
  *
@@ -28,7 +30,7 @@ import { APP_DIR, mainCheckout } from './harness-env.mjs';
 const OUT = join(APP_DIR, '.svelte-kit', 'output');
 const CLIENT = join(OUT, 'client');
 const KB = 1000; // the plan's KB (its 298 KB main chunk is 291.7 KiB)
-export const BUDGETS = { initialGzip: 330 * KB, layerBrotli: 30 * KB, sceneGzip: 40 * KB };
+export const BUDGETS = { initialGzip: 360 * KB, layerBrotli: 30 * KB, sceneGzip: 40 * KB };
 
 const sizes = (file) => {
 	const buf = readFileSync(join(CLIENT, file));

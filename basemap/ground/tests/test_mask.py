@@ -101,7 +101,9 @@ def osm_fixture(path):
     o.way(square(300, 100, 360, 160), closed=True, natural="water")
     o.way([(0, 200), (200, 200)], waterway="canal")
     o.way([(0, 260), (200, 260)], waterway="stream", intermittent="yes")
-    o.way([(0, 320), (200, 320)], railway="rail")                                        # a line: not read
+    o.way([(0, 320), (200, 320)], railway="rail")                                        # a line: a 5 m bed
+    o.way([(0, 800), (200, 800)], aeroway="runway")                                      # a line: 45 m
+    o.way([(300, 800), (500, 800)], aeroway="taxiway")                                   # a line: 23 m
     o.way(square(400, 300, 440, 340), closed=True, aeroway="apron")
     o.way(square(500, 300, 540, 340), closed=True, landuse="railway")
     o.way(square(400, 0, 420, 20), closed=True, building="yes")                         # OSM buildings: unused
@@ -414,11 +416,18 @@ class MaskTest(unittest.TestCase):
         self.assertFalse(self.at(K.exact(self.win, self.m, "water", where="intermittent = 0"), 100, 260.1))
         self.assertTrue(self.at(cov, 100, 266.0))
         self.assertFalse(self.at(cov, 100, 266.6))
-        # Apron and rail yard: sampling only, 2 m around. The railway line isn't read.
+        # Apron and rail yard: sampling only, 2 m around.
         self.assertTrue(self.at(cov, 420, 320) and not self.at(paving, 420, 320))
         self.assertTrue(self.at(cov, 541.6, 320))
         self.assertFalse(self.at(cov, 542.4, 320) or self.at(paving, 520, 320))
-        self.assertFalse(self.at(cov, 100, 320))
+        # The railway line: a 5 m bed and 2 m around (4.5 m from the line); runway 45 m, taxiway 23 m, likewise.
+        # None of them is painted.
+        self.assertTrue(self.at(cov, 100, 320) and self.at(cov, 100, 324.4))
+        self.assertFalse(self.at(cov, 100, 325.1) or self.at(paving, 100, 320))
+        self.assertTrue(self.at(cov, 100, 800) and self.at(cov, 100, 824.0))
+        self.assertFalse(self.at(cov, 100, 825.0) or self.at(paving, 100, 800) or self.at(water, 100, 800))
+        self.assertTrue(self.at(cov, 400, 800) and self.at(cov, 400, 812.9))
+        self.assertFalse(self.at(cov, 400, 814.1) or self.at(paving, 400, 800))
         # Parking: paint and sample. The plaza (a relation): paint, and 2 m for sampling.
         self.assertTrue(self.at(paving, 320, 20) and self.at(cov, 341.9, 20))
         self.assertTrue(self.at(paving, 650, 620) and self.at(cov, 681.6, 620))

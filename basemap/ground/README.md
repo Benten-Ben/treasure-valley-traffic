@@ -62,14 +62,15 @@ grid.aligned(ds.GetGeoTransform(), 10)          # is a raster on the 10 m grid?
 read with the **null datum shift**: their coordinates are taken as WGS 84's, the way web maps and OpenStreetMap's
 tracing imagery do. So OSM, Overture, NAIP and the lidar keep the agreement they were traced or measured with. The
 true NAD83(2011)-to-WGS 84 offset here is about 1 m ⚠️, under the painter's 2 m cell. Never let PROJ choose a
-grid-based NAD83 transform. The worker image sets `PROJ_NETWORK=ON`, so PROJ tries to download NOAA's HPGN grid from
-cdn.proj.org; offline that transform returns inf or fails (checked Oct 10 in `tvt-worker`). `rasterize.py` switches
-PROJ's network off and applies the policy: `rasterize.srs_of(crs)` for vectors, and `rasterize.warp_srs(crs)` as
+grid-based NAD83 transform. conda's PROJ sets `PROJ_NETWORK=ON` when it is activated, so PROJ would try to download
+NOAA's HPGN grid from cdn.proj.org; offline that transform returns inf or fails (checked Oct 10 in `tvt-worker`). The
+worker image now ends its activation with an `activate.d` script that sets `PROJ_NETWORK=OFF` (`ingest/Dockerfile.worker`),
+so `pyproj.network.is_network_enabled()` is False inside it. `rasterize.py` switches PROJ's network off again in
+process, as a second guard, and applies the policy: `rasterize.srs_of(crs)` for vectors, and `rasterize.warp_srs(crs)` as
 `gdal.Warp`'s `srcSRS` for rasters (P2's NAIP to the 2 m COG). A compound CRS keeps only its horizontal part: the
 QL1 lidar is NAD83(2011) / UTM 11N + NAVD88 heights (EPSG:6340+5703), and a raster written with vertical GeoKeys opens
-as compound, but the ground is 2D and heights are values, never coordinates. Code that uses pyproj directly calls
-`pyproj.network.set_network_enabled(False)` first: `docker run -e PROJ_NETWORK=OFF` doesn't help, because the image's
-conda activation sets it back to ON.
+as compound, but the ground is 2D and heights are values, never coordinates. Code that uses pyproj directly outside
+that image calls `pyproj.network.set_network_enabled(False)` first.
 
 **The ten boxes** are the land-cover spike's test areas (agreed with the owner Oct 7;
 [DECISIONS](../../docs/DECISIONS.md), Oct 8). They are in `spec.json`. Each box's
@@ -260,7 +261,7 @@ it, and its copy's origin and version (v7 or v8) are still to be confirmed ⚠�
 | `cdl`, `csb` | public domain | CDL 2025 (10 m) crop pixels and developed land; CSB 2025 fields, behind farm's crop cover (the box classes name them through the shrub builds) |
 | `naip` | public domain | NAIP 2025 (0.3 m) for Ada and Canyon; NAIP 2023 (0.6 m) in boxes h–j |
 | `naip-2m` | Copernicus | the 2 m COG P2 makes from NAIP 2025 in its decode pass (`naip2025_2m.tif`: red, green and blue on the June 18 flight's scale through same-day Sentinel-2, and the NDVI on Sentinel-2's scale, on the 2 m grid, with `flights.fgb`; [soils](../../plugins/soils/README.md#the-photo-statistics)). Public-domain NAIP carried through Copernicus-derived curves, so it credits both; its version is the sidecar's sha256 |
-| `3dep` | public domain | the 2023–24 QL1 lidar products in the boxes; the DEM for slope and aspect |
+| `3dep` | public domain | the lidar products in the boxes, by vintage: 2023–24 QL1 in boxes b, c, d, downtown, f and h; 2019–20 QL2 in boxes a, e, i and j (e is on the 2019–20 QL2 survey, 2+ points/m²; [docs/09](../../docs/09-base-map-data.md)). Fits that need one vintage use the six 2023 boxes; a, e, i and j are held-out checks. The DEM for slope and aspect |
 | `sentinel-2` | Copernicus | the July 2025 NDVI median, on the 10 m grid |
 | `rcmap` | public domain | RCMAP fractional cover (30 m), which calibrates the classes' bare cut |
 
@@ -316,7 +317,7 @@ into a work folder.
 
 | Input | Read from | What's taken |
 |---|---|---|
-| `osm` | S1's valley cut, `$TVT_ARCHIVE/osm/cut/valley.osm.pbf`, through GDAL's OSM driver with [`osmconf.ini`](osmconf.ini) (every tag, as JSON) | highway ways and waterways; parking, highway areas (plazas drawn as multipolygon relations included), water, and the soils design's rail and aeroway areas (aprons, runways, taxiways, helipads, `landuse=railway`). Railway tracks, runways and taxiways drawn as lines aren't read: no approval names them yet. OSM's buildings aren't read either: Overture's roofs hold them |
+| `osm` | S1's valley cut, `$TVT_ARCHIVE/osm/cut/valley.osm.pbf`, through GDAL's OSM driver with [`osmconf.ini`](osmconf.ini) (every tag, as JSON) | highway ways and waterways; railway tracks, runways and taxiways drawn as lines (sampling only, owner Oct 22); parking, highway areas (plazas drawn as multipolygon relations included), water, and the soils design's rail and aeroway areas (aprons, runways, taxiways, helipads, `landuse=railway`). OSM's buildings aren't read: Overture's roofs hold them |
 | `overture-buildings` | a copy of the map's `buildings.pmtiles` at z15, with `buildings.json` beside it | every footprint. One crossing a z15 tile's edge comes in two pieces, and the tiles' coordinates are good to about 0.2 m |
 | `nhd` | `$TVT_SOURCES/nhd/nhd_mapbox.gpkg` (HU4 1705) | Lake/Pond and Reservoir waterbodies; Stream/River and Canal/Ditch areas; stream, river and canal flowlines (canal and ditch lines for sampling only) |
 | `cdl` | `$TVT_SOURCES/cdl/out/cdl_2025_10m.tif` | developed land, classes 123 and 124 (medium and high intensity), polygonised on CDL's own 10 m grid |
@@ -342,12 +343,15 @@ null datum shift.
 | `road` | `roads` | 2 m beyond half the width |
 | `paving` | `paving` | 2 m |
 | `water` | all water, intermittent included (C6 and the soils design put no condition on it), and NHD's canal and ditch lines | 5 m (beyond half a line's width) |
-| `aeroway` | OSM's aprons, runways, taxiways and helipads drawn as areas | 2 m |
-| `rail` | OSM's rail yards (`landuse=railway`) | 2 m |
+| `aeroway` | OSM's aprons, runways, taxiways and helipads drawn as areas; runway and taxiway lines (45 m and 23 m wide ⚠️, or their `width` tag) | 2 m (beyond half a line's width) |
+| `rail` | OSM's rail yards (`landuse=railway`); railway track lines (`rail`, `light_rail`, `narrow_gauge`, `preserved`; sidings too, not trams or tunnels), a 5 m bed per track ⚠️ (times the `tracks` tag, 1 to 6, when a line stands for several) | 2 m (beyond half a line's width) |
 | `developed` | CDL 2025 classes 123 and 124 | none |
 
 Sampling buffers have square ends and mitred corners, a little more than round ones would cover. Aeroway and rail are
 for sampling only: the map doesn't draw them as surfaces, so the painter leaves them to the photo.
+The bed and runway widths are estimates ⚠️ (5 m per track, runway 45 m, taxiway 23 m, as before Oct 11) that wait for
+calibration in the ten windows. The lines only keep ballast and runways out of the soil sample, so a width on the wide
+side costs a few sample pixels and nothing else.
 
 **The rules** ([`maskrules.py`](maskrules.py), standard library, tested case by case):
 - **Which highway ways count.** Every road, street, service way, sidewalk and crossing counts, whatever its surface:

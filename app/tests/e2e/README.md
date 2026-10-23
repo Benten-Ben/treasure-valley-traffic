@@ -29,6 +29,53 @@ node scripts/harness-env.mjs -- vite dev --port {port} --strictPort   # or: npm 
 npm run preview:wp                                                    # build if stale, then vite preview
 ```
 
+## Which specs are which
+
+Every spec is either **map** or **non-map**. The non-map specs are listed by
+name in `NONMAP_SPECS` (`playwright.config.ts`); a new spec is a map spec until
+someone lists it there. Each project runs its own set: `--project=nonmap`
+or `--project=map`.
+
+| Spec | Set | What it covers |
+|---|---|---|
+| `harness.spec.ts` | non-map | `/api/meta`, the seeds, the tiles server (WP0) |
+| `live-images.spec.ts` | non-map | the live images server (WP11) |
+| `network.spec.ts` | non-map | `GET /api/transit/network` (WP6) |
+| `tracks.spec.ts` | non-map | the tracks API and replay (WP7) |
+| `boot.spec.ts` | map | the map loads same-origin, shell paint |
+| `budget.spec.ts` | map | first-load budgets |
+| `buses3d.spec.ts` | map | 3D buses and stops on the replay (WP10) |
+| `calibrate.spec.ts` | map | camera calibration on the map |
+| `cameras.spec.ts` | map | camera views on the map |
+| `flavors.spec.ts` | map | map flavors and layer looks |
+| `layers.spec.ts` | map | layer toggles and combinations |
+| `lookthrough.spec.ts` | map | camera look-through |
+| `performance.spec.ts` | map | map performance checks |
+| `persistent.spec.ts` | map | state that persists across reloads |
+| `polling.spec.ts` | map | data polling on the map |
+| `review.spec.ts` | map | review sheets on the map |
+| `roadweather.spec.ts` | map | road weather layer |
+| `scene.spec.ts` | map | the 3D scene |
+| `status.spec.ts` | map | the status chip in the top bar |
+| `terrain.spec.ts` | map | terrain |
+| `transit.spec.ts` | map | transit layers |
+| `trees.spec.ts` | map | trees layer |
+| `windows.spec.ts` | map | windows and panels |
+
+Where each set runs:
+
+- **The laptop** runs both sets (`npm run test:e2e`, behind the browser lock,
+  only when the machine isn't busy). Map specs time out under load.
+- **The server runner** runs the non-map set:
+  `npx playwright test --project=nonmap`. Map specs move there once they are
+  measured to pass.
+- **The VM's worker-test** runs the Python worker-image tests, not these specs.
+- **After a deploy**, `TVT_E2E_URL` runs only `boot.spec.ts` (deploy/README.md).
+
+`TVT_E2E_SLOW=<n>` multiplies the fixed timeouts in the config (the test
+timeout, `expect` and the action timeout) for a slow runner. The poll
+literals inside spec files are not scaled.
+
 ## Run specs
 
 ```bash

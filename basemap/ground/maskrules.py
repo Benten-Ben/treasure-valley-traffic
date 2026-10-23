@@ -7,13 +7,14 @@ rule mask.py applies, as plain functions of a feature's tags or fields, so they'
 
 - road(tags): an OSM highway way's kind, surface class and width, when it covers the ground;
 - paving_area(tags, relation), water_area(tags), other_area(tags): an OSM area (a closed way or a multipolygon);
-- waterway(tags): OSM waterways;
+- waterway(tags), other_line(tags): OSM waterways, and the railway, runway and taxiway lines;
 - nhd_waterbody(), nhd_area(), nhd_flowline(): NHD's features, from their fields;
 - CDL_DEVELOPED: the CDL classes counted as developed (123 and 124, medium and high intensity);
 - SAMPLE_BUFFER: how far each kind is grown for sampling (C6: roads and paving +2 m, roofs +1 m, water +5 m).
 
-The OSM tags read are decision 2's (highways, parking, water) and the soils design's (rail and aeroway areas, kept
-out of sampling). Railway tracks, runways and taxiways drawn as lines aren't read: no approval names them yet.
+The OSM tags read are decision 2's (highways, parking, water), the soils design's (rail and aeroway areas, kept out
+of sampling) and the owner's of Oct 22 (answer 4: railway tracks, runways and taxiways drawn as lines, so ballast and
+runway lines aren't sampled as soil). Their widths below are estimates ⚠️ that wait for calibration in the ten windows.
 
 Widths are OpenStreetMap's own: a `width` tag, else `lanes` x 3.6 m + 2 m, else the class's default below. They are
 estimates ⚠️ until the ten windows calibrate them. The roads build's measured widths come from ACHD and ITD
@@ -25,7 +26,8 @@ The layers mask.py writes (FlatGeobuf, EPSG:32611, MultiPolygon), named in LAYER
   `water` (bodies, and waterways grown to half their width; `intermittent` says which may be dry, and a painter
   filters on it);
 - buffered, for sampling: `covered`, everything that isn't uncovered ground, each grown by its SAMPLE_BUFFER:
-  roofs, roads, paving, water (intermittent too, as C6 says), aeroway and railway areas, and CDL's developed land,
+  roofs, roads, paving, water (intermittent too, as C6 says), aeroway and railway areas and lines, and CDL's
+  developed land,
   dissolved by `what` in 1 km blocks of the grid (COVER_BLOCK_M).
 """
 
@@ -328,6 +330,29 @@ def waterway(tags):
         return None
     w = _width_tag(tags, 0.3, 500.0)
     return WATER_KIND[ww], intermittent(tags), (w if w is not None else WATERWAY_WIDTH[ww])
+
+
+RAILWAYS = {"rail", "light_rail", "narrow_gauge", "preserved"}
+RAIL_BED_M = 5.0          # one track's bed, ballast included ⚠️ (waits for calibration in the ten windows)
+AEROWAY_WIDTH = {"runway": 45.0, "taxiway": 23.0}    # ⚠️ (150 and 75 ft, common sizes; wait for calibration)
+
+
+def other_line(tags):
+    """For an OSM line, (what, kind, width m) when it covers the ground for sampling only: a railway track's bed
+    ('rail', 5 m per track by its `tracks` tag, one if missing; sidings and yards too, not trams, which run in
+    streets), or a runway or taxiway drawn as a line ('aeroway', its width tag else AEROWAY_WIDTH). Else None. Not
+    painted: the map doesn't draw them as surfaces."""
+    if below_ground(tags) or tags.get("area") == "yes":
+        return None
+    if tags.get("railway") in RAILWAYS:
+        t = (tags.get("tracks") or "").strip()
+        n = int(t) if t.isdigit() and 1 <= int(t) <= 6 else 1      # a line drawn once for several tracks
+        return "rail", tags["railway"], RAIL_BED_M * n
+    a = tags.get("aeroway")
+    if a in AEROWAY_WIDTH:
+        w = _width_tag(tags, 5.0, 100.0)
+        return "aeroway", a, (w if w is not None else AEROWAY_WIDTH[a])
+    return None
 
 
 # ---- NHD -----------------------------------------------------------------------------------------------------------

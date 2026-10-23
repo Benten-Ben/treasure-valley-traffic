@@ -296,7 +296,7 @@ def dissolve(path, out, bounds, block_m=MR.COVER_BLOCK_M, log=print):
 # ---- the inputs ----------------------------------------------------------------------------------------------------
 
 def read_osm(path, bounds, out, log=print):
-    """S1's valley cut: highway ways and waterways, and parking, highway, water, aeroway and railway areas
+    """S1's valley cut: highway, water, rail and aeroway ways, and parking, highway, water, aeroway and railway areas
     (maskrules)."""
     ds = gdal.OpenEx(path, gdal.OF_VECTOR, allowed_drivers=["OSM"],
                      open_options=[f"CONFIG_FILE={OSMCONF}", "INTERLEAVED_READING=YES"])
@@ -312,8 +312,8 @@ def read_osm(path, bounds, out, log=print):
         seen[name] += 1
         tags = json.loads(f.GetField("all_tags") or "{}")
         if name == "lines":
-            road, water = MR.road(tags), MR.waterway(tags)
-            if not (road or water):
+            road, water, other = MR.road(tags), MR.waterway(tags), MR.other_line(tags)
+            if not (road or water or other):
                 continue
             ref = f"w{f.GetField('osm_id')}"
         else:
@@ -342,6 +342,9 @@ def read_osm(path, bounds, out, log=print):
                 out.water.add(grown(g, width / 2, EXACT_LINE), source="osm", ref=ref, kind=kind, intermittent=dry,
                               width=width)
                 out.cover(g, "water", kind, width / 2)
+            if other:
+                what, kind, width = other
+                out.cover(g, what, kind, width / 2)
         else:
             area = multipolygon(g)
             if area is None:

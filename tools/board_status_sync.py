@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Keep the project board's statuses to the rule in docs/agent-work.md (owner, Oct 22).
 
-  Backlog      an open issue that is blocked: an open "blocked by" link, or open sub-issues (a tracking issue)
+  Backlog      an open issue that is blocked: an open "blocked by" link, open sub-issues (a tracking issue), or the label
+               `waiting-agency` (it waits on a reply from an agency, outside GitHub)
   Ready        every other open issue that hasn't started
   In progress, In review   left as they are (a claim and an open PR set them)
   Done         closed issues
@@ -20,6 +21,22 @@ import time
 from collections import Counter
 
 REPO_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def use_login() -> None:
+    """The board is a Project on a personal account, which the agents' App can't reach: always call the real gh on
+    the login. Drop an App token a wrapped gh left in GH_TOKEN, and every */agent-bin directory from PATH (a wrapper
+    from another project may be on it and doesn't know TVT_GH_AS_USER)."""
+    os.environ["TVT_GH_AS_USER"] = "1"
+    if os.environ.get("TVT_GH_APP_TOKEN") == "1":
+        os.environ.pop("GH_TOKEN", None)
+        os.environ.pop("TVT_GH_APP_TOKEN", None)
+    os.environ["PATH"] = os.pathsep.join(
+        d for d in os.environ.get("PATH", "").split(os.pathsep) if d and os.path.basename(d.rstrip("/")) != "agent-bin")
+
+
+use_login()
+
 QUERY = ("query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){issue(number:$n){number state "
          "labels(first:30){nodes{name}} blockedBy(first:50){nodes{state}} subIssuesSummary{total completed} "
          "projectItems(first:5){nodes{id project{number} fieldValueByName(name:\"Status\"){... on ProjectV2ItemFieldSingleSelectValue{name}}}}}}}")
@@ -34,13 +51,13 @@ def gh(*args, parse=False):
     raise RuntimeError(f"gh {' '.join(args[:3])}: {r.stderr[:300]}")
 
 
-def wanted(state, current, open_blockers, open_subs):
+def wanted(state, current, open_blockers, open_subs, waiting_outside=False):
     """The status the rule asks for."""
     if state == "CLOSED":
         return "Done"
     if current in ("In progress", "In review"):
         return current
-    return "Backlog" if open_blockers or open_subs else "Ready"
+    return "Backlog" if open_blockers or open_subs or waiting_outside else "Ready"
 
 
 def main(argv):
@@ -63,14 +80,15 @@ def main(argv):
         cur = (item.get("fieldValueByName") or {}).get("name")
         blockers = sum(1 for b in iss["blockedBy"]["nodes"] if b["state"] == "OPEN")
         subs = iss["subIssuesSummary"]["total"] - iss["subIssuesSummary"]["completed"]
-        want = wanted(iss["state"], cur, blockers, subs)
+        names = {l["name"] for l in iss["labels"]["nodes"]}
+        want = wanted(iss["state"], cur, blockers, subs, "waiting-agency" in names)
         if want != cur:
             moved.append((n, cur, want))
             if not dry:
                 gh("project", "item-edit", "--id", item["id"], "--project-id", pid, "--field-id", status["id"],
                    "--single-select-option-id", opt[want])
                 time.sleep(1)
-        has_label = any(l["name"] == "blocked" for l in iss["labels"]["nodes"])
+        has_label = "blocked" in names
         if iss["state"] == "OPEN" and bool(blockers) != has_label:
             labelled.append(n)
             if not dry:

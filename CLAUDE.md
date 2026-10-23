@@ -155,14 +155,17 @@ python3 -m ingest match-intersections --dry-run   # rebuild intersections from t
 python3 -m ingest osm-load --inbox         # OSM extract downloaded by hand, into every consumer (needs TVT_ARCHIVE, osmium)
 python3 -m ingest osm-load --only roads.osm_street   # one OSM consumer, on the extract we hold
 python3 -m ingest segment-match           # rematch lane sources and OSM to ACHD segments by hand
+python3 -m ingest.builds mark|run ...   # mark a build out of date; run BUILD [--then B] -- COMMAND as a logged build
 python3 -m ingest -h                      # every command, the plugins' included
 python3 -m unittest discover -s ingest/tests -t .   # ingest core (set TVT_TEST_DATABASE_URL for the database tests)
 python3 -m unittest discover -s plugins -t .        # every plugin's tests
 python3 -m unittest discover -s basemap/ground -t . # the ground's contract (worker tests skip; run them in tvt-worker)
+python3 basemap/ground/ground.py spec|check-export|status|flat   # the ground's light commands; mask.py build and classes.py build run in the worker image as heavy jobs (basemap/ground/README.md)
 python3 tools/check_public.py              # nothing private in what would be pushed
 python3 tools/check_public.py --text <file>   # nothing private in an issue, PR or comment body (- for stdin)
 /srv/tvt/work/bin/heavy --deadline HH:MM --runtime MIN --peak GB "<label>" <command>   # a heavy job on the VM (deploy/README.md)
 /srv/tvt/work/bin/worker-test -C <checkout> discover -s <dir> -t .   # worker-image tests on the VM; a skip fails
+/srv/tvt/work/bin/status                  # the VM's status summary (installed from deploy/bin/status)
 python3 -m basemap.sheets.places          # the review places: ten boxes, 34 key cameras, Eagle and Chinden, three spots
 /srv/tvt/work/bin/sheets -C <checkout> --pkg <pkg> -- --places cameras --layer <plugin>/<layer>   # review sheets, into the private files
 cd app && node scripts/map-sheets.mjs --url <preview> --places cameras   # map screenshots of the same places (basemap/sheets/README.md)
