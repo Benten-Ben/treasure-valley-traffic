@@ -27,6 +27,13 @@ RUN micromamba install -y -n base -c conda-forge \
  # PDAL's HDF and IceBridge readers are built against another libhdf5_cpp than
  # conda-forge resolves here, so every run warns that they can't load. We read
  # EPT, LAS and LAZ only: drop the two plugins.
- && rm -f /opt/conda/lib/libpdal_plugin_reader_hdf.so /opt/conda/lib/libpdal_plugin_reader_icebridge.so
+ && rm -f /opt/conda/lib/libpdal_plugin_reader_hdf.so /opt/conda/lib/libpdal_plugin_reader_icebridge.so \
+ # conda's PROJ activate script sets PROJ_NETWORK=ON unless proj-data is installed, and the
+ # entrypoint runs it on every start, so `docker run -e PROJ_NETWORK=OFF` is overwritten. Our
+ # datum policy needs no grids (basemap/ground/grid.py), and a fetch would be an unrecorded
+ # request to a third-party CDN under PROJ's own User-Agent. Activate scripts run in name
+ # order, so "zz-" runs after proj4-activate.sh and wins.
+ && printf '#!/bin/sh\nexport PROJ_NETWORK="OFF"\n' > /opt/conda/etc/conda/activate.d/zz-proj-network-off.sh \
+ && chmod 755 /opt/conda/etc/conda/activate.d/zz-proj-network-off.sh
 ENV PATH=/opt/conda/bin:$PATH
 WORKDIR /repo

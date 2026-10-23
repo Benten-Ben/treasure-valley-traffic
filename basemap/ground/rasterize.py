@@ -34,8 +34,9 @@ from scipy import ndimage
 gdal.UseExceptions()
 ogr.UseExceptions()
 osr.UseExceptions()
-# The worker image turns PROJ's network on (PROJ_NETWORK=ON). Never fetch transformation grids: the datum policy
-# (grid.py) needs none, and a fetch would be an unrecorded request to a third party.
+# The worker image sets PROJ_NETWORK=OFF (ingest/Dockerfile.worker); this is a second guard, for any other
+# environment. Never fetch transformation grids: the datum policy (grid.py) needs none, and a fetch would be an
+# unrecorded request to a third party.
 osr.SetPROJEnableNetwork(False)
 gdal.SetConfigOption("PROJ_NETWORK", "OFF")
 os.environ["PROJ_NETWORK"] = "OFF"

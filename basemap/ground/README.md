@@ -62,14 +62,15 @@ grid.aligned(ds.GetGeoTransform(), 10)          # is a raster on the 10 m grid?
 read with the **null datum shift**: their coordinates are taken as WGS 84's, the way web maps and OpenStreetMap's
 tracing imagery do. So OSM, Overture, NAIP and the lidar keep the agreement they were traced or measured with. The
 true NAD83(2011)-to-WGS 84 offset here is about 1 m ⚠️, under the painter's 2 m cell. Never let PROJ choose a
-grid-based NAD83 transform. The worker image sets `PROJ_NETWORK=ON`, so PROJ tries to download NOAA's HPGN grid from
-cdn.proj.org; offline that transform returns inf or fails (checked Oct 10 in `tvt-worker`). `rasterize.py` switches
-PROJ's network off and applies the policy: `rasterize.srs_of(crs)` for vectors, and `rasterize.warp_srs(crs)` as
+grid-based NAD83 transform. conda's PROJ sets `PROJ_NETWORK=ON` when it is activated, so PROJ would try to download
+NOAA's HPGN grid from cdn.proj.org; offline that transform returns inf or fails (checked Oct 10 in `tvt-worker`). The
+worker image now ends its activation with an `activate.d` script that sets `PROJ_NETWORK=OFF` (`ingest/Dockerfile.worker`),
+so `pyproj.network.is_network_enabled()` is False inside it. `rasterize.py` switches PROJ's network off again in
+process, as a second guard, and applies the policy: `rasterize.srs_of(crs)` for vectors, and `rasterize.warp_srs(crs)` as
 `gdal.Warp`'s `srcSRS` for rasters (P2's NAIP to the 2 m COG). A compound CRS keeps only its horizontal part: the
 QL1 lidar is NAD83(2011) / UTM 11N + NAVD88 heights (EPSG:6340+5703), and a raster written with vertical GeoKeys opens
-as compound, but the ground is 2D and heights are values, never coordinates. Code that uses pyproj directly calls
-`pyproj.network.set_network_enabled(False)` first: `docker run -e PROJ_NETWORK=OFF` doesn't help, because the image's
-conda activation sets it back to ON.
+as compound, but the ground is 2D and heights are values, never coordinates. Code that uses pyproj directly outside
+that image calls `pyproj.network.set_network_enabled(False)` first.
 
 **The ten boxes** are the land-cover spike's test areas (agreed with the owner Oct 7;
 [DECISIONS](../../docs/DECISIONS.md), Oct 8). They are in `spec.json`. Each box's
