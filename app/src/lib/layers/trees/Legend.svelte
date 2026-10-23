@@ -45,7 +45,12 @@
 	{#each kinds as k (k)}
 		<li>
 			<svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true">
-				<circle cx="10" cy="10" r="7.5" fill={TREE_TONES.broadleaf[k][1]} stroke={DISC_EDGE} stroke-width="1" />
+				{#if inView(k)}
+					<circle cx="10" cy="10" r="7.5" fill={TREE_TONES.broadleaf[k][1]} stroke={DISC_EDGE} stroke-width="1" />
+				{:else}
+					<!-- Listed by the catalogue flag alone: the map draws no tree in this tone, so no fill. -->
+					<circle class="unfilled" cx="10" cy="10" r="7.5" fill="none" stroke={DISC_EDGE} stroke-width="1" stroke-dasharray="2 2" />
+				{/if}
 			</svg>
 			{#if inView(k)}
 				<span><b>{KIND_WORD[k]}</b> ({LOOK[k]}): {ABOUT[k]}{#if view.shown}{' '}<span class="num">({fmtCount(view.kinds[k])})</span>{/if}</span>

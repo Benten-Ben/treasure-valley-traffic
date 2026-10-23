@@ -20,6 +20,8 @@ describe('the Trees legend component', () => {
 		// No tone and no count for a kind the boxes never send.
 		expect(out).not.toContain('Catalogued</b> (full green)');
 		expect(out).toContain("a tree's card says when it is one");
+		// ...and no filled swatch: the map draws no tree in that tone.
+		expect(out).toContain('class="unfilled');
 	});
 	it('names neither on a public install', () => {
 		const out = html(stub(false));
@@ -30,5 +32,6 @@ describe('the Trees legend component', () => {
 		const out = html(stub(true, 3));
 		expect(out).toContain('(full green)');
 		expect(out).toMatch(/\(3\)/);
+		expect(out).not.toContain('class="unfilled');
 	});
 });
