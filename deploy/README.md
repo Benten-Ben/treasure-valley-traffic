@@ -295,7 +295,9 @@ own, never in the served tiles folder:
   python3 -m basemap.lock manifest.lock -- COMMAND`.
 - **Compose** sets nothing: its only mount of the tiles folder is the app's, read-only (`docker-compose.yml`), and no
   service rewrites the manifest.
-- **Checking it** (light, any hour): a worker run through `heavy` with the folder mounted, then `ls` of both folders.
+- **Checking it** (light, but it goes through `heavy`, so it needs an open window and waits behind any running heavy
+  job; out of window `heavy` refuses at once): a worker run through `heavy` with the folder mounted, then `ls` of both
+  folders.
 
   ```bash
   /srv/tvt/work/bin/heavy --deadline HH:MM --runtime 2 --peak 1 "tiles lock check" \
