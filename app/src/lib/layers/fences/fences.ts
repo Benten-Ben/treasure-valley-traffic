@@ -1,14 +1,21 @@
 import type { MapGeoJSONFeature } from 'maplibre-gl';
 import type { DataMeta } from '#lib/contracts/meta.js';
-import { layerCredit } from '#lib/contracts/layer-tiles.js';
+import { layerCredit, layerVersion } from '#lib/contracts/layer-tiles.js';
 import { INK } from '#lib/map/color.js';
 import type { SlottedLayer } from '#lib/map/order.js';
 import type { StaticSegment } from '#lib/scene/batches/static.js';
 import { PRIORITY, type Selection } from '../types.js';
-import { linesUrl } from './def.js';
 import { ESTIMATED, HALO, POST } from './palette.js';
 
-export { linesUrl };
+/** The layer's place in the stack; `def.ts` says the same (a test pins both), and doesn't import this file or the reverse, so the always-loaded def is not a chunk of its own. */
+export const ORDER = 40;
+const URL_PATH = '/api/fences/lines';
+
+/** The data's URL, with the version /api/meta reports when it has one (immutable then). The def prefetches the same URL (a test pins it). */
+export function linesUrl(meta: Pick<DataMeta, 'versions'> | null | undefined): string {
+	const v = layerVersion(meta, 'fences', 'lines');
+	return v ? `${URL_PATH}?v=${encodeURIComponent(v)}` : URL_PATH;
+}
 
 /**
  * The Fences layer's pure parts (plan §4.2 P10): the style of the 2D line, the 3D segments built from the same

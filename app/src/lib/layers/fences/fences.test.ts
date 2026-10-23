@@ -16,6 +16,7 @@ import {
 	lengthText,
 	materialText,
 	metresFeet,
+	ORDER,
 	segmentsOf,
 	shiftedLeft,
 	THICKNESS,
@@ -56,6 +57,18 @@ describe('the always-loaded def', () => {
 		const src = readFileSync(join(__dirname, 'def.ts'), 'utf8');
 		const imports = [...src.matchAll(/^import (?!type\b)[^;]*from '([^']+)'/gm)].map((m) => m[1]);
 		expect(imports.sort()).toEqual(['#lib/contracts/layer-tiles.js', '../prefetch.js', './icons.js']);
+	});
+
+	it("is not imported by the layer's module or its helpers, and imports neither (so it is part of the registry's chunk, not one of its own)", () => {
+		for (const f of ['fences.ts', 'index.svelte.ts', 'palette.ts', 'icons.ts']) {
+			const src = readFileSync(join(__dirname, f), 'utf8');
+			expect(src, f).not.toMatch(/from '\.\/def(\.js)?'/);
+		}
+		expect(readFileSync(join(__dirname, 'def.ts'), 'utf8')).not.toMatch(/from '\.\/(fences|index\.svelte)(\.js)?'/);
+	});
+
+	it('says the same place in the stack as the module', () => {
+		expect(def.order).toBe(ORDER);
 	});
 
 	it('prefetches exactly the URL the module takes', async () => {

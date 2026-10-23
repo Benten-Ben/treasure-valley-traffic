@@ -6,8 +6,7 @@ import type { Scene } from '#lib/scene/index.js';
 import { take } from '../prefetch.js';
 import { PRIORITY, type Interactive, type LayerModule, type LayerStatus, type Selection } from '../types.js';
 import Card from './Card.svelte';
-import def from './def.js';
-import { buildSegments, creditOf, fenceLayers, fenceSelection, GROUP, LAYER_IDS, LINE_LAYER, linesUrl, propsOf, RADIUS_M, SCENE_FROM_ZOOM, SOURCE, WALLS_FROM_ZOOM, SEGMENT_CAP, M_PER_DEG, type FenceCollection, type FenceFeature } from './fences.js';
+import { buildSegments, creditOf, fenceLayers, fenceSelection, GROUP, LAYER_IDS, LINE_LAYER, linesUrl, ORDER, propsOf, RADIUS_M, SCENE_FROM_ZOOM, SOURCE, WALLS_FROM_ZOOM, SEGMENT_CAP, M_PER_DEG, type FenceCollection, type FenceFeature } from './fences.js';
 import Legend from './Legend.svelte';
 
 /** Wait this long after the map stops before building the batch for the new view, ms. */
@@ -92,7 +91,7 @@ export class FencesModule implements LayerModule {
 		if (this.#destroyed) return;
 		const scope = (this.#scope = new MapScope(map));
 		scope.addSource(SOURCE, { type: 'geojson', data: data ?? EMPTY, promoteId: 'id', attribution: creditOf(ctx.meta) });
-		addSlotted(map, fenceLayers(), def.order, (l, before) => scope.addLayer(l, before), 'fences');
+		addSlotted(map, fenceLayers(), ORDER, (l, before) => scope.addLayer(l, before), 'fences');
 		scope.on('moveend', () => this.#schedule());
 		scope.on('zoom', () => this.#onZoom());
 		scope.defer(ctx.picker.onHover((h) => this.#hover(h?.selection ?? null)));
