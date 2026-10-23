@@ -10,6 +10,9 @@ import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 BOARD = os.path.join(HERE, "board")
+# built at run time, so this file passes the repository scan itself (as tools/test_check_public.py does)
+ADDR = "100." + "64.1.2"
+TS = ".ts" + ".net"
 
 FAKE_GH = """#!/bin/bash
 echo "$*" >> "$FAKE_GH_LOG"
@@ -76,19 +79,31 @@ class BoardPublicGateTest(unittest.TestCase):
         self.assertTrue(any(c.startswith("project item-edit") for c in calls), calls)
 
     def test_a_title_with_a_tailnet_address_is_refused(self):
-        self.assertRefused(self.board("new", "Check the box at 100.64.1.2"))
+        self.assertRefused(self.board("new", f"Check the box at {ADDR}"))
 
     def test_a_title_with_a_tailnet_name_is_refused(self):
-        self.assertRefused(self.board("new", "Look at machine.example.ts.net"))
+        self.assertRefused(self.board("new", "Look at machine.example" + TS))
 
     def test_a_title_that_hits_the_private_pattern_list_is_refused(self):
         self.assertRefused(self.board("new", "Fix the secret-host-name setup"))
+
+    def test_a_missing_pattern_list_refuses_instead_of_dropping_the_private_half(self):
+        out = self.board("new", "Fix the secret-host-name setup", env={"TVT_PRIVATE_PATTERNS": os.path.join(self.dir, "nope.txt")})
+        self.assertEqual(out.returncode, 2, out.stderr)
+        self.assertIn("names no file", out.stderr)
+        self.assertEqual(self.calls(), [], "gh must not be called at all")
+
+    def test_none_is_the_explicit_opt_out_and_runs_the_mechanical_checks_only(self):
+        ok = self.board("new", "Document the quoting rules", env={"TVT_PRIVATE_PATTERNS": "none"})
+        self.assertEqual(ok.returncode, 0, ok.stderr)
+        bad = self.board("new", f"Check the box at {ADDR}", env={"TVT_PRIVATE_PATTERNS": "none"})
+        self.assertEqual(bad.returncode, 2, bad.stderr)
 
     def test_a_label_is_checked_too(self):
         self.assertRefused(self.board("new", "Fine title", "area:docs", "secret-host-name"))
 
     def test_a_dry_run_still_runs_the_check(self):
-        self.assertRefused(self.board("new", "Check the box at 100.64.1.2", "--dry-run"))
+        self.assertRefused(self.board("new", f"Check the box at {ADDR}", "--dry-run"))
 
     def test_a_clean_dry_run_prints_the_write_and_calls_nothing_that_posts(self):
         out = self.board("new", "Document the quoting rules", "--dry-run")
@@ -99,7 +114,7 @@ class BoardPublicGateTest(unittest.TestCase):
     def test_a_template_body_that_fails_is_refused(self):
         tpl = os.path.join(self.dir, "tpl.md")
         with open(tpl, "w") as f:
-            f.write("**Goal:** reach 100.64.1.2\n")
+            f.write(f"**Goal:** reach {ADDR}\n")
         self.assertRefused(self.board("new", "Fine title", env={"BOARD_TEMPLATE": tpl}))
 
     def test_only_new_posts_text_and_it_gates_first(self):

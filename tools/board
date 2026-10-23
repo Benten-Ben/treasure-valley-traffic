@@ -134,7 +134,13 @@ public_gate() { # <file holding all the text about to be posted>
   checker="$(cd "$(dirname "$0")" && pwd)/check_public.py"
   [ -f "$checker" ] || { note "the public check isn't at $checker: nothing posted"; return 2; }
   pats=${TVT_PRIVATE_PATTERNS:-}
-  if [ -z "$pats" ] && [ ! -f "$root/data/dev/private-patterns.txt" ]; then
+  # an explicit list that isn't there (a typo) must not quietly drop the private-pattern half of the check;
+  # TVT_PRIVATE_PATTERNS=none is the explicit opt-out
+  if [ "$pats" = none ]; then pats=""
+  elif [ -n "$pats" ] && [ ! -f "$pats" ]; then
+    note "TVT_PRIVATE_PATTERNS is set but names no file: nothing posted (set it to a pattern list, or to none to run only the mechanical checks)"; return 2
+  fi
+  if [ -z "$pats" ] && [ "${TVT_PRIVATE_PATTERNS:-}" != none ] && [ ! -f "$root/data/dev/private-patterns.txt" ]; then
     # a linked worktree has no data/dev of its own: the list is in the main checkout
     common=$(git -C "$root" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || common=""
     main=${common%/.git}
