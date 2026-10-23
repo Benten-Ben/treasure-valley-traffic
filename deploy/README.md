@@ -305,7 +305,7 @@ own, never in the served tiles folder:
       -e HOME=/tmp -e PYTHONDONTWRITEBYTECODE=1 -e TVT_TILES_LOCK_DIR=/srv/tvt/work/locks \
       -v /srv/tvt/repo:/repo:ro -v /srv/tvt/work/locks:/srv/tvt/work/locks -w /repo \
       tvt-worker python -m basemap.lock check.lock -- true
-  ls -la /srv/tvt/work/locks /srv/tvt/tiles     # check.lock is in the first; no *.lock in the second
+  ls -ln /srv/tvt/work/locks /srv/tvt/tiles     # check.lock is in the first; no *.lock in the second (numeric ids: paste no names)
   ```
 
 ## Review sheets on the VM
