@@ -117,6 +117,22 @@ after the load gave 633 in `core.intersection` (585 active, 43 candidates,
 signal nodes with no COMPASS match and need review
 ([ingest/README](../ingest/README.md)).
 
+## Built, awaiting a production load or a history load
+
+These are built and checked (scratch or the server), with the deploy, the
+history load or the owner's decision still to come. Each row keeps what
+the source covers and why it matters; the open items are on the board
+(the issue links are in the table above and in [DEFERRED.md](DEFERRED.md)).
+
+| Theme | Source | Status | Why it matters | Access |
+|---|---|---|---|---|
+| Safety | ITD crash points, 461,521 crashes 2005–2023 | Not started; COMPASS's copy for Ada and Canyon runs to 2025 (below) | High-crash intersections, before/after studies | Open GIS |
+| Safety | COMPASS crash data: 174,038 crashes 2008–2025 linked to segments and intersections; high-injury network ([ch. 8 §8.9](08-data-inventory.md#89-second-source-review-oct-6-2026)) | Approved Oct 6; build timing with the owner | Two more years than ITD's layer, already tied to the network | Disclaimer; credit COMPASS |
+| Congestion | COMPASS congestion measures 2018–2025 by segment and commute travel times ([ch. 8 §8.9](08-data-inventory.md#89-second-source-review-oct-6-2026)) | Approved Oct 6 for internal use; republishing waits on COMPASS | The official congestion history; a baseline for bus-derived speeds | Not offered as open data |
+| Network | ACHD signal-asset points (2022): 2,469 signal **poles** (about 464 intersections), 182 pedestrian signals, 33 school flashers | Built Oct 6 (`achd_signal_points`, monthly; deploy pending); confirms intersections | The backbone: intersections that tie cameras, counts, crashes and bus delay together | Open; frozen since 2022 |
+| Network | COMPASS Signalized_Intersections (585, one per intersection, with ACHD's Synchro IDs, coordination groups, right-turn lanes, phasing) and Regional_Signals (1,078) ([ch. 8 §8.9](08-data-inventory.md#89-second-source-review-oct-6-2026)) | Built Oct 6 (`compass_signals`, `compass_regional_signals`, weekly; deploy pending); seeds `core.intersection` (591, 585 active, before the OpenStreetMap load; 633 after it, below) | One record per signalized intersection | No license ("for reference"); credit COMPASS; internal until COMPASS answers |
+| Network | FRA highway–rail crossings, 433 in Ada and Canyon (131 open public at grade) | Built Oct 6 (`fra_crossings`, weekly; history not loaded; deploy pending) | Rail crossings near signals; preemption (filled only for Boise Valley Railroad) | Public domain |
+
 ## Needs the owner's network, or a request
 
 These are on the board: the owner's network route is

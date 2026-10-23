@@ -61,3 +61,7 @@ Done items are dated history in the issue, not here.
   loaded by hand (13,917 ways, 10,614 with lanes), so the lanes items above
   can be built. Weekly hand downloads continue until Geofabrik answers
   ([#78](https://github.com/Benten-Ben/treasure-valley-traffic/issues/78)).
+  That also met the wait on Canyon County lanes (a `segment_lanes` keyed on
+  COMPASS pieces or OpenStreetMap ways, since Canyon has no ACHD segments;
+  [#5](https://github.com/Benten-Ben/treasure-valley-traffic/issues/5)),
+  which can now be built.
