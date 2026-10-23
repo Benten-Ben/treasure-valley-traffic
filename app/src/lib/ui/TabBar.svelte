@@ -1,11 +1,13 @@
 <script lang="ts">
 	import { layerIcon } from '#lib/layers/icons.js';
-	import { onDestroy, type Component } from 'svelte';
+	import { onDestroy, onMount, type Component } from 'svelte';
 	import type { AppCtx } from '#lib/app/context.js';
 	import type { LayerDef } from '#lib/layers/types.js';
 	import Icon from './Icon.svelte';
 	import { STACK } from './chrome-icons.js';
 	import { ESC, onEscape } from './keys.js';
+	import { LANDSCAPE_TRAY_EVENT } from './keymap.js';
+	import { inTray, LANDSCAPE, tray } from './LandscapeTray.svelte';
 	import { slots } from './slots.svelte.js';
 	import { tipFor, tooltip } from './tooltip.svelte.js';
 
@@ -21,6 +23,12 @@
 	 */
 	let { app }: { app: AppCtx } = $props();
 	const manager = $derived(app.layers);
+	const main = $derived(manager.defs.filter((d) => !inTray(d)));
+	const trayDefs = $derived(manager.defs.filter(inTray));
+	const trayOn = $derived(trayDefs.filter((d) => manager.isOn(d.id)).length);
+	/** Where Landscape and Base sit among the tabs: Landscape after the layers, Base last. */
+	const trayAt = $derived(main.length);
+	const baseAt = $derived(main.length + (trayDefs.length ? 1 : 0));
 	let baseOpen = $state(false);
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	let Popover = $state<Component<any> | null>(null);
@@ -30,9 +38,26 @@
 	async function toggleBase() {
 		if (!Popover) Popover = (await import('./BasePopover.svelte')).default;
 		baseOpen = !baseOpen;
+		if (baseOpen) tray.open = false;
 	}
 
+	/** The Landscape tab opens the tray as a tab of the sheet (Sheet.svelte), not a popover. */
+	function toggleTray() {
+		if (!trayDefs.length) return;
+		tray.open = !tray.open;
+		if (tray.open) baseOpen = false;
+	}
+
+	onMount(() => {
+		addEventListener(LANDSCAPE_TRAY_EVENT, toggleTray);
+		return () => removeEventListener(LANDSCAPE_TRAY_EVENT, toggleTray);
+	});
+
 	const stopEsc = onEscape(ESC.popover, () => {
+		if (tray.open) {
+			tray.open = false;
+			return true;
+		}
 		if (!baseOpen) return false;
 		baseOpen = false;
 		return true;
@@ -72,6 +97,7 @@
 
 	onDestroy(() => {
 		stopEsc();
+		tray.open = false;
 		clearTimeout(pressTimer);
 		clearTimeout(hideTimer);
 	});
@@ -104,7 +130,7 @@
 <svelte:window onpointerdown={outside} />
 
 <nav class="tabbar card" aria-label="Map layers">
-	{#each manager.defs as d, i (d.id)}
+	{#each main as d, i (d.id)}
 		{@const status = manager.status(d.id)}
 		{@const why = manager.available(d.id)}
 		{@const busy = manager.isOn(d.id) && (status === 'loading' || status === 'idle')}
@@ -133,14 +159,38 @@
 			{#if status === 'error' || status === 'stale'}<span class="sr-only">: a problem (long-press for why)</span>{/if}
 		</button>
 	{/each}
+	{#if trayDefs.length}
+		<button
+			bind:this={tabs[trayAt]}
+			class="tab landscape-tab"
+			aria-expanded={tray.open}
+			aria-controls="sheet-panel-landscape"
+			tabindex={current === trayAt ? 0 : -1}
+			onfocus={() => (current = trayAt)}
+			onkeydown={roving}
+			onpointerdown={(e) => pressStart(e, 'Landscape · key 0', ['Trees, crop fields, soils, water, trails and fences', trayOn ? `${trayOn} of ${trayDefs.length} on` : `${trayDefs.length} layers`])}
+			onpointerup={pressEnd}
+			onpointerleave={pressEnd}
+			onpointercancel={pressEnd}
+			oncontextmenu={(e) => e.preventDefault()}
+			onclick={() => activate(toggleTray)}
+		>
+			<span class="icon">
+				<Icon icon={LANDSCAPE} size={24} />
+				{#if trayOn}<span class="count num" aria-hidden="true">{trayOn}</span>{/if}
+			</span>
+			<span class="label">Landscape</span>
+			{#if trayOn}<span class="sr-only">: {trayOn} on</span>{/if}
+		</button>
+	{/if}
 	{#each slots.items('tabbar') as it (it.id)}<it.component {...it.props} />{/each}
 	<button
-		bind:this={tabs[manager.defs.length]}
+		bind:this={tabs[baseAt]}
 		class="tab base-tab"
 		aria-expanded={baseOpen}
 		aria-controls="base-popover"
-		tabindex={current === manager.defs.length ? 0 : -1}
-		onfocus={() => (current = manager.defs.length)}
+		tabindex={current === baseAt ? 0 : -1}
+		onfocus={() => (current = baseAt)}
 		onkeydown={roving}
 		onpointerdown={(e) => pressStart(e, 'Base', ['Map look, aerial photos, buildings, terrain and labels'])}
 		onpointerup={pressEnd}
@@ -213,6 +263,26 @@
 		box-shadow:
 			inset 0 0 0 2px var(--ink),
 			inset 0 0 0 5px var(--accent);
+	}
+	.landscape-tab[aria-expanded='true'] {
+		background: var(--ink);
+		color: var(--panel);
+	}
+	.count {
+		position: absolute;
+		top: -6px;
+		right: -12px;
+		display: grid;
+		place-items: center;
+		box-sizing: border-box;
+		min-width: 18px;
+		height: 18px;
+		padding: 0 4px;
+		border: 2px solid var(--panel);
+		border-radius: 9px;
+		background: var(--accent);
+		color: var(--ink);
+		font: 700 11px/1 var(--font-body);
 	}
 	.base-tab {
 		border-left: 2px solid var(--panel-edge);

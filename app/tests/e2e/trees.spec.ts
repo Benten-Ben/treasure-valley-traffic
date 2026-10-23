@@ -104,6 +104,29 @@ const clear = (p: { x: number; y: number }) => p.x > 320 && p.x < 1280 - 400 && 
 const uncovered = (all: Placed[]) => (p: Placed) => !all.some((q) => q.id !== p.id && q.seg && q.w < p.w && segDist(p.x, p.y, q.seg) <= q.r);
 
 test.describe('trees', () => {
+	test('Trees is a row of the Landscape tray, and its legend is a section of the Landscape legend', { tag: '@trees' }, async ({ page }) => {
+		test.setTimeout(300_000);
+		await keepErrors(page);
+		await page.goto('/#map=15/43.62755/-116.20892/0/45&layers=none');
+		await mapReady(page);
+		const bar = page.getByRole('toolbar', { name: 'Map layers' });
+		await expect(bar.getByRole('button', { name: 'Trees', exact: true })).toHaveCount(0);
+		await bar.getByRole('button', { name: 'Landscape' }).click();
+		const row = page.getByRole('dialog', { name: 'Landscape layers' }).getByRole('button', { name: /^Trees/ });
+		await expect(row).toHaveAttribute('aria-pressed', 'false');
+		await row.click();
+		await expect(row).toHaveAttribute('aria-pressed', 'true');
+		const card = page.getByRole('region', { name: 'Landscape legend' });
+		await expect(card).toBeVisible();
+		const section = card.getByRole('region', { name: 'Trees legend' });
+		await expect(section).toBeVisible();
+		await expect(section.getByText(/Trees are built for the North End( and area perf)? so far\./)).toBeVisible({ timeout: 60_000 });
+		// Trees keep the valley look under Auto.
+		expect((await page.evaluate(() => (globalThis as any).__tvt.layers)).flavor).toBe('valley');
+		await row.click();
+		await expect(card).toHaveCount(0);
+	});
+
 	test('at z17 over the North End the trees stand in 3D, and a click opens the tree panel with its log', { tag: '@trees' }, async ({ page }) => {
 		test.setTimeout(300_000);
 		await keepErrors(page);

@@ -1,10 +1,12 @@
 <script lang="ts">
 	import { layerIcon } from '#lib/layers/icons.js';
-	import { onDestroy, type Component } from 'svelte';
+	import { onDestroy, onMount, type Component } from 'svelte';
 	import type { AppCtx } from '#lib/app/context.js';
 	import type { LayerDef } from '#lib/layers/types.js';
 	import { STACK } from './chrome-icons.js';
 	import { ESC, onEscape } from './keys.js';
+	import { LANDSCAPE_TRAY_EVENT } from './keymap.js';
+	import LandscapeTray, { inTray, LANDSCAPE, tray } from './LandscapeTray.svelte';
 	import LayerButton from './LayerButton.svelte';
 
 	/**
@@ -12,9 +14,18 @@
 	 * the left end, then a button per layer that exists. When it has focus,
 	 * ← and → move between its buttons (roving tabindex). The Base popover
 	 * loads the first time it opens.
+	 *
+	 * The layers whose def says `group: 'landscape'` (Trees, Crop fields, Soils, Water, Trails, Fences) share
+	 * one Landscape button after the others: a badge counts the ones that are on, and it opens the tray
+	 * (S3b). Lanes keeps its own button and key.
 	 */
 	let { app, compact = false }: { app: AppCtx; compact?: boolean } = $props();
 	const manager = $derived(app.layers);
+	const main = $derived(manager.defs.filter((d) => !inTray(d)));
+	const trayDefs = $derived(manager.defs.filter(inTray));
+	const trayOn = $derived(trayDefs.filter((d) => manager.isOn(d.id)).length);
+	/** The Landscape button's place among the buttons (Base is 0, the layers follow). */
+	const trayAt = $derived(main.length + 1);
 
 	let buttons: HTMLButtonElement[] = $state([]);
 	let current = $state(0);
@@ -25,15 +36,35 @@
 	async function toggleBase() {
 		if (!Popover) Popover = (await import('./BasePopover.svelte')).default;
 		baseOpen = !baseOpen;
+		if (baseOpen) tray.open = false;
+	}
+
+	function toggleTray() {
+		if (!trayDefs.length) return;
+		tray.open = !tray.open;
+		if (tray.open) baseOpen = false;
 	}
 
 	const stopEsc = onEscape(ESC.popover, () => {
+		if (tray.open) {
+			tray.open = false;
+			buttons[trayAt]?.focus();
+			return true;
+		}
 		if (!baseOpen) return false;
 		baseOpen = false;
 		buttons[0]?.focus();
 		return true;
 	});
-	onDestroy(stopEsc);
+	// Key 0 (keymap.ts) asks for the tray with a window event, so the key module needs no component.
+	onMount(() => {
+		addEventListener(LANDSCAPE_TRAY_EVENT, toggleTray);
+		return () => removeEventListener(LANDSCAPE_TRAY_EVENT, toggleTray);
+	});
+	onDestroy(() => {
+		stopEsc();
+		tray.open = false;
+	});
 
 	function roving(e: KeyboardEvent) {
 		if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft' && e.key !== 'Home' && e.key !== 'End') return;
@@ -58,10 +89,9 @@
 	}
 
 	function outside(e: PointerEvent) {
-		if (!baseOpen) return;
 		const t = e.target as Element | null;
-		if (t?.closest('.base-popover') || t?.closest('.base-button')) return;
-		baseOpen = false;
+		if (baseOpen && !t?.closest('.base-popover') && !t?.closest('.base-button')) baseOpen = false;
+		if (tray.open && !t?.closest('.landscape-popover') && !t?.closest('.landscape-button')) tray.open = false;
 	}
 </script>
 
@@ -82,7 +112,7 @@
 		/>
 	</div>
 	<span class="divider" aria-hidden="true"></span>
-	{#each manager.defs as d, i (d.id)}
+	{#each main as d, i (d.id)}
 		{@const status = manager.status(d.id)}
 		{@const why = manager.available(d.id)}
 		<LayerButton
@@ -99,6 +129,27 @@
 			onclick={() => manager.toggle(d.id)}
 		/>
 	{/each}
+	{#if trayDefs.length}
+		<div class="landscape-button">
+			<LayerButton
+				bind:element={buttons[trayAt]}
+				label="Landscape"
+				icon={LANDSCAPE}
+				expanded={tray.open}
+				controls="landscape-tray"
+				count={trayOn}
+				tabindex={current === trayAt ? 0 : -1}
+				onfocus={() => (current = trayAt)}
+				tip={{ title: 'Landscape · key 0', lines: ['Trees, crop fields, soils, water, trails and fences', trayOn ? `${trayOn} of ${trayDefs.length} on` : `${trayDefs.length} layers`] }}
+				onclick={toggleTray}
+			/>
+			{#if tray.open}
+				<div class="landscape-popover card" id="landscape-tray" role="dialog" aria-label="Landscape layers">
+					<LandscapeTray {app} />
+				</div>
+			{/if}
+		</div>
+	{/if}
 	{#if baseOpen && Popover}
 		<Popover {app} onclose={() => (baseOpen = false)} />
 	{/if}
@@ -117,6 +168,17 @@
 	}
 	.toolbar:focus {
 		outline: none;
+	}
+	.landscape-popover {
+		position: absolute;
+		left: 50%;
+		bottom: calc(100% + 10px);
+		z-index: 50;
+		transform: translateX(-50%);
+		padding: 8px;
+	}
+	.landscape-button {
+		position: relative;
 	}
 	.divider {
 		align-self: center;

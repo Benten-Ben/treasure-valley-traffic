@@ -20,9 +20,9 @@ export const ESTIMATED_SHARE = 0.25;
 export const palette: Palette = {
 	id: 'fences',
 	colors: [
-		{ name: 'fence post', valley: POST, clay: POST, use: 'the 2D line, the post ticks, and a 3D fence or wall whose height is in OpenStreetMap' },
-		{ name: 'halo', valley: HALO, clay: HALO, use: 'the 1 px halo around the 2D line' },
-		{ name: 'estimated height', valley: ESTIMATED, clay: ESTIMATED, use: 'a 3D fence or wall whose height we estimated from its type' }
+		{ name: 'fence post', valley: POST, clay: POST, use: 'indicator, with a 1 px halo: the 2D line, the post ticks, and a 3D fence or wall whose height is in OpenStreetMap' },
+		{ name: 'halo', valley: HALO, clay: HALO, use: 'indicator, 1 px halo around the 2D line' },
+		{ name: 'estimated height', valley: ESTIMATED, clay: ESTIMATED, use: 'surface: a 3D fence or wall whose height we estimated from its type' }
 	]
 };
 

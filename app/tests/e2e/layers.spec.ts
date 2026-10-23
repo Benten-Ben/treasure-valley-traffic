@@ -672,6 +672,54 @@ test.describe('layers', () => {
 		expect(await vis('pois')).toBe('none');
 	});
 
+	test('the Landscape tray: one button with a count, 0 opens it, Shift+click solos a row, 1 covers it, Esc closes it', { tag: '@wp2' }, async ({ page, consoleErrors }) => {
+		test.setTimeout(300_000);
+		await page.goto('/#map=14/43.615/-116.2023/0/45&layers=cameras,transit');
+		await mapReady(page);
+		// The tray's layers are not on the bar: one Landscape button after the others, no badge while none is on.
+		await expect(layerButton(page, 'Trees')).toHaveCount(0);
+		const landscape = toolbar(page).getByRole('button', { name: /^Landscape/ });
+		await expect(landscape).toBeVisible();
+		await expect(landscape).toHaveAttribute('aria-expanded', 'false');
+		await expect(landscape.locator('.count')).toHaveCount(0);
+		// 0 opens and closes the tray.
+		await page.keyboard.press('0');
+		const tray = page.getByRole('dialog', { name: 'Landscape layers' });
+		await expect(tray).toBeVisible();
+		await expect(landscape).toHaveAttribute('aria-expanded', 'true');
+		const rows = tray.getByRole('button');
+		expect(await rows.count()).toBeGreaterThanOrEqual(1);
+		await page.keyboard.press('0');
+		await expect(tray).toHaveCount(0);
+		// A row turns its layer on: the button counts it, and the tray layer has no digit of its own.
+		await landscape.click();
+		await tray.getByRole('button', { name: /^Trees/ }).click();
+		await expect(tray.getByRole('button', { name: /^Trees/ })).toHaveAttribute('aria-pressed', 'true');
+		expect(await enabled(page)).toContain('trees');
+		await expect(landscape.locator('.count')).toHaveText('1');
+		// Shift+click solos the row: every other layer goes off; Shift+click again restores them.
+		await tray.getByRole('button', { name: /^Trees/ }).click({ modifiers: ['Shift'] });
+		expect(await enabled(page)).toEqual(['trees']);
+		await tray.getByRole('button', { name: /^Trees/ }).click({ modifiers: ['Shift'] });
+		expect(await enabled(page)).toEqual(['cameras', 'transit', 'trees']);
+		// 1 (all off) covers the tray's layers too.
+		await page.keyboard.press('1');
+		expect(await enabled(page)).toEqual([]);
+		await expect(landscape.locator('.count')).toHaveCount(0);
+		await page.keyboard.press('1');
+		expect(await enabled(page)).toEqual(['cameras', 'transit', 'trees']);
+		// Esc closes the tray and gives the focus back to its button.
+		await page.keyboard.press('Escape');
+		await expect(tray).toHaveCount(0);
+		await expect(landscape).toBeFocused();
+		// Base and the tray are never open together.
+		await landscape.click();
+		await toolbar(page).getByRole('button', { name: 'Base' }).click();
+		await expect(page.getByRole('dialog', { name: 'Base map' })).toBeVisible();
+		await expect(tray).toHaveCount(0);
+		expect(consoleErrors).toEqual([]);
+	});
+
 	test('the phone layout: a tab bar and a sheet, no horizontal scroll', { tag: '@wp2' }, async ({ page }) => {
 		await page.setViewportSize({ width: 390, height: 844 });
 		await page.goto('/');

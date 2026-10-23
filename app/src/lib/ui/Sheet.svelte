@@ -4,6 +4,7 @@
 	import PanelBoundary from '#lib/components/PanelBoundary.svelte';
 	import { windowsOf } from '#lib/state/windows.svelte.js';
 	import Icon from './Icon.svelte';
+	import LandscapeTray, { tray } from './LandscapeTray.svelte';
 	import { slots } from './slots.svelte.js';
 	import { CLOSE, PIN } from './window-icons.js';
 
@@ -43,6 +44,17 @@
 	let active = $state<Tab>('details');
 	const wins = $derived(windows.list);
 
+	// The Landscape tray (S3b) is a tab of the sheet while it's open: the tab bar's Landscape tab, or key 0,
+	// opens it and lifts the sheet to at least 55%; the Map tab (or closing it) gives the legends back.
+	$effect(() => {
+		if (tray.open) {
+			untrack(() => {
+				active = 'landscape';
+				if (snap < 1) snap = 1;
+			});
+		} else if (untrack(() => active) === 'landscape') active = 'details';
+	});
+
 	// A window that opens (or is opened again) with focus takes its tab, lifts the sheet and gets
 	// the focus; a closed one gives the Map tab back.
 	let windowAt = -Infinity;
@@ -57,7 +69,7 @@
 					windows.focused(w.key);
 					void tick().then(() => document.getElementById(panelId(w.key))?.focus({ preventScroll: true }));
 				}
-			if (active !== 'details' && !list.some((w) => w.key === active)) active = 'details';
+			if (active !== 'details' && !(active === 'landscape' && tray.open) && !list.some((w) => w.key === active)) active = 'details';
 		});
 	});
 
@@ -116,7 +128,14 @@
 
 	// --- tabs ----------------------------------------------------------------------------
 	let tabEls: HTMLButtonElement[] = $state([]);
-	const tabIds = $derived(['details', ...wins.map((w) => w.key)]);
+	const tabIds = $derived(['details', ...(tray.open ? ['landscape'] : []), ...wins.map((w) => w.key)]);
+	const tabAt = (key: string) => tabIds.indexOf(key);
+
+	/** The Map tab closes the tray tab; any other tab is just shown. */
+	function pick(key: Tab) {
+		if (key === 'details' && tray.open) tray.open = false;
+		active = key;
+	}
 
 	function tabKey(e: KeyboardEvent) {
 		if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
@@ -124,7 +143,7 @@
 		e.stopPropagation();
 		const i = tabIds.indexOf(active);
 		const next = (i + (e.key === 'ArrowRight' ? 1 : -1) + tabIds.length) % tabIds.length;
-		active = tabIds[next];
+		pick(tabIds[next]);
 		tabEls[next]?.focus();
 	}
 
@@ -153,7 +172,7 @@
 		<span class="bar" aria-hidden="true"></span>
 	</button>
 
-	{#if wins.length}
+	{#if wins.length || tray.open}
 		<div class="tabs" role="tablist" aria-label="Panels" tabindex="-1" onkeydown={tabKey}>
 			<button
 				bind:this={tabEls[0]}
@@ -162,17 +181,28 @@
 				aria-selected={active === 'details'}
 				aria-controls={panelId('details')}
 				tabindex={active === 'details' ? 0 : -1}
-				onclick={() => (active = 'details')}>Map</button
+				onclick={() => pick('details')}>Map</button
 			>
+			{#if tray.open}
+				<button
+					bind:this={tabEls[1]}
+					role="tab"
+					id={tabId('landscape')}
+					aria-selected={active === 'landscape'}
+					aria-controls={panelId('landscape')}
+					tabindex={active === 'landscape' ? 0 : -1}
+					onclick={() => pick('landscape')}>Landscape</button
+				>
+			{/if}
 			{#each wins as w, i (w.key)}
 				<button
-					bind:this={tabEls[i + 1]}
+					bind:this={tabEls[tabAt(w.key)]}
 					role="tab"
 					id={tabId(w.key)}
 					aria-selected={active === w.key}
 					aria-controls={panelId(w.key)}
 					tabindex={active === w.key ? 0 : -1}
-					onclick={() => (active = w.key)}
+					onclick={() => pick(w.key)}
 				>
 					<span class="number num" aria-hidden="true">{w.number}</span>
 					<span class="name">{w.title}</span>
@@ -181,7 +211,13 @@
 		</div>
 	{/if}
 
-	<div class="panel" role={wins.length ? 'tabpanel' : undefined} id={panelId('details')} aria-labelledby={wins.length ? tabId('details') : undefined} hidden={active !== 'details'}>
+	{#if tray.open}
+		<div class="panel" role="tabpanel" id={panelId('landscape')} aria-labelledby={tabId('landscape')} hidden={active !== 'landscape'}>
+			<LandscapeTray {app} variant="sheet" />
+		</div>
+	{/if}
+
+	<div class="panel" role={wins.length || tray.open ? 'tabpanel' : undefined} id={panelId('details')} aria-labelledby={wins.length || tray.open ? tabId('details') : undefined} hidden={active !== 'details'}>
 		{@render children()}
 		{#each slots.items('sheet') as it (it.id)}<it.component {...it.props} />{/each}
 	</div>
