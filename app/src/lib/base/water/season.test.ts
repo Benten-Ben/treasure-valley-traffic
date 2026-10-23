@@ -72,6 +72,17 @@ function paintAt(prop: 'line-width' | 'line-gap-width', width_m: number | undefi
 	return e.evaluate({ zoom }, { type: 2, properties: width_m === undefined ? {} : { width_m } }, season ? { season } : {});
 }
 
+/**
+ * What the GPU draws at a fractional zoom: MapLibre evaluates a zoom-and-feature paint expression at the tile's whole
+ * zoom and at the next, and blends the two with the exponential base 2 factor (a CompositeExpressionBinder).
+ */
+function gpuAt(prop: 'line-width' | 'line-gap-width', width_m: number, zoom: number, season?: string): number {
+	const z = Math.floor(zoom);
+	const t = 2 ** (zoom - z) - 1;
+	const a = paintAt(prop, width_m, z, season);
+	return a + t * (paintAt(prop, width_m, z + 1, season) - a);
+}
+
 function todaysWidth(width_m: number | undefined, zoom: number): number {
 	const parsed = createPropertyExpression(lineWidth() as never, 'line-width', (latest as { paint_line: Record<string, unknown> }).paint_line['line-width'] as never);
 	if (parsed.result !== 'success') throw new Error('line-width does not parse');
@@ -111,9 +122,49 @@ describe('the season’s paint', () => {
 		expect(paintAt('line-gap-width', 4, 15, 'off')).toBe(0);
 		expect(paintAt('line-gap-width', 4, 16, 'off')).toBeGreaterThan(0);
 		expect(paintAt('line-width', 4, 15, 'off')).toBeCloseTo(todaysWidth(4, 15), 6);
-		// Half a zoom on, a line keeps the look of the whole zoom it is past, and its footprint never jumps to a doubled line.
-		const half = paintAt('line-width', 4, 15.5, 'off') + paintAt('line-gap-width', 4, 15.5, 'off');
-		expect(half).toBeLessThanOrEqual(todaysWidth(4, 15.5) + 1e-2);
+	});
+
+	it('reads the same at a whole zoom as the plain width, with a stop at every whole zoom the base has', () => {
+		for (const width_m of [0.5, 1.5, 4, 14, 30]) {
+			for (let z = 8; z <= 22; z++) {
+				const on = paintAt('line-width', width_m, z);
+				expect(on, `${width_m} m at z${z}`).toBeCloseTo(todaysWidth(width_m, z), 6);
+				const gap = paintAt('line-gap-width', width_m, z, 'off');
+				const edge = paintAt('line-width', width_m, z, 'off');
+				// Hollow exactly from 3 px, and then the footprint is the true width.
+				expect(gap > 0, `${width_m} m at z${z}`).toBe(on >= 3);
+				expect(gap > 0 ? gap + 2 * edge : edge, `${width_m} m at z${z}`).toBeCloseTo(on, 6);
+			}
+		}
+	});
+
+	it('draws an off canal at its true footprint at every zoom but the one interval where it turns hollow, as the GPU blends it', () => {
+		// MapLibre evaluates this expression (it reads the zoom and the feature) at the tile's whole zoom and the next
+		// and blends them in the shader; a line with a gap is two lines (footprint gap + 2 * width), one without is one.
+		const footprintOf = (width_m: number, zoom: number) => {
+			const gap = gpuAt('line-gap-width', width_m, zoom, 'off');
+			const edge = gpuAt('line-width', width_m, zoom, 'off');
+			return gap > 0 ? gap + 2 * edge : edge;
+		};
+		for (const width_m of [0.5, 1.5, 4, 14, 30]) {
+			// The whole zoom where it is first 3 px or more, and the interval before it, the only one that is doubled.
+			let hollow = 8;
+			while (todaysWidth(width_m, hollow) < 3 && hollow < 22) hollow++;
+			for (let z = 8; z < 22; z += 0.25) {
+				const on = gpuAt('line-width', width_m, z);
+				const footprint = footprintOf(width_m, z);
+				const message = `${width_m} m at z${z}: ${footprint.toFixed(2)} px against ${on.toFixed(2)}`;
+				if (z > hollow - 1 && z < hollow) {
+					// The artefact: two lines of the blended width, never more than twice the true width, never under it.
+					expect(footprint, message).toBeGreaterThanOrEqual(on - 1e-6);
+					expect(footprint, message).toBeLessThanOrEqual(2 * on + 1e-6);
+				} else expect(footprint, message).toBeCloseTo(on, 5);
+			}
+		}
+		// A 14 m main canal: z14 is 2.8 px and z15 8.1, so z14.05 to z14.95 carries it, and z15 on is exact.
+		expect(footprintOf(14, 14)).toBeCloseTo(gpuAt('line-width', 14, 14), 5);
+		expect(footprintOf(14, 15)).toBeCloseTo(gpuAt('line-width', 14, 15), 5);
+		expect(footprintOf(14, 15.5)).toBeCloseTo(gpuAt('line-width', 14, 15.5), 5);
 	});
 
 	it('draws an unknown canal as a thin centre line in the same colour, where it is wide enough', () => {

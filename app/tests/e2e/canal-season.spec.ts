@@ -263,6 +263,32 @@ test.describe('canal season: the drawing', () => {
 		expect(offsite).toEqual([]);
 	});
 
+	test('draws an off canal at about its width at a fractional zoom: within twice it where it turns hollow, and at it after', { tag: '@canal' }, async ({ page, consoleErrors }) => {
+		test.setTimeout(300_000);
+		// The 14 m canal is 2.8 px at z14 and 8.1 px at z15. MapLibre blends the whole zooms' values in the shader, so
+		// the interval turns plain into hollow as two lines of the blended width (season.ts): never over twice the width.
+		await ready(page, `#map=14.5/43.608/-116.19/0/0&layers=none`);
+		await expect.poll(async () => (await rendered(page, ['water.network.reaches'])).some((f: { id: number }) => f.id === 7001), { timeout: 60_000 }).toBe(true);
+		const footprint = async (s: 'on' | 'off') => {
+			await force(page, s);
+			const p = await profile(page, CANAL_POINT);
+			return p.last - p.first + 1;
+		};
+		const on = await footprint('on');
+		const off = await footprint('off');
+		expect(on).toBeGreaterThanOrEqual(3);
+		expect(off, 'off at z14.5').toBeGreaterThanOrEqual(on - 2);
+		expect(off, 'off at z14.5').toBeLessThanOrEqual(2 * on + 2);
+		// Past the interval: hollow, at the true footprint again.
+		await page.evaluate(() => (globalThis as any).__tvt.map.jumpTo({ zoom: 15.5 }));
+		await settle(page);
+		const on2 = await footprint('on');
+		const off2 = await footprint('off');
+		expect(on2).toBeGreaterThan(10);
+		expect(Math.abs(off2 - on2), 'off at z15.5').toBeLessThanOrEqual(3);
+		expect(consoleErrors).toEqual([]);
+	});
+
 	test('draws a canal that has become unknown (48 hours without a reading) as a thin line after a reload', { tag: '@canal' }, async ({ page }) => {
 		test.setTimeout(300_000);
 		await setCanalOne('unknown');

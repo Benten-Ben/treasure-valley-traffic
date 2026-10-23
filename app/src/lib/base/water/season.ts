@@ -1,5 +1,5 @@
 import type { BaseLive } from '#lib/base/types.js';
-import { lineWidth, RIBBON_FROM_ZOOM } from './palette.js';
+import { lineWidth } from './palette.js';
 
 /**
  * The canal season on the baked reaches (landscape sprint plan v3 §4.2 P5, K5; P5-app): each canal reads
@@ -9,7 +9,8 @@ import { lineWidth, RIBBON_FROM_ZOOM } from './palette.js';
  * - **On**, or no state: today's line.
  * - **Off**: a hollow inside the reach's own line, at its true footprint. Where the on width is 3 px or more,
  *   two thin edges (a quarter of the width, between 0.6 and 1.2 px each) with a gap between them, so the
- *   footprint (gap plus two edges) is exactly the true width. The colour stays the reach's own tone: never a
+ *   footprint (gap plus two edges) is the true width, at every whole zoom (the one interval where a line turns
+ *   hollow is drawn as a doubled blend: see `seasonPaint`). The colour stays the reach's own tone: never a
  *   casing, never a second line under the same features.
  * - **Unknown**: over the same range, a solid centre hairline of about 0.8 px in the reach's tone (no dash:
  *   `line-dasharray` takes no feature-state).
@@ -99,64 +100,60 @@ type Expr = unknown[];
 const season: Expr = ['feature-state', 'season'];
 const is = (state: SeasonState): Expr => ['==', season, state];
 
-/** Where a stop's second half sits just before the next stop, so the hollow switches at a whole zoom, never mid-way. */
-const STEP_EPS = 0.001;
-
 /**
- * The width `lineWidth()` gives at a whole zoom between its z15 and z22 stops, as an expression over those two: its
- * exponential base 2 interpolation is affine in 2^zoom, so this is the same value (the 0.6 px floor included), and
- * interpolating between whole zooms is exact.
+ * The width `lineWidth()` gives at a whole zoom `zoom`, between its stops at `za` and `zb`: its exponential base 2
+ * interpolation is affine in 2^zoom, so this is the same value (the 0.6 px floor included) at a whole zoom.
  */
-const between = (zoom: number, at15: Expr, at22: Expr): Expr => ['+', at15, ['*', (2 ** (zoom - RIBBON_FROM_ZOOM) - 1) / (2 ** (22 - RIBBON_FROM_ZOOM) - 1), ['-', at22, at15]]];
+const between = (zoom: number, za: number, a: Expr, zb: number, b: Expr): Expr => ['+', a, ['*', (2 ** zoom - 2 ** za) / (2 ** zb - 2 ** za), ['-', b, a]]];
 
 /**
- * The solid reach layer's `line-width` and `line-gap-width`: `lineWidth()`'s own stops, each one reading the
- * feature's season. On, no state, or under 3 px: the width as today and a gap of 0. Off from 3 px: an edge of
- * `clamp(0.6, w / 4, 1.2)` and a gap of `w - 2 * edge`, so the footprint is the true width. Unknown from 3 px:
- * the hairline, no gap.
+ * The solid reach layer's `line-width` and `line-gap-width`: one stop at every whole zoom, each reading the
+ * feature's season. On, no state, or under 3 px: the width as `lineWidth()` gives it and a gap of 0. Off from 3 px:
+ * an edge of `clamp(0.6, w / 4, 1.2)` and a gap of `w - 2 * edge`, so the footprint is the true width. Unknown
+ * from 3 px: the hairline, no gap.
  *
- * MapLibre draws a line with a gap as two lines (footprint: gap plus two widths) and one without as a single
- * line (footprint: the width), so a style that interpolated between a plain stop and a hollow one would draw a
- * doubled line in between. The stops are therefore whole zooms (a ribbon's width doubles each zoom, so
- * interpolating between them is exact, and the on width stays `lineWidth()`'s own, the 0.6 px floor included),
- * and each interval keeps the look its first stop has: the second value, just before the next stop, is the next
- * stop's width in the same look. A line turns hollow at the first whole zoom where its width reaches 3 px, with
- * its footprint unchanged.
+ * MapLibre does not evaluate a paint expression that reads both the zoom and the feature at the map's zoom: it
+ * evaluates it at the tile's whole zoom z and at z + 1 and blends the two results in the shader, so a stop between
+ * two whole zooms is never read. The stops are therefore whole zooms, which is also exact: a ribbon's width
+ * doubles each zoom, so what the shader blends between two stops is the true width.
+ *
+ * One artefact is left, in the one zoom interval where an off line turns hollow (its width crosses 3 px: for a
+ * 14 m canal z14 to z15, for a 4 m lateral z15 to z16): a line drawn with a gap is two lines (footprint: the gap
+ * plus two widths) and one without is a single line, so the blend of the plain end (gap 0) into the hollow one
+ * reads as two lines of the blended width: a footprint of `2 (1 - t) w_start + t w_end` against the true
+ * `(1 - t) w_start + t w_end`, so up to twice the width just after the interval's start (under 3 px wider, the
+ * start being under 3 px) and the true width at its end. No set of whole-zoom values avoids it: giving the plain
+ * end two lines of half its width and a hairline gap only moves the doubled blend to the interval before, and so on
+ * down the zooms. A line that is on, unknown (one line at both ends) or already hollow never doubles.
  */
 export function seasonPaint(): { 'line-width': Expr; 'line-gap-width': Expr } {
 	const base = lineWidth() as unknown[];
 	const head = base.slice(0, 3);
-	const stopAt = (zoom: number) => base[base.indexOf(zoom) + 1] as Expr;
+	const known: [number, Expr][] = [];
+	for (let i = 3; i < base.length; i += 2) known.push([base[i] as number, base[i + 1] as Expr]);
+	// The width at every whole zoom the base's stops span.
 	const stops: [number, Expr][] = [];
-	for (let i = 3; i < base.length; i += 2) {
-		const zoom = base[i] as number;
-		// The whole zooms between the last ribbon stop and the final one.
-		if (zoom === 22) for (let z = RIBBON_FROM_ZOOM + 1; z < 22; z++) stops.push([z, between(z, stopAt(RIBBON_FROM_ZOOM), stopAt(22))]);
-		stops.push([zoom, base[i + 1] as Expr]);
+	for (let z = known[0][0]; z <= known[known.length - 1][0]; z++) {
+		const j = known.findIndex(([kz]) => kz >= z);
+		const [zb, eb] = known[j];
+		stops.push([z, zb === z ? eb : between(z, known[j - 1][0], known[j - 1][1], zb, eb)]);
 	}
-	// `look` is the stop whose width decides plain or hollow; `at` is the stop whose width the value follows.
-	const cell = (look: Expr, at: Expr, kind: 'width' | 'gap'): Expr => {
-		const wide: Expr = ['>=', ['var', 'look'], HOLLOW_FROM_PX];
-		const w: Expr = ['var', 'at'];
-		const edge: Expr = ['max', EDGE_MIN_PX, ['min', EDGE_MAX_PX, ['*', EDGE_SHARE, w]]];
+	const cell = (w: Expr, kind: 'width' | 'gap'): Expr => {
+		const wide: Expr = ['>=', ['var', 'w'], HOLLOW_FROM_PX];
+		const edge: Expr = ['max', EDGE_MIN_PX, ['min', EDGE_MAX_PX, ['*', EDGE_SHARE, ['var', 'w']]]];
 		const hollow: Expr = ['all', wide, is('off')];
 		const body: Expr =
 			kind === 'width'
-				? ['case', hollow, edge, ['all', wide, is('unknown')], HAIRLINE_PX, w]
-				: ['case', hollow, ['-', w, ['*', 2, edge]], 0];
-		return ['let', 'look', look, 'at', at, body];
+				? ['case', hollow, edge, ['all', wide, is('unknown')], HAIRLINE_PX, ['var', 'w']]
+				: ['case', hollow, ['-', ['var', 'w'], ['*', 2, edge]], 0];
+		return ['let', 'w', w, body];
 	};
 	const width: unknown[] = [];
 	const gap: unknown[] = [];
-	stops.forEach(([zoom, w], i) => {
-		width.push(zoom, cell(w, w, 'width'));
-		gap.push(zoom, cell(w, w, 'gap'));
-		const next = stops[i + 1];
-		if (next) {
-			width.push(next[0] - STEP_EPS, cell(w, next[1], 'width'));
-			gap.push(next[0] - STEP_EPS, cell(w, next[1], 'gap'));
-		}
-	});
+	for (const [zoom, w] of stops) {
+		width.push(zoom, cell(w, 'width'));
+		gap.push(zoom, cell(w, 'gap'));
+	}
 	return { 'line-width': [...head, ...width], 'line-gap-width': [...head, ...gap] };
 }
 

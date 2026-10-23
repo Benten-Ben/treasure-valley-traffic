@@ -106,7 +106,8 @@ describe('the water contribution', () => {
 		}
 		// The solid layer's gap is 0 unless the canal's season is off; the colour never changes with it.
 		expect(paint(REACH_SOLID_LAYER, 'valley')['line-color']).toBe('#4a9fcc');
-		for (const z of [8, 11.5, 12, 14, 14.6, 15, 15.5, 16, 16.5, 17, 18, 19.5, 20, 22]) {
+		// At whole zooms: MapLibre reads a zoom-and-feature expression at the tile's whole zoom and the next (season.test.ts blends them).
+		for (const z of [8, 9, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 22]) {
 			for (const width_m of [0.5, 1.5, 4, 8, 14]) {
 				const where = `z${z}, ${width_m} m`;
 				const on = widthAt(REACH_SOLID_LAYER, { width_m }, z);
