@@ -7,7 +7,10 @@ import { treeLayers } from '#lib/layers/trees/trees.js';
 import { networkLayers, SOURCES as TRANSIT_SOURCES } from '#lib/layers/transit/network.js';
 import { stopNameLayer } from '#lib/layers/transit/stops3d.js';
 import { fallbackBusLayers } from '#lib/layers/transit/transit.js';
-import { ANCHORS, drapedRuns, insertSlotted, ordered, rttStacks, type SlottedLayer } from './order.js';
+import type { BaseContribution, BaseLayer } from '#lib/base/types.js';
+import type { LayerId } from '#lib/layers/types.js';
+import { addSlotted, ANCHORS, DRAPED_TYPES, drapedRuns, fillOwner, insertSlotted, ordered, rttStacks, slotAllowed, slotFlags, type Slot, type SlotGate, type SlottedLayer } from './order.js';
+import { contributionLayer } from './flavors.js';
 import { addAerial, basemapReady, BUILDINGS_LAYERS, buildStyle, type BasemapManifest } from './style.js';
 
 beforeAll(() => basemapReady);
@@ -142,5 +145,164 @@ describe('rttStacks', () => {
 		const lastSymbol = a.findLastIndex((id) => id === 'streets-speed-labels' || id === 'transit-shields' || id === 'transit-hubs' || id === 'places_locality');
 		expect(lastSymbol).toBeLessThan(at('transit-buses'));
 		expect(at('transit-buses')).toBeLessThan(at('overlay'));
+	});
+});
+
+
+// -- the landscape slots (S3a) ------------------------------------------------------------------------------------
+
+const info = (plugin: string, layer: string) => ({
+	plugin,
+	layer,
+	build: 'b',
+	geometry: 'Polygon',
+	features: 1,
+	fields: {},
+	minzoom: 12,
+	maxzoom: 16,
+	licence: 'ODbL-1.0',
+	republish: 'internal',
+	credit: []
+});
+const landscapeManifest: BasemapManifest = {
+	...manifest,
+	landscape: {
+		status: 'baked',
+		file: 'l.pmtiles',
+		digest: 'l',
+		format: 'pbf',
+		minzoom: 8,
+		maxzoom: 16,
+		promoteId: 'id',
+		layers: { 'a.one': info('a', 'one'), 'b.two': info('b', 'two') },
+		empty: [],
+		attribution: 'OSM',
+		licences: [],
+		republish: 'internal',
+		access: 'tailnet',
+		inputs: [],
+		built: '2026-10-20',
+		spec: 1,
+		previous: null
+	}
+};
+
+const bl = (id: string, type: BaseLayer['type'], slot: Slot, rank: number, o: Partial<BaseLayer> = {}): BaseLayer => ({ id, type, slot, rank, sourceLayer: 'a.one', valley: {}, ...o });
+const CONTRIBUTIONS: BaseContribution[] = [
+	{ id: 'a.one', title: 'a', blurb: 'a', source: { kind: 'landscape', sourceLayers: ['a.one'] }, looks: 'both', credit: '', layers: [bl('a-fill', 'fill', 'surfaces', 10, { aerial: 'hide' }), bl('a-line', 'line', 'land', 10, { aerial: 'only' })] },
+	{ id: 'b.two', title: 'b', blurb: 'b', source: { kind: 'landscape', sourceLayers: ['b.two'] }, looks: 'valley', credit: '', layers: [bl('b-fill', 'fill', 'water', 10, { sourceLayer: 'b.two' })] },
+	{ id: 'g.ground', title: 'g', blurb: 'g', source: { kind: 'ground' }, looks: 'valley', credit: '', layers: [bl('g-paint', 'raster', 'ground', 0, { aerial: 'hide' })] },
+	{ id: 's.scars', title: 's', blurb: 's', source: { kind: 'tiles', plugin: 's', layer: 'scars', minzoom: 8, maxzoom: 15 }, looks: 'both', credit: '', layers: [bl('s-fill', 'fill', 'areas', 10)] }
+];
+/** Synthetic tray layers: one draped layer in a landscape slot each (soils, crops in two slots, trails over the streets). */
+const TRAY: Record<string, SlottedLayer[]> = {
+	soils: [{ slot: 'areas', layer: { id: 'soils-fill', type: 'fill', source: 'x' } as LayerSpecification, areaFill: true }],
+	crops: [
+		{ slot: 'areas', layer: { id: 'crops-fill', type: 'fill', source: 'x' } as LayerSpecification, areaFill: true },
+		{ slot: 'land', layer: { id: 'crops-fill-aerial', type: 'fill', source: 'x' } as LayerSpecification, areaFill: true, aerial: 'only' }
+	],
+	water: [{ slot: 'water', layer: { id: 'water-line', type: 'line', source: 'x' } as LayerSpecification }],
+	trails: [{ slot: 'routes', layer: { id: 'trails-line', type: 'line', source: 'x' } as LayerSpecification }]
+};
+
+describe('the landscape slots', () => {
+	/** The style with the contributions built in (ground and tiles as the manager adds them) and the tray layers inserted. */
+	function landscapeStyle(aerialAdded: boolean) {
+		const style = buildStyle(landscapeManifest, 'http://x', aerialAdded, 'valley', { contributions: CONTRIBUTIONS });
+		let layers = style.layers;
+		const ranks = {};
+		for (const c of CONTRIBUTIONS) {
+			if (c.source.kind === 'landscape') continue;
+			for (const l of c.layers) layers = insertSlotted(layers, [{ slot: l.slot, layer: contributionLayer(c, l, { flavor: 'valley', aerial: false, layers: new Set() }) }], l.rank, ranks);
+		}
+		let rank = 60;
+		for (const [id, add] of Object.entries(TRAY)) layers = insertSlotted(layers, add, rank++ + id.length, ranks);
+		layers = insertSlotted(layers, [wash], 0, ranks);
+		return layers;
+	}
+
+	it('is one draped block from anchor:ground to anchor:routes, in every on/off combination, at z12, z15.5 and z17', () => {
+		const ids = Object.keys(TRAY);
+		const contributionLayers = CONTRIBUTIONS.flatMap((c) => c.layers.map((l) => l.id));
+		const toggles = [...ids, ...contributionLayers];
+		for (const aerial of [false, true]) {
+			const layers = landscapeStyle(aerial);
+			// No layer that isn't draped sits between the ground and the routes anchor, shown or not.
+			const from = layers.findIndex((l) => l.id === ANCHORS.ground);
+			const to = layers.findIndex((l) => l.id === ANCHORS.routes);
+			expect(from).toBeGreaterThan(-1);
+			expect(to).toBeGreaterThan(from);
+			const bad = layers.slice(from, to).filter((l) => !DRAPED_TYPES.has(l.type));
+			expect(bad.map((l) => l.id), 'non-draped layers inside the draped block').toEqual([]);
+			const tray = new Set(Object.values(TRAY).flat().map((s) => s.layer.id));
+			for (const on of subsets(toggles)) {
+				const shown = new Set(on.flatMap((t) => (TRAY[t] ? TRAY[t].map((s) => s.layer.id) : [t])));
+				const list = layers.map((l) => {
+					const o = ordered(l);
+					if (tray.has(l.id) || contributionLayers.includes(l.id)) o.visible = shown.has(l.id);
+					if (l.id === 'base-wash') o.visible = on.length > 0;
+					if (l.id === 'aerial' || l.id === 'aerial-detail') o.visible = aerial;
+					if (overlay.id === l.id) o.visible = true;
+					return o;
+				});
+				for (const zoom of [12, 15.5, 17]) expect(rttStacks(list, zoom), `on=[${on}] aerial=${aerial} z${zoom}`).toBe(1);
+			}
+		}
+	});
+
+	it('orders the slots whatever loads first: tray layers by rank, contributions by theirs', () => {
+		const a = landscapeStyle(false).map((l) => l.id);
+		const at = (id: string) => a.indexOf(id);
+		expect(at('g-paint')).toBeLessThan(at(ANCHORS.ground));
+		expect(at(ANCHORS.ground)).toBeLessThan(at('landcover'));
+		for (const id of ['soils-fill', 'crops-fill', 's-fill']) {
+			expect(at(id), id).toBeGreaterThan(at('landuse_park'));
+			expect(at(id), id).toBeLessThan(at(ANCHORS.areas));
+		}
+		expect(at('water-line')).toBeGreaterThan(at('water'));
+		expect(at('water-line')).toBeLessThan(at(ANCHORS.water));
+		expect(at('b-fill')).toBeLessThan(at(ANCHORS.water));
+		expect(at('a-fill')).toBeGreaterThan(at(ANCHORS.water));
+		expect(at('a-fill')).toBeLessThan(at(ANCHORS.surfaces));
+		expect(at(ANCHORS.surfaces)).toBeLessThan(at('roads_minor'));
+		// The area fills' Aerial copies sit over the photo, under the streets.
+		expect(at('crops-fill-aerial')).toBeGreaterThan(at(ANCHORS.base));
+		expect(at('a-line')).toBeLessThan(at(ANCHORS.land));
+		expect(at(ANCHORS.land)).toBeLessThan(at(ANCHORS.streets));
+		expect(at('trails-line')).toBeLessThan(at(ANCHORS.routes));
+	});
+
+	it('records the slot flags a module adds, with its owner', () => {
+		const map: Parameters<typeof addSlotted>[0] = { getLayer: () => ({}), getLayersOrder: () => [] };
+		const added: string[] = [];
+		addSlotted(map, TRAY.crops, 80, (l) => void added.push(l.id), 'crops');
+		addSlotted(map, TRAY.water, 90, (l) => void added.push(l.id), 'water');
+		expect(added).toEqual(['crops-fill', 'crops-fill-aerial', 'water-line']);
+		expect([...slotFlags(map)]).toEqual([
+			['crops-fill', { aerial: undefined, areaFill: true, owner: 'crops' }],
+			['crops-fill-aerial', { aerial: 'only', areaFill: true, owner: 'crops' }]
+		]);
+		expect([...slotFlags({})]).toEqual([]);
+	});
+
+	it('lets one area fill draw at a time, the layer turned on last, and gates by Aerial', () => {
+		const owners = new Set<LayerId>(['soils', 'crops']);
+		expect(fillOwner(['soils', 'crops'], owners)).toBe('crops');
+		expect(fillOwner(['crops', 'soils'], owners)).toBe('soils');
+		expect(fillOwner(['crops', 'streets', 'soils'], new Set<LayerId>(['crops']))).toBe('crops');
+		expect(fillOwner(['streets'], owners)).toBeNull();
+		const gate = (o: Partial<SlotGate> = {}): SlotGate => ({ aerial: false, fillOwner: 'crops', fillsOff: new Set(), ...o });
+		const fill = { areaFill: true as const, owner: 'crops' as LayerId };
+		expect(slotAllowed(fill, gate())).toBe(true);
+		expect(slotAllowed({ ...fill, owner: 'soils' }, gate())).toBe(false);
+		// Crops under Transit: its fills off, wherever it sits in the order.
+		expect(slotAllowed(fill, gate({ fillsOff: new Set<LayerId>(['crops']) }))).toBe(false);
+		// Aerial 'only' (the 0.45 copies) and 'hide' (the ground, the surfaces).
+		expect(slotAllowed({ ...fill, aerial: 'only' }, gate())).toBe(false);
+		expect(slotAllowed({ ...fill, aerial: 'only' }, gate({ aerial: true }))).toBe(true);
+		expect(slotAllowed({ aerial: 'hide' }, gate())).toBe(true);
+		expect(slotAllowed({ aerial: 'hide' }, gate({ aerial: true }))).toBe(false);
+		// A layer added without an owner is gated by Aerial only.
+		expect(slotAllowed({ areaFill: true }, gate({ fillOwner: null }))).toBe(true);
 	});
 });

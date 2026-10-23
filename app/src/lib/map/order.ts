@@ -1,4 +1,5 @@
 import type { BackgroundLayerSpecification, LayerSpecification } from 'maplibre-gl';
+import type { LayerId } from '#lib/layers/types.js';
 
 /**
  * Layer order (docs/14 §14.8, "Layer order").
@@ -13,8 +14,17 @@ import type { BackgroundLayerSpecification, LayerSpecification } from 'maplibre-
  *
  * | Slot | Contents |
  * |---|---|
- * | base | basemap fills and lines, rail, the temporary wash (`anchor:base`) |
+ * | background, earth | the basemap's own |
+ * | ground | the painted ground (Valley only, hidden under Aerial; `anchor:ground`) |
+ * | landcover, landuse | the basemap's fills |
+ * | areas | area fills: soils, crops (`anchor:areas`) |
+ * | water | the basemap's water fills and lines |
+ * | water | water bodies and reaches (`anchor:water`) |
+ * | surfaces | paving under the roads (hidden under Aerial; `anchor:surfaces`) |
+ * | road lines | the basemap's road lines, rail and flat buildings |
+ * | base | the temporary wash (`anchor:base`) |
  * | hillshade, aerial | the style's own |
+ * | land | the area fills' 0.45 copies, shown over Aerial only (`anchor:land`) |
  * | streets | streets casing, speed lines (`anchor:streets`) |
  * | lanes | lane surfaces and markings, later (`anchor:lanes`) |
  * | footprints | camera view footprints and cones (`anchor:footprints`) |
@@ -26,9 +36,18 @@ import type { BackgroundLayerSpecification, LayerSpecification } from 'maplibre-
  * | base labels | the style's own |
  * | labels | route shields, speed numbers, one-way chevrons, badges (`anchor:labels`) |
  * | overlay | the always-loaded 2D overlay (`anchor:overlay`) |
+ *
+ * The landscape slots (ground, areas, water, surfaces, land) are filled by the base contributions
+ * (`#lib/base`, inserted by `buildStyle`) and by the landscape layers; all of them are draped types, so
+ * the run from `anchor:ground` to `anchor:routes` stays one block.
  */
 export const ANCHORS = {
+	ground: 'anchor:ground',
+	areas: 'anchor:areas',
+	water: 'anchor:water',
+	surfaces: 'anchor:surfaces',
 	base: 'anchor:base',
+	land: 'anchor:land',
 	streets: 'anchor:streets',
 	lanes: 'anchor:lanes',
 	footprints: 'anchor:footprints',
@@ -52,6 +71,16 @@ export function anchorLayer(slot: Slot): BackgroundLayerSpecification {
 export interface SlottedLayer {
 	slot: Slot;
 	layer: LayerSpecification;
+	/**
+	 * `'only'`: shown only while Aerial is on (the area fills' 0.45 copies in `land`);
+	 * `'hide'`: hidden under Aerial (the ground, the surfaces). The manager applies it.
+	 */
+	aerial?: 'only' | 'hide';
+	/**
+	 * An area fill: one is drawn at a time, and the layer turned on last keeps its fill (plan §3.2).
+	 * Its owner's def can name layers it goes off under (`LayerDef.offUnder`).
+	 */
+	areaFill?: true;
 }
 
 /**
@@ -93,17 +122,68 @@ export function setRank(map: object, layerId: string, rank: number): void {
 	ranks.set(layerId, rank);
 }
 
-/** Add a module's slotted layers in their slots at its rank, through `add` (a MapScope's addLayer). */
+/** What the manager gates a layer by (`SlottedLayer`'s flags), and the layer that owns it. */
+export interface SlotFlags {
+	aerial?: 'only' | 'hide';
+	areaFill?: true;
+	/** The tray layer whose module added it; absent for a layer added without saying (then only `aerial` applies). */
+	owner?: LayerId;
+}
+
+const FLAGS = new WeakMap<object, Map<string, SlotFlags>>();
+
+/** The flagged layers on this map, by style layer id. */
+export function slotFlags(map: object): ReadonlyMap<string, SlotFlags> {
+	return FLAGS.get(map) ?? new Map();
+}
+
+/**
+ * Add a module's slotted layers in their slots at its rank, through `add` (a MapScope's addLayer).
+ * `owner` is the layer id whose module this is: with it, the manager can gate its flagged layers
+ * (`slotAllowed`).
+ */
 export function addSlotted(
 	map: Orderable & object,
 	layers: readonly SlottedLayer[],
 	rank: number,
-	add: (layer: LayerSpecification, before?: string) => void
+	add: (layer: LayerSpecification, before?: string) => void,
+	owner?: LayerId
 ): void {
-	for (const { slot, layer } of layers) {
+	for (const { slot, layer, aerial, areaFill } of layers) {
 		add(layer, beforeSlot(map, slot, rank));
 		setRank(map, layer.id, rank);
+		if (aerial || areaFill) {
+			let flags = FLAGS.get(map);
+			if (!flags) FLAGS.set(map, (flags = new Map()));
+			flags.set(layer.id, { aerial, areaFill, owner });
+		}
 	}
+}
+
+/** What decides whether a flagged layer may draw. */
+export interface SlotGate {
+	aerial: boolean;
+	/** The owner whose area fill is the one drawn (the layer turned on last that has one), or null. */
+	fillOwner: LayerId | null;
+	/** Owners whose area fills are off now (their `offUnder` layer is on). */
+	fillsOff: ReadonlySet<LayerId>;
+}
+
+/** Whether a flagged layer may draw now (its owner's own visibility is separate: both must allow). */
+export function slotAllowed(f: SlotFlags, gate: SlotGate): boolean {
+	if (f.aerial === 'only' && !gate.aerial) return false;
+	if (f.aerial === 'hide' && gate.aerial) return false;
+	if (f.areaFill && f.owner) return gate.fillOwner === f.owner && !gate.fillsOff.has(f.owner);
+	return true;
+}
+
+/**
+ * The owner whose area fill draws: of the owners that have one and are on, the one turned on last
+ * (`enabled` keeps the order layers were turned on).
+ */
+export function fillOwner(enabled: readonly LayerId[], owners: ReadonlySet<LayerId>): LayerId | null {
+	for (let i = enabled.length - 1; i >= 0; i--) if (owners.has(enabled[i])) return enabled[i];
+	return null;
 }
 
 /** Layer types MapLibre renders to texture and drapes on the terrain. */

@@ -130,6 +130,10 @@ interface ManifestDates {
 	terrain: string | null;
 	imagery: string | null;
 	buildings: string | null;
+	/** The landscape file's build date (a `baked` entry only). */
+	landscape: string | null;
+	/** The painted ground's build date (a `painted` entry only). */
+	ground: string | null;
 }
 
 let manifestCache: { mtimeMs: number; dates: ManifestDates } | undefined;
@@ -150,7 +154,9 @@ export async function readTiles(dir = process.env.TILES_DIR ?? '../data/tiles'):
 			basemap: m.basemap?.built ?? null,
 			terrain: m.terrain?.built ?? null,
 			imagery: m.imagery?.built ?? null,
-			buildings: m.buildings?.built ?? null
+			buildings: m.buildings?.built ?? null,
+			landscape: m.landscape?.status === 'baked' ? (m.landscape.built ?? null) : null,
+			ground: m.ground?.status === 'painted' ? (m.ground.built ?? null) : null
 		};
 		manifestCache = { mtimeMs: s.mtimeMs, dates };
 		return dates;

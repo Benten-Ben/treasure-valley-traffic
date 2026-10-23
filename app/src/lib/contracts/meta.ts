@@ -131,7 +131,16 @@ export interface DataMeta {
 	cameras: { cameras: number; views: number; withImage: number } | null;
 	calibrations: { current: number; latestId: number | null; latestAt: number | null } | null;
 	/** Build dates (YYYY-MM-DD) from /tiles/manifest.json; null when the server can't read it. */
-	tiles: { basemap: string | null; terrain: string | null; imagery: string | null; buildings: string | null } | null;
+	tiles: {
+		basemap: string | null;
+		terrain: string | null;
+		imagery: string | null;
+		buildings: string | null;
+		/** The landscape base file's build date; null when it is `empty` or not built. Optional: absent from older servers (the contract stays 1). */
+		landscape?: string | null;
+		/** The painted ground's build date; null when it is `flat` or not built. Optional, like `landscape`. */
+		ground?: string | null;
+	} | null;
 	/**
 	 * Toggled layers' current builds, by `'<plugin>.<layer>'` as in
 	 * `versions.layers`: their credit, licence and `republish`, so the credit
