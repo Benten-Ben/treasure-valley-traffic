@@ -179,8 +179,12 @@ test.describe('flavors', () => {
 		await allLoaded(page);
 		await mapReady(page);
 		expect((await info(page)).flavor).toBe('valley');
+		// Switch with the Base menu's Clay, which starts the fade at once. A layer key would first load that layer,
+		// and the fade could start after the 450 ms window below.
+		await toolbar(page).getByRole('button', { name: 'Base' }).click();
+		const pop = page.getByRole('dialog', { name: 'Base map' });
 		await startFrameLog(page);
-		await page.keyboard.press('7');
+		await pop.getByRole('radio', { name: 'Clay' }).check();
 		await expect.poll(async () => (await info(page)).flavor).toBe('clay');
 		await mapReady(page);
 		const frames = await stopFrameLog(page);
