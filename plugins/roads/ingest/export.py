@@ -15,20 +15,32 @@ features start at different zooms, an integer `minzoom`. The bake names each sou
 | `markings` | 16 | MultiLineString | `kind` (edge, lane, centre_double, twltl, bike, stop_bar), `dash` (solid, dashed, double, solid_dashed) |
 | `crosswalks` | 16 | MultiPolygon | marked crossings only |
 | `arrows` | 16 | Point | `turns` ('left;through'), `bearing` (degrees from grid north, the way the lane travels) |
+| `paving_lots` | 14-16 | MultiPolygon | parking lots (roads.osm_parking kind lot): `material`, `parking` (surface, multi-storey, ...; 'unknown' when untagged), `layer` |
+| `paving_ways` | 15-16 | LineString | service ways and walkways (roads.osm_paving): `kind` (service, driveway, sidewalk, crossing, ...), `material`, `w` (the estimated width, m), `area` (the line is an area's outline), `layer` |
+| `paving_stalls` | 16 | MultiPolygon | mapped parking stalls (roads.osm_parking kind space): `material`, `parking`, `layer` |
+
+The paving layers carry no NULLs: an integer column that's missing is 0 (`layer`) and a text one is 'unknown'
+(`parking`), because FlatGeobuf's null columns shift the fields that follow them. Their `id` is OpenStreetMap's: a
+way's own for `paving_ways`, `osm_id * 2` (+ 1 for a multipolygon relation) for the lots and stalls. Only active rows
+are exported.
 
 **Licence.** The geometry is OpenStreetMap's (ODbL: the bake's tiles are a produced work, a derived database
-published stays ODbL), and the widths and lane counts rest on ACHD's and ITD's layers (no licence stated: internal).
-So every layer's republish is **internal**: the bake that holds it is tailnet-only (C17, decision 4) until a public
-variant is rebuilt from public inputs. The ground never reads these (basemap/ground/inputs.py NEVER). The inputs and
-their versions come from roads.build.inputs.
+published stays ODbL). The road layers (`lines` and what is cut from it) rest on ACHD's and ITD's widths and lane
+counts (no licence stated), so they stay **internal**. The paving layers (`paving_lots`, `paving_ways`,
+`paving_stalls`) are OpenStreetMap's alone, with materials that default from USDA NASS's Cropland Data Layer (public
+domain) where material_source is 'default': ODbL, republish **yes**, the values already approved for the tables
+(roads.osm_paving, roads.osm_parking). A layer lists only the inputs it rests on (Layer.inputs). The bake keeps taking
+the strictest input, so while road layers are in the export the bake that holds it is tailnet-only (C17, decision 4)
+until a public variant is rebuilt from public inputs. The ground never reads these (basemap/ground/inputs.py NEVER).
+The inputs and their versions come from roads.build.inputs.
 
 **One build.** The export reads in one snapshot (a read-only repeatable-read transaction) after locking the build's
 tables (build.TABLES, shared): a roads-build that's running holds them until it commits, so the export waits for it
 and reads the new build whole, and a build waits for the export. It keeps the newest KEEP exports and removes older
 ones once its own is written.
 
-Other roads layers join this export as they come (P8-app's paving: add a Layer to LAYERS), since the bake reads each
-plugin's newest export whole. Standard library plus psycopg, and basemap/ground and basemap/landscape's checks.
+Other roads layers join this export as they come (add a Layer to LAYERS), since the bake reads each plugin's newest
+export whole. Standard library plus psycopg, and basemap/ground and basemap/landscape's checks.
 """
 
 import argparse
@@ -60,6 +72,7 @@ class Layer:
     minzoom: int
     maxzoom: int
     note: str = ""
+    inputs: tuple = ()       # the roads.build inputs (by name) the layer rests on; none given: all of them
 
 
 _MINZOOM_LINES = "case when p.highway = 'service' then 15 else 14 end"
@@ -96,6 +109,32 @@ LAYERS = (
       select a.id, array_to_string(a.turns, ';') as turns, round(a.bearing)::int as bearing, a.geom
       from roads.arrow a order by a.id""",
           "Real-width roads: turn arrows", 16, 16, "turn:lanes"),
+)
+
+# Paving: OpenStreetMap alone, its materials defaulting from the CDL (the build lists "cdl" only when it used it).
+_PAVING_INPUTS = ("osm", "cdl")
+_PAVING_ID = "(p.osm_id * 2 + (p.osm_type = 'r')::int)"
+
+LAYERS += (
+    Layer("paving_lots", "MultiPolygon", f"""
+      select {_PAVING_ID} as id, p.material, coalesce(p.parking, 'unknown') as parking,
+             coalesce(p.layer, 0)::int as layer, ST_Transform(p.geom, 32611) as geom
+      from roads.osm_parking p where p.active and p.kind = 'lot' order by 1""",
+          "Paving: parking lots", 14, 16,
+          "OpenStreetMap amenity=parking; material is the surface tag or a default (CDL developed land)",
+          _PAVING_INPUTS),
+    Layer("paving_ways", "LineString", """
+      select p.osm_id as id, p.kind, p.material, round(p.width_est_m::numeric, 1)::float4 as w, p.area,
+             coalesce(p.layer, 0)::int as layer, ST_Transform(p.geom, 32611) as geom
+      from roads.osm_paving p where p.active order by p.osm_id""",
+          "Paving: service ways and walkways", 15, 16,
+          "w: the width tagged or estimated, in metres; area: the line is the outline of an area",
+          _PAVING_INPUTS),
+    Layer("paving_stalls", "MultiPolygon", f"""
+      select {_PAVING_ID} as id, p.material, coalesce(p.parking, 'unknown') as parking,
+             coalesce(p.layer, 0)::int as layer, ST_Transform(p.geom, 32611) as geom
+      from roads.osm_parking p where p.active and p.kind = 'space' order by 1""",
+          "Paving: parking stalls", 16, 16, "OpenStreetMap amenity=parking_space, as mapped", _PAVING_INPUTS),
 )
 
 
@@ -156,7 +195,8 @@ def _export(conn, archive, build, layers):
             with open(path, "wb") as f:
                 f.write(bytes(blob))
             specs.append({"name": lay.name, "file": f"{lay.name}.fgb", "format": "FlatGeobuf",
-                          "geometry": lay.geometry, "inputs": names, "base": True, "minzoom": lay.minzoom,
+                          "geometry": lay.geometry, "inputs": [n for n in lay.inputs if n in names] or names,
+                          "base": True, "minzoom": lay.minzoom,
                           "maxzoom": lay.maxzoom, "title": lay.title,
                           "note": f"roads build {build_id}" + (f"; {lay.note}" if lay.note else "")})
         if not specs:

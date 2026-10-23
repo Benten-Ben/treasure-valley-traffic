@@ -88,7 +88,7 @@ def town(conn):
     # The rows that point at intersections and segments go first, so a seeded copy works too.
     for t in ("roads.review", "roads.arrow", "roads.marking", "roads.edge", "roads.surface", "roads.xsection",
               "roads.junction", "roads.piece", "roads.build", "roads.osm_walk_node", "roads.osm_paving",
-              "roads.osm_street", "core.osm_lane", "core.osm_way", "core.segment_match", "roads.bike_facility_match",
+              "roads.osm_parking", "roads.osm_street", "core.osm_lane", "core.osm_way", "core.segment_match", "roads.bike_facility_match",
               "core.approach", "core.signal_device", "core.rail_crossing", "core.intersection",
               "roads.developed_land", "roads.developed_build"):
         conn.execute(f"delete from {t}")
@@ -132,6 +132,26 @@ def town(conn):
                   (3002, 'sidewalk', 'footway', 'sidewalk', 'concrete', 'default', 1.5, 'default', null, null,
                    '{"highway": "footway", "footway": "sidewalk"}', ST_GeomFromEWKT(%s))""",
         (line((10, -12), (10, 0), (10, 12)), line((5, 60), (5, 190))))
+    # An inactive way, and one with no layer; lots and stalls (one a multipolygon relation, one with no parking tag).
+    conn.execute(
+        """insert into roads.osm_paving (osm_id, kind, highway, material, material_source, width_est_m, width_source,
+                                         layer, active, tags, geom)
+           values (3003, 'driveway', 'service', 'asphalt', 'default', 4.0, 'default', null, true,
+                   '{"highway": "service"}', ST_GeomFromEWKT(%s)),
+                  (3004, 'service', 'service', 'gravel', 'surface', 3.0, 'default', 1, false,
+                   '{"highway": "service"}', ST_GeomFromEWKT(%s))""",
+        (line((100, 30), (100, 60)), line((200, 30), (200, 60))))
+    for osm_type, osm_id, kind, parking, layer, active, x in (
+            ("w", 4001, "lot", "surface", None, True, 60), ("r", 4001, "lot", None, 1, True, 100),
+            ("w", 4002, "lot", "surface", None, False, 140), ("w", 4003, "space", None, None, True, 180)):
+        conn.execute(
+            """insert into roads.osm_parking (osm_type, osm_id, kind, parking, material, material_source, layer,
+                                              area_m2, active, tags, geom)
+               values (%s, %s, %s, %s, 'asphalt', 'default', %s, 100, %s, '{"amenity": "parking"}',
+                       ST_Multi(ST_GeomFromEWKT(%s)))""",
+            (osm_type, osm_id, kind, parking, layer, active,
+             "SRID=4326;POLYGON((" + ", ".join("%.9f %.9f" % ll(x + dx, 30 + dy)
+                                               for dx, dy in ((0, 0), (10, 0), (10, 10), (0, 10), (0, 0))) + "))"))
     conn.execute(
         """insert into roads.osm_walk_node (osm_id, kind, marked, ways, tags, geom)
            values (5001, 'crossing', true, '{3001}', '{"crossing": "marked"}', ST_GeomFromEWKT(%s)),
@@ -465,12 +485,15 @@ class BuildTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as archive:
             m = E.export(self.conn, archive, build="20261011T000000Z")
             names = [lay.name for lay in m.layers]
-            self.assertEqual(names, ["lines", "surfaces_z15", "surfaces", "edges", "markings", "crosswalks"])
+            self.assertEqual(names, ["lines", "surfaces_z15", "surfaces", "edges", "markings", "crosswalks",
+                                     "paving_lots", "paving_ways", "paving_stalls"])
             self.assertEqual(m.republish, "internal")
             for lay in m.layers:
                 self.assertTrue(lay["base"])
-                self.assertEqual((lay["licence"], lay["republish"]), ("ODbL-1.0", "internal"))
                 self.assertIn("id", lay["fields"])
+                # The road layers rest on ACHD's and ITD's widths (internal); the paving is OpenStreetMap's (yes).
+                self.assertEqual((lay["licence"], lay["republish"]),
+                                 ("ODbL-1.0", "yes" if lay.name.startswith("paving_") else "internal"))
             lines = next(lay for lay in m.layers if lay.name == "lines")
             self.assertEqual(lines["features"], self.one("select count(*) from roads.piece")[0])
             self.assertIn("minzoom", lines["fields"])
@@ -479,6 +502,39 @@ class BuildTest(unittest.TestCase):
             plan = LP.resolve({"roads": m})
             self.assertTrue(plan.roads)
             self.assertEqual(plan.republish, "internal")
+
+    def test_the_paving_layers_hold_active_rows_without_nulls(self):
+        import tempfile
+        from plugins.roads.ingest import export as E
+        with tempfile.TemporaryDirectory() as archive:
+            m = E.export(self.conn, archive, build="20261011T000000Z")
+            by = {lay.name: lay for lay in m.layers}
+            # Only OpenStreetMap, and the CDL its default materials rest on: no ACHD or ITD input, so republish yes.
+            for name in ("paving_lots", "paving_ways", "paving_stalls"):
+                self.assertEqual(by[name]["inputs"], ["osm", "cdl"])
+                self.assertEqual(by[name]["credit"], ["© OpenStreetMap contributors",
+                                                      "USDA NASS Cropland Data Layer 2025"])
+                self.assertEqual(by[name]["crs"], "EPSG:32611")
+            self.assertEqual(by["lines"]["republish"], "internal")
+            self.assertIn("achd_roads", by["lines"]["inputs"])
+            self.assertEqual((by["paving_lots"]["features"], by["paving_ways"]["features"],
+                              by["paving_stalls"]["features"]), (2, 3, 1))     # the inactive rows are left out
+            self.assertEqual(by["paving_lots"]["fields"],
+                             {"id": "long", "material": "string", "parking": "string", "layer": "int"})
+            self.assertEqual((by["paving_lots"]["minzoom"], by["paving_lots"]["maxzoom"]), (14, 16))
+            self.assertEqual((by["paving_ways"]["minzoom"], by["paving_ways"]["maxzoom"]), (15, 16))
+            self.assertEqual((by["paving_stalls"]["minzoom"], by["paving_stalls"]["maxzoom"]), (16, 16))
+        for lay in E.LAYERS:
+            if lay.name.startswith("paving_"):
+                rows = self.q(f"select * from ({lay.sql}) q")
+                for row in rows:
+                    self.assertNotIn(None, row, lay.name)
+                self.assertEqual(self.one(f"select ST_SRID(geom) from ({lay.sql}) q limit 1")[0], 32611)
+        lots = dict(self.q(f"select id, parking from ({next(l for l in E.LAYERS if l.name == 'paving_lots').sql}) q"))
+        # A way's lot and a relation's with the same OpenStreetMap id get different ids; no tag reads 'unknown'.
+        self.assertEqual(lots, {8002: "surface", 8003: "unknown"})
+        ways = self.q(f"select id, layer from ({next(l for l in E.LAYERS if l.name == 'paving_ways').sql}) q order by 1")
+        self.assertEqual(ways, [(3001, 0), (3002, 0), (3003, 0)])
 
     def test_the_lines_carry_the_width_the_surface_is_drawn_at(self):
         from plugins.roads.ingest import export as E
