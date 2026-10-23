@@ -87,7 +87,7 @@ class SourcesTest(unittest.TestCase):
         scheduled = [e for e in manifest["sources"] if e["kind"] == "source"]
         self.assertEqual([e["name"] for e in scheduled], list(expected))
         self.assertEqual([e["name"] for e in manifest["sources"] if e["kind"] == "manual"],
-                         ["nhd_hr", "hydroshare_canals", "osm_waterways", "canal_dates"])
+                         ["nhd_hr", "hydroshare_canals", "nwi", "osm_waterways", "canal_dates"])
         for entry in scheduled:
             with self.subTest(entry["name"]):
                 m = importlib.import_module(f"plugins.water.{entry['module']}")

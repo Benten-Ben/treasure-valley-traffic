@@ -37,7 +37,7 @@ from basemap.ground import inputs as GI
 from basemap.ground import manifest as M
 from basemap.landscape import plan as bake_plan
 
-from .sources import hydroshare_canals, nhd_hr, osm_waterways
+from .sources import hydroshare_canals, nhd_hr, nwi, osm_waterways
 
 BUILD = "water-export"
 THEN = ("landscape-bake",)
@@ -54,7 +54,7 @@ REACHES_ROWS = """
   from water.reach where build_id = %(build)s order by id"""
 BODIES_ROWS = """
   select id, kind, coalesce(name, '') as name, intermittent, geometry_from = 'nhd' as nhd_only,
-         minzoom::int as minzoom, ST_Multi(ST_Transform(geom, 32611)) as geom
+         minzoom::int as minzoom, thin, ST_Multi(ST_Transform(geom, 32611)) as geom
   from water.body where build_id = %(build)s and not ST_IsEmpty(geom) order by id"""
 REACHES_SQL = f"select ST_AsFlatGeobuf(q, true, 'geom') from ({REACHES_ROWS}) q"
 BODIES_SQL = f"select ST_AsFlatGeobuf(q, true, 'geom') from ({BODIES_ROWS}) q"
@@ -89,12 +89,18 @@ def _download(entry, note):
     return {**out, "note": note}
 
 
-def input_entries(build_inputs):
+def input_entries(build_inputs, wetlands_from_nwi=False):
     """The manifest's inputs, from the build's (water.build.inputs)."""
     osm = build_inputs.get("osm_waterways") or {}
     nhd = build_inputs.get("nhd_hr") or {}
     hs = build_inputs.get("hydroshare_canals") or {}
     extract = f"extract {osm.get('extract') or '?'} (md5 {osm.get('md5') or '?'})"
+    wet = ([{"name": "nwi", "licence": "public-domain", "republish": "yes", "credit": nwi.SOURCE["credit"],
+             "source": "water/nwi", "url": nwi.URL,
+             "version": "October 2026 release, vegetated palustrine wetlands in the map box",
+             "note": "not a legal (regulatory) wetland boundary; the valley floor was mapped from July 1981 photos, "
+                     "so those polygons passed a presence check against today's land first"}]
+           if wetlands_from_nwi else [])
     return [{"name": "osm", "licence": "ODbL-1.0", "republish": "yes", "credit": osm_waterways.SOURCE["credit"],
              "source": "water/osm_waterways", "version": extract,
              "note": "the valley cut of the Idaho extract; the box's Oregon slice has no OpenStreetMap data"},
@@ -104,7 +110,8 @@ def input_entries(build_inputs):
             {"name": "hydroshare", "licence": "CC-BY-4.0", "republish": "yes",
              "credit": hydroshare_canals.SOURCE["credit"], "source": "water/hydroshare_canals",
              "url": hydroshare_canals.URL, "doi": hydroshare_canals.DOI,
-             **_download(hs, "canal names where OpenStreetMap and NHD have none, and the kinds of unnamed canals")}]
+             **_download(hs, "canal names where OpenStreetMap and NHD have none, and the kinds of unnamed canals")},
+            *wet]
 
 
 def export(conn, archive, build=None, min_features=None):
@@ -136,8 +143,9 @@ def export(conn, archive, build=None, min_features=None):
     # HydroShare is an input only when the reaches carry its names or kinds (CC BY: credited wherever they show), and
     # then of the mask too, whose widths follow them.
     hydroshare = bool(named_by_hs or (counts or {}).get("kinds_from_hydroshare"))
-    inputs = [i for i in input_entries(build_inputs or {}) if i["name"] != "hydroshare" or hydroshare]
-    base_inputs = [i["name"] for i in inputs]
+    nwi_drawn = bool((counts or {}).get("wetlands_nwi"))
+    inputs = [i for i in input_entries(build_inputs or {}, nwi_drawn) if i["name"] != "hydroshare" or hydroshare]
+    base_inputs = [i["name"] for i in inputs if i["name"] != "nwi"]      # NWI is in the bodies layer only
     folder = M.export_dir(archive, "water", build or M.build_id())
     os.makedirs(folder)
     try:
@@ -152,10 +160,12 @@ def export(conn, archive, build=None, min_features=None):
                      "only (topo-era, drawn lighter); canal: water.canal.id, 0 for none; name: '' for none; width_m "
                      "estimated ⚠️ unless OSM tags it"},
             {"name": "bodies", "file": "bodies.fgb", "format": "FlatGeobuf", "geometry": "MultiPolygon",
-             "inputs": ["osm", "nhd"], "base": True, "minzoom": 8, "maxzoom": 16,
+             "inputs": ["osm", "nhd"] + (["nwi"] if nwi_drawn else []), "base": True, "minzoom": 8, "maxzoom": 16,
              "title": "Rivers drawn as areas, lakes, reservoirs, ponds, basins, wetlands and pools",
              "note": "id: water.body.id (an OSM way's 2 x id, a relation's 2 x id + 1, NHD-only 2^51 + a hash); "
-                     "name: '' for none; pools from z15, wetlands from z14"},
+                     "name: '' for none; pools from z15, wetlands from z14 as tufts, from z15 as thinned tufts (thin: older "
+                     "mapping: NWI's 1981-83 or interim polygons that passed the presence check, and NHD's marsh "
+                     "alone), later for a small one; NWI is not a legal (regulatory) wetland boundary"},
             {"name": "mask", "file": "mask.fgb", "format": "FlatGeobuf", "geometry": "MultiPolygon",
              "inputs": base_inputs, "base": False, "title": "Confident water, for the ground",
              "note": "every body but wetlands, and the reaches OSM draws or both sources agree on, buffered to "

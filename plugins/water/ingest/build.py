@@ -31,7 +31,9 @@ Conflation, in PostGIS, in UTM 11N (EPSG:32611) metres:
    which most of it is reached), and each reach gets its distance from it. Its source is the river, reservoir or
    canal it leaves, and its head structure the dam, weir or gate within 150 m.
 7. Bodies: OSM's water areas, wetlands and pools; NHD's lakes, ponds, reservoirs, marshes, river and canal polygons
-   where OSM water covers less than half of them (NHD-only). Structures: OSM's and NHD's dams, weirs, gates,
+   where OSM water covers less than half of them (NHD-only). Wetlands (wetlands.py): NWI's vegetated palustrine
+   polygons after the presence check; where OSM outlines the same wetland OSM's outline is drawn with NWI's class and
+   regime; NHD's marshes are evidence, and draw (thinned) only where neither covers them. Structures: OSM's and NHD's dams, weirs, gates,
    waterfalls and springs, and the NWPS gauges. NHD's dam, weir, spring or waterfall whose geometry lies within 50 m
    of OSM's of the same family (a dam and a weir are one) is OSM's: dropped, its name kept when OSM's has none.
 8. Gauges (water.gauge): each NWPS gauge in the box to the reach or body it measures, by the water named in the
@@ -49,7 +51,7 @@ import re
 import sys
 from collections import defaultdict
 
-from . import rules
+from . import rules, wetlands
 
 BUILD = "water-build"
 THEN = ("water-export",)
@@ -73,6 +75,7 @@ GAUGE_NEAREST_M = 300.0
 BOX = (-117.05, 43.00, -115.95, 43.85)
 NHD_BASE = 2 ** 51        # NHD-only ids: 2^51 + a 48-bit hash
 GAUGE_BASE = 2 ** 52
+NWI_BASE = 2 ** 50        # NWI-only wetlands: 2^50 + a 48-bit hash of the NWI key
 TEMP_BUFFERS = "160MB"
 
 DRAWN_LINES = ("river", "stream", "canal", "ditch", "drain")
@@ -306,6 +309,80 @@ where ST_Distance(a.e, b.g) <= x.snap and not ST_DWithin(a.e, be.s, x.snap) and 
 on conflict do nothing"""),
 ]
 
+# Wetlands (issue #309). w_verdict (wetlands.prepare) holds the presence call for every NWI polygon. NWI splits one
+# wetland into several polygons by Cowardin class and water regime, so OSM and NWI are paired through coverage:
+#  - an NWI polygon is absorbed into an OSM wetland when at least half of the NWI polygon lies inside it;
+#  - an OSM wetland takes the class and regime of its largest-overlap NWI polygon (absorbed or not), and is confirmed,
+#    when the NWI polygons together cover half or more of it; a small NWI polygon that is neither absorbed nor part
+#    of that half-cover lends nothing to a large OSM wetland.
+# OSM's outline is what draws. Every NWI polygon draws minus every OSM wetland it overlaps (so a small OSM wetland
+# inside a big NWI polygon leaves the rest of it), simplified. For every NWI polygon that overlaps an OSM wetland,
+# what is left is an offset sliver or frame (an outline drawn a few metres off) and is dropped, unless the part of it
+# more than REMAINDER_REACH_M from the OSM wetlands (their union) is at least REMAINDER_REACH_MIN_M2: it is judged by
+# how far it reaches from OSM's outline, not by its own width, so a narrow tail running away from OSM draws. A leftover
+# that passes draws whole. A polygon at least half inside OSM's wetlands (an absorbed one, taken together) must also
+# leave REMAINDER_MIN_M2: a small leftover of a wetland OSM already draws is outline disagreement. A polygon less than
+# half inside draws its leftover subject to the reach rule and the drawing minimum only. A dropped leftover's check row
+# points at the OSM body that overlaps the polygon most; a leftover that draws is the polygon's own body, and its check
+# row points there; drawn is true only when a body holds the polygon. NHD's marshes are
+# evidence, and draw only where neither an OSM wetland nor any NWI polygon (retired or unchecked too) covers half
+# of them (below), as thinned tufts. Retired polygons are not drawn; they stay in water.wetland_check.
+WETLANDS = f"""
+alter table b add column wetland_class text, add column water_regime text, add column modifiers text,
+  add column nwi_key text, add column image_year smallint, add column thin boolean default false,
+  add column presence text, add column presence_reason text;
+create temp table w_nwi on commit drop as
+select k.key, k.attribute, k.image_year, v.presence, v.reason, v.thin, v.regime, v.modifiers,
+       ST_Multi(ST_CollectionExtract(ST_MakeValid(ST_Transform(k.geom, 32611)), 3)) g
+from water.nwi_wetland k join w_verdict v using (key) where v.drawn;
+delete from w_nwi where ST_IsEmpty(g);
+alter table w_nwi add column area_m2 real;
+update w_nwi set area_m2 = ST_Area(g);
+create index on w_nwi using gist (g);
+create temp table w_ov on commit drop as
+select o.id body_id, k.key, ST_Area(ST_Intersection(o.g, k.g)) a, k.area_m2 k_m2
+from b o join w_nwi k on ST_Intersects(o.g, k.g)
+where o.kind = 'wetland' and o.geometry_from = 'osm';
+delete from w_ov where a < 1;
+create temp table w_cov on commit drop as
+select o.id body_id from b o
+where o.kind = 'wetland' and o.geometry_from = 'osm'
+  and (select coalesce(ST_Area(ST_Intersection(o.g, ST_Union(k.g))), 0) from w_nwi k where ST_Intersects(k.g, o.g))
+      >= {wetlands.OVERLAP_SHARE} * o.area_m2;
+create temp table w_pair on commit drop as
+select v.body_id, v.key, v.a, c.body_id is not null covered
+from w_ov v left join w_cov c using (body_id)
+where c.body_id is not null or v.a >= {wetlands.OVERLAP_SHARE} * v.k_m2;
+update b set wetland_class = k.attribute, water_regime = k.regime, modifiers = k.modifiers, nwi_key = k.key,
+  image_year = k.image_year, presence = nullif(k.presence, 'kept'), presence_reason = k.reason, confirmed = p.covered
+from (select distinct on (body_id) body_id, key, covered from w_pair order by body_id, a desc, key) p
+join w_nwi k using (key)
+where b.id = p.body_id;
+create temp table w_osm on commit drop as
+select ST_Union(g) g from b where kind = 'wetland' and geometry_from = 'osm';
+create temp table w_osm_reach on commit drop as
+select ST_Buffer(g, {wetlands.REMAINDER_REACH_M}) g from w_osm;
+insert into b (id, kind, intermittent, geometry_from, geom, g, area_m2, wetland_class, water_regime, modifiers,
+               nwi_key, image_year, thin, presence, presence_reason)
+select {NWI_BASE} + {h48("'wetland:' || x.key")}, 'wetland', false, 'nwi', ST_Multi(ST_Transform(x.g, 4326)), x.g,
+       ST_Area(x.g), x.attribute, x.regime, x.modifiers, x.key, x.image_year, x.thin, nullif(x.presence, 'kept'),
+       x.reason
+from (select k.key, k.attribute, k.image_year, k.thin, k.presence, k.reason, k.regime, k.modifiers, r.mostly_inside,
+             r.reach_m2,
+             ST_Multi(ST_CollectionExtract(ST_MakeValid(ST_SimplifyPreserveTopology(r.g, {wetlands.SIMPLIFY_M})), 3)) g
+      from w_nwi k
+      cross join lateral (select exists (select 1 from w_ov where w_ov.key = k.key) overlapped) o
+      cross join lateral (select case when o.overlapped then ST_Difference(k.g, (select g from w_osm)) else k.g end g,
+                                 o.overlapped and ST_Area(ST_Intersection(k.g, (select g from w_osm)))
+                                                  >= {wetlands.OVERLAP_SHARE} * k.area_m2 mostly_inside
+                         ) q
+      cross join lateral (select q.g, q.mostly_inside,
+                                 case when o.overlapped
+                                      then ST_Area(ST_Difference(q.g, (select g from w_osm_reach))) end reach_m2) r) x
+where not ST_IsEmpty(x.g) and ST_Area(x.g) >= {wetlands.MIN_AREA_M2}
+  and (x.reach_m2 is null or x.reach_m2 >= {wetlands.REMAINDER_REACH_MIN_M2})
+  and (not x.mostly_inside or ST_Area(x.g) >= {wetlands.REMAINDER_MIN_M2})"""
+
 BODIES = f"""
 create temp table b on commit drop as
 select case when osm_type = 'r' then 2 * osm_id + 1 else 2 * osm_id end id, kind, {rules.name_sql("name")} as name,
@@ -319,6 +396,7 @@ alter table b add column g geometry, add column area_m2 real, add column confirm
 update b set g = ST_Transform(geom, 32611);
 update b set area_m2 = ST_Area(g);
 create index on b using gist (g);
+{WETLANDS};
 create temp table n_poly on commit drop as
 select permanent_identifier pid, layer, ftype_name, {rules.name_sql("gnis_name")} gnis_name, hydrographiccategory,
        reservoirtype,
@@ -328,12 +406,22 @@ from water.nhd_polygon, box
 where ftype_name in ('Lake/Pond', 'Reservoir', 'Swamp/Marsh', 'Playa', 'Stream/River', 'Canal/Ditch');
 delete from n_poly where ST_IsEmpty(g);
 create index on n_poly using gist (g);
-create temp table b_sub on commit drop as select id, ST_Subdivide(g, 64) g from b;
+create temp table b_sub on commit drop as select id, ST_Subdivide(g, 64) g from b where kind <> 'wetland';
 create index on b_sub using gist (g);
+create temp table m_sub on commit drop as
+select ST_Subdivide(g, 64) g from (
+  select g from b
+  union all
+  select ST_CollectionExtract(ST_MakeValid(ST_Transform(geom, 32611)), 3) from water.nwi_wetland) a
+where not ST_IsEmpty(g);
+create index on m_sub using gist (g);
 create temp table n_cover on commit drop as
 select n.pid, ST_Area(n.g) area,
-       coalesce((select sum(ST_Area(ST_Intersection(n.g, bs.g))) from b_sub bs where ST_Intersects(bs.g, n.g)), 0)
-         covered
+       case when n.ftype_name = 'Swamp/Marsh'
+            then coalesce((select ST_Area(ST_Union(ST_Intersection(n.g, ms.g))) from m_sub ms
+                           where ST_Intersects(ms.g, n.g)), 0)
+            else coalesce((select sum(ST_Area(ST_Intersection(n.g, bs.g))) from b_sub bs
+                           where ST_Intersects(bs.g, n.g)), 0) end covered
 from n_poly n;
 update b set confirmed = true
 where (select coalesce(ST_Area(ST_Intersection(b.g, ST_Union(n.g))), 0) from n_poly n where ST_Intersects(n.g, b.g))
@@ -348,7 +436,8 @@ select {NHD_BASE} + {h48("'body:' || n.pid")},
        n.gnis_name, coalesce(n.hydrographiccategory = 'Intermittent', false) or n.ftype_name = 'Playa', 'nhd', n.pid,
        ST_Multi(ST_Transform(n.g, 4326)), n.g, ST_Area(n.g)
 from n_poly n join n_cover c using (pid)
-where c.covered < 0.5 * c.area and not ST_IsEmpty(n.g)"""
+where c.covered < 0.5 * c.area and not ST_IsEmpty(n.g);
+update b set thin = true where geometry_from = 'nhd' and kind = 'wetland'"""
 
 STRUCTURES = f"""
 create temp table s on commit drop as
@@ -451,7 +540,7 @@ order by c.id, s.objectid"""
 
 RULE_COLUMNS = ("id, geometry_from, src_kind, name, osm_intermittent, piped, osm_width, nhd_class, nhd_category, "
                 "streamorder, visibilityfilter, hs_type")
-DRAWN_TABLES = ("water.canal_season", "water.canal_org", "water.gauge", "water.reach_evidence", "water.reach_link",
+DRAWN_TABLES = ("water.wetland_check", "water.canal_season", "water.canal_org", "water.gauge", "water.reach_evidence", "water.reach_link",
                 "water.structure", "water.body", "water.canal", "water.reach")
 
 
@@ -655,7 +744,18 @@ def build(conn, out=None):
                             (json.dumps(inputs(conn), default=str), json.dumps({
                                 **rules.settings(), "piece_m": PIECE_M, "match_m": MATCH_M, "nhd_share": NHD_SHARE,
                                 "way_share": WAY_SHARE, "confirmed_share": CONFIRMED_SHARE, "nhd_run_m": NHD_RUN_M,
-                                "hydroshare_share": HS_SHARE, "canal_eps_m": CANAL_EPS_M}))).fetchone()[0]
+                                "hydroshare_share": HS_SHARE, "canal_eps_m": CANAL_EPS_M,
+                                "wetland_overlap": wetlands.OVERLAP_SHARE, "wetland_simplify_m": wetlands.SIMPLIFY_M,
+                                "wetland_min_area_m2": wetlands.MIN_AREA_M2,
+                                "wetland_remainder_min_m2": wetlands.REMAINDER_MIN_M2,
+                                "wetland_remainder_reach_m": wetlands.REMAINDER_REACH_M,
+                                "wetland_remainder_reach_min_m2": wetlands.REMAINDER_REACH_MIN_M2,
+                                "presence": {"built": wetlands.BUILT_RETIRES,
+                                             "built_with_developed": wetlands.BUILT_WITH_DEVELOPED,
+                                             "developed": wetlands.DEVELOPED_RETIRES,
+                                             "cultivated": wetlands.CULTIVATED_RETIRES,
+                                             "hay_pasture": wetlands.HAY_PASTURE_FLAGS,
+                                             "cdl_support": wetlands.CDL_SUPPORT}}))).fetchone()[0]
     conn.execute("set local work_mem = '64MB'")
     for t in DRAWN_TABLES:
         conn.execute(f"delete from {t}")
@@ -737,10 +837,11 @@ def build(conn, out=None):
     out(f"water-build: canal heads ({time.monotonic() - t0:.1f} s)")
 
     step("gauges read", GAUGES)
+    wet = wetlands.prepare(conn, out)
     step("bodies", BODIES)
     conn.execute("analyze b")
-    bodies = conn.execute("select id, kind, area_m2 from b").fetchall()
-    _set(conn, "b", "id", [("minzoom", "smallint")], [(i, rules.body_minzoom(k, a)) for i, k, a in bodies])
+    bodies = conn.execute("select id, kind, area_m2, thin from b").fetchall()
+    _set(conn, "b", "id", [("minzoom", "smallint")], [(i, rules.body_minzoom(k, a, t)) for i, k, a, t in bodies])
     step("structures", STRUCTURES)
     conn.execute("analyze s")
     srows = conn.execute("select id, kind, name, on_river from s").fetchall()
@@ -770,10 +871,21 @@ def build(conn, out=None):
 
     step("bodies stored", """
 insert into water.body (id, kind, name, intermittent, area_m2, minzoom, geometry_from, confirmed, osm_type, osm_id,
-  nhd_pid, gauge_lid, geom, build_id)
+  nhd_pid, gauge_lid, geom, wetland_class, water_regime, modifiers, nwi_key, image_year, thin, presence,
+  presence_reason, build_id)
 select id, kind, name, intermittent, area_m2, minzoom, geometry_from, confirmed, osm_type, osm_id, nhd_pid, gauge_lid,
-       geom, %(build)s
+       geom, wetland_class, water_regime, modifiers, nwi_key, image_year, thin, presence, presence_reason, %(build)s
 from b""", {"build": build_id})
+    step("wetland checks stored", """
+insert into water.wetland_check (key, build_id, era, presence, reason, drawn, body_id, built, developed, cultivated,
+  hay_pasture, cdl_wetland, support)
+select v.key, %(build)s, v.era, v.presence, v.reason, v.drawn and coalesce(d.id, p.body_id) is not null,
+       coalesce(d.id, p.body_id), v.built, v.developed,
+       v.cultivated, v.hay_pasture, v.cdl_wetland, v.support
+from w_verdict v
+left join (select nwi_key, id from b where geometry_from = 'nwi' and nwi_key is not null) d on d.nwi_key = v.key
+left join (select distinct on (key) key, body_id from w_ov order by key, a desc, body_id) p on p.key = v.key""",
+         {"build": build_id})
     step("structures stored", """
 insert into water.structure (id, kind, name, source, source_id, reach_id, gauge_lid, minzoom, geom, build_id)
 select id, kind, name, source, source_id, reach_id, gauge_lid, minzoom, geom, %(build)s from s""", {"build": build_id})
@@ -840,6 +952,10 @@ update water.canal c set head_structure_id = (
     counts = {k: (float(v) if hasattr(v, "is_integer") and not isinstance(v, int) else v) for k, v in counts.items()}
     # Reaches whose kind HydroShare's type set (an unnamed OSM canal it calls a lateral, drain or field supply): with
     # its names, what makes HydroShare an input of the exports (their kinds and widths).
+    counts.update(wet)
+    counts.update(dict(zip(("wetlands", "wetlands_nwi", "wetlands_thin"), conn.execute(
+        """select count(*) filter (where kind = 'wetland'), count(distinct nwi_key),
+                  count(*) filter (where kind = 'wetland' and thin) from water.body""").fetchone())))
     counts["kinds_from_hydroshare"] = sum(1 for v in final.values() if v["kind_from_hydroshare"])
     conn.execute("update water.build set finished_at = clock_timestamp(), counts = %s::jsonb where id = %s",
                  (json.dumps(counts, default=float), build_id))

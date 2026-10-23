@@ -86,7 +86,7 @@ class RegistryTest(unittest.TestCase):
                          ["nifc_wfigs_perimeters_backfill"])
         self.assertEqual([e["name"] for _, e in registry.MANUAL if _.name == "trails"], ["osm_paths", "trails_match"])
         self.assertEqual([e["name"] for _, e in registry.MANUAL if _.name == "water"],
-                         ["nhd_hr", "hydroshare_canals", "osm_waterways", "canal_dates"])
+                         ["nhd_hr", "hydroshare_canals", "nwi", "osm_waterways", "canal_dates"])
 
     def test_the_plugins(self):
         self.assertEqual(sorted(p.name for p in ours()),
@@ -119,11 +119,11 @@ class RegistryTest(unittest.TestCase):
     def test_commands_resolve_and_keep_clear_of_the_built_ins(self):
         self.assertEqual(sorted(registry.COMMANDS),
                          ["burn-scars", "canal-dates-load", "canal-season", "farm-cdl-load", "farm-csb-load", "farm-derive", "farm-export",
-                          "farm-fields-load", "hydroshare-load", "match-intersections", "match-routes", "nhd-load",
+                          "farm-fields-load", "hydroshare-load", "match-intersections", "match-routes", "nhd-load", "nwi-load", "nwi-presence",
                           "roads-build", "roads-developed-load", "roads-export", "rollup", "route-colors",
                           "segment-match", "shrubs-hedge-check", "shrubs-load", "soils-export", "soils-load",
                           "soils-photo-load", "trails-export", "trails-match", "transit-progress", "transit-ribbons", "trees-load",
-                          "water-build", "water-export", "wfigs-backfill"])
+                          "water-build", "water-export", "wetland-qa", "wfigs-backfill"])
         self.assertFalse(set(registry.COMMANDS) & (set(BUILTINS) | set(CORE_COMMANDS)))
         for name in registry.COMMANDS:
             self.assertTrue(callable(registry.command(name)), name)
