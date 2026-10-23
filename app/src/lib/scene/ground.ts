@@ -24,6 +24,37 @@ export interface GroundSource {
 	queryTerrainElevation(lngLat: [number, number]): number | null;
 }
 
+/** The part of a map that says which tiles draw the terrain (MapLibre's `terrain.getCoverageIndex`). */
+export interface CoverageMap {
+	terrain?: { getCoverageIndex?: () => unknown } | null;
+}
+
+/**
+ * Tells when the drawn ground may have changed under things that haven't moved.
+ *
+ * The drawn surface a `queryTerrainElevation` reads is set by the tiles the terrain draws and their DEM data.
+ * MapLibre keeps an index of those tiles and drops it when the set changes or a DEM tile arrives, so a new
+ * index object means the ground may differ, while the same object means it doesn't, however the camera moved.
+ * A map without that method can't say, so the scene falls back to treating every move as a change (`reliable`).
+ */
+export class DrawnGroundWatch {
+	#index: unknown = undefined;
+
+	/** Whether this map can say when its drawn ground changes (always, without terrain: nothing is read then). */
+	static reliable(map: CoverageMap): boolean {
+		return !map.terrain || typeof map.terrain.getCoverageIndex === 'function';
+	}
+
+	/** Whether the drawn ground changed since the last call (the first call reports a change). */
+	changed(map: CoverageMap): boolean {
+		const t = map.terrain;
+		const index = t && typeof t.getCoverageIndex === 'function' ? t.getCoverageIndex() : null;
+		const changed = index !== this.#index;
+		this.#index = index;
+		return changed;
+	}
+}
+
 interface Track {
 	lng: number;
 	lat: number;

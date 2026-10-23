@@ -1,6 +1,9 @@
 import type { Page } from '@playwright/test';
 import { mkdirSync, writeFileSync } from 'node:fs';
+import { loadavg } from 'node:os';
 import { dirname } from 'node:path';
+import { chromium } from '@playwright/test';
+import { lockedArgs } from '../../scripts/harness-env.mjs';
 import { expect, mapReady, screenPath, test } from './fixtures.js';
 
 /**
@@ -36,35 +39,183 @@ async function openBudget(page: Page) {
 	await page.evaluate(() => (globalThis as any).__tvtSceneTest.clear());
 }
 
+
+/** Frames measured per run: the scene's own p95 window is 120, which is too few to trust. */
+const FRAMES = 600;
+
+type Q = { p50: number; p95: number; p99: number; max: number; mean: number };
+const quant = (xs: number[]): Q => {
+	if (!xs.length) return { p50: 0, p95: 0, p99: 0, max: 0, mean: 0 };
+	const s = [...xs].sort((a, b) => a - b);
+	const at = (q: number) => s[Math.min(s.length - 1, Math.floor(s.length * q))];
+	return { p50: at(0.5), p95: at(0.95), p99: at(0.99), max: s[s.length - 1], mean: xs.reduce((a, b) => a + b, 0) / xs.length };
+};
+
+/** Per rendered frame, collected in the page: the scene's JS ms, its placement ms, its tracked ground reads, every terrain query made inside the render, and the wall time since the last render. */
+async function instrument(page: Page) {
+	await page.evaluate(() => {
+		const w = globalThis as any;
+		const map = w.__tvt.map;
+		const impl = map.getLayer('scene-3d').implementation;
+		const rows: number[][] = [];
+		w.__budgetRows = rows;
+		let inRender = false;
+		let calls = 0;
+		const q = map.queryTerrainElevation.bind(map);
+		map.queryTerrainElevation = (...a: unknown[]) => {
+			if (inRender) calls++;
+			return (q as any)(...a);
+		};
+		const render = impl.render;
+		let last = performance.now();
+		impl.render = function (gl: unknown, args: unknown) {
+			inRender = true;
+			calls = 0;
+			try {
+				return render.call(this, gl, args);
+			} finally {
+				inRender = false;
+				const s = w.__tvtSceneTest.stats();
+				const now = performance.now();
+				rows.push([s.lastFrameMs, s.placeMs, s.groundQueries, calls, now - last]);
+				last = now;
+			}
+		};
+	});
+}
+
+type Node = { id: number; callFrame: { functionName: string; url: string; lineNumber: number }; children?: number[] };
+
+/** Self and inclusive time per function from a CDP CPU profile, in ms. */
+function profileTop(profile: { nodes: Node[]; samples: number[]; timeDeltas: number[] }) {
+	const byId = new Map(profile.nodes.map((n) => [n.id, n]));
+	const parent = new Map<number, number>();
+	for (const n of profile.nodes) for (const c of n.children ?? []) parent.set(c, n.id);
+	const name = (n: Node) => `${n.callFrame.functionName || '(anonymous)'} ${n.callFrame.url.split('/').pop() ?? ''}:${n.callFrame.lineNumber + 1}`;
+	const self = new Map<string, number>();
+	const incl = new Map<string, number>();
+	let total = 0;
+	profile.samples.forEach((id, i) => {
+		const dt = (profile.timeDeltas[i] ?? 0) / 1000;
+		total += dt;
+		const n = byId.get(id)!;
+		self.set(name(n), (self.get(name(n)) ?? 0) + dt);
+		const seen = new Set<string>();
+		for (let cur: number | undefined = id; cur !== undefined; cur = parent.get(cur)) {
+			const k = name(byId.get(cur)!);
+			if (seen.has(k)) continue;
+			seen.add(k);
+			incl.set(k, (incl.get(k) ?? 0) + dt);
+		}
+	});
+	const top = (m: Map<string, number>, skip: RegExp) =>
+		[...m].filter(([k]) => !skip.test(k)).sort((a, b) => b[1] - a[1]).slice(0, 14).map(([k, v]) => ({ fn: k, ms: Math.round(v) }));
+	return { totalMs: Math.round(total), self: top(self, /^\((root|program|idle|garbage collector)\)/), inclusive: top(incl, /^\((root|program|idle|garbage collector)\)/) };
+}
+
+/** The budget case on one page: the numbers over `FRAMES` frames, a CPU profile of the window, the renderer and the machine's load. */
+async function measureBudget(page: Page) {
+	await openBudget(page);
+	const renderer = await page.evaluate(() => {
+		const gl = document.createElement('canvas').getContext('webgl2');
+		const ext = gl?.getExtension('WEBGL_debug_renderer_info');
+		return gl ? String(gl.getParameter(ext ? ext.UNMASKED_RENDERER_WEBGL : gl.RENDERER)) : 'none';
+	});
+	const made = await page.evaluate(() => (globalThis as any).__tvtSceneTest.budget({ trees: 4000, posts: 1500, segments: 1500 }));
+	expect(made).toEqual({ trees: 4000, posts: 1500, segments: 1500 });
+	await mapReady(page);
+	await page.evaluate(() => (globalThis as any).__tvtSceneTest.rotate(true));
+	// Warm: the uploads and the first terrain tiles under the segments are out of the window.
+	const warm = (await stats(page)).frames;
+	await expect.poll(async () => (await stats(page)).frames - warm, { timeout: 420_000, intervals: [1000] }).toBeGreaterThan(130);
+	const loadBefore = loadavg()[0];
+	await instrument(page);
+	const cdp = await page.context().newCDPSession(page);
+	await cdp.send('Profiler.enable');
+	await cdp.send('Profiler.setSamplingInterval', { interval: 250 });
+	await cdp.send('Profiler.start');
+	await expect.poll(() => page.evaluate(() => (globalThis as any).__budgetRows.length), { timeout: 800_000, intervals: [1000] }).toBeGreaterThanOrEqual(FRAMES);
+	const { profile } = await cdp.send('Profiler.stop');
+	const loadAfter = loadavg()[0];
+	const rows: number[][] = await page.evaluate(() => (globalThis as any).__budgetRows);
+	const s = await stats(page);
+	await page.evaluate(() => (globalThis as any).__tvtSceneTest.rotate(false));
+	const col = (i: number) => rows.map((r) => r[i]);
+	// Terrain queries made in the render beyond the tracker's own are the static batches' (and the centre's).
+	const staticReads = rows.map((r) => r[3] - r[2]);
+	return {
+		renderer,
+		load: { before: loadBefore, after: loadAfter },
+		frames: rows.length,
+		jsMs: quant(col(0)),
+		placeMs: quant(col(1)),
+		drawMs: quant(rows.map((r) => r[0] - r[1])),
+		wallMs: quant(col(4)),
+		trackedReads: quant(col(2)),
+		staticReads: quant(staticReads),
+		framesWithStaticReads: staticReads.filter((n) => n > 2).length,
+		profile: profileTop(profile),
+		last: s
+	};
+}
+
+type Budget = Awaited<ReturnType<typeof measureBudget>>;
+const f = (q: Q) => `p50 ${q.p50.toFixed(2)} p95 ${q.p95.toFixed(2)} p99 ${q.p99.toFixed(2)} max ${q.max.toFixed(2)}`;
+
+function report(label: string, r: Budget) {
+	const s = r.last;
+	console.log(
+		`scene budget ${label} (${r.renderer}; load ${r.load.before.toFixed(1)} before, ${r.load.after.toFixed(1)} after): ${r.frames} frames; JS ms ${f(r.jsMs)}; placement ms ${f(r.placeMs)}; draw ms ${f(r.drawMs)}; wall ms between renders ${f(r.wallMs)}; ` +
+			`terrain reads per frame: tracked mean ${r.trackedReads.mean.toFixed(1)} (max ${r.trackedReads.max}), other mean ${r.staticReads.mean.toFixed(1)} (max ${r.staticReads.max}, ${r.framesWithStaticReads} frames over 2); ` +
+			`${s.drawCalls} draw calls, ${s.instances} instances, ${s.staticSegments} static segments, dropped ${s.dropped} ${JSON.stringify(s.droppedByGroup)}`
+	);
+	console.log(`scene budget ${label} profile: ${JSON.stringify(r.profile)}`);
+}
+
+/** All three loads are there and drawn. */
+function checkLoads(s: Stats) {
+	expect(s.staticSegments).toBe(1500);
+	expect(s.instances).toBeGreaterThan(1000);
+	// The shrub-like kind keeps to its 300 m radius: the scatter reaches 350 m, so some of it is dropped; the trees' cap of 4,000 drops none.
+	expect(s.droppedByGroup['scene-test-posts'] ?? 0).toBeGreaterThan(0);
+	expect(s.droppedByGroup['scene-test-trees'] ?? 0).toBe(0);
+}
+
 const stats = (page: Page): Promise<Stats> => page.evaluate(() => (globalThis as any).__tvtSceneTest.stats());
 
 test.describe('scene budget', () => {
 	test('4,000 trees, 1,500 registered-kind instances and 1,500 static segments: scene JS p95 ≤ 8 ms at z17, pitch 60, rotating', { tag: '@scene-budget' }, async ({ page, consoleErrors }) => {
-		test.setTimeout(900_000);
+		test.setTimeout(1_200_000);
 		await page.setViewportSize({ width: 900, height: 560 });
-		await openBudget(page);
-		const made = await page.evaluate(() => (globalThis as any).__tvtSceneTest.budget({ trees: 4000, posts: 1500, segments: 1500 }));
-		expect(made).toEqual({ trees: 4000, posts: 1500, segments: 1500 });
-		await mapReady(page);
-		await page.evaluate(() => (globalThis as any).__tvtSceneTest.rotate(true));
-		// The scene keeps the JS time of its last 120 frames: wait for that many new ones, so the uploads and the
-		// first terrain tiles under the segments are out of the window. A software-GL run draws only a few a second.
-		const warm = (await stats(page)).frames;
-		await expect.poll(async () => (await stats(page)).frames - warm, { timeout: 420_000, intervals: [1000] }).toBeGreaterThan(130);
-		const s = await stats(page);
+		const r = await measureBudget(page);
 		await page.screenshot({ path: screenPath('scene-budget-z17.png') });
-		await page.evaluate(() => (globalThis as any).__tvtSceneTest.rotate(false));
-		record('scene-budget.json', s);
-		console.log(`scene budget: JS p95 ${s.p95Ms.toFixed(2)} ms (last ${s.lastFrameMs.toFixed(2)} ms; placement p95 ${s.placeP95Ms.toFixed(2)} ms), ${s.drawCalls} draw calls, ${s.instances} instances, ${s.groundQueries} terrain queries in the last frame, ${s.staticSegments} static segments, dropped ${s.dropped} ${JSON.stringify(s.droppedByGroup)}`);
-		test.info().annotations.push({ type: 'scene JS p95', description: `${s.p95Ms.toFixed(2)} ms; ${s.drawCalls} draw calls; dropped ${s.dropped}` });
-		// All three loads are there and drawn.
-		expect(s.staticSegments).toBe(1500);
-		expect(s.instances).toBeGreaterThan(1000);
-		// The shrub-like kind keeps to its 300 m radius: the scatter reaches 350 m, so some of it is dropped; the trees' cap of 4,000 drops none.
-		expect(s.droppedByGroup['scene-test-posts'] ?? 0).toBeGreaterThan(0);
-		expect(s.droppedByGroup['scene-test-trees'] ?? 0).toBe(0);
-		expect.soft(s.p95Ms).toBeLessThanOrEqual(SCENE_JS_P95_MS);
+		record('scene-budget.json', r);
+		report('SwiftShader', r);
+		test.info().annotations.push({ type: 'scene JS p95', description: `${r.jsMs.p95.toFixed(2)} ms over ${r.frames} frames; ${r.last.drawCalls} draw calls; dropped ${r.last.dropped}` });
+		checkLoads(r.last);
+		expect.soft(r.jsMs.p95).toBeLessThanOrEqual(SCENE_JS_P95_MS);
 		expect(consoleErrors.filter((m) => !/could not be decoded/.test(m))).toEqual([]);
+	});
+
+	test('the same case on the laptop\'s GPU (headless Chromium with Metal), when it starts', { tag: '@scene-budget' }, async ({}, testInfo) => {
+		test.setTimeout(1_200_000);
+		const browser = await chromium.launch({ args: ['--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist', ...lockedArgs()] });
+		try {
+			const ctx = await browser.newContext({ viewport: { width: 900, height: 560 }, baseURL: testInfo.project.use.baseURL });
+			const page = await ctx.newPage();
+			const errors: string[] = [];
+			page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
+			const r = await measureBudget(page);
+			await page.screenshot({ path: screenPath('scene-budget-z17-gpu.png') });
+			record('scene-budget-gpu.json', r);
+			report('GPU', r);
+			testInfo.annotations.push({ type: 'scene JS p95 (GPU)', description: `${r.jsMs.p95.toFixed(2)} ms over ${r.frames} frames on ${r.renderer}` });
+			checkLoads(r.last);
+			expect.soft(r.jsMs.p95).toBeLessThanOrEqual(SCENE_JS_P95_MS);
+			expect(errors.filter((m) => !/could not be decoded/.test(m))).toEqual([]);
+		} finally {
+			await browser.close();
+		}
 	});
 
 	test('on a phone-sized screen the trees are capped at 1,000 and the registered kind is off', { tag: '@scene-budget' }, async ({ page }) => {
