@@ -78,9 +78,10 @@ xhigh.
   these, so set them again after any change. **Views:** All, Board, Ready queue, In flight, Decisions for Ben, Waiting
   on Ben, Chunk B, Chunk C, Backlog by area (grouped by Area) and Stale. A view's grouping saves only through "Save
   view" and its dialog's Save. A "Waiting on" field (nobody, Ben, an agency) marks what waits on someone.
-- **What each status means** (owner, Oct 22): **Backlog** is only what is blocked, by an open "blocked by" link or by
-  open sub-issues (the tracking issues). **Ready** is every other open issue not started yet, including decision-needed
-  and owner-action ones (their labels keep `board next` from handing them to agents). **In progress** means claimed:
+- **What each status means** (owner, Oct 22): **Backlog** is only what is blocked: by an open "blocked by" link, by
+  open sub-issues (the tracking issues), or by a wait outside GitHub (label `waiting-agency`: a reply from an agency). **Ready** is every other open issue not started yet, including decision-needed
+  and owner-action ones (their labels keep `board next` from handing them to agents). Once a decision-needed or owner-action issue is decided or done, its label comes off with a "Decided (who,
+  date):" comment. **In progress** means claimed:
   a builder runs `tools/board claim <n>` first. **In review** follows on its own when a PR with `Closes #n` opens.
   **Done** follows when the issue closes: a merged PR closes it; work finished without a PR (an issue that no longer
   reproduces, an owner action) is closed by hand with a comment saying why; a tracking issue is closed with a summary

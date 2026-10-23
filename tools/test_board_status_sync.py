@@ -20,6 +20,10 @@ class StatusRuleTest(unittest.TestCase):
         self.assertEqual(wanted("OPEN", "Ready", 1, 0), "Backlog")
         self.assertEqual(wanted("OPEN", None, 0, 3), "Backlog")
 
+    def test_waiting_on_an_agency_is_backlog(self):
+        self.assertEqual(wanted("OPEN", "Ready", 0, 0, True), "Backlog")
+        self.assertEqual(wanted("OPEN", "In progress", 0, 0, True), "In progress")
+
     def test_unblocked_and_not_started_is_ready(self):
         self.assertEqual(wanted("OPEN", "Backlog", 0, 0), "Ready")
         self.assertEqual(wanted("OPEN", None, 0, 0), "Ready")
