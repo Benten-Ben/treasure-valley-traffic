@@ -11,7 +11,7 @@ import { cleanWater, GAUGE, NHD_ONLY_ID, SERVICE_AREAS, seedWater, type Seeded }
  * - dotted source-layer names (`water.reaches`) read, `promoteId` and feature-state work in MapLibre;
  * - the base draws in Valley and in Clay; Protomaps' water is hidden once the network is built and stays when
  *   the manifest lists a water layer under `empty`;
- * - no water layer has a casing;
+ * - no water layer has a casing, and the only `line-gap-width` is the canal season's, on the solid reach layer;
  * - Auto stays Valley with Water on, and goes Clay with a layer that doesn't keep Valley;
  * - the Water layer's badges, italic names and picked shape come and go with it;
  * - a click on the canal opens its card (its gauge, its irrigation service areas, nothing said about who runs it).
@@ -161,8 +161,12 @@ test.describe('water: the baked network', () => {
 		const mine = layers.filter((l: any) => l.id.startsWith('water.network.') || l.id.startsWith('water-'));
 		expect(mine.length).toBeGreaterThan(BASE_LAYERS.length);
 		for (const l of mine) {
-			expect(l.id, l.id).not.toMatch(/casing/i);
-			expect(Object.keys(l.paint), l.id).not.toContain('line-gap-width');
+			expect(l.id, l.id).not.toMatch(/casing|outline|halo/i);
+			expect(Object.keys(l.paint), l.id).not.toContain('line-offset');
+			// The only gap is the canal season's hollow, on the solid reach layer: 0 unless the feature-state `season` is `off`
+			// (P5-app, season.ts); the water tone never changes with it. A dashed layer never has one.
+			if (l.id === 'water.network.reaches') expect(JSON.stringify(l.paint['line-gap-width']), l.id).toContain('feature-state');
+			else expect(Object.keys(l.paint), l.id).not.toContain('line-gap-width');
 		}
 		// No two line layers draw the same features one under the other (a casing is exactly that).
 		const lines = layers.filter((l: any) => l.id.startsWith('water.network.') && l.type === 'line');

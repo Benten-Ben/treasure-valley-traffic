@@ -9,7 +9,11 @@ import type { FlavorName } from '#lib/map/flavors.js';
  *   never the only cue: kinds differ by width, flow by dash, NHD-only by a finer line and its own dash, piped
  *   water by dots (K5, K8).
  * - **Never a casing** (K5): water sits under the streets, so a casing would only dim the street shades above
- *   it. No layer here has a casing or a `line-gap-width`; `water.base.test.ts` and the `@water` spec check it.
+ *   it. No layer here has a casing, an outline or a halo, and none uses `line-offset`. `line-gap-width` appears
+ *   once: on the solid reach layer, as 0 unless the canal's feature-state `season` is `off`, where it makes the
+ *   hollow inside the reach's own line (two thin edges in the reach's own tone, the gap between them, so the
+ *   footprint equals the true width: `season.ts`). The dashed layers never have one (their dashes are multiples
+ *   of the width). `water.base.test.ts` and the `@water` spec check it.
  * - **Widths.** Below z15 a line's width grows with the square root of its (estimated) width in metres; from z15
  *   it is the true width, in pixels, doubling every zoom (`trueWidth`). Dashed and dotted lines keep a thin
  *   width (a dash is a multiple of its line's width, so a ribbon-wide dash would stop reading as a dash).

@@ -1,6 +1,7 @@
 import type { FlavorName } from '#lib/map/flavors.js';
 import type { BaseContribution, BaseLayer } from '#lib/base/types.js';
 import { DASH, DASHED_MAX_PX, FILL_OPACITY, lineWidth, NHD_FINER, PIPED_FROM_ZOOM, TONES } from './palette.js';
+import { seasonLive, seasonPaint } from './season.js';
 
 /**
  * The baked water network as a base contribution (landscape sprint plan v3 §4.2 P4-app, §3.1 C13, §3.2 b5,
@@ -16,6 +17,10 @@ import { DASH, DASHED_MAX_PX, FILL_OPACITY, lineWidth, NHD_FINER, PIPED_FROM_ZOO
  * - **Form, not colour alone** (K5, K8): kinds differ by width; intermittent lines are dashed; lines from the
  *   federal map alone (`nhd_only`) are finer and lighter with their own dash; piped water is dotted. **Never a
  *   casing:** water sits under the streets, so a casing would only dim their shades.
+ * - **The canal season** (P5-app, `season.ts`). On the solid reach layer alone, the width and gap read feature-state
+ *   `season`: an off canal is hollow inside its own line, at its true footprint (two thin edges in the reach's own
+ *   tone, so no casing and no second line); an unknown one is a thin centre line. The `live` hook sets the state
+ *   from `/api/water/season`. The dashed layers keep their dashes, so they have no season cue.
  * - **Cards.** `cardsWhen: 'water'`: the Water layer makes these layers clickable while it's on.
  * - **Known limit (box edge).** The bake is clipped to the water plugin's box (plugins/water/ingest/build.py, `BOX`),
  *   but the map can pan 0.15 degrees past the manifest's bounds, and Protomaps' water group is hidden everywhere once
@@ -62,17 +67,23 @@ interface LineLook {
 	dash?: readonly number[];
 	/** Dots need a floor under their width. */
 	piped?: boolean;
+	/** The solid layer's width and gap read the canal season (feature-state). */
+	season?: boolean;
 }
 
 function linePaint(flavor: FlavorName, look: LineLook) {
 	const t = TONES[flavor];
 	return {
 		'line-color': look.nhd ? t.lineNhd : t.line,
-		'line-width': lineWidth({
-			scale: look.nhd ? NHD_FINER : 1,
-			...(look.dash ? { cap: DASHED_MAX_PX } : {}),
-			...(look.piped ? { floor: 2 } : {})
-		}),
+		...(look.season
+			? seasonPaint()
+			: {
+					'line-width': lineWidth({
+						scale: look.nhd ? NHD_FINER : 1,
+						...(look.dash ? { cap: DASHED_MAX_PX } : {}),
+						...(look.piped ? { floor: 2 } : {})
+					})
+				}),
 		...(look.dash ? { 'line-dasharray': [...look.dash] } : {})
 	};
 }
@@ -114,7 +125,7 @@ const layers: BaseLayer[] = [
 		valley: { 'line-color': TONES.valley.edge, 'line-width': 1.2, 'line-dasharray': [...DASH.intermittent] },
 		clay: { 'line-color': TONES.clay.edge, 'line-width': 1.2, 'line-dasharray': [...DASH.intermittent] }
 	},
-	reach(REACH_SOLID_LAYER, 20, ['all', no('piped'), no('nhd_only'), no('intermittent')], {}),
+	reach(REACH_SOLID_LAYER, 20, ['all', no('piped'), no('nhd_only'), no('intermittent')], { season: true }),
 	reach(REACH_INTERMITTENT_LAYER, 21, ['all', no('piped'), no('nhd_only'), flag('intermittent')], { dash: DASH.intermittent }),
 	reach(REACH_NHD_LAYER, 22, ['all', no('piped'), flag('nhd_only'), no('intermittent')], { nhd: true, dash: DASH.nhd }),
 	reach(REACH_NHD_INTERMITTENT_LAYER, 23, ['all', no('piped'), flag('nhd_only'), flag('intermittent')], { nhd: true, dash: DASH.nhdIntermittent }),
@@ -130,7 +141,8 @@ const contribution: BaseContribution = {
 	layers,
 	suppresses: { groups: ['water'] },
 	cardsWhen: 'water',
-	credit: '© OpenStreetMap contributors · USGS National Hydrography Dataset'
+	credit: '© OpenStreetMap contributors · USGS National Hydrography Dataset',
+	live: seasonLive
 };
 
 export default contribution;

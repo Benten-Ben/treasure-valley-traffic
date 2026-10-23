@@ -93,13 +93,41 @@ describe('the water contribution', () => {
 		expect(Object.keys(ANCHORS)).toContain('water');
 	});
 
-	it('never has a casing (K5): no casing layer, no gap width, and no line layer repeats another one’s features', () => {
+	it('never has a casing (K5): no casing layer, no offset, a gap only on the solid layer and only for an off canal, and no line layer repeats another one’s features', () => {
 		for (const l of water.layers) {
 			expect(l.id, l.id).not.toMatch(/casing|outline|halo/i);
 			for (const flavor of ['valley', 'clay'] as const) {
 				const p = paint(l.id, flavor);
-				expect(Object.keys(p), l.id).not.toContain('line-gap-width');
 				expect(Object.keys(p), l.id).not.toContain('line-offset');
+				// The gap is the season's hollow: the solid reach layer alone has one.
+				if (l.id === REACH_SOLID_LAYER) expect(Object.keys(p), l.id).toContain('line-gap-width');
+				else expect(Object.keys(p), l.id).not.toContain('line-gap-width');
+			}
+		}
+		// The solid layer's gap is 0 unless the canal's season is off; the colour never changes with it.
+		expect(paint(REACH_SOLID_LAYER, 'valley')['line-color']).toBe('#4a9fcc');
+		for (const z of [8, 11.5, 12, 14, 14.6, 15, 15.5, 16, 16.5, 17, 18, 19.5, 20, 22]) {
+			for (const width_m of [0.5, 1.5, 4, 8, 14]) {
+				const where = `z${z}, ${width_m} m`;
+				const on = widthAt(REACH_SOLID_LAYER, { width_m }, z);
+				for (const state of [undefined, 'on', 'unknown'] as const) expect(gapAt(REACH_SOLID_LAYER, { width_m }, z, state), `${state} ${where}`).toBe(0);
+				// Off: a plain line (as today) or a hollow whose footprint, gap plus two edges, is the on width.
+				const off = widthAt(REACH_SOLID_LAYER, { width_m }, z, 'off');
+				const gap = gapAt(REACH_SOLID_LAYER, { width_m }, z, 'off');
+				if (gap === 0) expect(off, `plain ${where}`).toBeCloseTo(on, 6);
+				else {
+					expect(gap + 2 * off, `the hollow's footprint is the true width, ${where}`).toBeCloseTo(on, 1);
+					expect(off, `edges, ${where}`).toBeGreaterThanOrEqual(0.6 - 1e-9);
+					expect(off, `edges, ${where}`).toBeLessThanOrEqual(1.2 + 1e-9);
+				}
+			}
+		}
+		// At whole zooms the hollow reads exactly where the on width is 3 px or more, and never under it.
+		for (const z of [8, 12, 14, 15, 16, 17, 18, 19, 20, 21, 22]) {
+			for (const width_m of [0.5, 1.5, 4, 8, 14]) {
+				const on = widthAt(REACH_SOLID_LAYER, { width_m }, z);
+				const gap = gapAt(REACH_SOLID_LAYER, { width_m }, z, 'off');
+				expect(gap > 0, `z${z}, ${width_m} m (${on.toFixed(2)} px)`).toBe(on >= 3);
 			}
 		}
 		// Each reach is in exactly one line layer: the filters partition piped / NHD-only / intermittent.
@@ -256,14 +284,26 @@ function matches(filter: unknown, properties: Feature): boolean {
 	return Boolean(f.filter({ zoom: 14 } as never, { type: 2, properties } as never));
 }
 
-/** The line width MapLibre would give a feature at a zoom, from the layer’s own style expression. */
-function widthAt(layerId: string, properties: Feature, zoom: number): number {
-	const expr = paint(layerId, 'valley')['line-width'];
-	const spec = (latest as { paint_line: Record<string, unknown> }).paint_line['line-width'];
-	const parsed = createPropertyExpression(expr as never, `layers[${layerId}].paint.line-width`, spec as never);
-	if (parsed.result !== 'success') throw new Error(`line-width does not parse: ${JSON.stringify(parsed.value)}`);
-	return (parsed.value as { evaluate(g: unknown, f: unknown): number }).evaluate({ zoom }, { type: 2, properties });
+type Evaluator = { evaluate(g: unknown, f: unknown, s: unknown): number };
+const parsed = new Map<string, Evaluator>();
+
+/** A paint property's value MapLibre would give a feature at a zoom, from the layer’s own style expression (and its feature-state). */
+function paintAt(layerId: string, prop: 'line-width' | 'line-gap-width', properties: Feature, zoom: number, season?: string): number {
+	const key = `${layerId} ${prop}`;
+	let e = parsed.get(key);
+	if (!e) {
+		const spec = (latest as { paint_line: Record<string, unknown> }).paint_line[prop];
+		const p = createPropertyExpression(paint(layerId, 'valley')[prop] as never, `layers[${layerId}].paint.${prop}`, spec as never);
+		if (p.result !== 'success') throw new Error(`${prop} does not parse: ${JSON.stringify(p.value)}`);
+		parsed.set(key, (e = p.value as Evaluator));
+	}
+	return e.evaluate({ zoom }, { type: 2, properties }, season ? { season } : {});
 }
+
+/** The line width MapLibre would give a feature at a zoom. */
+const widthAt = (layerId: string, properties: Feature, zoom: number, season?: string) => paintAt(layerId, 'line-width', properties, zoom, season);
+/** The gap MapLibre would give it. */
+const gapAt = (layerId: string, properties: Feature, zoom: number, season?: string) => paintAt(layerId, 'line-gap-width', properties, zoom, season);
 
 /** A map that holds style layers, as the base pass sees them. */
 function syncMap(layers: LayerSpecification[]) {
