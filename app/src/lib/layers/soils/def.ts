@@ -1,6 +1,5 @@
 import { built } from './tiles.js';
 import type { LayerDef } from '../types.js';
-import { SHOVEL } from './icons.js';
 
 /**
  * Soils (landscape sprint plan v3 §3.4 K6, P1-app): the NRCS soil survey as a wash of gray steps for one
@@ -12,7 +11,6 @@ import { SHOVEL } from './icons.js';
 const def: LayerDef = {
 	id: 'soils',
 	title: 'Soils',
-	icon: SHOVEL,
 	order: 80,
 	group: 'landscape',
 	blurb: "Mapped soil: hardpan, drainage, water held, farmland and runoff, from NRCS's soil survey",

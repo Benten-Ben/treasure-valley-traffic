@@ -27,9 +27,17 @@ export function setupMapLibre(): void {
 	if (setUp) return;
 	setUp = true;
 	setWorkerUrl(workerUrl);
-	const protocol: Promise<Protocol> = import('pmtiles').then((m) => new m.Protocol({ metadata: false }));
-	protocol.catch(() => {}); // each tile request below reports its own failure
-	addProtocol('pmtiles', async (params, abort) => (await protocol).tile(params, abort));
+	let protocol: Promise<Protocol> | undefined;
+	// A failed chunk load (network drop, a deploy replacing the hashed file) is not kept: the next tile request imports again.
+	const reader = (): Promise<Protocol> =>
+		(protocol ??= import('pmtiles')
+			.then((m) => new m.Protocol({ metadata: false }))
+			.catch((e) => {
+				protocol = undefined;
+				throw e;
+			}));
+	reader().catch(() => {}); // start it now; each tile request reports its own failure
+	addProtocol('pmtiles', async (params, abort) => (await reader()).tile(params, abort));
 }
 
 /**
