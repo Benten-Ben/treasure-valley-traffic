@@ -87,6 +87,7 @@ from basemap.ground import mask as MK  # noqa: E402
 from basemap.ground import rasterize as R  # noqa: E402   (also switches PROJ's network off)
 
 import photo as P  # noqa: E402
+import lidar_vintage as LV  # noqa: E402
 import pool as PL  # noqa: E402
 
 gdal.UseExceptions()
@@ -1223,6 +1224,9 @@ def cmd_calibrate(args):
                                if any("de" in r for r in v.get("types", [])) else None)
                            for b, v in boxes.items()},
                "rules": P.RULES, "class_keep": [CLASS_NAMES[c] for c in CLASS_KEEP], "min_px": CAL_MIN_PX}
+    for b, v in boxes.items():
+        v["lidar"] = LV.lidar_vintage(b)
+    log("lidar vintage by box (median dE):\n" + LV.vintage_table(summary["per_box"].items()))
     cal = {"format": "tvt-soils-calibration/1", "made": utc_now(), "inputs": cal_inputs(cfg, run),
            "summary": summary, "boxes": boxes, "pairs": out_pairs}
     if args.explore:
