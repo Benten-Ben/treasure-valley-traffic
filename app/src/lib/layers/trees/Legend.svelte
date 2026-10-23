@@ -30,6 +30,11 @@
 		placed: 'found in the lidar; crown placed'
 	};
 	const LOOK: Record<TreeKind, string> = { catalogued: 'full green', placed: 'lighter' };
+	/**
+	 * The map's boxes send every tree as placed; only a tree's card says it is catalogued. So when the catalogue
+	 * flag alone lists the entry (no catalogued tree in view), it says how to find one, with no tone and no count.
+	 */
+	const inView = (k: TreeKind) => k !== 'catalogued' || view.kinds.catalogued > 0;
 	/** Catalogued shows once the catalogue answered (the API's flag) or a catalogued tree is in view. */
 	const legend = $derived(legendFor(view.kinds, view.catalogue));
 	const kinds = $derived(legend.kinds);
@@ -42,7 +47,11 @@
 			<svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true">
 				<circle cx="10" cy="10" r="7.5" fill={TREE_TONES.broadleaf[k][1]} stroke={DISC_EDGE} stroke-width="1" />
 			</svg>
-			<span><b>{KIND_WORD[k]}</b> ({LOOK[k]}): {ABOUT[k]}{#if view.shown}{' '}<span class="num">({fmtCount(view.kinds[k])})</span>{/if}</span>
+			{#if inView(k)}
+				<span><b>{KIND_WORD[k]}</b> ({LOOK[k]}): {ABOUT[k]}{#if view.shown}{' '}<span class="num">({fmtCount(view.kinds[k])})</span>{/if}</span>
+			{:else}
+				<span><b>{KIND_WORD[k]}</b>: in the City's inventory, measured by lidar; a tree's card says when it is one</span>
+			{/if}
 		</li>
 	{/each}
 </ul>
