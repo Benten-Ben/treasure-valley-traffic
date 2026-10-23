@@ -2,73 +2,62 @@
 
 Things the UI v2 plan ([ch. 14](14-ui-v2.md)) designed or noted but left
 for a later round (owner, Oct 6, 2026), plus earlier map and site ideas
-that were marked "later", to review and check off. Data sources not yet
-used are tracked separately in [SOURCES.md](SOURCES.md); decisions are in
-[DECISIONS.md](DECISIONS.md).
+that were marked "later". Data sources not yet used are in
+[SOURCES.md](SOURCES.md); decisions are in [DECISIONS.md](DECISIONS.md).
 
-Tick an item when it's built, with the date, or strike it if we drop it.
+**The open items are on the project's GitHub board, not in this file.**
+Each item below is a pointer to its issue. The tracking issue for this
+list is [#5](https://github.com/Benten-Ben/treasure-valley-traffic/issues/5).
+Done items are dated history in the issue, not here.
 
 ## Next round (owner, Oct 6)
 
-- [ ] **Lanes** (designed in ch. 14 §14.7): lane counts, turn lanes and where
-  they start, from OpenStreetMap (`lanes`, `turn:lanes`), drawn at real
-  width from about zoom 16. Comes after the 3D cameras. Needs a regular
-  copy of Geofabrik's Idaho extract on the server (owner OK, Oct 6).
-  Geofabrik's robots.txt disallows scripted downloads (Oct 6), so hand
-  downloads load it until Geofabrik answers. **The first copy was loaded
-  by hand on Oct 7** (13,917 ways, 10,614 of them with lanes); weekly hand
-  downloads continue until Geofabrik answers.
-- [ ] **Full replay:** a time bar, playback at 60x and 600x, scrubbing to any
-  moment. Builds on the tracks API this round adds. This round has the
-  1–5 minute playback delay and Pause.
-- [ ] **Camera wall** (key C): every live camera in a grid.
-- [ ] **Valley Feed:** a stream of events (new lane closure, camera frozen,
-  bus detoured), click to fly there.
-- [ ] **Search:** places, roads, cameras, routes.
-- [ ] **Coach marks:** a short first-visit tour.
-- [ ] **Intersections layer** (data built Oct 6, [DECISIONS](DECISIONS.md)):
-  one badge per signalized intersection with its operator, coordination
-  group and confidence; the review list of candidates; approaches with
-  right-turn lanes and phasing; cameras, counts and rail crossings attached.
-  The review list grew with the Oct 7 OpenStreetMap load: **43
-  candidates**, 42 of them OSM signal nodes with no COMPASS match, where
-  the Oct 6 review had six (one left after it). Counts are in
-  [ingest/README](../ingest/README.md).
-- [ ] **Rail crossings layer:** FRA crossings, gates and preemption where
-  known, the nearest signal and its distance, trains per day.
-- [ ] **Lanes from every source:** draw the lanes the lanes rule picks
-  (ch. 9 §9.3), each number labeled with its source, with disagreements
-  (e.g. Chinden's) flagged; builds on the lanes design above.
-- [ ] **Crashes and the high-injury network** (COMPASS, 2008–2025), and
-  **congestion measures** by year (internal until COMPASS answers).
-- [ ] **Growth context:** building permits, plats and traffic-zone forecasts
-  near corridors; Boise's development pipeline (after the core pieces).
+| Item | Why it's deferred | Issue |
+|---|---|---|
+| Lanes (ch. 14 §14.7): lane counts and turn lanes from OpenStreetMap, at real width from about zoom 16 | Comes after the 3D cameras; the first OSM copy is loaded (Oct 7) | [#201](https://github.com/Benten-Ben/treasure-valley-traffic/issues/201) |
+| Full replay: a time bar, playback at 60x and 600x | Builds on the tracks API; this round has the 1–5 minute delay and Pause | [#178](https://github.com/Benten-Ben/treasure-valley-traffic/issues/178) |
+| Camera wall (key C) | Every live camera in a grid | [#179](https://github.com/Benten-Ben/treasure-valley-traffic/issues/179) |
+| Valley Feed: a stream of events, click to fly there | Next round | [#180](https://github.com/Benten-Ben/treasure-valley-traffic/issues/180) |
+| Search: places, roads, cameras, routes | Next round | [#181](https://github.com/Benten-Ben/treasure-valley-traffic/issues/181) |
+| Coach marks: a short first-visit tour | Next round | [#182](https://github.com/Benten-Ben/treasure-valley-traffic/issues/182) |
+| Intersections layer (data built Oct 6; 43 candidates after the Oct 7 OSM load) | Review list and badges | [#183](https://github.com/Benten-Ben/treasure-valley-traffic/issues/183), [#256](https://github.com/Benten-Ben/treasure-valley-traffic/issues/256) |
+| Rail crossings layer | FRA crossings, gates and preemption | [#184](https://github.com/Benten-Ben/treasure-valley-traffic/issues/184) |
+| Lanes from every source, each number labelled, disagreements flagged | Builds on the lanes design | [#201](https://github.com/Benten-Ben/treasure-valley-traffic/issues/201) |
+| Crashes and the high-injury network; congestion measures by year | COMPASS, 2008–2025; internal until COMPASS answers | [#185](https://github.com/Benten-Ben/treasure-valley-traffic/issues/185) |
+| Growth context: permits, plats, traffic-zone forecasts | After the core pieces | [#186](https://github.com/Benten-Ben/treasure-valley-traffic/issues/186) |
 
 ## Later, once their prerequisites exist
 
-| | Item | Why later | Needs |
-|---|---|---|---|
-| [ ] | Faster VRT polling (every 10 s with `If-None-Match`) for smooth 1-minute playback delays | More requests to VRT's feed | Owner OK |
-| [ ] | Lane lines drawn into camera windows, as a calibration check | After lanes | Lanes |
-| [ ] | Detecting when a camera has been moved or re-aimed | After the archive work | Archive in place (done) |
-| [ ] | Reading the time in 511's timestamp bar (and ITD's caption on road-weather views) | Image work | — |
-| [ ] | Syncing buses to a camera picture's moment while looking through | Needs the bar time | Reading the bar time |
-| [ ] | Bus shelters only where OSM or VRT says one exists | Data | OSM or VRT stop amenities |
-| [ ] | See-through bus silhouettes behind buildings; antialiasing | Measure first | — |
-| [ ] | Lower rendering resolution while the map moves; a live server-sent-events channel | Measure first (HTTP/2 is now on) | — |
-| [ ] | Serving tiles as plain z/x/y files (a Caddy build with the PMTiles module), so browsers cache them | Mainly helps Chrome and Edge on Windows; the owner uses Chrome on a Mac | Server change |
-| [ ] | A night look for the map | Polish | — |
-| [ ] | Trees across the whole valley, beyond the North End pilot ([ch. 19](19-trees.md)) | Needs lidar height products everywhere, a large build on the server | Lidar products for each area |
-| [ ] | Hand-made glTF models (instead of generated ones) | Polish | — |
-| [ ] | 3D road decks (bridges and overpasses with height) | Polish | Road levels (in ACHD's data) |
-| [ ] | deck.gl for heavy analysis layers (crash hexbins and similar) | deck.gl doesn't run on MapLibre 6 yet | A deck.gl release that supports MapLibre 6 |
-| [ ] | Buses offset into their actual lane | After lanes | Lanes |
-| [ ] | An hour-long playback check on a recorded weekday hour (the deploy runbook's step 6: `transit-progress --report` gives the step shares, speeds and backward motion) | Runs after deploy, on the server's data | Deploy; and a query for the share of bus-seconds spent waiting at the 90 s delay (from `seen_at`, backfilled rows left out), which no tool computes yet |
-| [ ] | Load the road-weather stations (WP16) from the 511 API's camera list and `core.weather_station` instead of the one-off private list, and show their readings on the layer | The API collector arrived while UI v2 was being built (Oct 6) | UI v2 finished |
-| [ ] | Lanes for Canyon County: a `segment_lanes` keyed on COMPASS pieces or OpenStreetMap ways, since Canyon has no ACHD segments | Was waiting for the first OpenStreetMap load | OSM extract on the server: **met Oct 7** (first hand load: 13,917 ways, 10,614 with lanes), so this can be built |
-| [ ] | Link COMPASS's high-injury junctions to `core.intersection` (nearest within 40 m; they carry no `int_id`) | Both are built now; small | — |
-| [ ] | One ArcGIS reader: fold COMPASS's pager (`ingest/compass_layer.py`, core since the plugin split because the safety, flow and development plugins share it) into the shared `ingest/arcgis.py` | Works today; two code paths to maintain | — |
-| [ ] | Make `restricted` a real permission boundary (a separate database role the app can't read) | Policy only today: the app and ingestors share one role | Server change |
-| [ ] | A "bus speeds" view of the Traffic lens ([ch. 13](13-visual-design.md); a layer in UI v2): travel speeds on the map, derived from VRT's bus GPS by the method in [ch. 15](15-plugins.md#speeds-from-buses-planned-for-flow) (pilot, Oct 5) | It's new map data, so it's the owner's call, and only once there's enough data: roughly two weeks after recording began (2:00 PM MDT, Oct 5). Time-of-day profiles need 2–4 weeks | Steps 2–4 of the bus-speed method (crossing times per segment, removing stop dwell, aggregation; only step 1 is built); owner OK |
-| [ ] | Video library: several cameras played side by side on one shared clock, e.g. every camera along a corridor at 5:30 PM | Proposed with the `/videos/` library ([ch. 11 §11.5](11-camera-validation-layer.md#115-storage)) and approved with it as a package (Oct 6), but this part was marked "later" | — (the library is built) |
-| [ ] | A "watch this day" button in UI v2's camera windows that opens the video library at that camera, day and moment | Marked "later" with the library (Oct 6) | UI v2 camera windows. Library links already carry the camera, day, speed and position in the address (`#cam=…&day=…&fps=…&t=…`, where `t` is seconds into the video), so the button only has to build that link. The library is LAN and tailnet only |
+| Item | Why later | Issue |
+|---|---|---|
+| Faster VRT polling (every 10 s with `If-None-Match`) | More requests to VRT's feed; owner OK | [#252](https://github.com/Benten-Ben/treasure-valley-traffic/issues/252) |
+| Lane lines drawn into camera windows, as a calibration check | After lanes | [#188](https://github.com/Benten-Ben/treasure-valley-traffic/issues/188) |
+| Detecting when a camera has been moved or re-aimed | After the archive work | [#189](https://github.com/Benten-Ben/treasure-valley-traffic/issues/189) |
+| Reading the time in 511's timestamp bar (and ITD's caption) | Image work | [#190](https://github.com/Benten-Ben/treasure-valley-traffic/issues/190) |
+| Syncing buses to a camera picture's moment while looking through | Needs the bar time | [#191](https://github.com/Benten-Ben/treasure-valley-traffic/issues/191) |
+| Bus shelters only where OSM or VRT says one exists | Data | [#192](https://github.com/Benten-Ben/treasure-valley-traffic/issues/192) |
+| See-through bus silhouettes; antialiasing | Measure first | [#193](https://github.com/Benten-Ben/treasure-valley-traffic/issues/193) |
+| Lower rendering resolution while moving; a live SSE channel | Measure first (HTTP/2 is on) | [#194](https://github.com/Benten-Ben/treasure-valley-traffic/issues/194) |
+| Serving tiles as plain z/x/y files (Caddy with the PMTiles module) | Mainly helps Chrome and Edge on Windows; server change | [#71](https://github.com/Benten-Ben/treasure-valley-traffic/issues/71) |
+| A night look for the map | Polish | [#195](https://github.com/Benten-Ben/treasure-valley-traffic/issues/195) |
+| Trees across the whole valley, beyond the North End pilot ([ch. 19](19-trees.md)) | Needs lidar height products everywhere | [#196](https://github.com/Benten-Ben/treasure-valley-traffic/issues/196) |
+| Hand-made glTF models | Polish | [#197](https://github.com/Benten-Ben/treasure-valley-traffic/issues/197) |
+| 3D road decks (bridges and overpasses with height) | Road levels in ACHD's data | [#198](https://github.com/Benten-Ben/treasure-valley-traffic/issues/198) |
+| deck.gl for heavy analysis layers | Needs a deck.gl release that supports MapLibre 6 | [#199](https://github.com/Benten-Ben/treasure-valley-traffic/issues/199) |
+| Buses offset into their actual lane | After lanes | [#200](https://github.com/Benten-Ben/treasure-valley-traffic/issues/200) |
+| An hour-long playback check on a recorded weekday hour, and the bus-seconds-waiting query | Runs after deploy, on the server's data | [#55](https://github.com/Benten-Ben/treasure-valley-traffic/issues/55) |
+| Road-weather stations (WP16) from the 511 API's camera list and `core.weather_station` | UI v2 cutover | [#202](https://github.com/Benten-Ben/treasure-valley-traffic/issues/202), [#53](https://github.com/Benten-Ben/treasure-valley-traffic/issues/53) |
+| Lanes for Canyon County: a `segment_lanes` keyed on COMPASS pieces or OSM ways | OSM extract is on the server (met Oct 7) | [#5](https://github.com/Benten-Ben/treasure-valley-traffic/issues/5) |
+| Link COMPASS's high-injury junctions to `core.intersection` | Both built; small | [#203](https://github.com/Benten-Ben/treasure-valley-traffic/issues/203) |
+| One ArcGIS reader: fold COMPASS's pager into `ingest/arcgis.py` | Works today; two code paths | [#204](https://github.com/Benten-Ben/treasure-valley-traffic/issues/204) |
+| Make `restricted` a real permission boundary | Policy only today; server change | [#72](https://github.com/Benten-Ben/treasure-valley-traffic/issues/72) |
+| A "bus speeds" view of the Streets layer (bus-speed method steps 2–4) | Owner's call; needs enough data | [#205](https://github.com/Benten-Ben/treasure-valley-traffic/issues/205) |
+| Video library: several cameras on one shared clock | Part of the library, marked later (Oct 6) | [#206](https://github.com/Benten-Ben/treasure-valley-traffic/issues/206) |
+| A "watch this day" button in UI v2's camera windows | Marked later with the library | [#207](https://github.com/Benten-Ben/treasure-valley-traffic/issues/207) |
+
+## History
+
+- **Oct 7, 2026:** the first OpenStreetMap copy of the Idaho extract was
+  loaded by hand (13,917 ways, 10,614 with lanes), so the lanes items above
+  can be built. Weekly hand downloads continue until Geofabrik answers
+  ([#78](https://github.com/Benten-Ben/treasure-valley-traffic/issues/78)).

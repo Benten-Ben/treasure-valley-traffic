@@ -17,8 +17,8 @@ our own base map with live and historical data layers.
   (trees layer).
 - Decisions: `docs/DECISIONS.md`. Read it before proposing anything
   structural.
-- Data sources still to do: `docs/SOURCES.md`.
-- Map and site work left for a later round: `docs/DEFERRED.md`.
+- Data sources in use and their history: `docs/SOURCES.md`. Open sources are on the GitHub board.
+- Map and site work left for a later round: `docs/DEFERRED.md`, which points to board issues. Outstanding work lives on the board.
 - How the two Claude sessions work together: `HANDOFF.md`.
 
 ## How we work with the owner
@@ -110,8 +110,8 @@ docs/01-08              research chapters (signals, local system, data, playbook
 docs/09-17, 19          platform: base-map data, architecture, camera layer, DB schema (draft), visual design, UI v2 plan, core and plugins, ideas by persona, sources for new plugins; trees
 docs/sources/           verified source catalogs per theme (Oct 7 research), for chapter 17
 docs/DECISIONS.md       decision log + pending questions + owner actions
-docs/SOURCES.md         data source backlog: what's in use, what's left, suggested order
-docs/DEFERRED.md        map and site work designed but left for a later round (lanes, replay, camera wall, ...)
+docs/SOURCES.md         data sources: what's in use and its history (open sources are on the board)
+docs/DEFERRED.md        map and site work designed but left for a later round, as pointers to board issues
 docs/data/README.md     what the reference datasets are (kept privately, not published)
 app/                    SvelteKit + MapLibre map (the platform front end)
 basemap/                builds self-hosted map layers into data/tiles/ (served at /tiles/)
