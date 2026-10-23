@@ -261,6 +261,14 @@ describe('the Trails module', () => {
 		await t.mount(ctx);
 		const ids = t.interactive.flatMap((i) => i.layerIds);
 		expect(ids).toEqual(expect.arrayContaining([L.hitWays, L.hitAgency, PAVED_LAYER.treads, PAVED_LAYER.areas]));
+		// Off, they select nothing (the picker keeps a mounted module's layers; the paved ones are base layers, always drawn).
+		const tread = { id: 9101, properties: { kind: 'cycleway', material: 'asphalt', w: 3 } } as never;
+		expect(t.interactive[2].pick(tread)).toBeNull();
+		expect(t.interactive[3].pick({ id: 9201, properties: { kind: 'pedestrian' } } as never)).toBeNull();
+		expect(t.interactive[0].pick({ id: 1, properties: { kind: 'path' } } as never)).toBeNull();
+		t.setVisible(true);
+		expect(t.interactive[2].pick(tread)).toMatchObject({ kind: 'trail', id: 'way:9101' });
+		expect(t.interactive[3].pick({ id: 9201, properties: { kind: 'pedestrian' } } as never)).toMatchObject({ kind: 'paving', id: 'area:9201' });
 		const way = t.interactive[0].pick({ id: 9500000001, properties: { kind: 'path', name: 'Example Ridge Trail' } } as never);
 		expect(way).toMatchObject({ id: 'way:9500000001', title: 'Example Ridge Trail', fact: expect.any(String) });
 		const line = t.interactive[1].pick({ id: 2, properties: { kind: 'trail', name: 'Closed Gulch' } } as never);

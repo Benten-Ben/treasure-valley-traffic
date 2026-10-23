@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Page } from '@playwright/test';
-import { MB, recordNetwork } from '../../scripts/net.mjs';
+import { MB } from '../../scripts/net.mjs';
 import { env, expect, mapReady, screenPath, test } from './fixtures.js';
 import { BLOCK, cleanTrails, FOOTHILLS, GEO, IDS, seedTrails, type Seeded } from './trails-seed.js';
 
@@ -270,12 +270,20 @@ test.describe('trails', () => {
 
 	test('records the z13 foothills view: the trails tiles’ bytes and frame times (150 KB gzip at most for the busiest tile)', { tag: '@trails' }, async ({ page }) => {
 		test.setTimeout(300_000);
-		const net = await recordNetwork(page);
+		// MapLibre fetches its tiles in workers, which the page's own CDP session doesn't see: take them from Playwright's events,
+		// with their size on the wire (gzip, as the tile route sends them).
+		const tiles: { url: string; bytes: number }[] = [];
+		const sizing: Promise<void>[] = [];
+		page.on('requestfinished', (req) => {
+			if (!req.url().includes('/api/trails/tiles/')) return;
+			sizing.push(req.sizes().then((s) => void tiles.push({ url: req.url(), bytes: s.responseBodySize })));
+		});
+		const statusCalls: string[] = [];
+		page.on('request', (req) => req.url().includes('/api/trails/status') && statusCalls.push(req.url()));
 		await page.goto(at(13, FOOTHILLS));
 		await mapReady(page);
 		await statusIn(page);
-		await net.settle();
-		const tiles = net.entries.filter((x) => x.url.includes('/api/trails/tiles/') && !x.failed);
+		await Promise.all(sizing);
 		expect(tiles.length, 'the view asked for trails tiles').toBeGreaterThan(0);
 		const byLayer: Record<string, { tiles: number; bytes: number; largest: number }> = {};
 		for (const t of tiles) {
@@ -285,7 +293,6 @@ test.describe('trails', () => {
 			b.bytes += t.bytes;
 			b.largest = Math.max(b.largest, t.bytes);
 		}
-		const status = net.entries.filter((x) => x.url.includes('/api/trails/status'));
 		// Frame times while the view pans for 6 s.
 		await page.evaluate(() => {
 			const map = (globalThis as any).__tvt.map;
@@ -308,7 +315,7 @@ test.describe('trails', () => {
 			tiles: byLayer,
 			tilesBytes: Object.values(byLayer).reduce((s, b) => s + b.bytes, 0),
 			largestTile: Math.max(...Object.values(byLayer).map((b) => b.largest)),
-			statusRequests: status.length,
+			statusRequests: statusCalls.length,
 			frames: { count: t.length, p50Ms: q(0.5), p95Ms: q(0.95), maxMs: gaps.at(-1) ?? null },
 			note: 'SwiftShader on the laptop, with the seed’s few trails: the frame times say little; the tile bytes are the seed’s. The real foothills’ numbers are measured on the scratch database (PR).'
 		};
@@ -320,6 +327,5 @@ test.describe('trails', () => {
 		test.info().annotations.push({ type: 'trails z13', description: `${tiles.length} tiles ${record.tilesBytes} B, largest ${record.largestTile} B; frame p95 ${q(0.95)?.toFixed(1)} ms` });
 		// The owner's budget (#32 Q1): the busiest tile of any zoom band is at most 150 KB gzip.
 		expect(record.largestTile).toBeLessThanOrEqual(150_000);
-		await net.detach();
 	});
 });

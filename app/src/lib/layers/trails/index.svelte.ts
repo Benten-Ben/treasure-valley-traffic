@@ -75,11 +75,12 @@ export class TrailsModule implements LayerModule {
 	Legend = Legend;
 	Card = Card;
 	interactive: Interactive[] = [
-		{ layerIds: HIT_WAYS, priority: PRIORITY.trail, pick: (f: MapGeoJSONFeature): Selection | null => waySelection(f, this.#statuses) },
-		{ layerIds: HIT_AGENCY, priority: PRIORITY.trail, pick: (f: MapGeoJSONFeature): Selection | null => lineSelection(f, this.#statuses) },
-		// The paved treads and areas are base layers (always drawn when built); they open a card only while Trails is on.
-		{ layerIds: [PAVED_LAYER.treads], priority: PRIORITY.trail, pick: (f: MapGeoJSONFeature): Selection | null => pavedSelection(f, false, this.#statuses) },
-		{ layerIds: [PAVED_LAYER.areas], priority: PRIORITY.paving, pick: (f: MapGeoJSONFeature): Selection | null => pavedSelection(f, true, this.#statuses) }
+		{ layerIds: HIT_WAYS, priority: PRIORITY.trail, pick: (f: MapGeoJSONFeature): Selection | null => this.#pick(() => waySelection(f, this.#statuses)) },
+		{ layerIds: HIT_AGENCY, priority: PRIORITY.trail, pick: (f: MapGeoJSONFeature): Selection | null => this.#pick(() => lineSelection(f, this.#statuses)) },
+		// The paved treads and areas are base layers (always drawn when built); they open a card only while Trails is on
+		// (the picker keeps a mounted module's layers, on or off, so the module says no itself).
+		{ layerIds: [PAVED_LAYER.treads], priority: PRIORITY.trail, pick: (f: MapGeoJSONFeature): Selection | null => this.#pick(() => pavedSelection(f, false, this.#statuses)) },
+		{ layerIds: [PAVED_LAYER.areas], priority: PRIORITY.paving, pick: (f: MapGeoJSONFeature): Selection | null => this.#pick(() => pavedSelection(f, true, this.#statuses)) }
 	];
 	#ctx: AppCtx | null = null;
 	#scope: MapScope | null = null;
@@ -96,6 +97,10 @@ export class TrailsModule implements LayerModule {
 	#statusError: string | null = null;
 	#tilesError: string | null = null;
 	#debug: object | null = null;
+	/** A pick, only while the layer is on. */
+	#pick(make: () => Selection | null): Selection | null {
+		return this.#visible ? make() : null;
+	}
 	/** Requests made for the status (tests and the console). */
 	statusRequests = 0;
 	readonly #statuses: Statuses = {
