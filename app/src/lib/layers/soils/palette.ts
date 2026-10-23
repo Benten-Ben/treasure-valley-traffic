@@ -8,10 +8,10 @@ import type { Palette } from '#lib/map/materials.js';
  * Colour is never the only cue: every step is named in the legend, the hardpan and bedrock, drained and
  * dual-group soils carry a pattern, and the card says it all in words.
  *
- * The steps are validated on Clay (`palette.test.ts`): each is at least ΔE 6 from the next and from the
- * surface at the wash's opacity. The wash draws in either look; it is an area fill (one at a time).
+ * The steps are validated on Clay (`palette.test.ts`): each is at least ΔE 6 from the next and the palest at least
+ * ΔE 4 from the surface (an unrated unit draws no fill), at the wash's opacity. The wash draws in either look; it is an area fill (one at a time).
  */
-export const STEPS = ['#e8e8e8', '#cacaca', '#a8a8a8', '#808080', '#555555'] as const;
+export const STEPS = ['#d9d9d9', '#bababa', '#999999', '#757575', '#4d4d4d'] as const;
 export type Step = 0 | 1 | 2 | 3 | 4;
 /** The wash's opacity, and the copy over Aerial (the wash sits above the photo at 0.45). */
 export const FILL_OPACITY = 0.85;
