@@ -27,6 +27,17 @@ describe('the status chip', () => {
 		expect([c.level, c.shape, c.headline]).toEqual(['fresh', '●', 'Data fresh']);
 		expect(c.lines).toEqual(['40 scheduled sources, all fresh']);
 		expect(c.color).toBe('var(--accent-2)');
+		expect(c.count).toBeNull();
+	});
+
+	it('counts what the headline counts, for the compact chip', () => {
+		const stale = chip({
+			sources: counts({ fresh: 24, never: 16 }),
+			attention: [],
+			builds: [build('roads-build', 'pending', { pendingSince: NOW - 3600 })]
+		});
+		expect([stale.shape, stale.count]).toEqual(['■', 17]);
+		expect(statusChip(null, NOW).count).toBeNull();
 	});
 
 	it('is unknown without a status, in a word and a hollow shape', () => {
