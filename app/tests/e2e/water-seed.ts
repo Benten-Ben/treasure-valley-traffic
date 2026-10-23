@@ -39,15 +39,18 @@ const line = (coords: [number, number][]) => `SRID=4326;LINESTRING(${coords.map(
 
 export async function seedWater(): Promise<Seeded> {
 	const sql = db();
+	let madeSchema = false;
+	const madeSources: string[] = [];
 	try {
 		const [has] = await sql`select to_regclass('water.reach') is not null as ok`;
-		let madeSchema = false;
 		if (!has.ok) {
-			for (const f of ['0001_hydrography.sql', '0002_canal_season.sql']) await sql.unsafe(readFileSync(join(REPO, 'plugins', 'water', 'migrations', f), 'utf8'));
+			// One transaction, so a failure leaves no half-made schema behind (the migrations aren't recorded in ops.schema_migration here).
+			await sql.begin(async (tx) => {
+				for (const f of ['0001_hydrography.sql', '0002_canal_season.sql']) await tx.unsafe(readFileSync(join(REPO, 'plugins', 'water', 'migrations', f), 'utf8'));
+			});
 			madeSchema = true;
 		}
 		await clean(sql);
-		const madeSources: string[] = [];
 		for (const name of SOURCES) {
 			const [r] = await sql`select 1 as ok from ops.source where name = ${name}`;
 			if (!r) {
@@ -98,6 +101,10 @@ export async function seedWater(): Promise<Seeded> {
 		                  ${sql.json({ SampleName: 'FXPOND1', SampleDescription: 'Fixture Pond Site', SampleDatetime: '2030-07-01', FinalResultNumeric: 12.5, Units: 'MPN/100 mL', LabNumber: 'FX-1', MostRecent: 'Y' })},
 		                  ST_GeomFromEWKT('SRID=4326;POINT(-116.194 43.6082)'), ${now}, ${now})`;
 		return { madeSchema, madeSources, build };
+	} catch (e) {
+		// A failure partway leaves no rows, sources or schema of ours for a later run to keep for good.
+		await cleanWater({ madeSchema, madeSources, build: 0 }).catch(() => {});
+		throw e;
 	} finally {
 		await sql.end();
 	}

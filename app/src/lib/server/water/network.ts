@@ -2,6 +2,7 @@ import {
 	CREDITS,
 	gaugeCredits,
 	reachCredits,
+	sourceCredits,
 	type BodyDetail,
 	type CanalDetail,
 	type Evidence,
@@ -148,13 +149,20 @@ export async function structureDetail(sql: Sql, idRaw: string): Promise<Structur
 	const id = parseId(idRaw);
 	if (!(await schema(sql)).network) return null;
 	const [s] = await sql`
-		select s.id, s.kind, s.name, s.source, s.gauge_lid, s.reach_id, r.kind as reach_kind, r.name as reach_name
+		select s.id, s.kind, s.name, s.source, s.gauge_lid, s.reach_id, r.kind as reach_kind, r.name as reach_name,
+		       r.geometry_from as reach_geometry, r.name_from as reach_name_from
 		from water.structure s left join water.reach r on r.id = s.reach_id
 		where s.id = ${id}`;
 	if (!s) return null;
-	const heads = await sql`select id, name from water.canal where head_structure_id = ${id} order by length_m desc, id limit 12`;
+	const heads = await sql`select id, name, sources from water.canal where head_structure_id = ${id} order by length_m desc, id limit 12`;
 	const gauge = s.gauge_lid ? await gaugeSummary(sql, String(s.gauge_lid)) : null;
-	const credit: string[] = s.source === 'nwps_gauges' ? [] : s.source === 'nhd_hr' ? [CREDITS.nhd] : [CREDITS.osm];
+	// The structure's own source, and the sources of the records it lists: the reach it is on and the canals it heads.
+	const credit: string[] = sourceCredits([
+		s.source === 'nwps_gauges' ? null : s.source === 'nhd_hr' ? 'nhd_hr' : 'osm_waterways',
+		s.reach_id === null || s.reach_id === undefined ? null : s.reach_geometry === 'osm' ? 'osm_waterways' : 'nhd_hr',
+		s.reach_name_from === 'hydroshare' ? 'hydroshare_canals' : null,
+		...heads.flatMap((h) => (h.sources ?? []).map(String))
+	]);
 	// A gauge's reading is credited as its own card credits it (NWPS, and USGS where its record names a site).
 	if (gauge || s.source === 'nwps_gauges') credit.push(...gaugeCredits(gauge?.usgs ?? false));
 	return {

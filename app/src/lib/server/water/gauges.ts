@@ -1,4 +1,4 @@
-import { gaugeCredits, readingFacts, type GaugeDetail, type GaugeFlood, type GaugeReading, type GaugeSummary, type WaterPoints } from '#lib/layers/water/water.js';
+import { gaugeCredits, readingFacts, sourceCredits, type GaugeDetail, type GaugeFlood, type GaugeReading, type GaugeSummary, type WaterPoints } from '#lib/layers/water/water.js';
 import { CREDITS } from '#lib/layers/water/water.js';
 import { iso, num, parseLid, round, schema, str, type Sql } from './common.js';
 
@@ -13,6 +13,8 @@ import { iso, num, parseLid, round, schema, str, type Sql } from './common.js';
  *   safe, and the card says only what it knows.
  * - **The credit** follows the gauge's own record: NOAA NWS always, and USGS only where the metadata we keep
  *   names USGS (`namesUsgs`); the 13 of NWPS's 37 gauges that name none (BSEI1 among them) are credited to NOAA alone.
+ *   A gauge's own card also names what it measures, so it credits the sources of that record (OpenStreetMap, NHD,
+ *   HydroShare), as the cards of the reach, body or canal themselves do.
  * - Before the plugin's migration: empty, never a 500.
  */
 
@@ -22,7 +24,7 @@ const asCategory = (v: unknown): GaugeFlood['category'] | null => (CATEGORIES as
 /**
  * The newest reading we hold for a gauge. The `like` on `source_id` can't use `raw.record`'s index under a
  * non-C collation, so it reads every NWPS observation we hold (about 3,500 new rows a day). A water-plugin migration
- * adding an index on the record's `lid` and `t` fixes it; that is outside this unit's files (follow-up).
+ * adding an index on the record's `lid` and `t` fixes it: issue #363.
  */
 export async function latestReading(sql: Sql, lid: string): Promise<GaugeReading | null> {
 	const [r] = await sql`
@@ -69,13 +71,16 @@ interface GaugeRow {
 	method: 'name' | 'nearest' | 'none';
 	distance_m: number | null;
 	measures: GaugeSummary['measures'];
+	/** The sources behind the measured record's name and shape, for the card's credit. */
+	named_from: string[];
 }
 
 async function gaugeRow(sql: Sql, lid: string): Promise<GaugeRow | null> {
 	const [g] = await sql`
 		select g.lid, g.name, g.method, g.distance_m, g.reach_id, g.body_id, g.canal_id,
-		       r.name as reach_name, r.kind as reach_kind, b.name as body_name, b.kind as body_kind,
-		       c.name as canal_name, c.kind as canal_kind
+		       r.name as reach_name, r.kind as reach_kind, r.geometry_from as reach_geometry, r.name_from as reach_name_from,
+		       b.name as body_name, b.kind as body_kind, b.geometry_from as body_geometry,
+		       c.name as canal_name, c.kind as canal_kind, c.sources as canal_sources
 		from water.gauge g
 		left join water.reach r on r.id = g.reach_id
 		left join water.body b on b.id = g.body_id
@@ -91,7 +96,22 @@ async function gaugeRow(sql: Sql, lid: string): Promise<GaugeRow | null> {
 				: g.reach_id !== null && g.reach_id !== undefined
 					? { type: 'reach', id: Number(g.reach_id), name: str(g.reach_name), kind: String(g.reach_kind) }
 					: null;
-	return { lid: String(g.lid), name: String(g.name), method: g.method, distance_m: g.distance_m === null ? null : round(Number(g.distance_m), 0), measures };
+	const named_from: string[] =
+		measures?.type === 'canal'
+			? (g.canal_sources ?? []).map(String)
+			: measures?.type === 'body'
+				? [g.body_geometry === 'osm' ? 'osm_waterways' : 'nhd_hr']
+				: measures?.type === 'reach'
+					? [g.reach_geometry === 'osm' ? 'osm_waterways' : 'nhd_hr', g.reach_name_from === 'hydroshare' ? 'hydroshare_canals' : '']
+					: [];
+	return {
+		lid: String(g.lid),
+		name: String(g.name),
+		method: g.method,
+		distance_m: g.distance_m === null ? null : round(Number(g.distance_m), 0),
+		measures,
+		named_from
+	};
 }
 
 /** A gauge for a card: what it measures, its latest reading and any open flood episode. Null when unknown. */
@@ -111,7 +131,7 @@ export async function gaugeDetail(sql: Sql, lidRaw: string): Promise<GaugeDetail
 	const g = await gaugeRow(sql, lid);
 	if (!g) return null;
 	const [reading, flood, usgs] = await Promise.all([latestReading(sql, lid), openFlood(sql, lid), recordNamesUsgs(sql, lid)]);
-	return { lid: g.lid, name: g.name, measures: g.measures, reading, flood, method: g.method, distance_m: g.distance_m, usgs, credit: gaugeCredits(usgs) };
+	return { lid: g.lid, name: g.name, measures: g.measures, reading, flood, method: g.method, distance_m: g.distance_m, usgs, credit: [...gaugeCredits(usgs), ...sourceCredits(g.named_from)] };
 }
 
 /** `GET /api/water/points`: every structure and gauge the map draws. */

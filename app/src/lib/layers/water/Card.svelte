@@ -15,7 +15,6 @@
 		evidenceWords,
 		FLOW_WORD,
 		floodWords,
-		gaugeCredits,
 		geometryWords,
 		HAZARD_NOTE,
 		HAZARD_STATUS_WORD,
@@ -278,7 +277,7 @@
 	{#if reach}{reach.credit.join(' · ')}
 	{:else if body}{body.credit.join(' · ')}
 	{:else if structure}{structure.credit.join(' · ')}
-	{:else if gauge}{gaugeCredits(gauge.usgs).join(' · ')}
+	{:else if gauge}{gauge.credit.join(' · ')}
 	{:else if data.type === 'hazard'}{CREDITS.boiseHazards}
 	{:else if data.type === 'ecoli'}{CREDITS.boiseEcoli}
 	{:else}{nhdOnly ? CREDITS.nhd : `${CREDITS.osm} · ${CREDITS.nhd}`}

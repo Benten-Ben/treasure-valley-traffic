@@ -7,7 +7,7 @@ import { PRIORITY, type Selection } from '../types.js';
 import { NOTICES_URL, POINTS_URL } from './def.js';
 import { WaterModule, type WaterSelectionData } from './index.svelte.js';
 import { GAUGE_LAYER, LABEL_BODY_LAYER, LABEL_MAIN_LAYER, NOTICE_LAYER, SELECTED_BODY_LAYER, SELECTED_REACH_LAYER, STRUCTURE_FINE_LAYER, STRUCTURE_LAYER } from './layers.js';
-import type { Notices, WaterPoints } from './water.js';
+import { CREDITS, type Notices, type WaterPoints } from './water.js';
 
 beforeAll(() => basemapReady);
 
@@ -53,13 +53,13 @@ function fakeMap(opts: { landscape: boolean }) {
 	const layers = new Map<string, Layer>();
 	// The basemap's water labels, which the layer hides only while its own italic names draw.
 	for (const id of ['water_waterway_label', 'water_label_lakes', 'water']) layers.set(id, { id, layout: { visibility: 'visible' }, minzoom: 0, maxzoom: 24 });
-	const sources = new Map<string, { data?: GeoJSON.FeatureCollection }>();
+	const sources = new Map<string, { data?: GeoJSON.FeatureCollection; attribution?: string }>();
 	if (opts.landscape) sources.set('landscape', {});
 	const images = new Set<string>();
 	return {
 		layers,
 		sources,
-		addSource: (id: string, spec: { data?: GeoJSON.FeatureCollection }) => void sources.set(id, spec),
+		addSource: (id: string, spec: { data?: GeoJSON.FeatureCollection; attribution?: string }) => void sources.set(id, spec),
 		getSource: (id: string) => sources.get(id),
 		removeSource: (id: string) => sources.delete(id),
 		addLayer: (l: Layer) => void layers.set(l.id, { ...l, layout: { ...l.layout } }),
@@ -144,6 +144,14 @@ describe('the Water module', () => {
 		water.destroy();
 		expect(map.layers.has(GAUGE_LAYER)).toBe(false);
 		expect(map.sources.has('water-points')).toBe(false);
+	});
+
+	it('credits what the badges draw in the map’s attribution card: NWPS, OSM and NHD for the points, the City for its notices', async () => {
+		const { map } = await mount(baked());
+		const points = map.sources.get('water-points')?.attribution ?? '';
+		for (const c of [CREDITS.nwps, CREDITS.osm, CREDITS.nhd]) expect(points, c).toContain(c);
+		const notices = map.sources.get('water-notices')?.attribution ?? '';
+		for (const c of [CREDITS.boiseHazards, CREDITS.boiseEcoli]) expect(notices, c).toContain(c);
 	});
 
 	it('hides the basemap’s water names only while its own italic ones draw', async () => {

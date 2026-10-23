@@ -1,5 +1,6 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import postgres from 'postgres';
+import { CREDITS, gaugeCredits } from '#lib/layers/water/water.js';
 import type { Sql } from './common.js';
 import { gaugeDetail, gaugeSummary, waterPoints } from './gauges.js';
 import { bodyDetail, reachDetail, structureDetail } from './network.js';
@@ -52,7 +53,8 @@ describe.skipIf(!URL)('the water APIs (database)', () => {
 				                (${B + 2}, 'nhd_hr', 'NHD-Y', 'agrees', 0.5, 9)`;
 				await tx`insert into water.structure (id, kind, name, source, source_id, reach_id, gauge_lid, minzoom, geom, build_id)
 				         values (${B + 10}, 'dam', 'Example Diversion Dam', 'osm_waterways', 'w5', ${B + 1}, null, 11, ST_GeomFromEWKT('SRID=4326;POINT(-116.31 43.6)'), ${build}),
-				                (${B + 11}, 'gauge', 'XTEST1 gauge', 'nwps_gauges', 'XTEST1', ${B + 2}, 'XTEST1', 12, ST_GeomFromEWKT('SRID=4326;POINT(-116.19 43.6)'), ${build})`;
+				                (${B + 11}, 'gauge', 'XTEST1 gauge', 'nwps_gauges', 'XTEST1', ${B + 2}, 'XTEST1', 12, ST_GeomFromEWKT('SRID=4326;POINT(-116.19 43.6)'), ${build}),
+				                (${B + 12}, 'dam', 'Example Gauged Dam', 'osm_waterways', 'w6', null, 'XTEST2', 14, ST_GeomFromEWKT('SRID=4326;POINT(-116.28 43.6)'), ${build})`;
 				await tx`insert into water.canal (id, name, kind, length_m, piped_m, reaches, head_reach_id, head_structure_id, source_kind, source_reach_id,
 				                                   gauge_lid, sources, build_id)
 				         values (${B + 2}, 'Example Canal', 'main_canal', 23100, 800, 12, ${B + 2}, ${B + 10}, 'river', ${B + 1}, 'XTEST1',
@@ -62,7 +64,8 @@ describe.skipIf(!URL)('the water APIs (database)', () => {
 				                ('XTEST2', 'Example River at Nowhere', ${B + 1}, null, null, 'nearest', 140, ST_GeomFromEWKT('SRID=4326;POINT(-116.29 43.6)'), ${build})`;
 				await tx`insert into water.body (id, kind, name, intermittent, area_m2, minzoom, geometry_from, confirmed, osm_type, osm_id, gauge_lid, geom, build_id)
 				         values (${B + 20}, 'pond', 'Example Pond', false, 12500, 11, 'osm', true, 'w', 777, null, ST_Multi(ST_GeomFromEWKT('SRID=4326;POLYGON((-116.2 43.6, -116.199 43.6, -116.199 43.601, -116.2 43.6))')), ${build}),
-				                (${B + 21}, 'wetland', null, true, 800, 14, 'nhd', false, null, null, null, ST_Multi(ST_GeomFromEWKT('SRID=4326;POLYGON((-116.1 43.6, -116.099 43.6, -116.099 43.601, -116.1 43.6))')), ${build})`;
+				                (${B + 21}, 'wetland', null, true, 800, 14, 'nhd', false, null, null, null, ST_Multi(ST_GeomFromEWKT('SRID=4326;POLYGON((-116.1 43.6, -116.099 43.6, -116.099 43.601, -116.1 43.6))')), ${build}),
+				                (${B + 22}, 'lake', 'Example Gauged Lake', false, 90000, 10, 'nhd', false, null, null, 'XTEST2', ST_Multi(ST_GeomFromEWKT('SRID=4326;POLYGON((-116.3 43.6, -116.299 43.6, -116.299 43.601, -116.3 43.6))')), ${build})`;
 				// IDWR's service areas, internal.
 				await tx`insert into water.canal_org (canal_id, objectid, name, share, at_head, build_id)
 				         values (${B + 2}, 90001, 'Example Irrigation District', 0.62, true, ${build}), (${B + 2}, 90002, 'Sample Ditch Company', 0.38, false, ${build})`;
@@ -139,15 +142,29 @@ describe.skipIf(!URL)('the water APIs (database)', () => {
 				const dam = (await structureDetail(db, String(B + 10)))!;
 				expect(dam).toMatchObject({ kind: 'dam', name: 'Example Diversion Dam', source: 'osm_waterways', reach: { id: B + 1, kind: 'river', name: 'Example River' } });
 				expect(dam.head_of).toEqual([{ id: B + 2, name: 'Example Canal' }]);
-				expect((await structureDetail(db, String(B + 11)))!.gauge?.lid).toBe('XTEST1');
+				// The credits follow the records each card shows: a gauge's reading brings NWPS (and USGS only where its record names a site).
+				const nwpsOnly = gaugeCredits(false);
+				const nwpsUsgs = gaugeCredits(true);
+				expect(nwpsUsgs[0]).toContain('Geological Survey');
+				expect((await bodyDetail(db, String(B + 20)))!.credit).toEqual([CREDITS.osm, CREDITS.nhd]); // no gauge
+				const lake = (await bodyDetail(db, String(B + 22)))!; // a USGS gauge
+				expect(lake.gauge?.lid).toBe('XTEST2');
+				expect(lake.credit).toEqual([CREDITS.nhd, ...nwpsUsgs]);
+				const gaugeStructure = (await structureDetail(db, String(B + 11)))!; // the gauge's own marker, on a HydroShare-named canal reach
+				expect(gaugeStructure.gauge?.lid).toBe('XTEST1');
+				expect(gaugeStructure.credit).toEqual([CREDITS.osm, CREDITS.hydroshare, ...nwpsOnly]);
+				expect(dam.credit).toEqual([CREDITS.osm, CREDITS.nhd, CREDITS.hydroshare]); // its reach, and the canal it heads (names from HydroShare), no gauge
+				const gaugedDam = (await structureDetail(db, String(B + 12)))!; // an OSM dam with a USGS gauge
+				expect(gaugedDam.credit).toEqual([CREDITS.osm, ...nwpsUsgs]);
 
 				// -- gauges ----------------------------------------------------------------------------------------------
 				const g1 = (await gaugeDetail(db, 'xtest1'))!;
 				expect(g1).toMatchObject({ lid: 'XTEST1', method: 'name', distance_m: 12, usgs: false, flood: null });
-				expect(g1.credit).toEqual(['NOAA National Weather Service (National Water Prediction Service)']); // the record names no USGS site
+				// The record names no USGS site; the card names the canal it measures, so it credits that canal's sources.
+				expect(g1.credit).toEqual([...gaugeCredits(false), CREDITS.osm, CREDITS.nhd, CREDITS.hydroshare]);
 				const g2 = (await gaugeDetail(db, 'XTEST2'))!;
 				expect(g2.usgs).toBe(true);
-				expect(g2.credit[0]).toContain('courtesy of the U.S. Geological Survey');
+				expect(g2.credit).toEqual([...gaugeCredits(true), CREDITS.osm]); // and the OSM river it measures
 				expect(g2.reading?.facts).toEqual([{ label: 'Stage', value: 3.2, unit: 'ft' }]);
 				expect(g2.flood).toMatchObject({ category: 'minor', peak: 'moderate' });
 				expect(g2.flood?.since).toBe('2030-07-01T12:00:00.000Z');
@@ -155,7 +172,7 @@ describe.skipIf(!URL)('the water APIs (database)', () => {
 
 				// -- the map's points: public sources only ---------------------------------------------------------------
 				const points = await waterPoints(db);
-				expect(points.structures.map((s) => s.id)).toEqual([B + 10]); // the gauge-kind structure is the gauge
+				expect(points.structures.map((s) => s.id)).toEqual([B + 10, B + 12]); // the gauge-kind structure is the gauge
 				expect(points.structures[0]).toMatchObject({ kind: 'dam', minzoom: 11 });
 				expect(points.gauges.map((g) => [g.lid, g.flood])).toEqual([['XTEST1', null], ['XTEST2', 'minor']]);
 				expect(JSON.stringify(points)).not.toMatch(/Irrigation|IDWR|service area/i);

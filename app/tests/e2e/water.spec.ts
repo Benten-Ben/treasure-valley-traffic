@@ -316,7 +316,10 @@ test.describe('water: the APIs', () => {
 		expect(await (await request.get('/api/water/structure/9001')).json()).toMatchObject({ kind: 'dam', head_of: [{ id: 1, name: 'Fixture Main Canal' }] });
 		const gauge = await (await request.get(`/api/water/gauge/${GAUGE.toLowerCase()}`)).json();
 		expect(gauge).toMatchObject({ lid: GAUGE, usgs: false, flood: null });
-		expect(gauge.credit).toHaveLength(1);
+		// NWPS alone for the reading (its record names no USGS site), then the sources of the canal it measures, HydroShare as its licence asks.
+		expect(gauge.credit[0]).toContain('National Weather Service');
+		expect(gauge.credit.join(' ')).not.toContain('Geological Survey');
+		expect(gauge.credit.some((c: string) => c.includes('HydroShare') && c.includes('modified'))).toBe(true);
 		const points = await (await request.get('/api/water/points')).json();
 		expect(points.gauges.map((g: { lid: string }) => g.lid)).toContain(GAUGE);
 		expect(points.structures.map((s: { id: number }) => s.id)).toContain(9001);

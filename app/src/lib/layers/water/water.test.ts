@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { DROP } from './icons.js';
 import {
@@ -26,6 +27,7 @@ import {
 	reachFact,
 	reachTitle,
 	serviceAreasWords,
+	sourceCredits,
 	sourceLine,
 	widthHow,
 	type CanalDetail,
@@ -131,6 +133,26 @@ describe('canals and their service areas', () => {
 		expect(reachCredits({ ...base, canal: null, gauge: { usgs: true } })).toContain(`${CREDITS.nwps}; ${CREDITS.usgs}`);
 		expect(reachCredits({ ...base, canal: null, gauge: { usgs: false } })).toContain(CREDITS.nwps);
 		expect(reachCredits({ ...base, evidence: [{ source: 'hydroshare_canals', source_id: 'N1', role: 'name', share: 1, distance_m: 1 }], canal: null })).toContain(CREDITS.hydroshare);
+		// The canal's own name can come from HydroShare when the reach's doesn't.
+		expect(reachCredits({ ...base, canal: { service_areas: [], gauge: null, sources: ['osm_waterways', 'hydroshare_canals'] } })).toEqual([CREDITS.osm, CREDITS.nhd, CREDITS.hydroshare]);
+	});
+
+	it('credits the sources behind the records a card shows, in a fixed order', () => {
+		expect(sourceCredits(['hydroshare_canals', 'nhd_hr', 'osm_waterways', 'nwps_gauges', null, ''])).toEqual([CREDITS.osm, CREDITS.nhd, CREDITS.hydroshare]);
+		expect(sourceCredits([])).toEqual([]);
+		expect(sourceCredits(['osm_waterways'], ['nhd_hr'])).toEqual([CREDITS.osm, CREDITS.nhd]);
+	});
+
+	it('credits HydroShare as its licence asks: the creators, the DOI and "modified" (CC BY 4.0 §3(a)(1))', () => {
+		expect(CREDITS.hydroshare).toContain('modified');
+		expect(CREDITS.hydroshare).toContain('doi:10.4211/hs.24a5f761bf4f41fb9b872b130d9d1a3f');
+		expect(CREDITS.hydroshare).toContain('CC BY 4.0');
+		expect(CREDITS.hydroshare).toContain('Tatum');
+		// The same words as the source's own record in the plugin's manifest, so the two can't drift.
+		const manifest = JSON.parse(readFileSync(fileURLToPath(new URL('../../../../../plugins/water/plugin.json', import.meta.url)), 'utf8')) as {
+			sources: { name: string; credit: string }[];
+		};
+		expect(manifest.sources.find((s) => s.name === 'hydroshare_canals')?.credit).toBe(CREDITS.hydroshare);
 	});
 });
 

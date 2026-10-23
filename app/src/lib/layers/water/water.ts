@@ -243,13 +243,21 @@ export const SOURCE_NAME: Record<SourceId, string> = {
 export const CREDITS = {
 	osm: '© OpenStreetMap contributors',
 	nhd: 'USGS National Hydrography Dataset',
-	hydroshare: 'Treasure Valley Irrigation System, HydroShare (CC BY 4.0; Tatum, Bittmann, Stone and Kaiser, 2022)',
+	// The source record's own credit (plugins/water/plugin.json; a test keeps the two equal): CC BY 4.0 asks for the
+	// creators, the DOI and a note that the material was modified.
+	hydroshare:
+		'Tatum, T., Bittmann, B., Stone, H., Kaiser, K. E. (2022), Treasure Valley Irrigation System, HydroShare, doi:10.4211/hs.24a5f761bf4f41fb9b872b130d9d1a3f (CC BY 4.0; modified)',
 	nwps: 'NOAA National Weather Service (National Water Prediction Service)',
 	usgs: 'observations courtesy of the U.S. Geological Survey',
 	idwr: 'Irrigation service areas: Idaho Department of Water Resources (internal use)',
 	boiseHazards: 'Boise Fire Department and City of Boise (Float the Boise)',
 	boiseEcoli: 'City of Boise Parks and Recreation'
 } as const;
+
+/** What the map's attribution card says while the badges draw: structures (OSM, NHD) and the NWPS gauges. */
+export const POINTS_ATTRIBUTION = `${CREDITS.osm} · ${CREDITS.nhd} · ${CREDITS.nwps}`;
+/** And the City's river hazards and E. coli sites. */
+export const NOTICES_ATTRIBUTION = `${CREDITS.boiseHazards}; ${CREDITS.boiseEcoli}`;
 
 /** "8 m (26 ft)". */
 export function metresFeet(m: number): string {
@@ -362,17 +370,37 @@ export function serviceAreasWords(areas: readonly ServiceArea[]): string {
 export const SERVICE_AREA_NOTE =
 	"A service area is where an irrigation organization may deliver its water rights. It doesn't say who runs this canal or when water flows.";
 
+/**
+ * The credits for the sources behind the records a card shows, in a fixed order (OpenStreetMap, NHD, HydroShare).
+ * `always` names sources credited whatever `sources` says.
+ */
+export function sourceCredits(sources: Iterable<string | null | undefined>, always: readonly SourceId[] = []): string[] {
+	const have = new Set<string>([...sources].filter((x): x is string => !!x));
+	for (const a of always) have.add(a);
+	const out: string[] = [];
+	if (have.has('osm_waterways')) out.push(CREDITS.osm);
+	if (have.has('nhd_hr')) out.push(CREDITS.nhd);
+	if (have.has('hydroshare_canals')) out.push(CREDITS.hydroshare);
+	return out;
+}
+
 /** The credits a reach's card shows. The gauge's own credit applies (USGS only where its record names a site). */
 export function reachCredits(
 	d: Pick<ReachDetail, 'geometry_from' | 'name_from' | 'evidence'> & {
-		canal: { service_areas: readonly unknown[]; gauge: { usgs: boolean } | null } | null;
+		canal: { service_areas: readonly unknown[]; gauge: { usgs: boolean } | null; sources?: readonly string[] } | null;
 		gauge?: { usgs: boolean } | null;
 	}
 ): string[] {
-	const out: string[] = [];
-	if (d.geometry_from === 'osm' || d.evidence.some((e) => e.source === 'osm_waterways')) out.push(CREDITS.osm);
-	out.push(CREDITS.nhd);
-	if (d.name_from === 'hydroshare' || d.evidence.some((e) => e.source === 'hydroshare_canals')) out.push(CREDITS.hydroshare);
+	// Where the line, its name and the canal's name came from; NHD is always credited (the base map's water).
+	const out = sourceCredits(
+		[
+			d.geometry_from === 'osm' ? 'osm_waterways' : 'nhd_hr',
+			d.name_from === 'hydroshare' ? 'hydroshare_canals' : null,
+			...d.evidence.map((e) => e.source),
+			...(d.canal?.sources ?? [])
+		],
+		['nhd_hr']
+	);
 	const gauge = d.canal?.gauge ?? d.gauge ?? null;
 	if (gauge) out.push(...gaugeCredits(gauge.usgs));
 	if (d.canal?.service_areas.length) out.push(CREDITS.idwr);

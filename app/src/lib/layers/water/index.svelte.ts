@@ -39,6 +39,8 @@ import {
 	FLOOD_WORD,
 	HAZARD_STATUS_WORD,
 	HAZARD_WORD,
+	NOTICES_ATTRIBUTION,
+	POINTS_ATTRIBUTION,
 	reachFact,
 	reachTitle,
 	sourceLine,
@@ -152,8 +154,14 @@ export class WaterModule implements LayerModule {
 		if (this.#destroyed) return;
 		const scope = (this.#scope = new MapScope(map));
 		const kit = flavorKit();
-		scope.addSource(POINTS_SOURCE, { type: 'geojson', data: pointFeatures(this.points), promoteId: 'id' });
-		scope.addSource(NOTICES_SOURCE, { type: 'geojson', data: noticeFeatures(this.notices ?? { hazards: [], ecoli: [] }), promoteId: 'id' });
+		// The attribution card credits the data these badges draw while the layer is on (docs/14 §14.11).
+		scope.addSource(POINTS_SOURCE, { type: 'geojson', data: pointFeatures(this.points), promoteId: 'id', attribution: POINTS_ATTRIBUTION });
+		scope.addSource(NOTICES_SOURCE, {
+			type: 'geojson',
+			data: noticeFeatures(this.notices ?? { hazards: [], ecoli: [] }),
+			promoteId: 'id',
+			attribution: NOTICES_ATTRIBUTION
+		});
 		for (const m of MARKERS) {
 			const img = markerImage(m.image);
 			if (img) scope.addImage(m.image, img, { pixelRatio: 2 });
