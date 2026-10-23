@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BANDS, BUDGET, FIRST_TOGGLE, overBudget, Z8_WITH_WASH } from './budget.js';
+import { BANDS, BUDGET, CUT_MS, FIRST_TOGGLE, overBudget, Z8_WITH_WASH } from './budget.js';
 import { WASH_FROM } from './tiles.js';
 
 describe("the Soils layer's tile budget", () => {
@@ -13,6 +13,10 @@ describe("the Soils layer's tile budget", () => {
 		for (const b of BANDS) expect(b.gzip, b.band).toBeLessThan(b.raw);
 		expect(FIRST_TOGGLE.gzip).toBeLessThanOrEqual(BUDGET.firstToggleBytes);
 		expect(FIRST_TOGGLE.nearest9.gzip).toBeLessThan(FIRST_TOGGLE.gzip);
+	});
+
+	it('cuts the busiest tile of every zoom far inside the tile pool\'s 3 s statement timeout', () => {
+		for (const [z, [, slowest]] of Object.entries(CUT_MS)) expect(slowest, z).toBeLessThan(1_000);
 	});
 
 	it('says why the wash starts at z9: z8 with every map unit in it was over', () => {

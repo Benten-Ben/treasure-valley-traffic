@@ -177,6 +177,10 @@ test.describe('soils', () => {
 		await page.screenshot({ path: screenPath('soils-card-hardpan-z13.5.png') });
 
 		// NRCS's "No Digital Data Available": not surveyed, and no soil facts.
+		// (The card sits over the right of the map: bring the unit to the middle first.)
+		await page.evaluate((c) => (globalThis as any).__tvt.map.jumpTo({ zoom: 13.5, center: c }), centre(3));
+		await mapReady(page);
+		await expect.poll(() => dominant(page, centre(3)), { timeout: 60_000 }).toBe('clay');
 		const d = await pos(3);
 		await page.mouse.click(d.x, d.y);
 		await expect.poll(async () => (await selection(page))?.id).toBe(UNITS[3].mukey);

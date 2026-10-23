@@ -54,6 +54,9 @@ export const Z8_WITH_WASH: BandMeasure = { band: 'z8 with the wash (not served)'
  */
 export const FIRST_TOGGLE = { tiles: 25, raw: 1_156_480, gzip: 942_082, nearest9: { tiles: 9, gzip: 727_713 } } as const;
 
+/** Database time to cut the busiest tile of each zoom (EXPLAIN ANALYZE on scratch, two runs each), ms: the 3 s statement timeout is far off. */
+export const CUT_MS = { z8: [22, 25], z9: [346, 375], z10: [419, 432], z11: [216, 226], z12: [88, 89], z13: [27, 27], z14: [25, 32] } as const;
+
 /** What is over the budget, in words (empty when nothing is). */
 export function overBudget(bands: readonly Pick<BandMeasure, 'band' | 'gzip'>[] = BANDS, first: number = FIRST_TOGGLE.gzip): string[] {
 	const out: string[] = [];
