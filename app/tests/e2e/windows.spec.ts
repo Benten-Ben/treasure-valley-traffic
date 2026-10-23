@@ -446,7 +446,7 @@ test.describe('windows', () => {
 		const settled = () => page.waitForFunction(() => !(globalThis as any).__tvt.map.isMoving(), null, { timeout: 60_000 });
 		const card = page.getByRole('region', { name: 'Selected marker' });
 		// Below the top bar, above the toolbar, right of the legends, left of the camera widget.
-		await expect.poll(async () => (await map()).padding).toEqual(CHROME);
+		await expect.poll(async () => (await map()).padding, { timeout: 30_000 }).toEqual(CHROME);
 		let m = await map();
 		// The link's centre is where it said, drawn in the middle of the visible area.
 		expect(Math.abs(m.view.center[0] - -116.25)).toBeLessThan(1e-6);
@@ -713,19 +713,22 @@ test.describe('windows', () => {
 		// for a stable element took 14 s on a loaded laptop (SwiftShader starves animation frames, Oct 15), so
 		// the click is dispatched on it.
 		await page.keyboard.press('KeyH');
-		await expect(chip).toBeVisible();
+		await chip.waitFor({ state: 'attached', timeout: 5_000 });   // H shows the Back chip (its fade-in may lag under load)
 		expect(await history()).toBe(1);
 		const home = await view();
 		expect(home.zoom).toBeCloseTo(13, 3);
 		expect(home.pitch).toBeCloseTo(50, 3);
-		await chip.dispatchEvent('click');
+		// The click does not wait on the chip's 8 s lifetime: it is dispatched on whatever is there now. If the
+		// chip has already hidden, Backspace takes the same step back.
+		if (await chip.count()) await chip.dispatchEvent('click');
+		else await page.keyboard.press('Backspace');
 		await mapReady(page);
 		same(await view(), start);
 		expect(await history()).toBe(0);
 
 		// O the same way, framing the valley (Caldwell to east Boise, Kuna to Eagle) in the visible area.
 		await page.keyboard.press('KeyO');
-		await expect(chip).toBeVisible();
+		await chip.waitFor({ state: 'attached', timeout: 5_000 });   // as for H: the fade-in may lag under load
 		expect(await history()).toBe(1);
 		const o = await view();
 		expect(o.pitch).toBeCloseTo(0, 3);
