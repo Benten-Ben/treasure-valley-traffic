@@ -21,7 +21,7 @@ const def: LayerDef = {
 	order: 35,
 	keepsValley: true,
 	blurb: 'Lane counts and turn lanes at real road width, each count with its source and the places the sources disagree',
-	source: '© OpenStreetMap contributors · ACHD and ITD (internal: this map only)',
+	source: '© OpenStreetMap contributors · ACHD, ITD, COMPASS and USDA NASS CDL (internal: this map only)',
 	loadingText: 'Loading lanes…',
 	// Offered once the landscape file holds roads (the tiles' manifest says so in /api/meta; null: not baked yet).
 	available: (meta) => (meta && meta.database === 'ok' && meta.tiles?.landscape === null ? 'Roads at real width are not built yet' : true),

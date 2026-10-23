@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { junctionCard, pieceAnswer, pieceCard, type Sql } from './piece.js';
+import { isBusy, junctionCard, pieceAnswer, pieceCard, type Sql } from './piece.js';
 
 /** A piece row as `roads.piece` joined to `roads.xsection` gives it. */
 const row = (over: Record<string, unknown> = {}) => ({
@@ -42,6 +42,12 @@ describe('the piece card (pure)', () => {
 		expect(label({ lanes_source: 'default', road_segment_id: 5 })).toBe('assumed');
 		expect(label({ lanes_source: 'default', road_segment_id: null })).toBe('assumed');
 		expect(pieceCard(row({ lanes_source: 'default' }) as never, 'b', []).lanes.assumed).toBe(true);
+	});
+
+	it('credits every source the roads build credits: OpenStreetMap, ACHD, ITD, COMPASS and USDA NASS, on both cards', () => {
+		for (const credit of [pieceCard(row() as never, 'b', []).credit, junctionCard('b', null, false).credit]) {
+			for (const name of ['OpenStreetMap', 'Ada County Highway District', 'Idaho Transportation Department', 'COMPASS', 'USDA NASS']) expect(credit).toContain(name);
+		}
 	});
 
 	it('says when the split is estimated, from the flags', () => {
@@ -111,11 +117,12 @@ describe('the piece card (pure)', () => {
 });
 
 /** A fake database: the queries it is asked, and the rows each kind of query answers. */
-function fake(o: { present?: boolean; review?: boolean; build?: { id: string; finished_at: Date } | null; rows?: Record<string, unknown[]> }) {
+function fake(o: { failWith?: unknown; present?: boolean; review?: boolean; build?: { id: string; finished_at: Date } | null; rows?: Record<string, unknown[]> }) {
 	const seen: string[] = [];
 	const sql = ((strings: TemplateStringsArray) => {
 		const q = strings.join('?').replace(/\s+/g, ' ');
 		seen.push(q);
+		if (o.failWith) return Promise.reject(o.failWith);
 		const rows = o.rows ?? {};
 		if (/to_regclass/.test(q)) return Promise.resolve([{ present: o.present ?? true, review: o.review ?? true }]);
 		if (/from roads\.build/.test(q)) return Promise.resolve(o.build === null ? [] : [o.build ?? { id: 'b1', finished_at: new Date('2026-10-12T03:15:00Z') }]);
@@ -128,6 +135,11 @@ function fake(o: { present?: boolean; review?: boolean; build?: { id: string; fi
 		if (/from roads\.piece where/.test(q)) return Promise.resolve(rows.line ?? []);
 		throw new Error(`unexpected query: ${q}`);
 	}) as unknown as Sql & { begin: unknown };
+	// The transaction's `set local` timeouts go through `unsafe`; they are recorded like any query.
+	(sql as unknown as { unsafe: (q: string) => Promise<unknown[]> }).unsafe = (q) => {
+		seen.push(q);
+		return Promise.resolve([]);
+	};
 	(sql as unknown as { begin: (o: string, f: (tx: unknown) => unknown) => unknown }).begin = (options, f) => {
 		seen.push(`BEGIN ${options}`);
 		return f(sql);
@@ -141,11 +153,30 @@ describe('the piece card API', () => {
 	it('before the roads migrations: empty (none), after reading nothing but the table check', async () => {
 		const f = fake({ present: false });
 		expect(await pieceAnswer(f.sql, { kind: 'surface', id: 1 }, 'b1')).toEqual({ status: 'none' });
-		expect(f.seen.filter((q) => !q.startsWith('BEGIN')).every((q) => /to_regclass/.test(q))).toBe(true);
+		expect(f.seen.filter((q) => !q.startsWith('BEGIN')).every((q) => /to_regclass|^set local/.test(q))).toBe(true);
 	});
 
 	it('before any build: empty', async () => {
 		expect(await pieceAnswer(fake({ build: null }).sql, { kind: 'line', id: 1 }, 'b1')).toEqual({ status: 'none' });
+	});
+
+	it('sets a short lock and statement timeout first, so a card never waits on a build', async () => {
+		const f = fake({ build: null });
+		await pieceAnswer(f.sql, { kind: 'line', id: 1 }, 'b1');
+		expect(f.seen[0]).toBe('BEGIN isolation level repeatable read read only');
+		expect(f.seen[1]).toMatch(/^set local lock_timeout = '\d+ms'$/);
+		expect(f.seen[2]).toMatch(/^set local statement_timeout = '\d+ms'$/);
+	});
+
+	it("a lock the build holds (55P03) or a statement timeout (57014) is 'busy', and any other error still throws", async () => {
+		for (const code of ['55P03', '57014']) {
+			const e = Object.assign(new Error('canceling statement due to lock timeout'), { code });
+			expect(isBusy(e)).toBe(true);
+			expect(await pieceAnswer(fake({ failWith: e }).sql, { kind: 'surface', id: 1 }, 'b1')).toEqual({ status: 'busy' });
+		}
+		const other = Object.assign(new Error('boom'), { code: '08006' });
+		expect(isBusy(other)).toBe(false);
+		await expect(pieceAnswer(fake({ failWith: other }).sql, { kind: 'surface', id: 1 }, 'b1')).rejects.toThrow('boom');
 	});
 
 	it('reads in one repeatable-read, read-only transaction', async () => {

@@ -24,6 +24,12 @@ export const BUILD = 'fixture';
 export const PIECES = { avenue: 1001, street: 1002 } as const;
 export const NAMES = { avenue: 'Fixture Avenue', street: 'Fixture Street' } as const;
 const NOTE = 'lanes e2e seed (synthetic)';
+/**
+ * The comment on the `roads` schema when this seed made it, with no `ops.schema_migration` row. A run killed before
+ * its cleanup leaves a schema `db/migrate.py` would trip on ("already exists"), so the next run drops a marked schema
+ * first.
+ */
+const SCHEMA_MARK = 'lanes e2e seed (synthetic; safe to drop)';
 
 const db = () => postgres(process.env.DATABASE_URL!, { max: 1, onnotice: () => {} });
 
@@ -42,12 +48,16 @@ export async function seedLanes(): Promise<Seeded> {
 	let madeSchema = false;
 	let previousCurrent: string | null = null;
 	try {
+		// A schema an earlier, interrupted run made (it holds only the seed's rows): take it away and start clean.
+		const [mark] = await sql`select obj_description(oid, 'pg_namespace') as c from pg_namespace where nspname = 'roads'`;
+		if (mark?.c === SCHEMA_MARK) await sql.unsafe('drop schema roads cascade');
 		const [has] = await sql`select to_regclass('roads.build') is not null as ok`;
 		if (has.ok) await refuseRealRoads(sql);
 		if (!has.ok) {
 			// One transaction, so a failure leaves no half-made schema behind.
 			await sql.begin(async (tx) => {
 				for (const f of ['0001_osm_street.sql', '0003_real_width.sql']) await tx.unsafe(readFileSync(join(REPO, 'plugins', 'roads', 'migrations', f), 'utf8'));
+				await tx.unsafe(`comment on schema roads is '${SCHEMA_MARK}'`);
 			});
 			madeSchema = true;
 		}

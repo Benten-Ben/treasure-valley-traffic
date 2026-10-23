@@ -125,7 +125,7 @@ export const KIND_BY_SOURCE_LAYER: Readonly<Record<string, PieceKind>> = {
 	'roads.lines': 'line'
 };
 
-export const PIECE_CREDIT = '© OpenStreetMap contributors. Lane counts and widths rest on Ada County Highway District and Idaho Transportation Department data (internal: shown on this map only).';
+export const PIECE_CREDIT = '© OpenStreetMap contributors. Lane counts, widths and junction kinds rest on Ada County Highway District, Idaho Transportation Department and COMPASS data, and the developed-land edges on USDA NASS\'s Cropland Data Layer (internal: shown on this map only).';
 
 // -- words ----------------------------------------------------------------------------------------------------
 
@@ -302,6 +302,8 @@ export function mapIsCurrent(mapBuild: string, current: { id: string; finished_a
 export const BEHIND_MESSAGE =
 	"The road data was rebuilt after these map tiles were made, so this card can't be matched to the road you clicked. Road cards come back when the map is rebuilt.";
 
+export const BUSY_MESSAGE = 'The road data is being rebuilt just now. Try this card again in a minute.';
+
 /**
  * Whether a reload would bring a different landscape file than the one the page loaded: the fresh `manifest.json`
  * holds a baked landscape whose digest (or, with no digest, build date) differs. The road data is rebuilt before the
@@ -436,7 +438,7 @@ const WAY_WORD: Readonly<Record<string, string>> = {
 	traffic_island: 'Traffic island'
 };
 
-export const ROAD_SOURCE = 'OpenStreetMap, ACHD and ITD (internal)';
+export const ROAD_SOURCE = 'OpenStreetMap, ACHD, ITD and COMPASS (internal)';
 export const PAVING_SOURCE = 'OpenStreetMap';
 
 type Props = Record<string, unknown> | null | undefined;

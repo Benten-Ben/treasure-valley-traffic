@@ -42,6 +42,8 @@ export type PieceResult =
 	| { status: 'none' }
 	/** The map's tiles are not from the current build. */
 	| { status: 'behind'; current: string }
+	/** A roads build holds the tables (its TRUNCATE locks them until it commits), or a read ran too long: ask again. */
+	| { status: 'busy' }
 	| { status: 'ok'; card: PieceAnswer };
 
 interface PieceRow {
@@ -143,8 +145,30 @@ export function junctionCard(build: string, junction: { kind: string; pieces: nu
  * The card for one picked feature of the map's tiles, as the map's `mapBuild` says they are, or why there isn't one.
  */
 export async function pieceAnswer(sql: Sql, ref: PieceRef, mapBuild: string): Promise<PieceResult> {
-	const result = await sql.begin('isolation level repeatable read read only', async (tx) => readTables(tx as unknown as Sql, ref, mapBuild));
-	return result as PieceResult;
+	try {
+		const result = await sql.begin('isolation level repeatable read read only', async (tx) => {
+			const t = tx as unknown as Sql;
+			// A roads build truncates these tables inside its one transaction, and a read waits for it. The app's pool is
+			// small and shared by every /api route, so a card must give up quickly rather than hold a connection.
+			await t.unsafe(`set local lock_timeout = '${LOCK_TIMEOUT_MS}ms'`);
+			await t.unsafe(`set local statement_timeout = '${STATEMENT_TIMEOUT_MS}ms'`);
+			return readTables(t, ref, mapBuild);
+		});
+		return result as PieceResult;
+	} catch (e) {
+		if (isBusy(e)) return { status: 'busy' };
+		throw e;
+	}
+}
+
+/** How long a card read waits for a lock, and how long one statement may run, before the card is told to try again. */
+export const LOCK_TIMEOUT_MS = 2000;
+export const STATEMENT_TIMEOUT_MS = 5000;
+
+/** lock_not_available (55P03) and query_canceled (57014, a statement_timeout): the build has the tables, not a fault. */
+export function isBusy(e: unknown): boolean {
+	const code = (e as { code?: unknown } | null)?.code;
+	return code === '55P03' || code === '57014';
 }
 
 async function readTables(sql: Sql, ref: PieceRef, mapBuild: string): Promise<PieceResult> {

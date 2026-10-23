@@ -72,7 +72,7 @@
 {:else}
 	<p class="hint">Click a road, a marking or a lot for what we know and where it comes from.</p>
 {/if}
-<p class="credit">© OpenStreetMap contributors (ODbL) · ACHD and ITD: internal, shown on this map only</p>
+<p class="credit">© OpenStreetMap contributors (ODbL) · ACHD, ITD, COMPASS and USDA NASS CDL: internal, shown on this map only</p>
 
 <style>
 	li {
