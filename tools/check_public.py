@@ -223,10 +223,15 @@ def main(argv=None):
     g.add_argument("--since", metavar="REV", help="only files changed since REV")
     g.add_argument("--text", metavar="FILE", help="check text about to go public (- for stdin) instead of the repository")
     ap.add_argument("--patterns", help="the private pattern list for --text (default data/dev/private-patterns.txt)")
+    ap.add_argument("--require-patterns", action="store_true",
+                    help="with --text: exit 3, checking nothing, when the pattern list holds no patterns")
     args = ap.parse_args(argv)
     if args.text:
         text = sys.stdin.read() if args.text == "-" else open(args.text, encoding="utf-8").read()
         pats = load_patterns(args.patterns or os.path.join(args.root, "data", "dev", "private-patterns.txt"))
+        if args.require_patterns and not pats:
+            print("check_public: the private pattern list holds no patterns (only comments or blank lines, or no file).")
+            return 3
         problems = check_text(text, pats)
         if problems:
             print(f"check_public: {len(problems)} problem(s) in the text:")

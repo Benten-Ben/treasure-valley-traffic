@@ -158,7 +158,7 @@ comments and issue edits show as the App's bot, and they spend the App's own API
   value was removed" instead of the value. A review finding about a leak says which file and line, never the value.
 - **`tools/board new` runs the check itself.** Before it posts anything, it runs `tools/check_public.py --text` on the
   title, the body and the labels together (with the private pattern list, looked up from the checkout the script lives in; a linked worktree uses the main checkout's
-  list, and `TVT_PRIVATE_PATTERNS` names another, or `none` to run only the mechanical checks). It refuses with the check's report, exit 2, and calls `gh` not at all; it refuses the same way when it finds no list and `none` was not set.
+  list, and `TVT_PRIVATE_PATTERNS` names another, or `none` to run only the mechanical checks). It refuses with the check's report, exit 2, and calls `gh` not at all; it refuses the same way when it finds no list, or a list with no patterns in it, and `none` was not set.
   `--dry-run` runs the check too. `new` is the only `tools/board` command that sends free text (the others send issue
   numbers, labels and status names), and any command added later that does must call the same gate. Everything else
   that is posted (PR bodies, comments, review text, `gh issue` calls made outside `tools/board`) is still checked

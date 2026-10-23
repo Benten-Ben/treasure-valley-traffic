@@ -161,6 +161,37 @@ class BoardPublicGateTest(unittest.TestCase):
         bad = self.default_board(top, "new", f"Check the box at {ADDR}", env={"TVT_PRIVATE_PATTERNS": "none"})
         self.assertEqual(bad.returncode, 2, bad.stderr)  # the mechanical checks still are
 
+    def test_an_empty_explicit_list_refuses(self):
+        for text in ("", "# only a comment\n\n   \n"):
+            empty = os.path.join(self.dir, "empty.txt")
+            with open(empty, "w") as f:
+                f.write(text)
+            out = self.board("new", "Document the quoting rules", env={"TVT_PRIVATE_PATTERNS": empty})
+            self.assertEqual(out.returncode, 2, out.stderr)
+            self.assertIn("pattern list is empty", out.stderr)
+            self.assertIn(empty, out.stderr)  # says where it looked
+            self.assertEqual(self.calls(), [], "gh must not be called at all")
+            self.assertEqual(os.listdir(self.tmp), [], "no temporary body left behind")
+
+    def test_an_empty_default_list_refuses_in_a_checkout_and_in_a_linked_worktree(self):
+        top = self.checkout("main", with_list=True)
+        with open(os.path.join(top, "data", "dev", "private-patterns.txt"), "w") as f:
+            f.write("# nothing yet\n\n")
+        wt = self.worktree(top)
+        for script_top in (top, wt):
+            out = self.default_board(script_top, "new", "Document the quoting rules")
+            self.assertEqual(out.returncode, 2, out.stderr)
+            self.assertIn("pattern list is empty", out.stderr)
+            self.assertIn("private-patterns.txt", out.stderr)
+            self.assertEqual(self.calls(), [], "gh must not be called at all")
+
+    def test_none_still_opts_out_when_the_default_list_is_empty(self):
+        top = self.checkout("main", with_list=True)
+        with open(os.path.join(top, "data", "dev", "private-patterns.txt"), "w") as f:
+            f.write("# nothing yet\n")
+        out = self.default_board(top, "new", "Document the quoting rules", env={"TVT_PRIVATE_PATTERNS": "none"})
+        self.assertEqual(out.returncode, 0, out.stderr)
+
     def test_a_label_is_checked_too(self):
         self.assertRefused(self.board("new", "Fine title", "area:docs", "secret-host-name"))
 

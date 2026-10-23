@@ -139,6 +139,21 @@ class CheckPublicTest(unittest.TestCase):
         finally:
             os.remove(pats)
 
+    def test_require_patterns_exits_3_on_an_empty_list(self):
+        import contextlib, io
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        text, empty, full = (os.path.join(d, n) for n in ("t.txt", "empty.txt", "full.txt"))
+        for path, body in ((text, "Goal: draw the trails layer.\n"), (empty, "# none yet\n\n"), (full, "example-host\n")):
+            with open(path, "w") as f:
+                f.write(body)
+        def run(*extra):
+            with contextlib.redirect_stdout(io.StringIO()):
+                return check_public.main(["--text", text, *extra])
+        self.assertEqual(run("--patterns", empty, "--require-patterns"), 3)
+        self.assertEqual(run("--patterns", empty), 0)  # without the flag an empty list still passes
+        self.assertEqual(run("--patterns", full, "--require-patterns"), 0)
+
     def test_main_exit_status(self):
         self.assertEqual(check_public.main(["--root", self.root]), 0)
         self.write("data/x.csv", "1")
