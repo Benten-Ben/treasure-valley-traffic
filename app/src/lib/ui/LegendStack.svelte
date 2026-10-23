@@ -29,9 +29,9 @@
 	/** The card is open when the most recently turned-on layer is in it (or the viewer opened it). */
 	const landscapeOpen = $derived(expanded === 'landscape' || (expanded !== null && landscape.some((d) => d.id === expanded)));
 	/** The section open inside the card: the viewer's pick, else the most recently turned-on tray layer. */
-	let section = $state<{ id: LayerId; focus: LayerId | null } | null>(null);
+	let section = $state<{ id: LayerId | null; focus: LayerId | null } | null>(null);
 	const sectionOpen = $derived(
-		section && section.focus === focus && landscape.some((d) => d.id === section!.id) ? section.id : (landscape.find((d) => d.id === focus)?.id ?? landscape.at(-1)?.id ?? null)
+		section && section.focus === focus ? (section.id !== null && landscape.some((d) => d.id === section!.id) ? section.id : null) : (landscape.find((d) => d.id === focus)?.id ?? landscape.at(-1)?.id ?? null)
 	);
 
 	function expand(id: LayerId) {
@@ -41,7 +41,7 @@
 		override = { id: landscapeOpen ? null : 'landscape', focus };
 	}
 	function openSection(id: LayerId) {
-		section = { id, focus };
+		section = { id: sectionOpen === id ? null : id, focus };
 	}
 </script>
 

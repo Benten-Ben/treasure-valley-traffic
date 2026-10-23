@@ -678,7 +678,7 @@ test.describe('layers', () => {
 		await mapReady(page);
 		// The tray's layers are not on the bar: one Landscape button after the others, no badge while none is on.
 		await expect(layerButton(page, 'Trees')).toHaveCount(0);
-		const landscape = layerButton(page, 'Landscape');
+		const landscape = toolbar(page).getByRole('button', { name: /^Landscape/ });
 		await expect(landscape).toBeVisible();
 		await expect(landscape).toHaveAttribute('aria-expanded', 'false');
 		await expect(landscape.locator('.count')).toHaveCount(0);

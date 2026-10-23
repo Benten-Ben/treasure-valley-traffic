@@ -154,12 +154,20 @@ export function foundPalettes(): Palette[] {
 	return out.sort((a, b) => (a.id < b.id ? -1 : 1));
 }
 
+/** The layer id a palette belongs to: its id up to the first dot ('water.pond' belongs to 'water'). */
+export const ownerOf = (paletteId: string): string => paletteId.split('.')[0];
+
+const KNOWN_USES = /^(fill|line|surface|label|wash|indicator)/i;
+function checkUse(p: Palette, use: string): void {
+	if (!KNOWN_USES.test(use)) throw new Error(`palette ${p.id}: unknown use '${use}' (start it with fill, line, surface, label, wash or indicator)`);
+}
+
 export function paletteSubjects(palettes: readonly Palette[]): Subject[] {
 	return palettes.flatMap((p) =>
-		p.colors.flatMap((c): Subject[] => [
+		p.colors.flatMap((c): Subject[] => (checkUse(p, c.use), [
 			{ owner: p.id, name: c.name, color: c.valley, look: 'valley', use: c.use },
 			...(c.clay && c.clay.toLowerCase() !== c.valley.toLowerCase() ? [{ owner: p.id, name: c.name, color: c.clay, look: 'clay' as const, use: c.use }] : [])
-		])
+		]))
 	);
 }
 
@@ -168,8 +176,13 @@ export function paletteSubjects(palettes: readonly Palette[]): Subject[] {
  * route colour and 12 from teal (the plan adds amber and magenta), not for a distance from street shades:
  * trees are reported against the streets, never required (conifer green 2 is ΔE 9.9 from the darkest slate).
  */
+/** The tree greens of `TREE_GREENS` (named `<type> green <n>`): the only subjects excused from the street-shade bar. */
+function isTreeGreen(s: Subject): boolean {
+	return s.owner === 'trees' && Object.keys(TREE_GREENS).some((type) => s.name.startsWith(`${type} green `));
+}
+
 function barFor(s: Subject, r: Reference): number {
-	return s.owner === 'trees' && r.group.startsWith('streets') ? 0 : r.min;
+	return isTreeGreen(s) && r.group.startsWith('streets') ? 0 : r.min;
 }
 
 /** Every subject against every reference it has to clear, with the form exemptions applied. */
@@ -229,7 +242,7 @@ export interface IndicatorRow {
 /** The indicators of the palettes of layers that keep Valley (`keepValley` tells which owners). */
 export function paletteIndicators(palettes: readonly Palette[], keepValley: (owner: string) => boolean): Indicator[] {
 	return palettes.flatMap((p) =>
-		keepValley(p.id) ? p.colors.filter((c) => /^indicator/i.test(c.use)).map((c): Indicator => ({ owner: p.id, name: c.name, color: c.valley, ...(/halo|ring/i.test(c.use) ? { halo: c.use } : {}) })) : []
+		keepValley(ownerOf(p.id)) ? p.colors.filter((c) => /^indicator/i.test(c.use)).map((c): Indicator => ({ owner: p.id, name: c.name, color: c.valley, ...(/halo|ring/i.test(c.use) ? { halo: c.use } : {}) })) : []
 	);
 }
 

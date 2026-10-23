@@ -9,12 +9,13 @@ import {
 	foundPalettes,
 	formatTable,
 	indicatorRows,
+	ownerOf,
 	paletteIndicators,
 	paletteSubjects,
 	referenceSubjects
 } from './budget.js';
 
-const keepsValley = (owner: string) => LAYER_DEFS.some((d) => d.id === owner && d.keepsValley);
+const keepsValley = (owner: string) => LAYER_DEFS.some((d) => d.id === ownerOf(owner) && d.keepsValley);
 const palettes = foundPalettes();
 const subjects = [...referenceSubjects(), ...paletteSubjects(palettes)];
 const rows = distanceRows(subjects);
@@ -31,9 +32,9 @@ describe('the colour budget (docs/14 §14.4)', () => {
 		expect(failing).toEqual([]);
 	});
 
-	it('only the four named form exemptions are ever used', () => {
+	it('only the named form exemptions are ever used', () => {
 		const names = new Set(EXEMPTIONS.map((e) => e.name));
-		expect(names.size).toBe(4);
+		expect(names.size).toBe(EXEMPTIONS.length);
 		for (const r of rows.filter((r) => r.verdict === 'exempt')) expect(names.has(r.exemption ?? '')).toBe(true);
 	});
 
@@ -66,6 +67,11 @@ describe('the colour budget (docs/14 §14.4)', () => {
 		const r = distanceRows(paletteSubjects([water]));
 		expect(r.filter((x) => x.verdict === 'exempt').every((x) => x.against.startsWith('streets'))).toBe(true);
 		expect(r.some((x) => x.verdict === 'exempt')).toBe(true);
+	});
+
+	it('a palette id with a dot belongs to the layer before it, and an unknown use fails loudly', () => {
+		expect(ownerOf('water.pond')).toBe('water');
+		expect(() => paletteSubjects([{ id: 'x', colors: [{ name: 'a', valley: '#112233', use: 'marker' }] }])).toThrow(/unknown use/);
 	});
 
 	it('every palette found by glob is well formed', () => {

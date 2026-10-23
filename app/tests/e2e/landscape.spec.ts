@@ -28,7 +28,7 @@ test.describe('landscape', () => {
 		const i = await info(page);
 		expect([...i.enabled].sort()).toEqual(['cameras', 'transit']);
 		expect(i.flavor).toBe('clay');
-		const landscape = toolbar(page).getByRole('button', { name: 'Landscape', exact: true });
+		const landscape = toolbar(page).getByRole('button', { name: /^Landscape/ });
 		await expect(landscape).toHaveAttribute('aria-expanded', 'false');
 		await expect(landscape.locator('.count')).toHaveCount(0);
 		await expect(page.getByRole('region', { name: 'Landscape legend' })).toHaveCount(0);
@@ -41,7 +41,7 @@ test.describe('landscape', () => {
 		await page.goto(`${HOME}&layers=trees`);
 		await mapReady(page);
 		expect((await info(page)).flavor, 'Trees keep the valley look under Auto').toBe('valley');
-		const landscape = toolbar(page).getByRole('button', { name: 'Landscape', exact: true });
+		const landscape = toolbar(page).getByRole('button', { name: /^Landscape/ });
 		await expect(landscape.locator('.count')).toHaveText('1');
 		// One legend for the tray, a section per layer on.
 		const legend = page.getByRole('region', { name: 'Landscape legend' });
@@ -51,7 +51,7 @@ test.describe('landscape', () => {
 		// The Base menu: the Look hint names the layers that keep the valley look.
 		await toolbar(page).getByRole('button', { name: 'Base' }).click();
 		const pop = page.getByRole('dialog', { name: 'Base map' });
-		await expect(pop.getByText('Now Map: no data layer is on')).toBeVisible();
+		await expect(pop.getByText('Now Map: only layers that keep the valley look are on')).toBeVisible();
 		await expect(pop.locator('label[title*="Trees, Fences, Water and Lanes"]')).toHaveCount(1);
 		// A row per base contribution, built or with its reason (none, or the fixture's, depending on what is registered).
 		for (const row of await pop.locator('[data-contribution]').all()) {
@@ -83,7 +83,7 @@ test.describe('landscape', () => {
 		await page.goto(`${HOME}&layers=none`);
 		await mapReady(page);
 		const tabs = page.getByRole('navigation', { name: 'Map layers' });
-		const tab = tabs.getByRole('button', { name: 'Landscape', exact: true });
+		const tab = tabs.getByRole('button', { name: /^Landscape/ });
 		await expect(tab).toBeVisible();
 		expect((await tab.boundingBox())!.height).toBeGreaterThanOrEqual(44);
 		await tab.click();

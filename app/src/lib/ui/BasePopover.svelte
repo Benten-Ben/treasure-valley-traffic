@@ -25,7 +25,7 @@
 	/** What the Look does right now, in words. */
 	const now = $derived.by(() => {
 		if (!exploring) return 'Kept while this mode is open, with the photo in full color';
-		if (base.look === 'auto') return flavor === 'clay' ? 'Now Clay: a data layer is on' : 'Now Map: no data layer is on';
+		if (base.look === 'auto') return flavor === 'clay' ? 'Now Clay: a data layer is on' : (app.layers.set.enabled.length ? 'Now Map: only layers that keep the valley look are on' : 'Now Map: no data layer is on');
 		return base.look === 'clay' ? 'Clay, whatever is on' : 'Map, whatever is on';
 	});
 	/** A row per base contribution, with whether it is built (● Built, ◌ and the reason when not). */
