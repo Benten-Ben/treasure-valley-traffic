@@ -99,10 +99,19 @@ Open questions for the owner are not kept in this file. They are issues on the p
 Each issue carries the question, the recommendation and where it was discussed. When one is decided, its label comes off
 with a "Decided (who, date):" comment, and a lasting decision is added to the Decided table above.
 
+One open question has no board issue yet, so it stays here until one is filed:
+
+| Question | Recommendation | Where discussed |
+|---|---|---|
+| Freight rail layer (owner: "would be cool if there is live location data") | No public live train positions exist: railroads don't publish them, and the blocked-crossing feeds some share with Waze are private and off-limits to us. Possible layers: rail lines (OSM) and FRA's crossing inventory (433 crossings in Ada and Canyon); FRA's public blocked-crossing reports as history (whether they download is unchecked); and our own "train at the crossing" detection from cameras near crossings, once the camera vision pipeline exists. | Oct 5 chat; [ch. 8](08-data-inventory.md) |
+
 ## Promised and not done yet
 
-Promises made in a session are tracked as issues on the project's GitHub board, not here. Look for the open issues
-that carry the work, and for the agency or outside wait label `waiting-agency`.
+Promises made in a session are tracked as issues on the project's GitHub board, not here. The open ones are:
+[#99](https://github.com/Benten-Ben/treasure-valley-traffic/issues/99) (a week of per-route bus coverage against VRT's
+timetables), [#168](https://github.com/Benten-Ben/treasure-valley-traffic/issues/168) (the courtesy note to VRT about its
+static schedule file), [#169](https://github.com/Benten-Ben/treasure-valley-traffic/issues/169) (the optional note to ITD
+about the WZDx feed) and [#162](https://github.com/Benten-Ben/treasure-valley-traffic/issues/162) (the ACHD note update).
 
 ## Owner actions
 
