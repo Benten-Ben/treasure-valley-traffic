@@ -95,7 +95,7 @@ describe('readings', () => {
 	it('ask for the gauge’s own records only (the id is a validated literal, its % is ours)', async () => {
 		const seen: Seen[] = [];
 		await latestReading(fakeSql({}, seen), 'BSEI1');
-		expect(seen[0].values).toEqual(['BSEI1@%']);
+		expect(seen[0].values).toEqual(['BSEI1', 'BSEI1@%']);
 	});
 });
 

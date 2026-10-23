@@ -1124,6 +1124,28 @@ def cal_inputs(cfg, run):
             "july": cfg["july"], "fits": cfg["fits"], "gains": sha256(cfg["gains"]) if cfg.get("gains") else None}
 
 
+def miss_summary(per_box, boxes, urban):
+    """The boxes over the cut, each with its median dE and the types it compared; the note only says what holds.
+    per_box: {box: median dE or None}; boxes: {box: {"types": [rows]}}; urban: type ids that are urban land."""
+    misses = {}
+    for b, m in per_box.items():
+        if m is not None and m > CAL_PASS:
+            misses[b] = {"de": m, "types": sorted(r["type"] for r in boxes[b]["types"] if "de" in r)}
+    out = {"misses": misses}
+    if not misses:
+        return out
+    only_urban = [b for b, v in misses.items() if v["types"] and all(t in urban for t in v["types"])]
+    other = [b for b in misses if b not in only_urban]
+    parts = []
+    if only_urban:
+        parts.append(f"box {', '.join(only_urban)}: only urban land compared, where the class mask holds dry lawn and "
+                     f"sidewalk, which isn't soil, and photo-v1 keeps only vacant lots")
+    if other:
+        parts.append(f"box {', '.join(other)}: other types compared too, so urban land alone doesn't explain the miss")
+    out["misses_note"] = "; ".join(parts)
+    return out
+
+
 def cmd_calibrate(args):
     cfg, run = calibration_config(args)
     P.configure(**cfg["rules"])
@@ -1224,6 +1246,8 @@ def cmd_calibrate(args):
                                if any("de" in r for r in v.get("types", [])) else None)
                            for b, v in boxes.items()},
                "rules": P.RULES, "class_keep": [CLASS_NAMES[c] for c in CLASS_KEEP], "min_px": CAL_MIN_PX}
+    urban = {t for t, v in ctx.soils["types"].items() if v.get("misc") == "urban"}
+    summary.update(miss_summary(summary["per_box"], boxes, urban))
     for b, v in boxes.items():
         v["lidar"] = LV.lidar_vintage(b)
     log("lidar vintage by box (median dE):\n" + LV.vintage_table(summary["per_box"].items()))

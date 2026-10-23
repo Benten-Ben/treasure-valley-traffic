@@ -14,7 +14,7 @@ One line each (a line that needs a look starts with "!"):
   cold-vid  the last run of cold-videos (camera days older than a week to the cold drive): what
             it moved, and whether one has finished in the last two days
   restart   a planned VM restart in MAINTENANCE
-  sources   the scheduled sources by state (ops.source_status: fresh, late, stale, never), with
+  sources   the sources and streams by state (ops.source_status: fresh, late, stale, never), with
             a line for each that isn't fresh or is failing, and its last error
   builds    each build that failed (or was killed), is running or is marked (ops.build_status),
             and the rest's age
@@ -269,7 +269,8 @@ READY = ("select to_regclass('ops.source_status') is not null "
 DATA = """
 select json_build_object(
   'sources', coalesce((select json_agg(json_build_object(
-      'source', source, 'state', state, 'every_s', extract(epoch from schedule)::bigint,
+      'source', source, 'state', state, 'every_s', extract(epoch from coalesce(schedule, stale_after))::bigint,
+      'stream', stale_after is not null,
       'age_s', extract(epoch from age)::bigint, 'failures', failures,
       'last_error', left(last_error, 300)) order by source) from ops.source_status), '[]'::json),
   'builds', coalesce((select json_agg(json_build_object(
@@ -307,7 +308,7 @@ def database(report, run, where):
     try:
         ready = run(READY) == "t"
         if not ready:
-            report.ok("sources", f"{where}: the staleness views aren't there yet (migration 0021)")
+            report.ok("sources", f"{where}: the staleness views aren't there yet (migrations 0021, 0022)")
             return
         data = json.loads(run(DATA))
     except (DbError, ValueError) as err:
@@ -319,12 +320,12 @@ def database(report, run, where):
         counts[s["state"]] = counts.get(s["state"], 0) + 1
     worth = sorted((s for s in sources if s["state"] != "fresh" or s["failures"]),
                    key=lambda s: (SOURCE_ORDER.get(s["state"], 9), -(s["age_s"] or 10**12), s["source"]))
-    text = f"{len(sources)} scheduled in {where}: " + ", ".join(f"{n} {s}" for s, n in counts.items() if n)
-    (report.look if worth else report.ok)("sources", text if sources else f"no scheduled sources in {where}")
+    text = f"{len(sources)} sources in {where}: " + ", ".join(f"{n} {s}" for s, n in counts.items() if n)
+    (report.look if worth else report.ok)("sources", text if sources else f"no sources in {where}")
     for s in worth:
         word = "failing" if s["state"] == "fresh" else s["state"]
         line = (f"{s['source']}: {word}" + ("" if s["age_s"] is None else f", last good fetch {ago(s['age_s'])} ago")
-                + f" (every {ago(s['every_s'])})")
+                + f" ({'every' if not s.get('stream') else 'stale after'} {ago(s['every_s'])})")
         if s["failures"]:
             line += f"; {s['failures']} failed tr{'y' if s['failures'] == 1 else 'ies'} since"
             if s.get("last_error"):

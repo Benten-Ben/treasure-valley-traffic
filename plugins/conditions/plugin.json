@@ -6,9 +6,12 @@
   "order": 40,
   "sources": [
     {"name": "itd_wzdx", "module": "ingest.sources.itd_wzdx", "kind": "stream",
+     "stale_after": "30 minutes",
      "license": "public use; WZDx asks for CC0 (none stated in the feed)",
      "credit": "Idaho Transportation Department (511 Idaho)", "republish": "yes"},
     {"name": "idaho511_api", "module": "ingest.sources.idaho511_api", "kind": "stream",
+     "stale_after": "30 minutes",
+     "fetch_sources": ["idaho511_event", "idaho511_messagesigns", "idaho511_weatherstations", "idaho511_alerts", "idaho511_truckrestrictions", "idaho511_winterroads", "idaho511_cameras", "idaho511_mountainpasses", "idaho511_restareas", "idaho511_truckramps", "idaho511_weighstations"],
      "license": "511 Idaho developer terms (key holder); not republished",
      "credit": "Idaho Transportation Department (511 Idaho)", "republish": "internal"}
   ],

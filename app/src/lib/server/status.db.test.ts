@@ -6,10 +6,10 @@ const { readStatus, readStatusRows, summarize } = await import('./status.js');
 const { readDatabase } = await import('./versions.js');
 
 /**
- * /api/meta's `status` against the real views of migration 0021
+ * /api/meta's `status` against the real views of migrations 0021 and 0022
  * (ops.source_status, ops.build_status), with made-up sources, fetches,
  * runs and marks inside a transaction that's rolled back. Runs only with
- * TVT_TEST_DATABASE_URL, a test database migrated through 0021 (never `tvt`);
+ * TVT_TEST_DATABASE_URL, a test database migrated through 0022 (never `tvt`);
  * skips before the migration.
  */
 const URL = process.env.TVT_TEST_DATABASE_URL;
@@ -23,8 +23,9 @@ class Rollback extends Error {}
 
 describe.skipIf(!URL)('status views (database)', () => {
 	it('reads the views as the contract says', async ({ skip }) => {
-		const [{ ready }] = await sql!`select to_regclass('ops.source_status') is not null as ready`;
-		if (!ready) skip('ops.source_status is missing: apply migration 0021');
+		const [{ ready }] = await sql!`select exists (select 1 from information_schema.columns
+			where table_schema = 'ops' and table_name = 'source_status' and column_name = 'stale_after') as ready`;
+		if (!ready) skip('ops.source_status.stale_after is missing: apply migration 0022');
 		const p = `tvt_test_${Math.random().toString(16).slice(2, 8)}`;
 		const b = p.replace(/_/g, '-');
 		await expect(
@@ -69,7 +70,7 @@ describe.skipIf(!URL)('status views (database)', () => {
 				expect(builds[1].pendingSince).toBeGreaterThan(Date.now() / 1000 - 3600);
 				expect(JSON.stringify(s)).not.toMatch(/secret|HTTPError|a reason|12 reaches|MemoryError|roads built/);
 				const whole = await readStatus(tx as unknown as postgres.Sql);
-				const scheduled = await tx`select count(*)::int as n from ops.source where schedule is not null`;
+				const scheduled = await tx`select count(*)::int as n from ops.source where schedule is not null or stale_after is not null`;
 				const { failing, ...states } = whole.sources;
 				expect(Object.values(states).reduce((x, y) => x + y, 0)).toBe(scheduled[0].n);
 				expect(failing).toBeGreaterThanOrEqual(2);

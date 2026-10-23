@@ -387,6 +387,23 @@ class FieldsLoadTest(DbTest):
         self.assertFalse(plan.choice("farm/fields").fallback)
         self.assertEqual(plan.status, "flat")              # no soils or mask v0 here: flat, as it should be
 
+    def test_a_null_cdl_and_acres_keep_the_export_columns(self):
+        """A field with no crop code (cdl NULL) exports 0 and the acres NULL stays put, so no column shifts."""
+        self.load()
+        folder = self.make_build(self.tmp.name)
+        b, rows = fields_load.read_build(folder)
+        fields_load.load(self.conn, folder, b, rows)
+        self.conn.execute("update farm.field set crops = '{}', acres = null where field_id = %s", (S.F2,))
+        cases = " ".join(f"when '{g}' then {code}" for g, code in export.C.COVER_CODES.items() if code)
+        inner = export.FIELDS_SQL.format(cases=cases).replace("select ST_AsFlatGeobuf(q, true, 'geom') from (",
+                                                              "select q.* from (", 1)
+        cols = [d.name for d in self.conn.execute(inner).description]
+        self.assertEqual(cols, ["id", "csbid", "crop_group", "cdl", "bearing", "acres", "geom"])
+        row = self.conn.execute(f"select csbid, cdl, acres from ({inner}) z where csbid = %s", (S.F2,)).fetchone()
+        self.assertEqual((row[1], row[2]), (0, None))
+        m = export.export(self.conn, self.tmp.name, build="20261011T140000Z")
+        self.assertEqual(m.layer("fields")["features"], 3)
+
     def test_export_refuses_without_a_loaded_build(self):
         self.load()
         with self.assertRaises(fields_load.BuildError):

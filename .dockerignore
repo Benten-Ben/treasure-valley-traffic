@@ -5,6 +5,7 @@
 !plugins/
 !basemap/ground/
 !basemap/landscape/
+!basemap/lock.py
 **/__pycache__
 ingest/tests
 plugins/*/tests

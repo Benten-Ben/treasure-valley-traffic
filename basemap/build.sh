@@ -10,6 +10,8 @@
 # Usage: basemap/build.sh            # output in data/tiles/
 #        TILES_DIR=/srv/tvt/tiles basemap/build.sh
 #        basemap/build.sh --precompress-glyphs   # only step 2b, on an existing folder
+# The manifest is written under the lock the bake and the ground paint take (basemap/lock.py; the lock folder is
+# $TVT_TILES_LOCK_DIR, data/locks by default), through a temporary file and a rename.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -62,8 +64,8 @@ cp -r "$tmp/assets/fonts" "$tmp/assets/sprites" "$OUT/"
 precompress_glyphs "$OUT"
 
 # 3. Manifest. Later steps (terrain, buildings) add their own entries.
-python3 - "$OUT" "$BBOX" "$CENTER" "$BUILD" "$FLAVOR" <<'EOF'
-import json, os, sys, datetime
+python3 -m basemap.lock manifest.lock -- python3 - "$OUT" "$BBOX" "$CENTER" "$BUILD" "$FLAVOR" <<'EOF'
+import json, os, sys, datetime, tempfile
 out, bbox, center, build, flavor = sys.argv[1:]
 path = os.path.join(out, "manifest.json")
 m = json.load(open(path)) if os.path.exists(path) else {}
@@ -81,7 +83,18 @@ m.update({
     "glyphs": "fonts/{fontstack}/{range}.pbf",
     "sprite": f"sprites/v4/{flavor}",
 })
-json.dump(m, open(path, "w"), indent=1)
+fd, tmp = tempfile.mkstemp(prefix=".manifest-", suffix=".json", dir=out)
+try:
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump(m, f, indent=1)
+        f.flush()
+        os.fsync(f.fileno())
+    os.chmod(tmp, 0o644)
+    os.replace(tmp, path)
+except BaseException:
+    if os.path.exists(tmp):
+        os.unlink(tmp)
+    raise
 print("wrote", path)
 EOF
 ls -la "$OUT"
