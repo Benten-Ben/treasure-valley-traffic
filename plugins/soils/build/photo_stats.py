@@ -1226,9 +1226,7 @@ def cmd_calibrate(args):
                "rules": P.RULES, "class_keep": [CLASS_NAMES[c] for c in CLASS_KEEP], "min_px": CAL_MIN_PX}
     for b, v in boxes.items():
         v["lidar"] = LV.lidar_vintage(b)
-    log("lidar vintage by box:\n" + LV.vintage_table(
-        [(b, round(float(np.median([r["de"] for r in v["types"] if "de" in r])), 2)
-          if v.get("types") and any("de" in r for r in v["types"]) else None) for b, v in boxes.items()]))
+    log("lidar vintage by box (median dE):\n" + LV.vintage_table(summary["per_box"].items()))
     cal = {"format": "tvt-soils-calibration/1", "made": utc_now(), "inputs": cal_inputs(cfg, run),
            "summary": summary, "boxes": boxes, "pairs": out_pairs}
     if args.explore:
