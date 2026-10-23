@@ -77,11 +77,14 @@ create table ops.source (
   url           text not null,
   access        text not null check (access in
                   ('open', 'api_key', 'one_off', 'request')),  -- how we're allowed to get it
-  schedule      interval,                  -- null = not scheduled (one-off, request)
+  schedule      interval,                  -- null = not scheduled (one-off, request, or a stream)
+  stale_after   interval,                  -- streams only (migration 0022): longest age of the last good fetch that still reads fresh
+  fetch_sources text[],                    -- streams only: other sources whose fetches count as this one's
   license       text,                      -- e.g. 'ODbL', 'public domain', 'none stated'
   credit        text,                      -- attribution to show
   notes         text,
-  check (access not in ('one_off', 'request') or schedule is null)  -- never schedule these
+  check (access not in ('one_off', 'request') or schedule is null),  -- never schedule these
+  check (stale_after is null or schedule is null)                    -- scheduled or a stream, not both
 );
 
 create table ops.fetch (
@@ -115,12 +118,13 @@ create table ops.fetch (
   `ops.source_status` (each scheduled source's last good fetch against its
   schedule: fresh until a schedule plus a grace of a quarter of it, at
   least 15 min; late for two more schedules; then stale; never without a
-  good fetch; with the failed attempts since) and `ops.build_status` (each
+  good fetch; with the failed attempts since; a stream by its `stale_after` alone: fresh, stale or never) and `ops.build_status` (each
   build's state, age and marks: running; failed when its newest run failed
   or was killed, even while it's marked (killed: unfinished, and no session
   holds the advisory lock it took); pending when marked; else built). A
   source taken out of every manifest keeps its row and schedule, and would
-  read stale for good: set its `schedule` to null by hand when it's retired.
+  read stale for good: set its `schedule` (or `stale_after`) to null by hand when it's retired. A stream's
+  `stale_after` and `fetch_sources` come from its manifest entry (migration 0022).
 
 ## 12.4 `raw`: every version of every record
 

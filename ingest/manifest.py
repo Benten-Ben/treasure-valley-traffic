@@ -15,7 +15,11 @@ A manifest:
     sources         its sources, in the order they run: {"name", "module"
                     (dotted, inside the plugin, e.g. "ingest.sources.achd_roads"),
                     "kind", "license", "credit", "republish"} and optionally
-                    "order" (overrides the plugin's for this one entry)
+                    "order" (overrides the plugin's for this one entry); a "stream" may
+                    also have "stale_after" (e.g. "10 minutes": the longest age of its
+                    last good fetch that still reads fresh; ops.source_status judges
+                    the stream by it) and, with it, "fetch_sources" (other sources whose
+                    fetches count as the stream's: idaho511_api logs one per endpoint)
     tables          the tables (and views) it owns, schema.table
     commands        optional extra `python3 -m ingest` subcommands: {"name",
                     "module", "help"} and optionally "function" (default main),
@@ -61,7 +65,7 @@ FILE = "plugin.json"
 _FIELDS = {"name", "title", "depends", "visibility", "order", "sources", "tables", "commands", "osm_consumers",
            "storage", "ethics"}
 _REQUIRED = {"name", "title", "depends", "visibility", "sources", "tables", "storage", "ethics"}
-_ENTRY_FIELDS = {"name", "module", "kind", "license", "credit", "republish", "order"}
+_ENTRY_FIELDS = {"name", "module", "kind", "license", "credit", "republish", "order", "stale_after", "fetch_sources"}
 _COMMAND_FIELDS = {"name", "module", "help", "function"}
 _CONSUMER_FIELDS = {"source", "tags", "geometry", "tables"}
 OSM_GEOMETRY = ("point", "linestring", "polygon", "relation")
@@ -72,6 +76,9 @@ OSM_LICENSE, OSM_CREDIT = "ODbL", "OpenStreetMap contributors"
 # "nwr/amenity=parking,parking_space". No "!=", wildcards or regular expressions.
 OSM_TAG_EXPRESSION = re.compile(r"^(?P<types>[nwra]{1,4})/(?P<key>[A-Za-z0-9_:.-]+)"
                                 r"(?:=(?P<values>[A-Za-z0-9_:.;-]+(?:,[A-Za-z0-9_:.;-]+)*))?$")
+# A Postgres interval a stream may be left alone for: a whole number and one unit.
+STALE_AFTER = re.compile(r"^[1-9][0-9]{0,5} (second|minute|hour|day)s?$")
+_SOURCE_NAME = re.compile(r"^[a-z][a-z0-9_]*$")
 _MODULE = re.compile(r"^[A-Za-z_]\w*(\.[A-Za-z_]\w*)*$")
 _TABLE = re.compile(r"^[a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*$")
 _COMMAND = re.compile(r"^[a-z][a-z0-9-]*$")
@@ -155,7 +162,7 @@ def check_manifest(m, folder_name, where):
         label = f"sources[{i}]"
         if not isinstance(e, dict):
             bad(f"{label} must be an object")
-        if missing := (_ENTRY_FIELDS - {"order"}) - set(e):
+        if missing := (_ENTRY_FIELDS - {"order", "stale_after", "fetch_sources"}) - set(e):
             bad(f"{label}: missing {', '.join(sorted(missing))}")
         if extra := set(e) - _ENTRY_FIELDS:
             bad(f"{label}: unknown field(s) {', '.join(sorted(extra))}")
@@ -170,6 +177,19 @@ def check_manifest(m, folder_name, where):
                 bad(f"{label}: {key} must be a non-empty string")
         if not isinstance(e.get("order", 0), int):
             bad(f"{label}: order must be an integer")
+        if "stale_after" in e:
+            if e["kind"] != "stream":
+                bad(f"{label}: stale_after is for streams (a source has a schedule)")
+            if not isinstance(e["stale_after"], str) or not STALE_AFTER.match(e["stale_after"]):
+                bad(f"{label}: stale_after must be a number and a unit, like \"10 minutes\" "
+                    "(seconds, minutes, hours or days)")
+        if "fetch_sources" in e:
+            fs = e["fetch_sources"]
+            if "stale_after" not in e:
+                bad(f"{label}: fetch_sources needs stale_after")
+            if (not isinstance(fs, list) or not fs or len(set(fs)) != len(fs)
+                    or not all(isinstance(x, str) and _SOURCE_NAME.match(x) for x in fs)):
+                bad(f"{label}: fetch_sources must be a list of distinct source names")
     names = [e["name"] for e in m["sources"]]
     if len(set(names)) != len(names):
         bad("a source is listed twice")
@@ -258,6 +278,16 @@ def find(folders=None):
             if dep not in found:
                 raise ManifestError(f"plugin {plugin.name} depends on {dep}, which isn't installed")
     return [found[n] for n in sorted(found)]
+
+
+def stream_staleness(plugins, name):
+    """(stale_after, fetch_sources) of the stream `name` from the manifests, or None when it has no
+    stale_after (not a stream, or one judged some other way, like idaho511_frames)."""
+    for p in plugins:
+        for e in p.entries("stream"):
+            if e["name"] == name and "stale_after" in e:
+                return e["stale_after"], e.get("fetch_sources")
+    return None
 
 
 def _kahn(nodes, preds, key):

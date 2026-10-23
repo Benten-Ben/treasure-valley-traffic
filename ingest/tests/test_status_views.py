@@ -1,7 +1,7 @@
-"""Tests for the staleness views of migration 0021: ops.source_status and ops.build_status.
+"""Tests for the staleness views of migrations 0021 and 0022: ops.source_status and ops.build_status.
 
 Database only: they run against a test database named by TVT_TEST_DATABASE_URL (migrated through
-0021), inside one transaction they roll back, with synthetic sources, fetches, runs and marks.
+0022), inside one transaction they roll back, with synthetic sources, fetches, runs and marks.
 Against a copy of production (the scratch database) they also check the views over its real
 fetch log: one row per scheduled source, and quick enough for /api/meta.
 
@@ -15,14 +15,16 @@ import unittest
 DB_URL = os.environ.get("TVT_TEST_DATABASE_URL")
 
 
-@unittest.skipUnless(DB_URL, "set TVT_TEST_DATABASE_URL to a test database migrated through 0021")
+@unittest.skipUnless(DB_URL, "set TVT_TEST_DATABASE_URL to a test database migrated through 0022")
 class ViewsTest(unittest.TestCase):
     def setUp(self):
         import psycopg
         self.conn = psycopg.connect(DB_URL)
-        if not self.conn.execute("select to_regclass('ops.source_status') is not null").fetchone()[0]:
+        if not self.conn.execute("select exists (select 1 from information_schema.columns "
+                                 "where table_schema = 'ops' and table_name = 'source_status' "
+                                 "and column_name = 'stale_after')").fetchone()[0]:
             self.conn.close()
-            self.skipTest("ops.source_status is missing: apply migration 0021")
+            self.skipTest("ops.source_status.stale_after is missing: apply migration 0022")
         self.p = "tvt_test_" + os.urandom(3).hex()
 
     def tearDown(self):
@@ -40,6 +42,18 @@ class ViewsTest(unittest.TestCase):
                    values (%s, now() - make_interval(mins => %s),
                            case when %s then now() - make_interval(mins => %s) + interval '5 s' end, %s, %s)""",
                 (name, ago, finished, ago, ok, error))
+
+    def stream(self, name, stale_after, fetches=(), fetch_sources=None):
+        """A stream: stale_after in minutes, fetches as in source() but under `name` or one of fetch_sources."""
+        self.conn.execute(
+            "insert into ops.source (name, title, url, access, stale_after, fetch_sources) "
+            "values (%s, %s, 'https://example.test/', 'open', make_interval(mins => %s), %s)",
+            (name, name.title(), stale_after, fetch_sources))
+        for source, ago, ok in fetches:
+            self.conn.execute(
+                "insert into ops.fetch (source, started_at, finished_at, ok) values "
+                "(%s, now() - make_interval(mins => %s), now() - make_interval(mins => %s), %s)",
+                (source, ago, ago, ok))
 
     def sources(self):
         cur = self.conn.execute(
@@ -71,6 +85,63 @@ class ViewsTest(unittest.TestCase):
         self.assertEqual((s["late"]["late_at"] - s["late"]["due_at"]).total_seconds(), 15 * 60)
         self.assertEqual((s["daily"]["late_at"] - s["daily"]["due_at"]).total_seconds(), 6 * 3600)
         self.assertEqual((s["daily"]["stale_at"] - s["daily"]["late_at"]).total_seconds(), 2 * 86400)
+
+    def test_a_stream_is_judged_by_its_stale_after(self):
+        p = self.p
+        self.stream(f"{p}_live", 30, [(f"{p}_live", 2, True)])                       # fetched 2 min ago, 30 allowed
+        self.stream(f"{p}_quiet", 30, [(f"{p}_quiet", 29, True)])
+        self.stream(f"{p}_silent", 30, [(f"{p}_silent", 31, True), (f"{p}_silent", 5, False)])   # only failures since
+        self.stream(f"{p}_idle", 30)                                                  # never fetched
+        # a stream that logs under its parts' names (idaho511_api's endpoints): the newest good one counts
+        self.conn.execute(
+            "insert into ops.source (name, title, url, access) values (%s, 'a', 'https://example.test/', 'open'), "
+            "(%s, 'b', 'https://example.test/', 'open'), (%s, 'c', 'https://example.test/', 'open')",
+            (f"{p}_part_a", f"{p}_part_b", f"{p}_part_c"))
+        self.stream(f"{p}_split", 30, [(f"{p}_part_a", 90, True), (f"{p}_part_b", 10, True), (f"{p}_part_b", 1, False)],
+                    [f"{p}_part_a", f"{p}_part_b"])
+        self.stream(f"{p}_split_dead", 30, [(f"{p}_part_a", 90, True)], [f"{p}_part_a", f"{p}_part_c"])
+        self.source(f"{p}_scheduled", "10 minutes", [(3, True, True, None)])
+        s = self.sources()
+        self.assertEqual({k: v["state"] for k, v in s.items()}, {
+            "live": "fresh", "quiet": "fresh", "silent": "stale", "idle": "never", "split": "fresh",
+            "split_dead": "stale", "scheduled": "fresh"})
+        # the sources behind a stream aren't listed on their own
+        self.assertNotIn("part_a", s)
+        silent = s["silent"]
+        self.assertEqual((silent["failures"], silent["last_try_ok"], silent["schedule"]), (1, False, None))
+        self.assertEqual((silent["stale_at"] - silent["last_ok_at"]).total_seconds(), 30 * 60)
+        self.assertEqual(round(silent["age"].total_seconds() / 60), 31)
+        self.assertEqual(round(s["split"]["age"].total_seconds() / 60), 10)
+        self.assertEqual(s["split"]["failures"], 1)
+        self.assertIsNone(s["live"]["due_at"])
+        self.assertEqual(s["live"]["stale_after"].total_seconds(), 30 * 60)
+        self.assertIsNone(s["scheduled"]["stale_after"])
+
+    def test_ensure_source_takes_a_streams_values_from_its_manifest(self):
+        from ingest import db
+        sources = {"name": "idaho511_api", "title": "t", "url": "https://example.test/", "access": "api_key"}
+        db.ensure_source(self.conn, sources)
+        row = self.conn.execute("select stale_after, fetch_sources from ops.source where name = 'idaho511_api'").fetchone()
+        self.assertEqual(row[0].total_seconds(), 30 * 60)
+        self.assertIn("idaho511_event", row[1])
+        # a source that isn't a stream, and a stream without the value, get null
+        db.ensure_source(self.conn, {**sources, "name": self.p + "_plain"})
+        db.ensure_source(self.conn, {**sources, "name": "idaho511_frames"})
+        for name in (self.p + "_plain", "idaho511_frames"):
+            self.assertEqual(self.conn.execute("select stale_after, fetch_sources from ops.source where name = %s",
+                                               (name,)).fetchone(), (None, None))
+
+    def test_a_source_is_scheduled_or_a_stream(self):
+        import psycopg
+        with self.assertRaises(psycopg.errors.CheckViolation):
+            self.conn.execute(
+                "insert into ops.source (name, title, url, access, schedule, stale_after) values "
+                "(%s, 'x', 'https://example.test/', 'open', interval '1 hour', interval '1 hour')", (self.p + "_both",))
+        self.conn.rollback()
+        with self.assertRaises(psycopg.errors.CheckViolation):
+            self.conn.execute(
+                "insert into ops.source (name, title, url, access, fetch_sources) values "
+                "(%s, 'x', 'https://example.test/', 'open', array['a'])", (self.p + "_orphan",))
 
     def test_failures_count_finished_attempts_since_the_last_good_one(self):
         self.source(f"{self.p}_failing", "10 minutes", [

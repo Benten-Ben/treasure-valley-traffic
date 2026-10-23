@@ -134,6 +134,41 @@ class CheckTest(unittest.TestCase):
                     manifest.find([folder.path])
                 self.assertIn(word, str(cm.exception))
 
+    def test_stale_after_and_fetch_sources(self):
+        ok = plugin("a", [entry("x", "stream", stale_after="10 minutes", fetch_sources=["x_one", "x_two"])])
+        self.folder.write(ok)
+        found = manifest.find([self.folder.path])
+        self.assertEqual(manifest.stream_staleness(found, "x"), ("10 minutes", ["x_one", "x_two"]))
+        self.assertIsNone(manifest.stream_staleness(found, "nowhere"))
+        cases = [
+            (plugin("b", [entry("x", "source", stale_after="10 minutes")]), "for streams"),
+            (plugin("c", [entry("x", "stream", stale_after="soon")]), "stale_after must be"),
+            (plugin("d", [entry("x", "stream", stale_after="0 minutes")]), "stale_after must be"),
+            (plugin("e", [entry("x", "stream", stale_after="1 fortnight")]), "stale_after must be"),
+            (plugin("f", [entry("x", "stream", fetch_sources=["y"])]), "needs stale_after"),
+            (plugin("g", [entry("x", "stream", stale_after="1 hour", fetch_sources=[])]), "fetch_sources"),
+            (plugin("h", [entry("x", "stream", stale_after="1 hour", fetch_sources=["y", "y"])]), "fetch_sources"),
+            (plugin("i", [entry("x", "stream", stale_after="1 hour", fetch_sources=["Y; drop"])]), "fetch_sources"),
+        ]
+        for m, word in cases:
+            with self.subTest(m["name"]):
+                folder = Folder(self)
+                folder.write(m)
+                with self.assertRaises(manifest.ManifestError) as cm:
+                    manifest.find([folder.path])
+                self.assertIn(word, str(cm.exception))
+
+    def test_this_repositorys_streams(self):
+        """The live streams carry a stale_after (ops.source_status judges them by it); idaho511_frames is
+        judged by its status file instead (migration 0022)."""
+        found = manifest.find([os.path.join(REPO, "plugins")])
+        self.assertEqual(manifest.stream_staleness(found, "vrt_realtime"), ("1 hour", None))
+        self.assertEqual(manifest.stream_staleness(found, "itd_wzdx"), ("30 minutes", None))
+        stale, parts = manifest.stream_staleness(found, "idaho511_api")
+        self.assertEqual(stale, "30 minutes")
+        self.assertIn("idaho511_event", parts)
+        self.assertIsNone(manifest.stream_staleness(found, "idaho511_frames"))
+
     def test_osm_consumers(self):
         def consumer(**kw):
             return {"source": "osm_x", "tags": ["w/highway=path,track", "r/route=hiking"],

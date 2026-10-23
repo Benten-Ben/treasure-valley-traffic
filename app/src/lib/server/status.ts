@@ -93,7 +93,7 @@ export async function readStatus(sql: postgres.Sql): Promise<DataStatus> {
 export async function readStatusRows(sql: postgres.Sql): Promise<{ sources: SourceRow[]; builds: BuildRow[] }> {
 	const [sources, builds] = await Promise.all([
 		sql`select source, state, extract(epoch from last_ok_at)::float8 as last_ok_at,
-		           extract(epoch from schedule)::float8 as every_s, failures
+		           extract(epoch from coalesce(schedule, stale_after))::float8 as every_s, failures
 		    from ops.source_status`,
 		sql`select build, state, extract(epoch from last_ok_at)::float8 as last_ok_at,
 		           extract(epoch from pending_since)::float8 as pending_since,
