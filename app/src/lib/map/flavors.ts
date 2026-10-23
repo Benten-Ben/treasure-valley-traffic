@@ -500,15 +500,17 @@ export function layerShown(c: BaseContribution, l: BaseLayer, state: BaseState):
 }
 
 /** A contribution's layer as a style layer, in the flavor's paint and shown or hidden as `state` says. */
-export function contributionLayer(c: BaseContribution, l: BaseLayer, state: BaseState): LayerSpecification {
+export function contributionLayer(c: BaseContribution, l: BaseLayer, state: BaseState, m?: BasemapManifest): LayerSpecification {
 	const paint = state.flavor === 'clay' && l.clay ? l.clay : l.valley;
+	// The ground's detail layer starts where the built file does (the manifest's `detail.minzoom`), not at a copy of it here.
+	const minzoom = l.detail && c.source.kind === 'ground' && m?.ground?.status === 'painted' ? m.ground.detail.minzoom : l.minzoom;
 	return {
 		id: l.id,
 		type: l.type,
 		source: sourceId(c, l),
 		...(l.sourceLayer ? { 'source-layer': l.sourceLayer } : {}),
 		...(l.filter ? { filter: l.filter } : {}),
-		...(l.minzoom !== undefined ? { minzoom: l.minzoom } : {}),
+		...(minzoom !== undefined ? { minzoom } : {}),
 		...(l.maxzoom !== undefined ? { maxzoom: l.maxzoom } : {}),
 		layout: { visibility: layerShown(c, l, state) ? 'visible' : 'none' },
 		paint
@@ -621,7 +623,7 @@ export function syncContributions(
 			if (!added) runtimeLayers.set(map, (added = new Map()));
 			for (const l of c.layers) {
 				const before = beforeSlot(map as never, l.slot, l.rank);
-				map.addLayer(contributionLayer(c, l, state), before);
+				map.addLayer(contributionLayer(c, l, state, m), before);
 				added.set(l.id, { c, l, flavor: state.flavor });
 			}
 		}

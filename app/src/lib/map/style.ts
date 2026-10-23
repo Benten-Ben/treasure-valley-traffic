@@ -646,7 +646,7 @@ export function buildStyle(
 	for (const c of opts.contributions ?? BASE_CONTRIBUTIONS) {
 		if (c.source.kind !== 'landscape' || !kit.contributionStatus(c, m, opts.meta).built) continue;
 		Object.assign(style.sources, kit.contributionSources(c, m, origin, opts.meta));
-		for (const l of c.layers) style.layers = insertSlotted(style.layers, [{ slot: l.slot, layer: kit.contributionLayer(c, l, state) }], l.rank, ranks);
+		for (const l of c.layers) style.layers = insertSlotted(style.layers, [{ slot: l.slot, layer: kit.contributionLayer(c, l, state, m) }], l.rank, ranks);
 	}
 	return style;
 }
