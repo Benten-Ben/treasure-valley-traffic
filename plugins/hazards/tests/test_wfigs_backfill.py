@@ -368,8 +368,8 @@ class LoadDatabaseTest(unittest.TestCase):
         self.assertEqual(self.conn.execute(
             "select first_seen, last_seen, first_fetch from raw.record where source = %s and source_id = %s",
             (self.SOURCE, range_id)).fetchone(), (polled, polled, None))   # the held version is left as it is
-        self.assertEqual(self.conn.execute("select count(*) from ops.fetch where source = %s",
-                                           (wb.SOURCE["name"],)).fetchone()[0], 2)
+        self.assertEqual(self.conn.execute("select count(*) from ops.fetch where id = any(%s)",
+                                           ([first["fetch"], july["fetch"]],)).fetchone()[0], 2)
         again = wb.load(self.conn, july_folder, source=self.SOURCE, build=self.BUILD)
         self.assertEqual((again["fetch"], again["record versions new"], again["already held"]), (july["fetch"], 0, 2))
 
