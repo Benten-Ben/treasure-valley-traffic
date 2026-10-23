@@ -2,28 +2,31 @@
 
     docker run --rm --memory 5g --memory-swap 5g --user $(id -u):$(id -g) -v "$PWD":/repo -v /srv/tvt:/srv/tvt \\
       -w /repo tvt-worker python plugins/trees/build/build.py --area c --dsm .../dsm.tif --dtm .../dtm.tif \\
-      --mask .../zero_mask_c.npy --anchors .../anchors_c.csv --spring .../sentinel2/april2025 \\
+      --mask .../zero_mask_c.npy --spring .../sentinel2/april2025 \\
       --summer .../sentinel2/july2025 --out $TVT_ARCHIVE/trees/<build-id>
 
 Then `python3 -m ingest trees-load --build <dir>` loads it.
 
-1. Catalogued trees first (when --anchors is given: a CSV of catalogue trunk points). A catalogue tree planted before the
-   lidar flight whose trunk point has a crown 3 m or taller within 1.5 m becomes a catalogued tree: its crown is centred
-   within 2.5 m of the trunk point where it best explains the lidar, sized from the crown model for its height and type
-   (the genus says conifer or broadleaf). It is fixed: the placer builds around it. Otherwise it is an estimated tree,
-   sized from Boise's measured trees of its genus (Urban Tree Database) by trunk diameter.
-2. The placer fills the rest (place.py), then repairs. Each placed crown's size and shape come from the width curve that
-   explains the lidar best. Its type: narrow by the narrow rule (narrow_rule below), not by that curve; else conifer
-   when the spring Sentinel-2 cue sees an evergreen crown in an area where its calls were checked against labelled
-   trees (--spring and --summer: Seasons, spring_conifer and SPRING_CHECKED_AREAS below); else the curve's conifer call
-   stands for now (KEEP_WIDTH_CONIFER), and broadleaf otherwise.
-3. Writes trees.geojson (WGS84 points with the tree's fields), log.jsonl (one event per line) and build.json.
+1. The placer fills the area from the lidar alone (place.py), tallest first, then repairs. Each crown's size and shape
+   come from the width curve that explains the lidar best. Its type: narrow by the narrow rule (narrow_rule below), not
+   by that curve; else conifer when the spring Sentinel-2 cue sees an evergreen crown in an area where its calls were
+   checked against labelled trees (--spring and --summer: Seasons, spring_conifer and SPRING_CHECKED_AREAS below); else
+   the curve's conifer call stands for now (KEEP_WIDTH_CONIFER), and broadleaf otherwise.
+2. Writes trees.geojson (WGS84 points with the tree's fields), log.jsonl (one event per line) and build.json: crowns
+   found in the lidar and nothing from an inventory.
+3. Only then, when --anchors is given (a CSV of an inventory's trunk points, anchors.py; with --private-out, a folder
+   outside the archive): each anchor planted before the lidar flight whose trunk point has lidar 3 m or taller within
+   1.5 m, and that is not under a taller tree, is matched to the nearest crown the build already found within 2.5 m of
+   it (one anchor to a crown). The anchors change no crown, so the crowns, ids and events in the public files are the
+   ones a build without --anchors writes. The links, and the anchors with no such crown (sized from Boise's measured trees of
+   the genus, Urban Tree Database, by trunk diameter), go to anchors.jsonl in --private-out, which only the private
+   plugin that owns the inventory loads. It is never written into --out.
 
 The area's inputs for the pilot are the land-cover spike's lidar products (0.5 m DSM and DTM in UTM 11N) and its
 building mask (aligned footprints, zeroed with a buffer). The spring cue reads the early-April 2025 and July 2025
 Sentinel-2 NDVI products on the ground's 10 m grid (basemap/ground/grid.py; "Contains modified Copernicus Sentinel data
-2025"). The build never reads a catalogue unless --anchors names one."""
-import argparse, csv, datetime as dt, hashlib, json, math, os, sys, time
+2025"). The build never reads an inventory unless --anchors names one."""
+import argparse, datetime as dt, hashlib, json, math, os, sys, time
 import numpy as np
 import rasterio
 from pyproj import CRS, Transformer
@@ -31,6 +34,7 @@ from rasterio.windows import Window
 from scipy import ndimage
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import anchors as anchor_file  # noqa: E402
 from place import Model, Placer, PX  # noqa: E402
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -58,7 +62,7 @@ NARROW_ROUGH_MAX = 0.2
 NARROW_OWN_TOP_M = 2.0
 # Pending the owner (docs/DECISIONS.md): a placed tree that neither the narrow rule nor the spring cue types keeps the
 # width curve's conifer call. That call is weak (of the 14 labelled trees the Oct 8 build called conifer, one was);
-# False would leave conifers to the spring cue and a catalogue's genus (docs/19 §19.3).
+# False would leave conifers to the spring cue and an inventory's genus (docs/19 §19.3).
 KEEP_WIDTH_CONIFER = True
 # The spring cue (docs/19 §19.3; decision 24, Oct 8): an early-April 2025 Sentinel-2 image against July's. Evergreen
 # crowns are green in early April and broadleaf crowns are still bare. But by then the valley's lawns and pastures are
@@ -296,9 +300,9 @@ class Seasons:
         return out
 
 
-def utd_size(utd, genus, dbh_in, conifer):
+def utd_size(utd, genus, trunk_in, conifer):
     """Height and crown width (m) for a trunk diameter, from Boise's measured trees of the genus (else of the type)."""
-    d_cm = max(2.5, (dbh_in or 2.0) * 2.54)
+    d_cm = max(2.5, (trunk_in or 2.0) * 2.54)
     f = utd["by_genus"].get((genus or "").capitalize()) or utd["by_type"]["CEL" if conifer else "BDL"]
     h = f["height"]["a"] * d_cm ** f["height"]["b"]
     w = f["crown_width"]["a"] * d_cm ** f["crown_width"]["b"]
@@ -307,36 +311,29 @@ def utd_size(utd, genus, dbh_in, conifer):
 
 def read_anchors(path, to_rc, shape, lidar_ms):
     out = []
-    with open(path, newline="") as f:
-        for r in csv.DictReader(f):
-            inst = r.get("installed_ms")
-            if inst and lidar_ms and float(inst) > lidar_ms:
-                continue                                         # planted after the flight: not in the lidar
-            row, col = to_rc(float(r["lon"]), float(r["lat"]))
-            if not (0 <= row < shape[0] and 0 <= col < shape[1]):
-                continue
-            genus = (r.get("genus") or "").strip().lower()
-            out.append({"catalogue": r["catalogue"], "catalogue_id": r["catalogue_id"], "row": row, "col": col,
-                        "genus": genus, "dbh_in": float(r["dbh_in"]) if r.get("dbh_in") else None,
-                        "conifer": genus in CONIFER_GENERA, "after_flight": False})
+    for r in anchor_file.read_rows(path):
+        inst = r.get("installed_ms")
+        if inst and lidar_ms and float(inst) > lidar_ms:
+            continue                                             # planted after the flight: not in the lidar
+        row, col = to_rc(float(r["lon"]), float(r["lat"]))
+        if not (0 <= row < shape[0] and 0 <= col < shape[1]):
+            continue
+        genus = (r.get("genus") or "").strip().lower()
+        out.append({"source": r["source"], "source_id": r["source_id"], "row": row, "col": col,
+                    "genus": genus, "trunk_in": float(r["trunk_in"]) if r.get("trunk_in") else None,
+                    "conifer": genus in CONIFER_GENERA, "after_flight": False})
     return out
 
 
 def sources(a, seasons):
     """The outside data a build read, for build.json's params: the lidar and Sentinel-2 by their names in
-    plugins/trees/plugin.json (its manual sources), and a catalogue's trunk points when --anchors gave them (from a
-    private plugin; sized with the Urban Tree Database)."""
+    plugins/trees/plugin.json (its manual sources). Anchors (--anchors) are not a source of the public build and are not
+    recorded in it."""
     out = [{"source": "trees/usgs_3dep_lidar", "credit": LIDAR_CREDIT, "version": a.lidar}]
     if seasons:
         ab = seasons.about()
         out.append({"source": "trees/sentinel2", "credit": SENTINEL2_CREDIT,
                     "version": f"early April 2025 ({ab['april']}); July 2025 ({ab['july']})"})
-    if a.anchors:
-        out.append({"source": "catalogue", "credit": "the catalogue's (--anchors; a private plugin's, never stored here)",
-                    "version": "trunk points, genus, trunk diameter and planting date"})
-        out.append({"source": "urban_tree_database",
-                    "credit": "US Forest Service Urban Tree Database (McPherson, van Doorn & Peper 2016)",
-                    "version": "Boise's trees by genus (model/utd_boise.json), for estimated trees"})
     return out
 
 
@@ -357,9 +354,13 @@ def main(argv=None):
     ap.add_argument("--dsm", required=True)
     ap.add_argument("--dtm", required=True)
     ap.add_argument("--mask", help="building mask (.npy, the DSM's grid)")
-    ap.add_argument("--anchors", help="catalogue trunk points (CSV: catalogue, catalogue_id, lon, lat, genus, dbh_in, installed_ms)")
+    ap.add_argument("--anchors", help="an inventory's trunk points (CSV: " + ", ".join(anchor_file.CSV_FIELDS) + "); see anchors.py")
+    ap.add_argument("--private-out", help="with --anchors: the folder for anchors.jsonl, under the private root and "
+                                          "outside --out and the archive (never a folder the scratch jobs can read)")
+    ap.add_argument("--private-root", help="the private files' folder that --private-out must be under "
+                                           "(default " + anchor_file.PRIVATE_ROOT + ")")
     ap.add_argument("--lidar", default="USGS 3DEP QL1 lidar", help="the survey's name, for the log")
-    ap.add_argument("--lidar-date", help="the flight date (YYYY-MM-DD); later catalogue plantings are 'estimated'")
+    ap.add_argument("--lidar-date", help="the flight date (YYYY-MM-DD); later plantings are not matched to a crown")
     ap.add_argument("--theta", type=float, default=0.2, help="overlap limit (share of the smaller crown); 0.2 calibrated Oct 8")
     ap.add_argument("--lam", type=float, default=40.0, help="per-tree cost (metres x cells); 40 from the owner's 100 labelled trees (Oct 8)")
     ap.add_argument("--sweeps", type=int, default=2)
@@ -371,6 +372,15 @@ def main(argv=None):
     a = ap.parse_args(argv)
     if bool(a.spring) != bool(a.summer):
         ap.error("--spring and --summer go together")
+    if bool(a.anchors) != bool(a.private_out):
+        ap.error("--anchors and --private-out go together")
+    if a.anchors:
+        try:
+            anchor_file.check_private_dir(a.private_out, a.out,
+                                          [os.environ.get(v) for v in ("TVT_ARCHIVE", "TVT_PROD_ARCHIVE")],
+                                          a.private_root)
+        except ValueError as e:
+            ap.error(str(e))
     t0 = time.time(); started = dt.datetime.now(dt.timezone.utc)
     cm = json.load(open(os.path.join(MODEL_DIR, "crown_model.json")))
     utd = json.load(open(os.path.join(MODEL_DIR, "utd_boise.json")))
@@ -416,76 +426,40 @@ def main(argv=None):
         lidar_ms = dt.datetime.fromisoformat(a.lidar_date).replace(tzinfo=dt.timezone.utc).timestamp() * 1000 + 86400000
     flight_at = (a.lidar_date + "T12:00:00Z") if a.lidar_date else started.isoformat()
     built_at = started.isoformat()
-    out_trees, log = [], []
-    # 1. catalogued trees first, the tallest crowns first
+    out_trees, log, private = [], [], []
+    build_id = os.path.basename(os.path.normpath(a.out))
+    # 1. the anchors, measured and not used: they take no part in placing crowns (see step 4)
     anchors = read_anchors(a.anchors, to_rc, h.shape, lidar_ms) if a.anchors else []
     for an in anchors:
         y, x = int(round(an["row"])), int(round(an["col"]))
         r = TRUNK_H_CELLS
         win = s[max(0, y - r):y + r + 1, max(0, x - r):x + r + 1]
         an["H"] = float(win.max()) if win.size else 0.0
-    anchors.sort(key=lambda an: -an["H"])
-    n_cat = n_est = 0
-    for an in anchors:
-        tid = f'{an["catalogue"]}-{an["catalogue_id"]}'
-        y, x = int(round(an["row"])), int(round(an["col"]))
-        exp_h, _ = utd_size(utd, an["genus"], an["dbh_in"], an["conifer"]) if an["dbh_in"] else (None, None)
-        under = exp_h is not None and an["H"] > max(1.8 * exp_h, exp_h + 6)     # the crown above is another tree's
-        an["under"] = under
-        if an["H"] >= pl.tree_h and not under and valid[min(max(y, 0), h.shape[0] - 1), min(max(x, 0), h.shape[1] - 1)]:
-            types = ["conifer", "narrow"] if an["conifer"] else ["broadleaf", "narrow"]
-            g, t = pl.best_near(y, x, an["H"], types, TRUNK_REACH_CELLS, overlap=False)
-            if t is not None:
-                t["fixed"] = True; t["kind"] = "catalogued"; t["anchor"] = an; t["gain"] = g
-                pl.add(t); n_cat += 1
-                continue
-        hh, ww = utd_size(utd, an["genus"], an["dbh_in"], an["conifer"])
-        _, _, lon, lat = to_ll(an["row"], an["col"])
+        exp_h, _ = utd_size(utd, an["genus"], an["trunk_in"], an["conifer"]) if an["trunk_in"] else (None, None)
+        an["under"] = exp_h is not None and an["H"] > max(1.8 * exp_h, exp_h + 6)    # the crown above is another tree's
         gy, gx = min(max(y, 0), h.shape[0] - 1), min(max(x, 0), h.shape[1] - 1)
-        out_trees.append({"id": tid, "kind": "estimated", "type": "conifer" if an["conifer"] else "broadleaf",
-                          "lon": lon, "lat": lat, "ground_m": float(dtm[gy, gx]) if not bad[gy, gx] else None,
-                          "height_m": hh, "crown_radius_m": round(ww / 2, 2), "crown_a": None, "crown_n": None, "lidar": None,
-                          "catalogue": an["catalogue"], "catalogue_id": an["catalogue_id"],
-                          "fit": {"from": "Urban Tree Database, Boise, by genus and trunk diameter", "dbh_in": an["dbh_in"],
-                                  "under_taller_crown": bool(an.get("under")), "lidar_height_there_m": round(an["H"], 1)}})
-        why = ("under a taller tree's crown: the lidar there is far taller than its trunk diameter predicts" if an.get("under")
-               else "no crown 3 m or taller within 1.5 m of its trunk point in the lidar")
-        log.append({"tree_id": tid, "at": built_at, "event": "estimated",
-                    "detail": {"why": why,
-                               "height_m": hh, "crown_width_m": ww, "dbh_in": an["dbh_in"]}})
-        n_est += 1
-    print(f"catalogue: {len(anchors)} trees in the area, {n_cat} catalogued, {n_est} estimated ({time.time() - t0:.0f} s)", flush=True)
-    # 2. the placer fills the rest
+        an["can_match"] = an["H"] >= pl.tree_h and not an["under"] and bool(valid[gy, gx])
+    # 2. the placer fills the area from the lidar alone: the same crowns with or without anchors
     pl.run_greedy(log=lambda m: print(m, flush=True))
     pl.repair(sweeps=a.sweeps, log=lambda m: print(m, flush=True))
     # 3. write
-    n_placed = 0
     for t in pl.alive():
         x_m, y_m, lon, lat = to_ll(t["y"], t["x"])
         gy, gx = int(min(max(round(t["y"]), 0), h.shape[0] - 1)), int(min(max(round(t["x"]), 0), h.shape[1] - 1))
         ground = float(dtm[gy, gx]) if not bad[gy, gx] else None
         common = {"lon": lon, "lat": lat, "ground_m": ground, "height_m": round(t["H"], 2),
                   "crown_radius_m": round(t["R"] * PX, 2), "crown_a": round(t["a"], 3), "crown_n": round(t["n"], 3), "lidar": a.lidar}
-        if t.get("kind") == "catalogued":
-            an = t["anchor"]; tid = f'{an["catalogue"]}-{an["catalogue_id"]}'
-            off = math.hypot(t["y"] - an["row"], t["x"] - an["col"]) * PX
-            typ = "conifer" if an["conifer"] else "broadleaf"
-            out_trees.append({"id": tid, "kind": "catalogued", "type": typ, **common, "catalogue": an["catalogue"],
-                              "catalogue_id": an["catalogue_id"], "fit": {"trunk_to_crown_m": round(off, 2), "gain": round(t["gain"], 1)}})
-            log.append({"tree_id": tid, "at": flight_at, "event": "measured",
-                        "detail": {"lidar": a.lidar, "height_m": round(t["H"], 2), "crown_width_m": round(2 * t["R"] * PX, 2),
-                                   "trunk_to_crown_m": round(off, 2)}})
-        else:
-            tid = f"{a.area}-{int(round(x_m))}-{int(round(y_m))}"
-            spring = seasons.cue(x_m, y_m, t["R"] * PX) if seasons else None
-            typ, fit = type_placed(h, t, model, spring)
-            out_trees.append({"id": tid, "kind": "placed", "type": typ, **common, "catalogue": None, "catalogue_id": None,
-                              "fit": fit})
-            log.append({"tree_id": tid, "at": flight_at, "event": "placed",
-                        "detail": {"lidar": a.lidar, "height_m": round(t["H"], 2), "crown_width_m": round(2 * t["R"] * PX, 2),
-                                   "theta": a.theta}})
-            n_placed += 1
-    # placed ids can collide when two crowns round to the same metre: suffix them
+        # Every crown is a tree found in the lidar, sized, shaped and typed from its own profile (and the spring cue).
+        # Anchors play no part in finding it, so the public rows are the ones a build without --anchors writes.
+        tid = f"{a.area}-{int(round(x_m))}-{int(round(y_m))}"
+        spring = seasons.cue(x_m, y_m, t["R"] * PX) if seasons else None
+        typ, fit = type_placed(h, t, model, spring)
+        tr = {"id": tid, "kind": "placed", "type": typ, **common, "fit": fit}
+        ev = {"at": flight_at, "event": "placed",
+              "detail": {"lidar": a.lidar, "height_m": round(t["H"], 2), "crown_width_m": round(2 * t["R"] * PX, 2),
+                         "theta": a.theta}, "_tree": tr}
+        out_trees.append(tr); log.append(ev)
+    # ids can collide when two crowns round to the same metre: suffix them
     seen = {}
     for tr in out_trees:
         k = tr["id"]
@@ -493,6 +467,46 @@ def main(argv=None):
             seen[k] += 1; tr["id"] = f"{k}-{seen[k]}"
         else:
             seen[k] = 0
+    for e in log:
+        e["tree_id"] = e.pop("_tree")["id"]
+    # 4. only now the anchors: each is matched to the nearest crown the build already found within 2.5 m of its trunk
+    # point (one anchor to a crown), and the rest are the inventory's trees the lidar doesn't show. The crowns are never
+    # changed by this, so nothing in the public rows tells a matched crown from any other.
+    crowns = pl.alive()                                         # in the order of out_trees
+    can = [i for i, an in enumerate(anchors) if an["can_match"]]
+    pairs = anchor_file.match([(anchors[i]["row"], anchors[i]["col"]) for i in can], [(t["y"], t["x"]) for t in crowns],
+                              TRUNK_REACH_CELLS)
+    pos = {i: n for n, i in enumerate(can)}
+    n_cat = n_est = 0
+    for k, an in enumerate(anchors):
+        j = pairs.get(pos.get(k))
+        if j is not None:
+            ci, dist = j
+            tr, t = out_trees[ci], crowns[ci]
+            off = round(dist * PX, 2)
+            private.append(anchor_file.matched(
+                tr["id"], an, a.area, build_id, off, flight_at,
+                {"lidar": a.lidar, "height_m": round(t["H"], 2), "crown_width_m": round(2 * t["R"] * PX, 2),
+                 "trunk_to_crown_m": off}))
+            n_cat += 1
+            continue
+        y, x = int(round(an["row"])), int(round(an["col"]))
+        gy, gx = min(max(y, 0), h.shape[0] - 1), min(max(x, 0), h.shape[1] - 1)
+        hh, ww = utd_size(utd, an["genus"], an["trunk_in"], an["conifer"])
+        _, _, lon, lat = to_ll(an["row"], an["col"])
+        why = ("under a taller tree's crown: the lidar there is far taller than its trunk diameter predicts" if an["under"]
+               else "no crown the build found within 2.5 m of its trunk point" if an["H"] >= pl.tree_h
+               else "no crown 3 m or taller within 1.5 m of its trunk point in the lidar")
+        private.append(anchor_file.estimated(
+            an, a.area, build_id,
+            {"type": "conifer" if an["conifer"] else "broadleaf", "lon": lon, "lat": lat,
+             "ground_m": float(dtm[gy, gx]) if not bad[gy, gx] else None, "height_m": hh,
+             "crown_radius_m": round(ww / 2, 2), "crown_a": None, "crown_n": None, "lidar": None,
+             "fit": {"from": "Urban Tree Database, Boise, by genus and trunk diameter", "trunk_in": an["trunk_in"],
+                     "under_taller_crown": bool(an["under"]), "lidar_height_there_m": round(an["H"], 1)}},
+            built_at, {"why": why, "height_m": hh, "crown_width_m": ww, "trunk_in": an["trunk_in"]}))
+        n_est += 1
+    print(f"anchors: {len(anchors)} in the area, {n_cat} matched to a crown, {n_est} estimated", flush=True)
     os.makedirs(a.out, exist_ok=True)
     fc = {"type": "FeatureCollection", "features": [
         {"type": "Feature", "geometry": {"type": "Point", "coordinates": [round(tr["lon"], 7), round(tr["lat"], 7)]},
@@ -501,9 +515,10 @@ def main(argv=None):
     with open(os.path.join(a.out, "log.jsonl"), "w") as f:
         for e in log:
             f.write(json.dumps(e) + "\n")
+    anchor_file.write(a.private_out, private)
     canopy = (s >= 2) & valid
     err = np.abs(s - pl.E)[canopy]
-    build = {"build_id": os.path.basename(os.path.normpath(a.out)), "area": a.area, "started_at": started.isoformat(),
+    build = {"build_id": build_id, "area": a.area, "started_at": started.isoformat(),
              "finished_at": dt.datetime.now(dt.timezone.utc).isoformat(),
              "params": {"theta": a.theta, "lam": a.lam, "sweeps": a.sweeps, "lidar": a.lidar, "lidar_date": a.lidar_date,
                         "window": a.window, "model": cm["source"][:200],
@@ -511,7 +526,7 @@ def main(argv=None):
                                         "min_top_m": round(narrow_min_top(model), 2), "own_top_m": NARROW_OWN_TOP_M},
                         "conifer_from_width_curve": KEEP_WIDTH_CONIFER,
                         "spring": seasons.about() if seasons else None, "sources": sources(a, seasons)},
-             "counts": {"trees": len(out_trees), "catalogued": n_cat, "estimated": n_est, "placed": n_placed,
+             "counts": {"trees": len(out_trees),
                         "types": {k: sum(1 for tr in out_trees if tr["type"] == k) for k in ("broadleaf", "conifer", "narrow")},
                         "spring": spring_counts(out_trees) if seasons else None,
                         "surface_mae_m": round(float(err.mean()), 3) if err.size else None,

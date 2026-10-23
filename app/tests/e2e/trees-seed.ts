@@ -8,10 +8,12 @@
  *   private dev data (`$MAIN/data/dev/trees/test-c-window`, never
  *   committed). Already loaded: left as it is;
  * - **a FAKE catalogue:** when the database has no `city_trees.tree` (the
- *   private plugin's table, only on the owner's server), one is made with a
- *   few invented rows (made-up species and sizes, marked `layer =
- *   'synthetic-test'`) for trees the build already has, so the panel's
- *   catalogue fields can be checked. No real city record is used or kept;
+ *   private plugin's table, only on the owner's server), it and the match
+ *   tables are made with a few invented rows (made-up species and sizes,
+ *   marked `layer = 'synthetic-test'`) matched to the build's tallest trees
+ *   (the public tables hold no catalogue id; the match table links them), so
+ *   the panel's catalogue fields can be checked. No real city record is used
+ *   or kept;
  * - **synthetic trees for the measurement:** 15,000 made-up trees in their
  *   own area (`perf`), placed at random around the North End box.
  */
@@ -50,7 +52,9 @@ export async function seedTrees(): Promise<Seeded> {
 	const sql = db();
 	try {
 		const [has] = await sql`select to_regclass('trees.tree') is not null as trees, to_regclass('city_trees.tree') is not null as catalogue`;
-		if (!has.trees) await sql.unsafe(readFileSync(join(REPO, 'plugins', 'trees', 'migrations', '0001_trees.sql'), 'utf8'));
+		if (!has.trees)
+			for (const m of ['0001_trees.sql', '0003_no_city_rows.sql'])
+				await sql.unsafe(readFileSync(join(REPO, 'plugins', 'trees', 'migrations', m), 'utf8'));
 		// Left over from a run that stopped halfway.
 		await dropPerfTrees(sql);
 		let [{ n }] = await sql`select count(*)::int as n from trees.tree where area = ${AREA}`;
@@ -69,17 +73,24 @@ export async function seedTrees(): Promise<Seeded> {
 					catalogue_id text primary key, layer text, common_name text, genus text, species text, dbh_in real,
 					installed date, last_verified date, condition text, site_type text, geom geometry(Point, 4326),
 					attrs jsonb not null default '{}', fetched_at timestamptz not null default now())`;
+				await tx`create table city_trees.tree_match (
+					tree_id text primary key, catalogue text not null default 'boise', catalogue_id text not null,
+					area text not null, build_id text not null, fit jsonb not null default '{}')`;
+				await tx`create table city_trees.tree_event (
+					tree_id text not null, at timestamptz not null, event text not null, detail jsonb not null default '{}',
+					area text not null, build_id text not null, primary key (tree_id, at, event))`;
 			});
 			madeCatalogue = true;
-			// The tallest catalogued trees and one estimated one get invented rows.
+			// The tallest trees get invented rows, matched through the private match table.
 			const picks = await sql`
-				(select tree_id, catalogue_id from trees.tree where area = ${AREA} and kind = 'catalogued' order by height_m desc limit 2)
-				union all
-				(select tree_id, catalogue_id from trees.tree where area = ${AREA} and kind = 'estimated' order by height_m desc limit 1)`;
+				select tree_id, build_id from trees.tree where area = ${AREA} order by height_m desc, tree_id limit 3`;
 			for (const [i, p] of picks.entries()) {
 				const f = FAKE_SPECIES[i % FAKE_SPECIES.length];
+				const catalogueId = `fake-${i + 1}`;
 				await sql`insert into city_trees.tree (catalogue_id, layer, common_name, genus, species, dbh_in, installed, last_verified, condition, site_type)
-					values (${p.catalogue_id}, ${FAKE_LAYER}, ${f.common_name}, ${f.genus}, ${f.species}, ${f.dbh_in}, ${f.installed}, ${f.last_verified}, ${f.condition}, ${f.site_type})`;
+					values (${catalogueId}, ${FAKE_LAYER}, ${f.common_name}, ${f.genus}, ${f.species}, ${f.dbh_in}, ${f.installed}, ${f.last_verified}, ${f.condition}, ${f.site_type})`;
+				await sql`insert into city_trees.tree_match (tree_id, catalogue_id, area, build_id, fit)
+					values (${p.tree_id}, ${catalogueId}, ${AREA}, ${p.build_id}, ${JSON.stringify({ trunk_to_crown_m: 0.8, gain: 12 })}::jsonb)`;
 			}
 			faked = picks.map((p) => String(p.tree_id));
 		}
@@ -112,11 +123,11 @@ export async function seedPerfTrees(centre: [number, number], halfM = 900, count
 				values ('perf-synthetic', ${PERF_AREA}, now(), now(), '{"synthetic": true}', ${JSON.stringify({ trees: count })}::jsonb)`;
 			await tx`select setseed(0.42)`;
 			await tx`
-				insert into trees.tree (tree_id, area, kind, type, geom, height_m, crown_radius_m, crown_a, crown_n, lidar, catalogue, catalogue_id, build_id)
+				insert into trees.tree (tree_id, area, kind, type, geom, height_m, crown_radius_m, crown_a, crown_n, lidar, build_id)
 				select 'perf-' || g, ${PERF_AREA}, 'placed',
 				       (array['broadleaf', 'broadleaf', 'broadleaf', 'narrow', 'conifer'])[1 + floor(random() * 5)::int],
 				       ST_SetSRID(ST_MakePoint(${centre[0]} + (random() * 2 - 1) * ${dLng}, ${centre[1]} + (random() * 2 - 1) * ${dLat}), 4326),
-				       h, greatest(1, 0.345 * power(h, 1.01) * (0.8 + random() * 0.4)), 0.45, 1.64, 'synthetic', null, null, 'perf-synthetic'
+				       h, greatest(1, 0.345 * power(h, 1.01) * (0.8 + random() * 0.4)), 0.45, 1.64, 'synthetic', 'perf-synthetic'
 				from (select g, 5 + random() * 23 as h from generate_series(1, ${count}) g) s`;
 		});
 		const [{ n }] = await sql`select count(*)::int as n from trees.tree where area = ${PERF_AREA}`;

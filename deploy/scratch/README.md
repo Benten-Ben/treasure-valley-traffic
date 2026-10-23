@@ -96,7 +96,7 @@ Inside a job:
 |---|---|
 | `DATABASE_URL` | `postgresql://tvt_build@tvt-scratch-db:5432/<db>` (the password is in `PGPASSWORD`; libpq and GDAL's PostgreSQL driver read `PGHOST`, `PGUSER`, `PGDATABASE`) |
 | `TVT_ARCHIVE` | `/srv/archive`: **the archive of the job's database**, `/srv/tvt/work/scratch/archive/<db>/`: inboxes, exports (`<plugin>/export/<build>/`), build files and **load state**. Its `osm/` holds a copy of production's held extracts and the **load state that matches the database** (see [Load state](#load-state)). It follows its database: a refresh replaces both. Never production's archive |
-| `TVT_PROD_ARCHIVE` | `/srv/archive-prod`: production's archive, read-only |
+| `TVT_PROD_ARCHIVE` | `/srv/archive-prod`: production's archive, read-only, **but its `trees/` is an empty folder**: builds made before the City's inventory left the public tables (#277) hold its ids and trunk points, so `run.sh` hides them under an empty tmpfs (as `deploy/bin/sheets` never mounts them) |
 | `TVT_SOURCES` | `/srv/sources`: `/srv/tvt/work/sources` (downloaded sources: CDL, CSB, NHD, SSURGO, Sentinel-2, HydroShare), read-only |
 | `TVT_COLD` | the cold drive, read-only, when it's mounted (the scratch dumps hidden) |
 | `TVT_SCRATCH` | `1` |
@@ -110,9 +110,12 @@ our User-Agent, approved sources only); `--offline` drops that.
 `--mount SRC:DST[:ro]` adds a folder (resolved, symlinks included, before it's
 checked):
 - read-write: a folder inside one of `/srv/tvt/work/`'s folders, or inside
-  the cold drive's `vm/`;
-- read-only: also production's archive, the downloaded sources, the cold drive
-  and the scratch archives;
+  the cold drive's `vm/`; of `landcover/` (the land-cover spike's folder, whose
+  trees runs and experiments were matched against the City's inventory) only
+  `lidar/`, `naip2025/` and `naip2023/`, as `deploy/bin/sheets` allows;
+- read-only: also production's archive (not its `trees/`, nor the archive's
+  root, which holds it), the downloaded sources, the cold drive and the scratch
+  archives;
 - never: `/srv/tvt/work/` itself or its `bin/`, `scratch/` (but its archives,
   read-only), `e2e/` and `worker-test*/`; the scratch dumps; the private files
   and private plugins; anything with a `secrets/` or `private/` folder in it;

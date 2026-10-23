@@ -57,19 +57,6 @@ class PlacerTest(unittest.TestCase):
         s = np.maximum(dome((140, 200), 70, 70, 16, R), dome((140, 200), 70, 70 + 1.6 * R, 16, R))
         self.assertEqual(self.run_placer(s, theta=0.2, lam=20).count(), 2)
 
-    def test_fixed_trees_survive_repair(self):
-        from place import Placer
-        m = self.model()
-        R = m.radius_cells(15, "broadleaf")
-        s = dome((120, 120), 60, 60, 15, R).astype(np.float32)
-        pl = Placer(s, np.ones(s.shape, bool), m, theta=0.2, lam=20)
-        # a catalogue says there are two trees, the second one 4 cells off: both stay
-        for x in (60, 64):
-            t = {"y": 60.0, "x": float(x), "H": 15.0, "R": R, "type": "broadleaf", "a": 0.77, "n": 1.64, "fixed": True}
-            pl.add(t)
-        pl.repair(sweeps=2)
-        self.assertEqual(sum(1 for t in pl.alive() if t.get("fixed")), 2)
-
     def test_overlap_share(self):
         from place import overlap_share
         a = {"y": 0, "x": 0, "R": 10}

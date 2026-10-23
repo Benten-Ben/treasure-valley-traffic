@@ -128,6 +128,9 @@ def _first(path, root):
 # Folders of the work folder no job may mount: the tools that enforce the rules, their locks,
 # the scratch scripts and secrets, the browser runner's and worker-test's state.
 WORK_NEVER = ("bin", "scratch", "e2e", "worker-test", "worker-test.slots")
+# The land-cover spike's folder: its trees runs and experiments were matched against the City's inventory, so only
+# the lidar and the NAIP crops mount (the same list as deploy/bin/sheets).
+LANDCOVER_OK = ("lidar", "naip2025", "naip2023")
 RESERVED_DST = ("/", "/repo", "/srv/archive", "/srv/archive-prod", "/srv/sources", "/tmp", "/proc", "/sys",
                 "/dev", "/etc", "/usr", "/bin", "/lib", "/sbin", "/var")
 
@@ -137,8 +140,8 @@ def check_mount(spec, roots):
     scratch_root, prod_archive, cold_mount, dump_root, private (a list).
 
     Read-write: a folder under a folder of the work folder (not bin/, scratch/, e2e/,
-    worker-test*/ or sources/), or under the cold drive's vm/ (not the scratch dumps).
-    Read-only as well: production's archive, the downloaded sources, the cold drive (not the
+    worker-test*/ or sources/; of landcover/ only lidar, naip2025 and naip2023), or under the cold drive's vm/ (not the scratch dumps).
+    Read-only as well: production's archive (but not its trees/, nor the archive's root, which holds it), the downloaded sources, the cold drive (not the
     scratch dumps), the scratch archive. Never: private files, secrets, or a folder that
     holds any of those (a parent of one is refused because it isn't inside an allowed root)."""
     parts = spec.split(":")
@@ -157,6 +160,11 @@ def check_mount(spec, roots):
             raise Refused(f"--mount {src}: private files stay out of scratch jobs")
     work, scratch = roots.get("work"), roots.get("scratch_root")
     cold, dumps, prod = roots.get("cold_mount"), roots.get("dump_root"), roots.get("prod_archive")
+    if prod:                                            # production's trees/ holds builds from the City's inventory
+        trees = os.path.join(os.path.realpath(prod), "trees")
+        if _inside(src, trees) or _inside(trees, src):
+            raise Refused(f"--mount {src}: production's trees archive ({trees}) holds builds from the City's inventory; "
+                          "it isn't mounted, nor a folder holding it")
     for root in (work, cold, prod):                     # a private or secrets folder below a root
         if root and _inside(src, root):
             below = set(src[len(root.rstrip("/")):].split("/"))
@@ -175,6 +183,11 @@ def check_mount(spec, roots):
                               "that enforce the rules; it can't be mounted")
         elif top == "sources":
             ro_ok = True
+        elif top == "landcover":
+            if _first(src, os.path.join(work, "landcover")) not in LANDCOVER_OK:
+                raise Refused(f"--mount {src}: of the land-cover spike's folder only {', '.join(LANDCOVER_OK)} are "
+                              "mounted (its trees runs and experiments were matched against the City's inventory)")
+            rw_ok = True
         else:
             rw_ok = True
     if cold and _inside(src, cold):

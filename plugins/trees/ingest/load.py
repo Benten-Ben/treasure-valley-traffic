@@ -2,15 +2,30 @@
 
 DIR is what plugins/trees/build/build.py wrote: build.json, trees.geojson and log.jsonl. In one transaction the build is
 recorded, the area's trees are replaced by the build's, and its log events are added (events already there are kept, so
-a tree's history survives rebuilds). Standard library plus psycopg."""
+a tree's history survives rebuilds). Standard library plus psycopg.
+
+The public tables hold only trees found in the lidar, so the loader takes a fixed set of fields and nothing else: a
+build whose trees, fits or log events carry anything outside those sets (an old-format build, or one that let an
+inventory's data in) is refused whole, before anything is written. An anchors.jsonl beside the build is not read here;
+the private plugin that owns the inventory loads it."""
 
 import argparse
 import json
 import os
 import sys
 
-KINDS = ("catalogued", "placed", "estimated")
+KINDS = ("placed",)
 TYPES = ("broadleaf", "conifer", "narrow")
+# The fields a public tree, its fit and its log events may carry. Anything else stops the load.
+TREE_FIELDS = {"id", "kind", "type", "ground_m", "height_m", "crown_radius_m", "crown_a", "crown_n", "lidar", "fit"}
+FIT_FIELDS = {"width_vs_typical_sd", "crowded", "width_curve", "profile", "spring"}
+EVENTS = {"placed": {"lidar", "height_m", "crown_width_m", "theta"}}
+
+
+def unknown(label, got, allowed):
+    extra = sorted(set(got) - allowed)
+    if extra:
+        raise ValueError(f"{label}: fields not allowed in the public trees tables: {', '.join(extra)}")
 
 
 def read_build(folder):
@@ -21,12 +36,12 @@ def read_build(folder):
     for f in fc["features"]:
         p = dict(f["properties"])
         lon, lat = f["geometry"]["coordinates"][:2]
+        unknown(f"tree {p.get('id')}", p, TREE_FIELDS)
+        unknown(f"tree {p.get('id')}: fit", p.get("fit") or {}, FIT_FIELDS)
         if p.get("kind") not in KINDS or p.get("type") not in TYPES:
             raise ValueError(f"tree {p.get('id')}: kind {p.get('kind')!r} or type {p.get('type')!r} unknown")
         if not (p.get("height_m") or 0) > 0 or not (p.get("crown_radius_m") or 0) > 0:
             raise ValueError(f"tree {p.get('id')}: no height or crown")
-        if (p["kind"] == "placed") != (p.get("catalogue") is None):
-            raise ValueError(f"tree {p.get('id')}: only placed trees lack a catalogue")
         p["lon"], p["lat"] = float(lon), float(lat)
         trees.append(p)
     ids = [t["id"] for t in trees]
@@ -37,6 +52,12 @@ def read_build(folder):
     if os.path.exists(path):
         with open(path) as fh:
             log = [json.loads(line) for line in fh if line.strip()]
+        for e in log:
+            who = f"log event {e.get('event')!r} of {e.get('tree_id')}"
+            if e.get("event") not in EVENTS:
+                raise ValueError(f"{who}: not an event of a tree found in the lidar")
+            unknown(who, e, {"tree_id", "at", "event", "detail"})
+            unknown(who, e.get("detail") or {}, EVENTS[e["event"]])
     return build, trees, log
 
 
@@ -53,11 +74,11 @@ def load(conn, build, trees, log):
     with conn.cursor() as cur:
         cur.executemany(
             """insert into trees.tree (tree_id, area, kind, type, geom, ground_m, height_m, crown_radius_m, crown_a,
-                 crown_n, lidar, catalogue, catalogue_id, fit, build_id)
-               values (%s, %s, %s, %s, ST_SetSRID(ST_MakePoint(%s, %s), 4326), %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                 crown_n, lidar, fit, build_id)
+               values (%s, %s, %s, %s, ST_SetSRID(ST_MakePoint(%s, %s), 4326), %s, %s, %s, %s, %s, %s, %s, %s)""",
             [(t["id"], b["area"], t["kind"], t["type"], t["lon"], t["lat"], t.get("ground_m"), t["height_m"],
-              t["crown_radius_m"], t.get("crown_a"), t.get("crown_n"), t.get("lidar"), t.get("catalogue"),
-              t.get("catalogue_id"), json.dumps(t.get("fit") or {}), b["build_id"]) for t in trees])
+              t["crown_radius_m"], t.get("crown_a"), t.get("crown_n"), t.get("lidar"),
+              json.dumps(t.get("fit") or {}), b["build_id"]) for t in trees])
         cur.executemany(
             """insert into trees.tree_log (tree_id, at, event, detail, build_id) values (%s, %s, %s, %s, %s)
                on conflict (tree_id, at, event) do nothing""",

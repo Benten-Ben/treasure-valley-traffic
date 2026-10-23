@@ -133,8 +133,9 @@ class Mounts(unittest.TestCase):
         r = os.path.realpath(self.tmp.name)
         self.p = lambda *a: os.path.join(r, *a)
         for d in ("work/bin", "work/e2e/slots", "work/worker-test", "work/sources/cdl", "work/landcover/run1",
+                  "work/landcover/trees-out/c-1", "work/landcover/naip2025/crops", "work/landcover/lidar",
                   "work/scratch/archive/tvt/osm", "work/scratch/secrets", "work/scratch/trees/s1", "work/scratch/bin",
-                  "cold/vm/scratch/20261011T0839Z", "cold/vm/lidar-work", "cold/lidar/laz", "prod/osm",
+                  "cold/vm/scratch/20261011T0839Z", "cold/vm/lidar-work", "cold/lidar/laz", "prod/osm", "prod/trees/b1",
                   "srv/private/secrets", "srv/plugins-private/x"):
             os.makedirs(self.p(d))
         open(self.p("work", "heavy.lock"), "w").close()
@@ -155,14 +156,30 @@ class Mounts(unittest.TestCase):
             self.ok(src, dst, ro)
 
     def test_work_folders_mount_read_write(self):
-        self.assertEqual(self.ok("work/landcover"), (self.p("work/landcover"), "/mnt/in", False))
-        self.assertEqual(self.ok("work/landcover/run1", ro=True)[2], True)
+        self.assertEqual(self.ok("work/landcover/naip2025"), (self.p("work/landcover/naip2025"), "/mnt/in", False))
+        self.assertEqual(self.ok("work/landcover/naip2025/crops", ro=True)[2], True)
+        self.assertEqual(self.ok("work/landcover/lidar")[0], self.p("work/landcover/lidar"))
         self.assertEqual(self.ok("cold/vm/lidar-work")[0], self.p("cold/vm/lidar-work"))
 
     def test_read_only_places(self):
         for src in ("work/sources/cdl", "prod/osm", "cold/lidar/laz", "work/scratch/archive/tvt"):
             self.assertTrue(self.ok(src, ro=True)[2], src)
             self.refused(src, why="read-only only")
+
+    def test_the_landcover_spikes_trees_runs_never_mount(self):
+        """Its trees runs and experiments were matched against the City's inventory (as deploy/bin/sheets refuses)."""
+        for src in ("work/landcover", "work/landcover/run1", "work/landcover/trees-out", "work/landcover/trees-out/c-1"):
+            self.refused(src, why="land-cover spike")
+            self.refused(src, ro=True, why="land-cover spike")
+        os.symlink(self.p("work/landcover/trees-out/c-1"), self.p("work/landcover/lidar/viarun"))
+        self.refused("work/landcover/lidar/viarun", ro=True, why="land-cover spike")
+
+    def test_production_trees_archive_never_mounts_nor_a_folder_holding_it(self):
+        for src in ("prod/trees", "prod/trees/b1", "prod"):
+            self.refused(src, ro=True, why="trees archive")
+        os.symlink(self.p("prod/trees"), self.p("work/landcover/viatrees"))
+        self.refused("work/landcover/viatrees", ro=True, why="trees archive")
+        self.assertEqual(self.ok("prod/osm", ro=True)[0], self.p("prod/osm"))        # the rest of the archive still does
 
     def test_the_tools_locks_and_secrets_never_mount(self):
         for src in ("work/bin", "work/e2e", "work/e2e/slots", "work/worker-test", "work/scratch", "work/scratch/bin",
@@ -190,9 +207,9 @@ class Mounts(unittest.TestCase):
 
     def test_the_containers_own_paths_stay_its_own(self):
         for dst in ("/repo", "/repo/data", "/srv/archive", "/srv/archive/osm", "/tmp", "/", self.p("cold")):
-            self.refused("work/landcover", dst=dst)
-        for spec in ("relative:x", f"{self.p('work/landcover')}", f"{self.p('work/landcover')}:/x:rw",
-                     f"{self.p('work/landcover')}:/x,y"):
+            self.refused("work/landcover/naip2025", dst=dst)
+        for spec in ("relative:x", f"{self.p('work/landcover/naip2025')}", f"{self.p('work/landcover/naip2025')}:/x:rw",
+                     f"{self.p('work/landcover/naip2025')}:/x,y"):
             with self.assertRaises(scratchq.Refused):
                 scratchq.check_mount(spec, self.roots)
 

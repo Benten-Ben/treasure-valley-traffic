@@ -12,8 +12,7 @@ The surface the placed crowns explain is their upper envelope E (the lidar only 
 3. Keep the tree only if it lowers the error by at least lam (a per-tree cost, so noise doesn't become trees).
 4. When the seeds run out, look for leftover unexplained blobs bigger than the smallest crown and seed them; repeat.
 5. Repair: per tree, try deleting, moving, resizing, reshaping, splitting into two and merging with a neighbour; keep any
-   change that lowers error + lam * trees + the size costs. Up to a few sweeps. Trees marked "fixed" (catalogued trees,
-   placed first by the build) are never touched or merged.
+   change that lowers error + lam * trees + the size costs. Up to a few sweeps.
 
 Pure numpy/scipy; no I/O here. Coordinates are (row, col) in cells; distances in cells unless named _m."""
 import math
@@ -160,28 +159,6 @@ class Placer:
         E1 = np.maximum(E0, z)
         return float((np.abs(S - E0) - np.abs(S - E1))[V].sum())
 
-    def best_near(self, y, x, H, types, reach, overlap=True):
-        """The best crown centred within `reach` cells of (y, x) (a catalogued tree's trunk point): any of `types`, any
-        allowed width and shape. overlap=False skips the overlap rule (a catalogue says the tree exists)."""
-        best = (-math.inf, None)
-        for typ in types:
-            for k in self.m.scales():
-                R = self.m.radius_cells(H, typ, k)
-                if R < 1.5:
-                    continue
-                for a, n in self.m.shapes[typ]:
-                    for dy in range(-reach, reach + 1):
-                        for dx in range(-reach, reach + 1):
-                            if dy * dy + dx * dx > reach * reach:
-                                continue
-                            t = {"y": y + dy, "x": x + dx, "H": H, "R": R, "type": typ, "a": a, "n": n}
-                            if overlap and not self.ok_overlap(t):
-                                continue
-                            g = self.gain(t) - self.m.size_cost(t)
-                            if g > best[0]:
-                                best = (g, t)
-        return best
-
     def best_at(self, y, x, H, step=2):
         """The best crown for a seed at (y, x) of height H: centre within 0.6 R of the seed, any type and allowed width,
         on top of the current envelope. Returns (gain, tree) or (0, None)."""
@@ -289,7 +266,7 @@ class Placer:
             changed = 0
             for i in range(len(self.trees)):
                 t = self.trees[i]
-                if not t["alive"] or t.get("fixed"):
+                if not t["alive"]:
                     continue
                 cands = [[]]                                            # delete
                 for dy, dx in ((-1, 0), (1, 0), (0, -1), (0, 1), (-2, 0), (2, 0), (0, -2), (0, 2)):
@@ -329,7 +306,7 @@ class Placer:
                         best, arg = dlt, news
                 # merge with the nearest neighbour: one crown at the taller one's place
                 for j in self.near(self.bbox(t)):
-                    if j == i or self.trees[j].get("fixed"):
+                    if j == i:
                         continue
                     u = self.trees[j]
                     if math.hypot(t["y"] - u["y"], t["x"] - u["x"]) > t["R"] + u["R"]:

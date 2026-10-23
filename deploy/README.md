@@ -229,6 +229,9 @@ uncapped build stalled the VM during the nightly camera roll-up on Oct 7.
   (`DATABASE_URL`, the load's role, comes from the shell: `heavy.log`
   records the command.) A `heavy` inside a heavy job runs at once, under
   that job's lock and deadline, with its caps still checked.
+  The trees plugin's migration 0003 (removing the City-derived rows) has its
+  own order of rebuilds, deploy and loads:
+  [its runbook](../plugins/trees/README.md#runbook-migration-0003-on-production).
 - Exit codes: the command's; 73 not enough disk; 75 not now; 123 stopped
   for disk; 124 stopped at the deadline (`heavy -h` has the rest).
 
