@@ -242,12 +242,12 @@ On Oct 11, 2026 it held 3,932 records over 1,080 miles: 3,401 on streets,
   only confirms its versions. The hub's DCAT feed isn't read: it lists the
   whole hub on another host, while the layer itself is three requests.
 - **Readings checked** (Oct 23, 2026, against the reader's code and its tests, not the live layer, which the
-  sandbox can't reach): a protected bike lane reads as `protected_bike_lane`, which the view counts as lying
-  between the curbs (`bike_in_roadway`); a direction of 'N/A' reads as a one-way street's other side (0 lanes, its
-  edge and parking kept). Still ⚠️ until the live layer is checked: whether ACHD also writes 'N/A' on records it
-  hasn't field-checked (those would read as a 0-lane side), and whether ACHD's protected lanes lie inside
-  `TotalPavement` (few records). `MarkingLocation` is kept in the attributes as `MarkingLocationEBNB` and
-  `MarkingLocationWBSB`; its meaning is still open ([the ACHD ask, #164](https://github.com/Benten-Ben/treasure-valley-traffic/issues/164)).
+  sandbox can't reach): a protected bike lane reads as `protected_bike_lane`, which the view counts as in the
+  roadway (`bike_in_roadway`); that the lane lies between the curbs is ⚠️ unconfirmed: it holds only if ACHD's
+  protected lanes lie inside `TotalPavement` (few records; not checked yet). A direction of 'N/A' reads as a
+  one-way street's other side (0 lanes, its edge and parking kept). Still ⚠️ until the live layer is checked:
+  whether ACHD also writes 'N/A' on records it hasn't field-checked (those would read as a 0-lane side).
+  `MarkingLocation` is kept in the attributes as `MarkingLocationEBNB` and `MarkingLocationWBSB`; its meaning is still open ([the ACHD ask, #164](https://github.com/Benten-Ben/treasure-valley-traffic/issues/164)).
 - **Free text:** ACHD's `Comments` and `FieldNotes` stay in
   `roads.bike_facility_note` (and `raw.record`). No view, export, tile set or
   card reads them.
