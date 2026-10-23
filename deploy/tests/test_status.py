@@ -272,7 +272,7 @@ class TheDatabase(Base):
                             "pending_by": None, "pending_reason": None, "run_s": 9000, "last_error": None}]}
         code, out = self.run_status([], db=self.fake(data))
         self.assertEqual(code, 0, out)
-        self.assertIn("  sources:  1 scheduled in tvt (tvt-db-1): 1 fresh", out)
+        self.assertIn("  sources:  1 sources in tvt (tvt-db-1): 1 fresh", out)
         self.assertIn("  builds:   1 built", out)
         self.assertIn("water-build: last built 2 h ago", out)
 
@@ -300,7 +300,7 @@ class TheDatabase(Base):
                  "pending_reason": None, "run_s": 20 * 3600, "last_error": None}]}
         code, out = self.run_status(["--db-container", "tvt-scratch-db"], db=self.fake(data))
         self.assertEqual(code, 1)
-        self.assertIn("! sources:  4 scheduled in tvt (tvt-scratch-db): 2 fresh, 1 late, 1 never", out)
+        self.assertIn("! sources:  4 sources in tvt (tvt-scratch-db): 2 fresh, 1 late, 1 never", out)
         lines = out.splitlines()
         i = next(n for n, line in enumerate(lines) if "sources:" in line)
         self.assertIn("new_one: never (every 60 min); 1 failed try since: URLError: postgres://u:***@host/db refused",
@@ -323,7 +323,7 @@ class TheDatabase(Base):
     def test_before_the_migration_and_when_it_doesnt_answer(self):
         code, out = self.run_status([], db=self.fake({}, ready=False))
         self.assertEqual(code, 0, out)
-        self.assertIn("the staleness views aren't there yet (migration 0021)", out)
+        self.assertIn("the staleness views aren't there yet (migrations 0021, 0022)", out)
         code, out = self.run_status([], db=self.fake({}, fail="psql: error: connection to server failed"))
         self.assertEqual(code, 1)
         self.assertIn("! sources:  tvt (tvt-db-1) didn't answer: psql: error", out)

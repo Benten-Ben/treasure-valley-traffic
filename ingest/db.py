@@ -20,10 +20,16 @@ def now():
     return datetime.now(timezone.utc)
 
 
-@functools.lru_cache(maxsize=1)
-def _plugins():
+@functools.lru_cache(maxsize=4)
+def _plugins_in(folders):
     from . import manifest
-    return manifest.find()
+    return manifest.find(folders)
+
+
+def _plugins():
+    """The plugins, read once per set of plugin folders (so a changed TVT_PLUGIN_PATH is seen)."""
+    from . import manifest
+    return _plugins_in(tuple(manifest.plugin_folders()))
 
 
 def ensure_source(conn, s):
@@ -31,7 +37,7 @@ def ensure_source(conn, s):
     (ops.source_status judges it by them) come from its manifest entry, unless s has them."""
     from . import manifest
     row = {"schedule": None, "license": None, "credit": None, "notes": None, **s}
-    if "stale_after" not in row:
+    if "stale_after" not in row and row["schedule"] is None:    # only an unscheduled source can be a stream
         row["stale_after"], row["fetch_sources"] = manifest.stream_staleness(_plugins(), row["name"]) or (None, None)
     row.setdefault("fetch_sources", None)
     conn.execute(
