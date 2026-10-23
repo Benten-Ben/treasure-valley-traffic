@@ -119,8 +119,9 @@ test.describe('roads at real width', () => {
 		for (const z of [15.5, 15.6, 15.75, 15.9, 16.05]) {
 			await jump(page, z);
 			const [r, g, b] = await darkestAround(page, road);
-			// Asphalt is about (152,144,136); the fixture ground is about (232,224,208) or its checker tone.
-			expect(r, `z${z}: the road's tone shows, not the ground (${r},${g},${b})`).toBeLessThan(200);
+			// Asphalt is about (152,144,136); the fixture ground is about (232,224,208) or its checker tone. A
+			// half-faded line over bare ground would read about 192, so the bound is tight on asphalt at every step.
+			expect(Math.abs(r - 152), `z${z}: the road is asphalt, not the ground (${r},${g},${b})`).toBeLessThan(14);
 		}
 		await page.screenshot({ path: screenPath('roads-k11-z1575.png') });
 	});

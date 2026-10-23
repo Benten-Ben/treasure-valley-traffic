@@ -7,6 +7,9 @@ import { DECK_CASING, ZOOM } from './palette.js';
  * surfaces, with an ink casing, from z15. The generalised `surfaces_z15` draws z15-16, the full detail from z16
  * (and the deck edges from `roads.edges`). 3D decks stay later; these are draped, so the draped run is unbroken.
  * Hidden under Aerial.
+ *
+ * Known trade-off (plan-level): the decks sit in `anchor:surfaces`, below the piece lines (`anchor:base`), so at
+ * z15-16 a crossed street's piece line still runs across the top of a deck; from z16 the lines are gone.
  */
 
 const RANK = 25;

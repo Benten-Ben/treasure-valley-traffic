@@ -5,7 +5,7 @@ import { baseContribution } from '../registry.js';
 import { contributionLayer, contributionStatus, layerShown } from '#lib/map/flavors.js';
 import { ANCHORS, drapedRuns, ordered } from '#lib/map/order.js';
 import { basemapReady, buildStyle, type BasemapManifest, type LandscapeEntry } from '#lib/map/style.js';
-import { ASPHALT, MARKINGS } from '#lib/map/materials.js';
+import { ASPHALT, MARKINGS, UNPAVED } from '#lib/map/materials.js';
 import ROADS_PALETTE, { LATITUDE, ZOOM, metres, pixelsPerMetre } from './palette.js';
 import lines from './lines.base.js';
 import surfaces from './surfaces.base.js';
@@ -147,7 +147,7 @@ describe('built or not', () => {
 });
 
 describe('K11: the lower layer stays opaque, only the upper one fades', () => {
-	const line = lines.layers[0];
+	const line = lines.layers.find((l) => l.id === 'roads.lines.line')!;
 	const fills = surfaces.layers.filter((l) => l.type === 'fill' && /\.(asphalt|concrete)$/.test(l.id));
 
 	it('fades the piece lines from 1 at z15.5 to 0 at z16, and holds 1 below', () => {
@@ -199,7 +199,7 @@ describe('widths in metres', () => {
 	});
 
 	it('draws a piece line w metres wide at any zoom of its range', () => {
-		const line = lines.layers[0];
+		const line = lines.layers.find((l) => l.id === 'roads.lines.line')!;
 		for (const z of [14, 14.7, 15.5, 15.99]) {
 			expect(evaluate(line, 'line-width', z, { w: 10 }) as number).toBeCloseTo(10 * pixelsPerMetre(z), 6);
 		}
@@ -210,7 +210,7 @@ describe('widths in metres', () => {
 });
 
 describe('the tones', () => {
-	const line = lines.layers[0];
+	const line = lines.layers.find((l) => l.id === 'roads.lines.line')!;
 	it('runs the piece lines from white at z14 to asphalt by z15.5, per material', () => {
 		const rgb = (c: unknown) => c as { r: number; g: number; b: number };
 		const at14 = rgb(evaluate(line, 'line-color', 14, { material: 'asphalt' }));
@@ -221,8 +221,21 @@ describe('the tones', () => {
 		expect(hex(rgb(evaluate(line, 'line-color', 15.5, { material: 'asphalt' }, 'clay')))).toBe(ASPHALT.clay.toLowerCase());
 	});
 
+	it('gives gravel and dirt lines the surface tint and no fade, so nothing pops at the K11 handover', () => {
+		const un = lines.layers.find((l) => l.id === 'roads.lines.unpaved')!;
+		const hex = (c: { r: number; g: number; b: number }) => '#' + [c.r, c.g, c.b].map((v) => Math.round(v * 255).toString(16).padStart(2, '0')).join('');
+		expect(un.maxzoom).toBe(ZOOM.fadeFrom);
+		for (const [m, t] of [['gravel', UNPAVED.gravel], ['dirt', UNPAVED.dirt]] as const) {
+			for (const z of [14, 15.4]) {
+				expect(hex(evaluate(un, 'line-color', z, { material: m }) as never), `${m} z${z}`).toBe(t.color.toLowerCase());
+				expect(evaluate(un, 'line-opacity', z, { material: m }), `${m} z${z}`).toBe(t.opacity);
+			}
+		}
+		expect(JSON.stringify(lines.layers.find((l) => l.id === 'roads.lines.line')!.filter)).toContain('gravel');
+	});
+
 	it('draws a tunnel faint', () => {
-		const line = lines.layers[0];
+		const line = lines.layers.find((l) => l.id === 'roads.lines.line')!;
 		expect(evaluate(line, 'line-opacity', 15, { tunnel: true }) as number).toBeLessThan(0.5);
 	});
 
@@ -293,12 +306,16 @@ describe('markings: when they show', () => {
 		expect(evaluate(solid, 'line-opacity', 17, { material: 'concrete' })).toBeCloseTo(0.7);
 	});
 
-	it('draws a double centre line as two cream lines with the road tone between', () => {
-		const outer = markings.layers.find((l) => l.id === 'roads.markings.double')!;
-		const gap = markings.layers.find((l) => l.id === 'roads.markings.double.gap')!;
-		expect(gap.rank).toBeGreaterThan(outer.rank);
-		expect(evaluate(gap, 'line-width', 18, {}) as number).toBeLessThan(evaluate(outer, 'line-width', 18, {}) as number);
-		expect(gap.valley['line-color']).toBe(ASPHALT.valley);
+	it('draws a double centre line as two cream lines offset either side, with no opaque layer between', () => {
+		const left = markings.layers.find((l) => l.id === 'roads.markings.double.left')!;
+		const right = markings.layers.find((l) => l.id === 'roads.markings.double.right')!;
+		expect(markings.layers.some((l) => l.id.endsWith('.gap'))).toBe(false);
+		expect(evaluate(left, 'line-offset', 18, {}) as number).toBeLessThan(0);
+		expect(evaluate(right, 'line-offset', 18, {}) as number).toBeGreaterThan(0);
+		expect(evaluate(left, 'line-offset', 18, {}) as number).toBeCloseTo(-(evaluate(right, 'line-offset', 18, {}) as number));
+		// The offset is one line width, so the gap between the two lines is one line width.
+		expect(Math.abs(evaluate(right, 'line-offset', 18, {}) as number)).toBeCloseTo(evaluate(right, 'line-width', 18, {}) as number);
+		for (const l of [left, right]) expect(l.valley['line-opacity']).toBeTruthy();
 	});
 });
 

@@ -1,6 +1,6 @@
 import type { BaseContribution } from '../types.js';
-import { ASPHALT, CONCRETE } from '#lib/map/materials.js';
-import { EDGES, LINE_START, ZOOM, metres } from './palette.js';
+import { ASPHALT, CONCRETE, UNPAVED } from '#lib/map/materials.js';
+import { LINE_START, ZOOM, metres } from './palette.js';
 
 /**
  * Roads' piece lines (P9; plan v3 §3.2 row b7, §3.4 K11, §3.5).
@@ -13,15 +13,12 @@ import { EDGES, LINE_START, ZOOM, metres } from './palette.js';
  * (two layers fading at t and 1-t would leave a quarter of it showing).
  */
 
-const tone = (asphalt: string, concrete: string, unpaved: string): unknown => [
-	'match',
-	['get', 'material'],
-	'concrete',
-	concrete,
-	['gravel', 'dirt'],
-	unpaved,
-	asphalt
-];
+const tone = (asphalt: string, concrete: string): unknown => ['match', ['get', 'material'], 'concrete', concrete, asphalt];
+
+/** Gravel and dirt have no asphalt tone: their lines are the same tint the surface lays over the ground. */
+const unpavedFilter: unknown = ['in', ['get', 'material'], ['literal', ['gravel', 'dirt']]];
+const unpavedColor: unknown = ['match', ['get', 'material'], 'gravel', UNPAVED.gravel.color, UNPAVED.dirt.color];
+const unpavedOpacity: unknown = ['match', ['get', 'material'], 'gravel', UNPAVED.gravel.opacity, UNPAVED.dirt.opacity];
 
 /** A tunnel's line is drawn faint (it isn't on the surface). */
 const strength = (full: number): unknown => ['case', ['==', ['get', 'tunnel'], true], full * 0.45, full];
@@ -41,11 +38,30 @@ const lines: BaseContribution = {
 	suppresses: { groups: ['roads'], fromZoom: ZOOM.linesFrom },
 	layers: [
 		{
+			// Gravel and dirt: the surface's own tint from z14, so there is nothing to pop at the K11 handover (the
+			// surface tint is translucent, so a line fading over it would double the tint). Gone at z15.5.
+			id: 'roads.lines.unpaved',
+			type: 'line',
+			slot: 'base',
+			rank: 10,
+			sourceLayer: 'roads.lines',
+			filter: unpavedFilter,
+			minzoom: ZOOM.linesFrom,
+			maxzoom: ZOOM.fadeFrom,
+			valley: {
+				'line-width': common['line-width'],
+				'line-offset': common['line-offset'],
+				'line-color': unpavedColor,
+				'line-opacity': unpavedOpacity
+			}
+		},
+		{
 			id: 'roads.lines.line',
 			type: 'line',
 			slot: 'base',
 			rank: 10,
 			sourceLayer: 'roads.lines',
+			filter: ['!', unpavedFilter],
 			minzoom: ZOOM.linesFrom,
 			maxzoom: ZOOM.fadeTo,
 			valley: {
@@ -57,7 +73,7 @@ const lines: BaseContribution = {
 					ZOOM.linesFrom,
 					LINE_START,
 					ZOOM.toneBy,
-					tone(ASPHALT.valley, CONCRETE.valley, EDGES.shoulder)
+					tone(ASPHALT.valley, CONCRETE.valley)
 				]
 			},
 			clay: {
@@ -69,7 +85,7 @@ const lines: BaseContribution = {
 					ZOOM.linesFrom,
 					LINE_START,
 					ZOOM.toneBy,
-					tone(ASPHALT.clay, CONCRETE.clay, EDGES.clayKerb)
+					tone(ASPHALT.clay, CONCRETE.clay)
 				]
 			}
 		}
