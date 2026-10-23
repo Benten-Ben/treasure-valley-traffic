@@ -5,7 +5,8 @@ import { ConeBatch } from './batches/cone.js';
 import { MeshBatch } from './batches/mesh.js';
 import { PhotoBatch } from './batches/photo.js';
 import { ShadowBatch } from './batches/shadow.js';
-import { allMeshes } from './meshes.js';
+import { gpuMeshes } from './meshes.js';
+import { StaticBatch } from './batches/static.js';
 
 /**
  * The `scene-3d` custom layer (docs/14 §14.8, "The 3D engine"): slot 9, above
@@ -23,11 +24,12 @@ export interface Gpu {
 	shadows: ShadowBatch;
 	cones: ConeBatch;
 	photos: PhotoBatch;
+	statics: StaticBatch;
 }
 
 export function createGpu(gl: WebGL2RenderingContext, labels: SpriteAtlas): Gpu {
 	if (typeof WebGL2RenderingContext === 'undefined' || !(gl instanceof WebGL2RenderingContext)) throw new Error('WebGL2 is not available');
-	return { gl, meshes: new MeshBatch(gl, allMeshes()), shadows: new ShadowBatch(gl), cones: new ConeBatch(gl), photos: new PhotoBatch(gl, labels) };
+	return { gl, meshes: new MeshBatch(gl, gpuMeshes()), shadows: new ShadowBatch(gl), cones: new ConeBatch(gl), photos: new PhotoBatch(gl, labels), statics: new StaticBatch(gl) };
 }
 
 export function destroyGpu(g: Gpu | null): void {
@@ -36,6 +38,7 @@ export function destroyGpu(g: Gpu | null): void {
 	g.shadows.destroy();
 	g.cones.destroy();
 	g.photos.destroy();
+	g.statics.destroy();
 }
 
 export interface LayerHandlers {

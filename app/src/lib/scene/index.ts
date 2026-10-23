@@ -7,11 +7,13 @@ import type { Hit, HitSource, Hover } from '#lib/map/picker.js';
 import { pxPerSecond } from '#lib/overlay/project.js';
 import { CONE_FLOATS, Floats, LINE_FLOATS } from './batches/cone.js';
 import { INSTANCE_FLOATS, InstanceData } from './batches/mesh.js';
+import { StaticData, type StaticSegment } from './batches/static.js';
 import { PHOTO_FLOATS } from './batches/photo.js';
 import { ShadowData } from './batches/shadow.js';
+import { CapLimiter } from './caps.js';
 import { GroundTracker, renderedZ } from './ground.js';
 import { addSceneLayer, createGpu, destroyGpu, SCENE_LAYER, sceneLayer, type Gpu } from './layer.js';
-import { allMeshes, rgb, type Mesh, type MeshKind } from './meshes.js';
+import { allMeshes, gpuMeshes, lodKey, lodMeshes, meshVersion, rgb, type Lod, type Mesh, type MeshKind } from './meshes.js';
 import { PickIndex, priorityOf, selectionKey } from './pick.js';
 import { makeFrame, mercatorX, mercatorY, offset, projectLocal, projectMercator32, type Frame } from './rtc.js';
 import { PhotoTextures } from './textures.js';
@@ -26,8 +28,12 @@ import { PhotoTextures } from './textures.js';
  *
  * - places each instance relative to the centre (rtc.ts), on the drawn ground
  *   or at a true height (ground.ts), so it lands where `map.project` says;
- * - draws one instanced call per mesh type, then blob shadows, cones and
- *   lines, then photo planes: 12 draw calls or fewer in all;
+ * - draws one instanced call per mesh type (and per low-detail mesh in use), one per static
+ *   group, then blob shadows, cones and lines, then photo planes. The count is reported, not
+ *   capped, in `SceneStats.drawCalls`. Measured with every built-in kind in use at once (the nine
+ *   mesh kinds with a selected bus's ring, shadows, cones, lines and both photo calls: the
+ *   @scene-budget spec counts the GL draws itself): 14. Each registered kind, low-detail mesh in use
+ *   and static group adds one (16 with one of each of the last two);
  * - picks on the CPU through the central picker, and shows hover (a cream
  *   tint) and selection (lifted 2 m, 1.2×, an ink-and-cream ground ring and
  *   one 1.2 s pulse; a `grounded` instance only gets the ring) for whatever
@@ -48,10 +54,18 @@ import { PhotoTextures } from './textures.js';
  * scene.setPhotos('cameras-3d', [{ apex, right, down, forward, tx, ty, texture: viewKey, label: name }]);
  * scene.show('transit-buses-3d', false);        // the owner's layer was turned off
  * ```
+ *
+ * Budgets (plan v3 S7): a plugin adds a mesh kind with `registerMeshKind(kind, build, budget, lod?)`
+ * (meshes.ts; an optional low-detail mesh of 24 triangles or fewer, used under `belowPx` on screen);
+ * `set(group, list, { cap, capPhone, radiusM })` keeps the nearest `cap` of a group within `radiusM`
+ * of the view's ground centre (`capPhone` under 600 px wide, 0 turns it off) and reports the rest in
+ * `stats().dropped`; `setStatic(group, segments)` draws fences and walls, which never move, from one
+ * buffer (batches/static.ts).
  */
 export type { MeshKind } from './meshes.js';
 export { renderedZ, slopePitch } from './ground.js';
-export { allMeshes } from './meshes.js';
+export { allMeshes, registerMeshKind, unregisterMeshKind } from './meshes.js';
+export type { StaticSegment } from './batches/static.js';
 export { SCENE_LAYER } from './layer.js';
 
 export type Vec3 = [number, number, number];
@@ -172,6 +186,21 @@ export type SceneUpdate = (now: number, instances: SceneInstance[]) => number | 
 export interface GroupOptions {
 	/** Picking priority for its instances (default: by each pick's kind). */
 	priority?: number;
+	/**
+	 * At most this many instances of the group are drawn, picked and queried: those nearest the view's
+	 * ground centre (and within `radiusM`). Unset: no limit. The rest are counted in `SceneStats.dropped`.
+	 */
+	cap?: number;
+	/** `cap` on a phone (the shell's `(max-width: 599px)`); 0 turns the group off there. Unset: `cap`. */
+	capPhone?: number;
+	/** Only instances within this many metres of the view's ground centre are kept (before `cap`). */
+	radiusM?: number;
+	/**
+	 * Scenery (trees, shrubs): it never moves, and while the camera moves it may read the ground under a share
+	 * of its instances each frame (a group over 400), so each is read again within a few frames instead of all
+	 * of them every frame. Without it every instance is read whenever the camera has moved.
+	 */
+	scenery?: boolean;
 }
 
 interface Group {
@@ -182,6 +211,9 @@ interface Group {
 	opts: GroupOptions;
 	update: SceneUpdate | null;
 	visible: boolean;
+	/** Things that never move (fences): see setStatic. */
+	static: StaticData | null;
+	staticVisible: boolean;
 }
 
 export interface SceneStats {
@@ -192,8 +224,18 @@ export interface SceneStats {
 	lastFrameMs: number;
 	/** p95 of the last 120 frames' JS time, ms. */
 	p95Ms: number;
+	/** The part of that before the first draw call (updates, caps, placement, static grounding), last frame and p95 of the last 120, ms. */
+	placeMs: number;
+	placeP95Ms: number;
 	/** Terrain queries in the last frame (things that moved, or everything after the camera moved). */
 	groundQueries: number;
+	/** Instances left out of the last frame by a group's `cap`, `capPhone` or `radiusM`, in all and by group. */
+	dropped: number;
+	droppedByGroup: Record<string, number>;
+	/** Segments in the static batches that were drawn. */
+	staticSegments: number;
+	/** Instances drawn with their kind's low-detail mesh in the last frame. */
+	lodInstances: number;
 }
 
 /** One probed instance: where the GPU put its anchor, and where `map.project` says. */
@@ -222,6 +264,8 @@ export interface SceneDeps {
 	/** The live terrain exaggeration (app.exaggeration()). */
 	exaggeration: () => number;
 	reducedMotion?: () => boolean;
+	/** A phone-sized screen (default: the shell's `(max-width: 599px)`). */
+	phone?: () => boolean;
 }
 
 const SELECT_LIFT = 2;
@@ -229,6 +273,13 @@ const SELECT_SCALE = 1.2;
 const PULSE_MS = 1200;
 const DEG = Math.PI / 180;
 const CREAM = '#fffbf4';
+
+/** The shell's phone breakpoint (ChromeShell.svelte). */
+const PHONE_QUERY = '(max-width: 599px)';
+/** A scenery group bigger than this reads the ground under a share of its instances per frame while the camera moves. */
+const STALE_READS = 400;
+/** The most a frame spends re-grounding static batches, ms (a slice of segments; the rest follow in the next frames). */
+const STATIC_SLICE_MS = 1;
 
 const reduced = () => typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -300,7 +351,11 @@ export class Scene implements HitSource {
 	#labels: SpriteAtlas;
 	#groups = new globalThis.Map<string, Group>();
 	#meshes: Record<MeshKind, Mesh> = allMeshes();
+	#lods: Record<string, Lod> = lodMeshes();
+	#meshVersion = meshVersion();
 	#data = new globalThis.Map<MeshKind, InstanceData>();
+	#caps = new CapLimiter<SceneInstance>();
+	#phoneQuery: MediaQueryList | null = null;
 	#shadows = new ShadowData();
 	#cones = new Floats(CONE_FLOATS);
 	#lines = new Floats(LINE_FLOATS);
@@ -318,10 +373,14 @@ export class Scene implements HitSource {
 	#selectedAt = 0;
 	#cleanup: (() => void)[] = [];
 	#times: number[] = [];
+	#placeTimes: number[] = [];
 	#probe: { kind: MeshKind; local: Vec3; resolve: (rows: ProbeRow[]) => void; reject: (e: Error) => void } | null = null;
 	/** Ids per mesh kind in the order they were written this frame (for the probe). */
 	#order = new globalThis.Map<MeshKind, { id: string; lng: number; lat: number; z: number }[]>();
-	#stats: SceneStats = { frames: 0, drawCalls: 0, instances: 0, lastFrameMs: 0, p95Ms: 0, groundQueries: 0 };
+	#stats: SceneStats = { frames: 0, drawCalls: 0, instances: 0, lastFrameMs: 0, p95Ms: 0, placeMs: 0, placeP95Ms: 0, groundQueries: 0, dropped: 0, droppedByGroup: {}, staticSegments: 0, lodInstances: 0 };
+	#m64 = new Float64Array(16);
+	#m32 = new Float32Array(16);
+	#tmp: Vec3 = [0, 0, 0];
 	#layer = sceneLayer({
 		onAdd: (gl) => this.#setup(gl),
 		onRemove: () => this.#teardown(),
@@ -332,7 +391,6 @@ export class Scene implements HitSource {
 	constructor(deps: SceneDeps) {
 		this.#deps = deps;
 		this.#labels = new SpriteAtlas(Math.min(globalThis.devicePixelRatio || 1, 2), 512, 256);
-		for (const k of Object.keys(this.#meshes) as MeshKind[]) this.#data.set(k, new InstanceData());
 		this.textures.onReady = () => this.#repaint();
 	}
 
@@ -395,6 +453,7 @@ export class Scene implements HitSource {
 					const k = selectionKey(h?.selection);
 					if (k !== this.#hoverKey) {
 						this.#hoverKey = k;
+						for (const g of this.#groups.values()) g.static?.setHover(k);
 						this.#repaint();
 					}
 				})
@@ -426,6 +485,7 @@ export class Scene implements HitSource {
 		}
 		for (const key of this.#groups.keys()) this.#deps.loop.want(`scene:${key}`, null);
 		this.#deps.loop.want('scene:ease', null);
+		for (const key of this.#groups.keys()) this.#deps.loop.want(`scene:static:${key}`, null);
 		this.#groups.clear();
 		this.textures.destroy();
 		this.#map = null;
@@ -435,7 +495,7 @@ export class Scene implements HitSource {
 
 	#group(name: string): Group {
 		let g = this.#groups.get(name);
-		if (!g) this.#groups.set(name, (g = { instances: [], cones: [], lines: [], photos: [], opts: {}, update: null, visible: true }));
+		if (!g) this.#groups.set(name, (g = { instances: [], cones: [], lines: [], photos: [], opts: {}, update: null, visible: true, static: null, staticVisible: true }));
 		return g;
 	}
 
@@ -462,6 +522,38 @@ export class Scene implements HitSource {
 		this.#repaint();
 	}
 
+	/**
+	 * Things that never move (fences, walls): built into one buffer here and drawn in one call, each
+	 * segment `{ id, from, to, height, thickness, look: 'solid' | 'open', color, pick }` (see StaticSegment).
+	 * Heights are worked out again when DEM tiles arrive, picking runs only on pointer events. Replaces
+	 * the group's earlier static batch.
+	 */
+	setStatic(group: string, segments: StaticSegment[]): void {
+		const g = this.#group(group);
+		if (g.static) this.#gpu?.statics.forget(g.static);
+		g.static = new StaticData(segments);
+		g.static.setHover(this.#hoverKey);
+		this.#repaint();
+	}
+
+	/** Show or hide a group's static batch (the group's instances stay as they are). */
+	showStatic(group: string, on: boolean): void {
+		const g = this.#group(group);
+		if (g.staticVisible === on) return;
+		g.staticVisible = on;
+		this.#repaint();
+	}
+
+	/** Drop a group's static batch and free its buffer. */
+	clearStatic(group: string): void {
+		const g = this.#groups.get(group);
+		if (!g?.static) return;
+		this.#gpu?.statics.forget(g.static);
+		g.static = null;
+		this.#deps.loop.want(`scene:static:${group}`, null);
+		this.#repaint();
+	}
+
 	/** Run `fn` once per rendered frame for this group (null stops it). */
 	update(group: string, fn: SceneUpdate | null): void {
 		this.#group(group).update = fn;
@@ -480,7 +572,10 @@ export class Scene implements HitSource {
 	}
 
 	remove(group: string): void {
+		const st = this.#groups.get(group)?.static;
+		if (st) this.#gpu?.statics.forget(st);
 		this.#groups.delete(group);
+		this.#deps.loop.want(`scene:static:${group}`, null);
 		this.#deps.loop.want(`scene:${group}`, null);
 		this.#repaint();
 	}
@@ -490,12 +585,21 @@ export class Scene implements HitSource {
 	}
 
 	stats(): SceneStats {
-		return { ...this.#stats };
+		return { ...this.#stats, droppedByGroup: { ...this.#stats.droppedByGroup } };
 	}
 
-	/** The picker's hit test (HitSource). */
+	/** The picker's hit test (HitSource): the instances placed last frame, then the static segments, projected only now. */
 	hits(x: number, y: number, minRadius: number): Hit[] {
-		return this.#pick.hits(x, y, minRadius);
+		const out = this.#pick.hits(x, y, minRadius);
+		const f = this.#frame;
+		if (!f) return out;
+		const tmp = this.#tmp;
+		const project = (mx: number, my: number, z: number, o: { x: number; y: number; w: number }) => {
+			offset(f, mx, my, z, tmp);
+			return projectLocal(f, tmp[0], tmp[1], tmp[2], o);
+		};
+		for (const g of this.#groups.values()) if (g.visible && g.staticVisible && g.static) out.push(...g.static.hits(project, x, y, minRadius, g.opts.priority));
+		return out;
 	}
 
 	/**
@@ -522,6 +626,50 @@ export class Scene implements HitSource {
 
 	#repaint() {
 		this.#map?.triggerRepaint();
+	}
+
+	/** The instance data of a mesh kind (or its low-detail key), made on first use. */
+	#dataOf(key: MeshKind): InstanceData {
+		let d = this.#data.get(key);
+		if (!d) this.#data.set(key, (d = new InstanceData()));
+		return d;
+	}
+
+	/** A kind was registered or removed: take the new meshes and upload them. */
+	#syncMeshes(gpu: Gpu) {
+		this.#meshVersion = meshVersion();
+		this.#meshes = allMeshes();
+		this.#lods = lodMeshes();
+		gpu.meshes.sync(gpuMeshes());
+	}
+
+	#phone(): boolean {
+		const f = this.#deps.phone;
+		if (f) return f();
+		if (typeof matchMedia === 'undefined') return false;
+		return (this.#phoneQuery ??= matchMedia(PHONE_QUERY)).matches;
+	}
+
+	/**
+	 * Work out a static batch's heights again when the terrain data changed (DEM tiles arrived), a slice of its segments
+	 * per frame so no frame pays for all of them, or its exaggeration did.
+	 */
+	#groundStatic(name: string, d: StaticData, map: Map, terrain: boolean, exag: number, now: number) {
+		const want = terrain ? exag : 0;
+		const key = `scene:static:${name}`;
+		if (d.groundedEpoch === this.#dataEpoch) {
+			if (d.exag !== want) d.rebuild(want);
+			return;
+		}
+		const t0 = performance.now();
+		const done = d.step(
+			(lng, lat) => (want > 0 ? (map.queryTerrainElevation([lng, lat]) ?? 0) / want : 0),
+			want,
+			this.#dataEpoch,
+			now,
+			() => performance.now() - t0 > STATIC_SLICE_MS
+		);
+		this.#deps.loop.want(key, done ? null : 30);
 	}
 
 	#fail(e: unknown) {
@@ -574,6 +722,7 @@ export class Scene implements HitSource {
 			if (!this.#gpu) return;
 		}
 		const gpu = this.#gpu;
+		if (meshVersion() !== this.#meshVersion) this.#syncMeshes(gpu);
 		const t0 = performance.now();
 		const deps = this.#deps;
 		const wall = Date.now();
@@ -603,6 +752,13 @@ export class Scene implements HitSource {
 		this.#pick.begin();
 		for (const d of this.#data.values()) d.reset();
 		for (const o of this.#order.values()) o.length = 0;
+		const phone = this.#phone();
+		const dropped = this.#stats.droppedByGroup;
+		for (const k of Object.keys(dropped)) delete dropped[k];
+		let droppedTotal = 0;
+		let staticSegments = 0;
+		let lodTotal = 0;
+		const statics: StaticData[] = [];
 		this.#shadows.reset();
 		this.#cones.reset();
 		this.#lines.reset();
@@ -614,9 +770,11 @@ export class Scene implements HitSource {
 		/** True ground under a point (eased), and the drawn base height for a true height (or the ground). */
 		const epoch = this.#epoch;
 		const data = this.#dataEpoch;
+		let lazy = false;
+		const query = (lng: number, lat: number) => map.queryTerrainElevation([lng, lat]) ?? 0;
 		const groundAt = (id: string, lng: number, lat: number, groundAlt: number | undefined, fallback: number) => {
 			if (!terrain) return groundAlt ?? fallback;
-			return this.#ground.sample(id, lng, lat, () => map.queryTerrainElevation([lng, lat]) ?? 0, exag, now, still, epoch, data);
+			return this.#ground.sample(id, lng, lat, query, exag, now, still, epoch, data, lazy);
 		};
 		const zAt = (id: string, lng: number, lat: number, alt: number | undefined, groundAlt: number | undefined) => {
 			const g = groundAt(id, lng, lat, groundAlt, alt ?? 0);
@@ -630,9 +788,18 @@ export class Scene implements HitSource {
 		const over: ScenePhoto[] = [];
 		this.#lastMain = args.defaultProjectionData.mainMatrix;
 
-		for (const [, g] of this.#groups) {
+		for (const [name, g] of this.#groups) {
 			if (!g.visible) continue;
-			for (const inst of g.instances) {
+			const list = this.#caps.limit(g.instances, g.opts, centre.lng, centre.lat, phone);
+			if (list !== g.instances && g.instances.length > list.length) {
+				dropped[name] = g.instances.length - list.length;
+				droppedTotal += dropped[name];
+			}
+			// A big group reads the ground under a share of its still instances each frame (ground.ts, `lazy`).
+			const share = g.opts.scenery && list.length > STALE_READS ? Math.ceil(list.length / STALE_READS) : 1;
+			for (let li = 0; li < list.length; li++) {
+				const inst = list[li];
+				lazy = share > 1 && (li + this.#stats.frames) % share !== 0;
 				const kind = inst.mesh ?? 'bus';
 				const mesh = this.#meshes[kind];
 				if (!mesh) continue;
@@ -648,7 +815,8 @@ export class Scene implements HitSource {
 				// Off screen (judged on the ground last read under it): neither drawn, picked nor queried for its ground.
 				// That reading counts only from the current terrain data: one taken before its DEM tile arrived
 				// (0) could place it off screen for good, since a culled model isn't read again.
-				const prev = terrain ? this.#ground.peek(inst.id, data) : undefined;
+				// (A lazy one is read again within a few frames, so a height from older terrain data can't strand it off screen.)
+				const prev = terrain ? this.#ground.peek(inst.id, lazy ? -1 : data) : undefined;
 				if (prev !== undefined || !terrain) {
 					const approx = terrain ? (inst.alt === undefined ? exag * prev! : renderedZ(inst.alt, prev!, exag)) : zAt(inst.id, inst.lng, inst.lat, inst.alt, inst.groundAlt);
 					offset(f, mx, my, approx + lift, local);
@@ -677,7 +845,11 @@ export class Scene implements HitSource {
 					s *= grow;
 					rPx *= grow;
 				}
-				const d = this.#data.get(kind)!;
+				// Small on screen: the kind's low-detail mesh, if it has one.
+				const lod = visible ? this.#lods[kind] : undefined;
+				const drawKind = lod && 2 * rPx < lod.belowPx ? lodKey(kind) : kind;
+				if (drawKind !== kind) lodTotal++;
+				const d = this.#dataOf(drawKind);
 				const o = d.push();
 				const a = d.f32;
 				a[o] = local[0];
@@ -697,9 +869,9 @@ export class Scene implements HitSource {
 				const u = d.u32;
 				for (let k = 0; k < 4; k++) u[o + 16 + k] = packColor(inst.slots?.[k]);
 				a[o + 20] = hover ? 1 : 0;
-				let order = this.#order.get(kind);
-				if (!order) this.#order.set(kind, (order = []));
-				order.push({ id: inst.id, lng: inst.lng, lat: inst.lat, z });
+				let order = this.#order.get(drawKind);
+				if (!order) this.#order.set(drawKind, (order = []));
+				if (this.#probe) order.push({ id: inst.id, lng: inst.lng, lat: inst.lat, z });
 				total++;
 
 				if (inst.shadow || selected) {
@@ -724,7 +896,7 @@ export class Scene implements HitSource {
 					}
 					if (selected) {
 						// The ground ring: wide enough to circle the footprint, with one pulse.
-						const ring = this.#data.get('ring')!;
+						const ring = this.#dataOf('ring');
 						const ro = ring.push();
 						const rr = Math.max(Math.hypot(halfLen, halfWid) * 1.15, 1.5 * c) * (1 + 0.25 * pulse);
 						const ra = ring.f32;
@@ -738,25 +910,46 @@ export class Scene implements HitSource {
 					}
 				}
 				if (inst.pick && visible) {
+					const slot = this.#pick.slot();
 					let hitPx = rPx;
-					let seg: [number, number, number, number] | undefined;
 					if (inst.pickRadius !== undefined) {
 						// A vertical capsule from trunk to top, as wide as the crown (on screen at the centre's depth).
 						const rM = inst.pickRadius * s;
 						hitPx = (rM * f.pxPerMetreW) / pt.w;
-						const [z0, z1] = pickSpan(mesh.min[2] * sv[2] * s, mesh.max[2] * sv[2] * s, rM);
+						// pickSpan(), inline: the span's ends, one radius in from the base and the top.
+						const zLo = mesh.min[2] * sv[2] * s;
+						const zHi = mesh.max[2] * sv[2] * s;
+						const zMid = (zLo + zHi) / 2;
+						const z0 = Math.min(zLo + rM, zMid);
+						const z1 = Math.max(zHi - rM, zMid);
 						const ux = axes[2][0] * c;
 						const uy = axes[2][1] * c;
 						const uz = axes[2][2];
-						if (projectLocal(f, local[0] + ux * z0, local[1] + uy * z0, local[2] + uz * z0, end0) && projectLocal(f, local[0] + ux * z1, local[1] + uy * z1, local[2] + uz * z1, end1))
-							seg = [end0.x, end0.y, end1.x, end1.y];
+						if (projectLocal(f, local[0] + ux * z0, local[1] + uy * z0, local[2] + uz * z0, end0) && projectLocal(f, local[0] + ux * z1, local[1] + uy * z1, local[2] + uz * z1, end1)) {
+							slot.own[0] = end0.x;
+							slot.own[1] = end0.y;
+							slot.own[2] = end1.x;
+							slot.own[3] = end1.y;
+							slot.seg = slot.own;
+						}
 					}
-					this.#pick.add({ x: pt.x, y: pt.y, r: Math.max(hitPx, inst.radius ?? 0), w: pt.w, seg, pick: inst.pick, priority: priorityOf(inst.pick, g.opts.priority) });
+					slot.x = pt.x;
+					slot.y = pt.y;
+					slot.r = Math.max(hitPx, inst.radius ?? 0);
+					slot.w = pt.w;
+					slot.pick = inst.pick;
+					slot.priority = priorityOf(inst.pick, g.opts.priority);
 				}
 			}
+			lazy = false;
 			for (const cone of g.cones) this.#cone(cone, f, zAt);
 			for (const line of g.lines) this.#line(line, f, zAt);
 			for (const photo of g.photos) (photo.depthTest === false ? over : tested).push(photo);
+			if (g.static && g.staticVisible) {
+				this.#groundStatic(name, g.static, map, terrain, exag, now);
+				statics.push(g.static);
+				staticSegments += g.static.segments.length;
+			}
 		}
 		// Depth-tested photo planes first, then those drawn over everything (look-through).
 		for (const p of tested) this.#writePhoto(p, f, zAt, cosC);
@@ -764,6 +957,7 @@ export class Scene implements HitSource {
 		for (const p of over) this.#writePhoto(p, f, zAt, cosC);
 
 		// Draw: opaque models → blob shadows → cones and lines → photo planes.
+		const placeMs = performance.now() - t0;
 		let calls = 0;
 		const light = this.#light(map);
 		gl.enable(gl.DEPTH_TEST);
@@ -775,6 +969,10 @@ export class Scene implements HitSource {
 		gl.cullFace(gl.BACK);
 		gl.frontFace(gl.CCW);
 		calls += gpu.meshes.draw(this.#data, f.m32, light);
+		for (const st of statics) {
+			st.matrix(args.defaultProjectionData.mainMatrix, this.#m64, this.#m32);
+			calls += gpu.statics.draw(st, this.#m32, light);
+		}
 		// The probe (tests only) stalls until the GPU is done; keep it out of the frame's JS time.
 		let probeMs = 0;
 		if (this.#probe) {
@@ -809,7 +1007,14 @@ export class Scene implements HitSource {
 		this.#stats.instances = total;
 		this.#stats.lastFrameMs = ms;
 		this.#stats.p95Ms = p95(this.#times);
+		this.#placeTimes.push(placeMs);
+		if (this.#placeTimes.length > 120) this.#placeTimes.shift();
+		this.#stats.placeMs = placeMs;
+		this.#stats.placeP95Ms = p95(this.#placeTimes);
 		this.#stats.groundQueries = this.#ground.queries;
+		this.#stats.dropped = droppedTotal;
+		this.#stats.staticSegments = staticSegments;
+		this.#stats.lodInstances = lodTotal;
 		// Keep frames coming while heights ease or the selection pulses.
 		deps.loop.want('scene:ease', this.#ground.tweening ? 60 : null);
 	}
@@ -950,7 +1155,7 @@ export class Scene implements HitSource {
 		this.#probe = null;
 		try {
 			const f = this.#frame!;
-			const d = this.#data.get(req.kind)!;
+			const d = this.#dataOf(req.kind);
 			const clip = gpu.meshes.probe(req.kind, d.n, f.m32, req.local);
 			const ids = this.#order.get(req.kind) ?? [];
 			const rows: ProbeRow[] = [];

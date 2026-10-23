@@ -96,6 +96,35 @@ describe('ground', () => {
 		expect(queries).toBe(2);
 	});
 
+	it('a lazy sample keeps the height of a still object when only the camera moved, and reads again when anything else changed', () => {
+		const g = new GroundTracker();
+		let queries = 0;
+		const q = (v: number) => () => (queries++, v);
+		g.begin();
+		g.sample('a', -116, 43, q(1300), 1.3, 0, false, 1, 1);
+		// The camera moved (a new epoch): lazy keeps 1000 m and reads nothing; the next, not lazy, reads and eases.
+		g.begin();
+		expect(g.sample('a', -116, 43, q(1313), 1.3, 16, false, 2, 1, true)).toBeCloseTo(1000, 9);
+		expect(queries).toBe(1);
+		g.begin();
+		g.sample('a', -116, 43, q(1313), 1.3, 32, false, 2, 1, false);
+		expect(queries).toBe(2);
+		expect(g.tweening).toBe(true);
+		// New terrain data is put off too, for a lazy one (it is read within a few frames) but not for the rest.
+		g.begin();
+		g.sample('a', -116, 43, q(1313), 1.3, 48, false, 3, 2, true);
+		expect(queries).toBe(2);
+		g.begin();
+		g.sample('a', -116, 43, q(1313), 1.3, 64, false, 3, 2, false);
+		expect(queries).toBe(3);
+		// A move or a changed exaggeration is never put off.
+		g.begin();
+		g.sample('a', -116.001, 43, q(1313), 1.3, 80, false, 4, 2, true);
+		g.begin();
+		g.sample('a', -116.001, 43, q(1000), 1, 96, false, 5, 2, true);
+		expect(queries).toBe(5);
+	});
+
 	it('under reduced motion heights jump', () => {
 		const g = new GroundTracker();
 		g.begin();
@@ -197,6 +226,33 @@ describe('picking', () => {
 		expect(hits[0].distance).toBe(0);
 		// Off the near one's crown (and within only the far one's), the far one.
 		expect(p.hits(80, 85, 14).map((h) => h.selection.id)).toEqual(['far']);
+	});
+
+	it('slots are reused from frame to frame, and a reused slot carries nothing of the frame before', () => {
+		const p = new PickIndex();
+		p.begin();
+		const a = p.slot();
+		Object.assign(a, { x: 10, y: 10, r: 5, w: 1, pick: bus, priority: 1 });
+		[a.own[0], a.own[1], a.own[2], a.own[3]] = [10, 0, 10, 20];
+		a.seg = a.own;
+		p.commit();
+		expect(p.size).toBe(1);
+		expect(p.hits(10, 10, 14)).toHaveLength(1);
+		// The next frame fills the other buffer; the committed frame still answers until it commits.
+		p.begin();
+		const b = p.slot();
+		expect(b).not.toBe(a);
+		expect(b.seg).toBeUndefined();
+		Object.assign(b, { x: 200, y: 200, r: 5, w: 1, pick: route, priority: 1 });
+		expect(p.hits(10, 10, 14)).toHaveLength(1);
+		p.commit();
+		expect(p.hits(10, 10, 14)).toHaveLength(0);
+		expect(p.hits(200, 200, 14)[0].selection.id).toBe('7');
+		// Two frames on, the first slot comes back clean.
+		p.begin();
+		const c = p.slot();
+		expect(c).toBe(a);
+		expect(c.seg).toBeUndefined();
 	});
 
 	it('a pick capsule spans the model, its ends one radius in, meeting at mid-height when it’s as wide as tall', () => {

@@ -21,11 +21,16 @@
  */
 export const FLOATS_PER_VERTEX = 10;
 
-export type MeshKind = 'bus' | 'stop' | 'pole' | 'head' | 'pin' | 'ring' | 'tree-broad' | 'tree-cone' | 'tree-column';
+/** The meshes built in. */
+export type BuiltinMeshKind = 'bus' | 'stop' | 'pole' | 'head' | 'pin' | 'ring' | 'tree-broad' | 'tree-cone' | 'tree-column';
+
+/** A built-in kind, or one a plugin added with `registerMeshKind` (no edit to this union). */
+export type MeshKind = BuiltinMeshKind | (string & {});
 
 /**
  * Triangle budgets (§14.8, "Models"); `ring` is the selection ground ring. Trees (docs/19 §19.6): the
  * concept models' 92, 60 and 92, plus 8 to cap the trunk (a closed mesh), under the 128 ceiling.
+ * `registerMeshKind` adds its kind's budget here.
  */
 export const BUDGETS: Record<MeshKind, number> = {
 	bus: 300,
@@ -39,6 +44,9 @@ export const BUDGETS: Record<MeshKind, number> = {
 	'tree-column': 104
 };
 
+/** The most triangles a low-detail mesh may have (plan §3.5, shrubs). */
+export const LOD_BUDGET = 24;
+
 export interface Mesh {
 	kind: MeshKind;
 	vertices: Float32Array;
@@ -49,6 +57,13 @@ export interface Mesh {
 	/** Bounding sphere around the box centre (for picking and screen size). */
 	center: [number, number, number];
 	radius: number;
+}
+
+/** A kind's low-detail mesh (≤ LOD_BUDGET triangles) and the screen size under which it is drawn. */
+export interface Lod {
+	mesh: Mesh;
+	/** Drawn instead of the full mesh while the instance is under this many px across on screen. */
+	belowPx: number;
 }
 
 type V3 = [number, number, number];
@@ -77,7 +92,7 @@ const norm = (a: V3): V3 => {
 	return [a[0] / l, a[1] / l, a[2] / l];
 };
 
-class Builder {
+export class Builder {
 	v: number[] = [];
 	i: number[] = [];
 	#n = 0;
@@ -543,11 +558,84 @@ export const MESHES: Record<MeshKind, () => Mesh> = {
 	'tree-column': treeColumnMesh
 };
 
-/** Every mesh, once (they're pure, so the result can be shared). */
+const BUILTIN = new Set(Object.keys(MESHES));
+const lods = new Map<MeshKind, Lod>();
 let built: Record<MeshKind, Mesh> | null = null;
+let version = 0;
+
+/** The key a kind's low-detail instances are drawn under (its own instanced call). */
+export const lodKey = (kind: MeshKind): MeshKind => `${kind}:lod`;
+
+/**
+ * Add a mesh kind (a plugin's fence post, a shrub) without editing the union: its builder, its triangle
+ * budget and, optionally, a low-detail mesh with the screen size in px under which it is used. Throws
+ * if the mesh is over its budget or the low-detail mesh over LOD_BUDGET; a kind registered again
+ * replaces the earlier one. Scenes already running pick the kind up on their next frame.
+ */
+export function registerMeshKind(kind: MeshKind, build: () => Mesh, budget: number, lod?: { build: () => Mesh; belowPx: number }): void {
+	if (BUILTIN.has(kind)) throw new Error(`mesh kind "${kind}" is built in`);
+	if (!kind || kind.includes(':')) throw new Error(`bad mesh kind name "${kind}"`);
+	const mesh = { ...build(), kind };
+	const tris = triangles(mesh);
+	if (tris > budget) throw new Error(`mesh kind "${kind}" has ${tris} triangles, over its budget of ${budget}`);
+	let low: Lod | undefined;
+	if (lod) {
+		const m = { ...lod.build(), kind: lodKey(kind) };
+		if (triangles(m) > LOD_BUDGET) throw new Error(`the low-detail mesh of "${kind}" has ${triangles(m)} triangles, over ${LOD_BUDGET}`);
+		low = { mesh: m, belowPx: lod.belowPx };
+	}
+	MESHES[kind] = () => mesh;
+	BUDGETS[kind] = budget;
+	if (low) lods.set(kind, low);
+	else lods.delete(kind);
+	// Keep the meshes already built (a batch compares them by identity and would upload them all again).
+	if (built) built = { ...built, [kind]: mesh };
+	version++;
+}
+
+/** Remove a registered kind (tests; a built-in can't be removed). */
+export function unregisterMeshKind(kind: MeshKind): void {
+	if (BUILTIN.has(kind)) throw new Error(`mesh kind "${kind}" is built in`);
+	if (!(kind in MESHES)) return;
+	delete MESHES[kind];
+	delete BUDGETS[kind];
+	lods.delete(kind);
+	if (built) {
+		built = { ...built };
+		delete built[kind];
+	}
+	version++;
+}
+
+/** Bumped whenever a kind is registered or removed (a running scene compares it each frame). */
+export const meshVersion = () => version;
+
+/** Every mesh, once (they're pure, so the result can be shared), registered kinds included. */
 export function allMeshes(): Record<MeshKind, Mesh> {
 	built ??= Object.fromEntries(Object.entries(MESHES).map(([k, f]) => [k, f()])) as Record<MeshKind, Mesh>;
 	return built;
 }
 
+/** The low-detail meshes by kind (only kinds that have one). */
+export function lodMeshes(): Record<string, Lod> {
+	return Object.fromEntries(lods);
+}
+
+/** What the GPU holds: every mesh, and each low-detail mesh under its `lodKey`. */
+export function gpuMeshes(): Record<MeshKind, Mesh> {
+	const out = { ...allMeshes() };
+	for (const [k, l] of lods) out[lodKey(k)] = l.mesh;
+	return out;
+}
+
 export const triangles = (m: Mesh) => m.indices.length / 3;
+
+/**
+ * The unit box of the static batch (docs/19, fences): x and y from −0.5 to 0.5, z from 0 to 1, five
+ * faces (no underside) in the instance's color (tint 1). Not a mesh kind: only StaticBatch draws it.
+ */
+export function unitBoxMesh(): Mesh {
+	const b = new Builder();
+	b.box([-0.5, -0.5, 0], [0.5, 0.5, 1], CREAM, TINT.instance, ['-z']);
+	return b.build('static-box');
+}
