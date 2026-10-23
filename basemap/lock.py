@@ -7,6 +7,8 @@ live in one folder of their own, so the tiles folder (served at /tiles/) holds o
 The folder is $TVT_TILES_LOCK_DIR. Unset, it is data/locks in the project's main checkout (a worktree uses its main
 checkout's, so parallel worktrees on the laptop still queue). On the server the heavy jobs and Compose set it to a
 folder under the work area (deploy/README.md).
+Nothing in deploy/ sets it yet, and a worker run mounts the checkout read-only, so there the variable must name a
+writable folder: ensure() checks that up front and says so.
 
 From a shell (macOS has no flock(1)): `python3 -m basemap.lock manifest.lock -- COMMAND ...` takes the lock, runs
 the command, releases the lock and exits with the command's status.
@@ -45,13 +47,25 @@ def lock_dir():
     return os.path.join(_main_checkout(root), "data", "locks")
 
 
+def ensure():
+    """Make the lock folder and prove it writable now, so a run that would fail at the end fails at the start."""
+    d = lock_dir()
+    try:
+        os.makedirs(d, exist_ok=True)
+        if not os.access(d, os.W_OK):
+            raise PermissionError(13, "not writable", d)
+    except OSError as err:
+        raise OSError(err.errno, f"the lock folder {d} is not usable ({err.strerror}): set {ENV} to a writable "
+                                 f"folder (e.g. one under the work area)") from err
+    return d
+
+
 @contextmanager
 def locked(name):
     """An exclusive lock on the file `name` in the lock folder, held for the block (it waits for another holder)."""
     if not name or os.path.basename(name) != name:
         raise ValueError(f"a lock name is a bare file name, not {name!r}")
-    d = lock_dir()
-    os.makedirs(d, exist_ok=True)
+    d = ensure()
     fd = os.open(os.path.join(d, name), os.O_RDWR | os.O_CREAT, 0o644)
     try:
         fcntl.flock(fd, fcntl.LOCK_EX)

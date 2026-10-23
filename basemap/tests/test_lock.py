@@ -102,6 +102,14 @@ class LockTest(Base):
             self.assertTrue(os.path.isfile(os.path.join(self.locks, "a.lock")))
         self.assertWaits("a.lock", lambda: lock.locked("a.lock").__enter__())
 
+    def test_an_unusable_folder_fails_with_the_variable_named(self):
+        blocker = os.path.join(self.dir, "file")
+        open(blocker, "w").close()
+        with mock.patch.dict(os.environ, {lock.ENV: os.path.join(blocker, "sub")}):
+            with self.assertRaises(OSError) as cm:
+                lock.ensure()
+        self.assertIn(lock.ENV, str(cm.exception))
+
     def test_a_name_is_a_bare_file_name(self):
         for bad in ("", "../x.lock", "a/b.lock"):
             with self.assertRaises(ValueError):
