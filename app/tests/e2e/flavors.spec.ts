@@ -167,6 +167,32 @@ test.describe('flavors', () => {
 		expect(offsite).toEqual([]);
 	});
 
+	test('the crossfade at z16 with every registered base contribution on: frame times are recorded, and the fade ends at Clay', { tag: '@wp4' }, async ({ page, consoleErrors }) => {
+		test.setTimeout(300_000);
+		// Landscape sprint S3b: the contributions the registry knows add layers to the style (the ground, water,
+		// soils, ...), and the 350 ms fade repaints every one of them. If the frames drop above a measured count of
+		// contributions, FLAVOR_FADE_MS gets a sibling in flavors.ts and the manager switches at once above it.
+		// None is registered on main yet, so this records the base case; the packages that add contributions
+		// re-run it and read the numbers in the annotation and in wp4-crossfade.txt.
+		await page.goto('/#map=16/43.615/-116.2023/0/45&layers=none');
+		await mapReady(page);
+		await allLoaded(page);
+		await mapReady(page);
+		expect((await info(page)).flavor).toBe('valley');
+		await startFrameLog(page);
+		await page.keyboard.press('7');
+		await expect.poll(async () => (await info(page)).flavor).toBe('clay');
+		await mapReady(page);
+		const frames = await stopFrameLog(page);
+		frameReport('z16, Map → Clay, every registered contribution on', frames);
+		const fade = frames.filter((t) => t <= 450);
+		expect(fade.length, 'frames drawn during the fade').toBeGreaterThanOrEqual(2);
+		const gaps = fade.map((t, i) => t - (i ? fade[i - 1] : 0));
+		expect(Math.max(0, ...gaps), 'the largest gap in the fade, ms').toBeLessThan(1000);
+		expect(await paint(page, 'earth', 'fill-color')).toBe(GROUND.clay);
+		expect(consoleErrors.filter((e) => !e.startsWith('map error'))).toEqual([]);
+	});
+
 	test('with terrain on, the drape is redrawn through the crossfade and ends at the new flavor without the map moving', { tag: '@wp4' }, async ({ page }) => {
 		test.setTimeout(300_000);
 		// Labels "fewer", so switching hides or shows no label layer.

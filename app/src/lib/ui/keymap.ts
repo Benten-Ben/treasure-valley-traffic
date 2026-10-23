@@ -55,6 +55,9 @@ export function homeFlight(landing?: Landing | null): FlyToOptions {
 	return { ...HOME, duration: 1200, ...(landing ? { offset: landing.offset } : {}) };
 }
 
+/** Key 0 asks the toolbar (desktop) or the tab bar (phone) to open or close the Landscape tray. */
+export const LANDSCAPE_TRAY_EVENT = 'tvt-landscape-tray';
+
 const PAN_PX = 120;
 const ROTATE_DEG = 15;
 const TILT_DEG = 10;
@@ -87,8 +90,13 @@ export function registerDefaultKeys(app: AppCtx, opts: { help: () => void }): ()
 	};
 
 	const list: KeyBinding[] = [
-		{ id: 'all-layers', codes: ['Digit1'], label: '1', description: 'All data layers off; again to restore', group: 'Layers', run: () => app.layers.allOff() }
+		{ id: 'all-layers', codes: ['Digit1'], label: '1', description: 'All data layers off, the Landscape tray\u2019s too; again to restore', group: 'Layers', run: () => app.layers.allOff() }
 	];
+	// The Landscape tray: 0 opens and closes it. Its layers have no digit (owner, Oct 22): 1 (all off) covers
+	// them, and Shift+click on a tray row solos one.
+	if (app.layers.defs.some((d) => d.group === 'landscape')) {
+		list.push({ id: 'landscape-tray', codes: ['Digit0', 'Numpad0'], label: '0', description: 'Landscape tray: Trees, fields, soils, water, trails, fences', group: 'Layers', run: () => dispatchEvent(new Event(LANDSCAPE_TRAY_EVENT)) });
+	}
 	for (const d of app.layers.defs) {
 		if (!d.key) continue;
 		list.push(

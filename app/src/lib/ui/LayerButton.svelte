@@ -27,6 +27,7 @@
 		tabindex = 0,
 		expanded = undefined,
 		controls = undefined,
+		count = undefined,
 		onclick,
 		onkeydown,
 		onfocus,
@@ -44,6 +45,8 @@
 		tabindex?: number;
 		expanded?: boolean;
 		controls?: string;
+		/** A count badge: how many of the layers behind this button are on (the Landscape tray), shown from 1. */
+		count?: number;
 		onclick: () => void;
 		onkeydown?: (e: KeyboardEvent) => void;
 		onfocus?: () => void;
@@ -87,8 +90,10 @@
 		<Icon {icon} size={26} />
 		{#if busy}<span class="ring" aria-hidden="true"></span>{/if}
 		{#if problem}<span class="warn" aria-hidden="true">▲</span>{/if}
+		{#if count}<span class="count num" aria-hidden="true">{count}</span>{/if}
 	</span>
 	<span class="label">{label}</span>
+	{#if count}<span class="sr-only">: {count} on</span>{/if}
 </button>
 
 <style>
@@ -179,6 +184,30 @@
 		color: var(--panel);
 		font-size: 10px;
 		line-height: 1;
+	}
+	.sr-only {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		overflow: hidden;
+		clip: rect(0 0 0 0);
+		white-space: nowrap;
+	}
+	.count {
+		position: absolute;
+		top: -4px;
+		left: -4px;
+		display: grid;
+		place-items: center;
+		box-sizing: border-box;
+		min-width: 20px;
+		height: 20px;
+		padding: 0 4px;
+		border: 2px solid var(--panel);
+		border-radius: 10px;
+		background: var(--accent);
+		color: var(--ink);
+		font: 700 11px/1 var(--font-body);
 	}
 	.label {
 		padding: 1px 6px;
