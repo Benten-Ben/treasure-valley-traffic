@@ -125,15 +125,17 @@
 </header>
 
 <style>
+	/* Two tracks: the left (nameplate and stat chips) takes what the right side leaves, so the chips' row
+	   (and its "+N" chip) can never run under the clock, the time pill, the status chip or Help. */
 	.topbar {
 		position: absolute;
 		top: 12px;
 		left: 16px;
 		right: 16px;
 		z-index: 40;
-		display: flex;
-		justify-content: space-between;
-		align-items: flex-start;
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) auto;
+		align-items: start;
 		gap: 12px;
 		pointer-events: none;
 	}
