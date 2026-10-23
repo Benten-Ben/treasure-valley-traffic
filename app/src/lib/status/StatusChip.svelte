@@ -17,25 +17,27 @@
 
 	// The answer this chip has fetched itself; until then, the one the boot fetched.
 	let polled = $state<DataMeta | null>(null);
-	let failed = $state(false);
+	// Consecutive failed polls. One miss (a server restart) keeps the last good answer;
+	// the chip says "unknown" only after two in a row.
+	let failures = $state(0);
+	// When the last poll started (ms), so a focus during an outage still honours the gap.
 	let lastAt: number | null = null;
 
-	const chip = $derived(statusChip(failed ? null : (polled ?? app.meta)));
+	const chip = $derived(statusChip(failures >= 2 ? null : (polled ?? app.meta)));
 
 	const poller = new Poller(
 		async (signal) => {
+			lastAt = Date.now();
 			try {
 				const r = await fetch('/api/meta', { signal, cache: 'no-store' });
 				if (!r.ok) throw new Error(`/api/meta ${r.status}`);
 				polled = (await r.json()) as DataMeta;
-				failed = false;
+				failures = 0;
 			} catch (e) {
 				if (signal.aborted) return;
-				polled = null;
-				failed = true;
+				failures += 1;
 				throw e;
 			}
-			lastAt = Date.now();
 		},
 		{ interval: POLL_MS, immediate: false }
 	);
@@ -96,5 +98,13 @@
 	.shape {
 		font-size: 1.05em;
 		line-height: 1;
+	}
+	.sr-only {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		overflow: hidden;
+		clip: rect(0 0 0 0);
+		white-space: nowrap;
 	}
 </style>
