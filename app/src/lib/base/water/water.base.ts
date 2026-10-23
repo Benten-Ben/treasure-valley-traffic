@@ -17,6 +17,11 @@ import { DASH, DASHED_MAX_PX, FILL_OPACITY, lineWidth, NHD_FINER, PIPED_FROM_ZOO
  *   federal map alone (`nhd_only`) are finer and lighter with their own dash; piped water is dotted. **Never a
  *   casing:** water sits under the streets, so a casing would only dim their shades.
  * - **Cards.** `cardsWhen: 'water'`: the Water layer makes these layers clickable while it's on.
+ * - **Known limit (box edge).** The bake is clipped to the water plugin's box (plugins/water/ingest/build.py, `BOX`),
+ *   but the map can pan 0.15 degrees past the manifest's bounds, and Protomaps' water group is hidden everywhere once
+ *   this is built. In that padded ring outside the box the water draws as dry land. Hiding Protomaps' water only
+ *   inside the box needs a clipped suppression in the map kit, or a wider box in the bake (a data change): the owner's
+ *   call, recorded on the pull request.
  * - Italic names and the flow marks are symbols, so they belong to the Water layer (in `labels`), never here
  *   below `anchor:routes`.
  */

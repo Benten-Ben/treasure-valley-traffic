@@ -28,6 +28,7 @@ export const GAUGE_LAYER = 'water-gauges';
 export const STRUCTURE_LAYER = 'water-structures';
 export const STRUCTURE_MID_LAYER = 'water-structures-mid';
 export const STRUCTURE_FINE_LAYER = 'water-structures-fine';
+export const STRUCTURE_SPRING_LAYER = 'water-structures-spring';
 export const NOTICE_LAYER = 'water-notices';
 export const LABEL_MAIN_LAYER = 'water-labels-main';
 export const LABEL_FINE_LAYER = 'water-labels-fine';
@@ -36,7 +37,7 @@ export const LABEL_BODY_LAYER = 'water-labels-bodies';
 /** The layers that draw from the baked file: they exist only once the water network is baked. */
 export const BAKED_LAYERS = [SELECTED_REACH_LAYER, SELECTED_BODY_LAYER, LABEL_MAIN_LAYER, LABEL_FINE_LAYER, LABEL_BODY_LAYER] as const;
 /** The layers of the layer's own points (always there once it is mounted). */
-export const POINT_LAYERS = [STRUCTURE_LAYER, STRUCTURE_MID_LAYER, STRUCTURE_FINE_LAYER, GAUGE_LAYER, NOTICE_LAYER] as const;
+export const POINT_LAYERS = [STRUCTURE_LAYER, STRUCTURE_MID_LAYER, STRUCTURE_FINE_LAYER, STRUCTURE_SPRING_LAYER, GAUGE_LAYER, NOTICE_LAYER] as const;
 /** Every pickable point layer. */
 export const PICKABLE_POINT_LAYERS = [...POINT_LAYERS] as const;
 /** The basemap water-label group's owner string, for `suppressGroups`. */
@@ -216,13 +217,16 @@ export function pointLayers(): SlottedLayer[] {
 	};
 	const paint = { 'text-color': INK, 'text-halo-color': CREAM, 'text-halo-width': 1.5 };
 	return [
-		// A structure appears from its own first zoom (dams and big gates early, small gates late): three layers
-		// by that zoom, since a per-feature zoom filter isn't evaluated by MapLibre at fractional zooms.
+		// A structure appears from its own first zoom (the plugin's rules: named river dams z11, other structures
+		// z14, springs z15): one layer per bucket of that zoom, since a per-feature zoom filter isn't evaluated by
+		// MapLibre at fractional zooms. The first bucket holds every minzoom up to 11 (so a gate given an earlier
+		// zoom still shows from z11), the last everything from 15.
 		...(
 			[
-				[STRUCTURE_LAYER, 9, ['<=', ['get', 'minzoom'], 11], 14],
+				[STRUCTURE_LAYER, 11, ['<=', ['get', 'minzoom'], 11], 14],
 				[STRUCTURE_MID_LAYER, 12, ['all', ['>=', ['get', 'minzoom'], 12], ['<=', ['get', 'minzoom'], 13]], 14],
-				[STRUCTURE_FINE_LAYER, 14, ['>=', ['get', 'minzoom'], 14], 14]
+				[STRUCTURE_FINE_LAYER, 14, ['all', ['>=', ['get', 'minzoom'], 14], ['<=', ['get', 'minzoom'], 14]], 14],
+				[STRUCTURE_SPRING_LAYER, 15, ['>=', ['get', 'minzoom'], 15], 15]
 			] as const
 		).map(
 			([id, minzoom, bucket, labelZoom]): SlottedLayer => ({
@@ -236,7 +240,7 @@ export function pointLayers(): SlottedLayer[] {
 					layout: {
 						visibility: 'none',
 						'icon-image': IMAGE.structure,
-						'icon-size': ['interpolate', ['linear'], ['zoom'], 9, 0.7, 15, 1],
+						'icon-size': ['interpolate', ['linear'], ['zoom'], 11, 0.7, 15, 1],
 						'icon-allow-overlap': true,
 						...label,
 						'text-field': ['step', ['zoom'], '', labelZoom, ['get', 'label']]

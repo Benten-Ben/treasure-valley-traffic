@@ -122,11 +122,13 @@ describe.skipIf(!URL)('the water APIs (database)', () => {
 				expect(reach.credit).toEqual(expect.arrayContaining(['© OpenStreetMap contributors', 'USGS National Hydrography Dataset']));
 				expect(reach.credit.some((c) => c.includes('HydroShare'))).toBe(true);
 				expect(reach.credit.some((c) => c.includes('Idaho Department of Water Resources'))).toBe(true);
+				expect(reach.credit.some((c) => c.includes('Geological Survey'))).toBe(false); // its gauge's record names no USGS site
 				// A reach with no canal: no service areas anywhere, and the gauge on the river itself.
 				const river = (await reachDetail(db, String(B + 1)))!;
 				expect(river.canal).toBeNull();
 				expect(river.gauge).toMatchObject({ lid: 'XTEST2', flood: { category: 'minor', peak: 'moderate' } });
 				expect(river.credit.some((c) => c.includes('Idaho Department of Water Resources'))).toBe(false);
+				expect(river.credit.some((c) => c.includes('courtesy of the U.S. Geological Survey'))).toBe(true); // the gauge's own credit, as on its card
 				const piped = (await reachDetail(db, String(B + 3)))!;
 				expect(piped).toMatchObject({ piped: true, flow: 'intermittent', geometry_from: 'nhd', name: null, canal: null, evidence: [] });
 				expect(await reachDetail(db, String(B + 99))).toBeNull();

@@ -23,7 +23,8 @@ import {
 	SELECTED_REACH_LAYER,
 	STRUCTURE_FINE_LAYER,
 	STRUCTURE_LAYER,
-	STRUCTURE_MID_LAYER
+	STRUCTURE_MID_LAYER,
+	STRUCTURE_SPRING_LAYER
 } from './layers.js';
 import { MARKERS, markerImage } from './markers.js';
 
@@ -127,7 +128,7 @@ describe('the Water layer’s style layers', () => {
 		for (const s of [...bakedLayers(), ...pointLayers()]) expect((s.layer as { layout?: { visibility?: string } }).layout?.visibility, s.layer.id).toBe('none');
 		for (const s of bakedLayers()) expect((s.layer as { source: string }).source).toBe('landscape');
 		expect(BAKED_LAYERS.slice().sort()).toEqual(bakedLayers().map((s) => s.layer.id).sort());
-		expect(pointLayers().map((s) => s.layer.id)).toEqual([STRUCTURE_LAYER, STRUCTURE_MID_LAYER, STRUCTURE_FINE_LAYER, GAUGE_LAYER, NOTICE_LAYER]);
+		expect(pointLayers().map((s) => s.layer.id)).toEqual([STRUCTURE_LAYER, STRUCTURE_MID_LAYER, STRUCTURE_FINE_LAYER, STRUCTURE_SPRING_LAYER, GAUGE_LAYER, NOTICE_LAYER]);
 	});
 
 	it('follow the Base look where their colours differ', () => {
@@ -145,14 +146,14 @@ describe('the structure layers', () => {
 	it('split by first zoom so each structure shows from its own, with none shown twice or never', () => {
 		const layers = pointLayers().map((s) => s.layer as unknown as { id: string; minzoom?: number; filter: unknown[] });
 		const structure = layers.filter((l) => l.id.startsWith('water-structures'));
-		expect(structure.map((l) => l.minzoom)).toEqual([9, 12, 14]);
+		expect(structure.map((l) => l.minzoom)).toEqual([11, 12, 14, 15]);
 		const bucket = (z: number) =>
 			structure.filter((l) => {
 				const b = (l.filter[2] as unknown[]);
 				const f = (op: unknown[]) => (op[0] === '<=' ? z <= (op[2] as number) : z >= (op[2] as number));
 				return b[0] === 'all' ? (b.slice(1) as unknown[][]).every(f) : f(b as unknown[]);
 			}).length;
-		for (const z of [8, 11, 12, 13, 14, 16]) expect(bucket(z), `minzoom ${z}`).toBe(1);
+		for (const z of [8, 11, 12, 13, 14, 15, 16]) expect(bucket(z), `minzoom ${z}`).toBe(1);
 	});
 });
 

@@ -1,5 +1,6 @@
 import {
 	CREDITS,
+	gaugeCredits,
 	reachCredits,
 	type BodyDetail,
 	type CanalDetail,
@@ -106,7 +107,6 @@ export async function reachDetail(sql: Sql, idRaw: string): Promise<ReachDetail 
 		credit: []
 	};
 	detail.credit = reachCredits(detail);
-	if (gauge && !detail.credit.includes(CREDITS.nwps)) detail.credit.push(CREDITS.nwps);
 	return detail;
 }
 
@@ -128,7 +128,7 @@ export async function bodyDetail(sql: Sql, idRaw: string): Promise<BodyDetail | 
 	const credit: string[] = [];
 	if (b.geometry_from === 'osm') credit.push(CREDITS.osm);
 	credit.push(CREDITS.nhd);
-	if (gauge) credit.push(CREDITS.nwps);
+	if (gauge) credit.push(...gaugeCredits(gauge.usgs));
 	return {
 		id: Number(b.id),
 		kind: b.kind,
@@ -154,8 +154,9 @@ export async function structureDetail(sql: Sql, idRaw: string): Promise<Structur
 	if (!s) return null;
 	const heads = await sql`select id, name from water.canal where head_structure_id = ${id} order by length_m desc, id limit 12`;
 	const gauge = s.gauge_lid ? await gaugeSummary(sql, String(s.gauge_lid)) : null;
-	const credit =
-		s.source === 'nwps_gauges' ? [CREDITS.nwps] : s.source === 'nhd_hr' ? [CREDITS.nhd] : [CREDITS.osm];
+	const credit: string[] = s.source === 'nwps_gauges' ? [] : s.source === 'nhd_hr' ? [CREDITS.nhd] : [CREDITS.osm];
+	// A gauge's reading is credited as its own card credits it (NWPS, and USGS where its record names a site).
+	if (gauge || s.source === 'nwps_gauges') credit.push(...gaugeCredits(gauge?.usgs ?? false));
 	return {
 		id: Number(s.id),
 		kind: s.kind,

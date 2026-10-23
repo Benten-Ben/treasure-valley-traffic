@@ -120,12 +120,16 @@ describe('canals and their service areas', () => {
 	});
 
 	it('credits IDWR only when its service areas are shown, HydroShare only when its names or types are used', () => {
-		const canal = (service_areas: CanalDetail['service_areas'], gauge: boolean) => ({ service_areas, gauge: gauge ? {} : null });
+		const canal = (service_areas: CanalDetail['service_areas'], gauge: boolean) => ({ service_areas, gauge: gauge ? { usgs: false } : null });
 		const base = { geometry_from: 'osm' as const, name_from: 'osm' as const, evidence: [] as Evidence[] };
 		expect(reachCredits({ ...base, canal: null })).toEqual([CREDITS.osm, CREDITS.nhd]);
 		const withAreas = reachCredits({ ...base, name_from: 'hydroshare', canal: canal(areas, true) });
 		expect(withAreas).toEqual([CREDITS.osm, CREDITS.nhd, CREDITS.hydroshare, CREDITS.nwps, CREDITS.idwr]);
 		expect(reachCredits({ ...base, geometry_from: 'nhd', canal: null })).toEqual([CREDITS.nhd]);
+		// A gauge the record ties to a USGS site brings its credit, on the canal's gauge or the reach's own.
+		expect(reachCredits({ ...base, canal: { service_areas: [], gauge: { usgs: true } } })).toContain(`${CREDITS.nwps}; ${CREDITS.usgs}`);
+		expect(reachCredits({ ...base, canal: null, gauge: { usgs: true } })).toContain(`${CREDITS.nwps}; ${CREDITS.usgs}`);
+		expect(reachCredits({ ...base, canal: null, gauge: { usgs: false } })).toContain(CREDITS.nwps);
 		expect(reachCredits({ ...base, evidence: [{ source: 'hydroshare_canals', source_id: 'N1', role: 'name', share: 1, distance_m: 1 }], canal: null })).toContain(CREDITS.hydroshare);
 	});
 });

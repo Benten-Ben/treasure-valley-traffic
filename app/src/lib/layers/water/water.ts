@@ -49,6 +49,8 @@ export interface GaugeSummary {
 	measures: { type: 'reach' | 'body' | 'canal'; id: number; name: string | null; kind: string } | null;
 	reading: GaugeReading | null;
 	flood: GaugeFlood | null;
+	/** Whether NWPS names a USGS site for it (the record's `usgsId`): the credit of every card showing its reading follows. */
+	usgs: boolean;
 }
 
 export interface Evidence {
@@ -133,8 +135,6 @@ export interface StructureDetail {
 export interface GaugeDetail extends GaugeSummary {
 	method: 'name' | 'nearest' | 'none';
 	distance_m: number | null;
-	/** Whether NWPS names a USGS site for it (the record's `usgsId`): the credit follows. */
-	usgs: boolean;
 	credit: string[];
 }
 
@@ -362,13 +362,19 @@ export function serviceAreasWords(areas: readonly ServiceArea[]): string {
 export const SERVICE_AREA_NOTE =
 	"A service area is where an irrigation organization may deliver its water rights. It doesn't say who runs this canal or when water flows.";
 
-/** The credits a reach's card shows. */
-export function reachCredits(d: Pick<ReachDetail, 'geometry_from' | 'name_from' | 'evidence'> & { canal: { service_areas: readonly unknown[]; gauge: unknown } | null }): string[] {
+/** The credits a reach's card shows. The gauge's own credit applies (USGS only where its record names a site). */
+export function reachCredits(
+	d: Pick<ReachDetail, 'geometry_from' | 'name_from' | 'evidence'> & {
+		canal: { service_areas: readonly unknown[]; gauge: { usgs: boolean } | null } | null;
+		gauge?: { usgs: boolean } | null;
+	}
+): string[] {
 	const out: string[] = [];
 	if (d.geometry_from === 'osm' || d.evidence.some((e) => e.source === 'osm_waterways')) out.push(CREDITS.osm);
 	out.push(CREDITS.nhd);
 	if (d.name_from === 'hydroshare' || d.evidence.some((e) => e.source === 'hydroshare_canals')) out.push(CREDITS.hydroshare);
-	if (d.canal?.gauge) out.push(CREDITS.nwps);
+	const gauge = d.canal?.gauge ?? d.gauge ?? null;
+	if (gauge) out.push(...gaugeCredits(gauge.usgs));
 	if (d.canal?.service_areas.length) out.push(CREDITS.idwr);
 	return out;
 }
