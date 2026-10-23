@@ -1,11 +1,9 @@
-import { SECURITY_CAMERA } from '#lib/ui/icons.js';
 import { prefetch } from '../prefetch.js';
 import type { LayerDef } from '../types.js';
 
 const def: LayerDef = {
 	id: 'cameras',
 	title: 'Cameras',
-	icon: SECURITY_CAMERA,
 	key: '7',
 	order: 30,
 	blurb: 'Traffic cameras, their calibration and view cones',

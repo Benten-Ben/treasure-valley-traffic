@@ -2,7 +2,7 @@ import { AttributionControl, Map, ScaleControl, addProtocol, setWorkerUrl, type 
 // MapLibre looks for its worker next to its own module, which bundling breaks,
 // so Vite builds the worker and MapLibre gets its URL.
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
-import { Protocol } from 'pmtiles';
+import type { Protocol } from 'pmtiles';
 import { dev } from '$app/env';
 import { errorDetail, type MapErrorLike } from './errors.js';
 import { buildStyle, loadManifest, type BasemapManifest } from './style.js';
@@ -17,12 +17,19 @@ let setUp = false;
  *
  * The protocol runs with `metadata: false`: the attribution comes from the
  * manifest, so the metadata section is never fetched (docs/14 §14.8).
+ *
+ * The pmtiles reader (and fflate, its fallback inflater) is its own chunk, about
+ * 7 KB gzip kept out of the initial JavaScript (docs/14 §14.9). Its import starts
+ * here, with MapLibre's workers, so it arrives alongside the manifest and the
+ * style; the first tile request waits for it, never longer.
  */
 export function setupMapLibre(): void {
 	if (setUp) return;
 	setUp = true;
 	setWorkerUrl(workerUrl);
-	addProtocol('pmtiles', new Protocol({ metadata: false }).tile);
+	const protocol: Promise<Protocol> = import('pmtiles').then((m) => new m.Protocol({ metadata: false }));
+	protocol.catch(() => {}); // each tile request below reports its own failure
+	addProtocol('pmtiles', async (params, abort) => (await protocol).tile(params, abort));
 }
 
 /**

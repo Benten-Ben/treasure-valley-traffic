@@ -1,6 +1,5 @@
 import { prefetch } from '../prefetch.js';
 import type { LayerDef } from '../types.js';
-import RoadWeatherIcon from './RoadWeatherIcon.svelte';
 
 /** The station list with each view's newest picture (no-store: the ages change). */
 export const DATA_URL = '/api/roadweather';
@@ -13,7 +12,6 @@ export const DATA_URL = '/api/roadweather';
 const def: LayerDef = {
 	id: 'weather',
 	title: 'Road weather',
-	icon: RoadWeatherIcon,
 	key: '9',
 	order: 40,
 	blurb: 'Road-weather station cameras: a picture per direction, about every 15 minutes',

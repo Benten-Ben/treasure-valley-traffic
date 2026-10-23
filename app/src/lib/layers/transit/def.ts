@@ -1,11 +1,9 @@
-import { BUS } from '#lib/ui/icons.js';
 import { prefetch } from '../prefetch.js';
 import type { LayerDef } from '../types.js';
 
 const def: LayerDef = {
 	id: 'transit',
 	title: 'Transit',
-	icon: BUS,
 	key: '4',
 	order: 20,
 	blurb: 'Bus routes side by side, stops, and buses played back a little behind live',
