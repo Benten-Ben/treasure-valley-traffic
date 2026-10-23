@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { layerIcon } from '#lib/layers/icons.js';
 	import { onDestroy, type Component } from 'svelte';
 	import type { AppCtx } from '#lib/app/context.js';
 	import type { LayerDef } from '#lib/layers/types.js';
@@ -87,7 +88,7 @@
 		<LayerButton
 			bind:element={buttons[i + 1]}
 			label={d.title}
-			icon={d.icon}
+			icon={layerIcon(d)}
 			pressed={manager.isOn(d.id)}
 			busy={manager.isOn(d.id) && status === 'loading'}
 			problem={status === 'error' || status === 'stale' ? manager.error(d.id) ?? 'Something went wrong' : null}

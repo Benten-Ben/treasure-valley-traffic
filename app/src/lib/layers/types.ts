@@ -12,7 +12,7 @@ import type { IconData } from '#lib/ui/icons.js';
  * export is a `LayerDef`. The registry finds every `def.ts` by itself, so a
  * later package adds a layer (road weather, lanes) by adding its folder, not
  * by editing the registry. The def is small and always loaded (the toolbar
- * needs its icon); `load()` imports the module itself, its own chunk (≤ 30 KB
+ * needs its title; its icon is `icon.ts`, in the chrome's chunk); `load()` imports the module itself, its own chunk (≤ 30 KB
  * brotli), the first time the layer is switched on or prefetched.
  */
 export type LayerId = 'streets' | 'transit' | 'cameras' | 'lanes' | 'weather' | 'trees' | 'soils' | 'crops' | 'water' | 'trails' | 'fences';
@@ -109,8 +109,8 @@ export type Icon = IconData | IconComponent;
 export interface LayerDef {
 	id: LayerId;
 	title: string;
-	/** A Phosphor duotone icon (`#lib/ui/icons.ts`, or a phosphor-svelte deep import). */
-	icon: Icon;
+	/** Optional: the layer's icon is its `icon.ts` (`#lib/layers/icons.ts`), kept out of the always-loaded def. */
+	icon?: Icon;
 	/** Its toggle key, by digit: '2', '4', '7' (ch. 13's numbers). */
 	key?: string;
 	/** Toolbar order, left to right. */

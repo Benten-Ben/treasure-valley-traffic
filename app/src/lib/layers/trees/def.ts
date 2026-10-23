@@ -1,6 +1,5 @@
 import { prefetch } from '../prefetch.js';
 import type { LayerDef } from '../types.js';
-import { TREE } from './icons.js';
 
 /** Where trees are built (small; the legend says where, and the map waits for no tree). */
 export const AREAS_URL = '/api/trees/areas';
@@ -14,7 +13,6 @@ export const AREAS_URL = '/api/trees/areas';
 const def: LayerDef = {
 	id: 'trees',
 	title: 'Trees',
-	icon: TREE,
 	order: 50,
 	group: 'landscape',
 	keepsValley: true,
