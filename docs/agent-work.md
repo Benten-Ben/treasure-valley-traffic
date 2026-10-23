@@ -146,6 +146,23 @@ comments and issue edits show as the App's bot, and they spend the App's own API
   `python3 tools/check_public.py --text <file>`. That runs the repository's mechanical checks plus a private pattern list
   kept outside the repository. Agents tend to quote the exact private value they just removed, so the coordinator also
   reads each PR body before merging.
+- **What agents may quote in issue and PR text** (coordinator, Oct 22). *May quote:* what the repository itself
+  publishes: public docs, code, tests and the work order, by path and line (`docs/15-core-and-plugins.md`,
+  `tools/check_public.py:50`), short excerpts of them, command lines and their output once checked, and the sprint plan
+  only as far as the issue itself already quotes it. *Goes only in a private note* (the private files on the server,
+  or the coordinator's own notes), never in an issue, PR, comment or commit message: anything from the server notes or the
+  private files (addresses, host and user names, hardware, other guests, backup or power arrangements, their
+  contents and paths); the private pattern list and any value it holds; local paths outside the repository;
+  third-party data copies; unsent agency drafts; secrets and tokens; and builder or reviewer notes that quote any of
+  these. Refer to such a thing by role ("the owner's home server", "a VM", "the private files"), and write "a private
+  value was removed" instead of the value. A review finding about a leak says which file and line, never the value.
+- **`tools/board new` runs the check itself.** Before it posts anything, it runs `tools/check_public.py --text` on the
+  title, the body and the labels together (with the private pattern list, looked up from the checkout the script lives in; a linked worktree uses the main checkout's
+  list, and `TVT_PRIVATE_PATTERNS` names another, or `none` to run only the mechanical checks). It refuses with the check's report, exit 2, and calls `gh` not at all; it refuses the same way when it finds no list, or a list with no patterns in it, and `none` was not set.
+  `--dry-run` runs the check too. `new` is the only `tools/board` command that sends free text (the others send issue
+  numbers, labels and status names), and any command added later that does must call the same gate. Everything else
+  that is posted (PR bodies, comments, review text, `gh issue` calls made outside `tools/board`) is still checked
+  by hand before posting. `tools/test_board_gate.py` covers the gate with a fake `gh` that records its calls.
 
 ## Evidence (re-measure as it changes)
 
