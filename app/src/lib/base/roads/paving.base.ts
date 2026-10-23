@@ -33,6 +33,27 @@ const FILL_OPACITY: unknown[] = [
 ];
 const FILL_MATCH_CLAY: unknown[] = ['match', ['get', 'material'], 'concrete', CONCRETE.clay, ASPHALT.clay];
 
+/**
+ * A way's fade-in to its material's opacity: gravel and dirt stay as the unpaved tones over the
+ * ground (the `FILL_OPACITY` the lots use), so a gravel way is not a solid near-white line.
+ */
+const WAY_OPACITY: unknown[] = [
+	'interpolate', ['linear'], ['zoom'],
+	15.5, 0,
+	16, ['match', ['get', 'material'], 'gravel', UNPAVED.gravel.opacity, 'dirt', UNPAVED.dirt.opacity, 1]
+];
+
+/**
+ * A way's width in pixels: the bake's `w` in metres, about 2.7 px per metre at z16, doubling each zoom
+ * (exponential, so the width keeps growing up close: about 43 px per metre at z20).
+ */
+const WAY_WIDTH: unknown[] = [
+	'interpolate', ['exponential', 2], ['zoom'],
+	15.5, 0,
+	16, ['*', ['get', 'w'], 2.7],
+	20, ['*', ['get', 'w'], 2.7 * 16]
+];
+
 const paving: BaseContribution = {
 	id: 'roads.paving',
 	title: 'Paving',
@@ -69,12 +90,11 @@ const paving: BaseContribution = {
 			sourceLayer: 'roads.paving_ways',
 			minzoom: 15.5,
 			valley: {
-				// Width in metres (the bake's `w`) at about 2.7 px per metre at z16, doubling each zoom.
 				'line-color': FILL_MATCH,
-				'line-opacity': ['interpolate', ['linear'], ['zoom'], 15.5, 0, 16, 1],
-				'line-width': ['interpolate', ['linear'], ['zoom'], 15.5, 0, 16, ['*', ['get', 'w'], 2.7]]
+				'line-opacity': WAY_OPACITY,
+				'line-width': WAY_WIDTH
 			},
-			clay: { 'line-color': FILL_MATCH_CLAY, 'line-width': ['interpolate', ['linear'], ['zoom'], 15.5, 0, 16, ['*', ['get', 'w'], 2.7]] },
+			clay: { 'line-color': FILL_MATCH_CLAY, 'line-width': WAY_WIDTH },
 			aerial: 'hide'
 		},
 		{

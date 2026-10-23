@@ -97,7 +97,7 @@ export function wayCard(r: {
 		osm: String(r.osm_id),
 		way_kind: r.kind,
 		surface: r.surface,
-		surface_estimated: r.material_source === 'default',
+		surface_estimated: r.surface == null || r.material_source === 'default',
 		width_m: round(r.width_m ?? r.width_est_m, 1),
 		width_estimated: r.width_m == null || r.width_source === 'default',
 		length_m: round(r.length_m, 1),
@@ -134,7 +134,7 @@ export async function pavingCard(sql: Sql, kind: 'lot' | 'way', id: string): Pro
 		const [r] = await sql`
 			select osm_type, osm_id, name, operator, access, fee, area_m2, capacity, material, material_source
 			from roads.osm_parking
-			where osm_type = ${p.osm_type} and osm_id = ${p.osm_id} and active`;
+			where osm_type = ${p.osm_type} and osm_id = ${p.osm_id} and kind = 'lot' and active`;
 		return r ? lotCard(r as never) : null;
 	}
 	const w = parseWayId(id);

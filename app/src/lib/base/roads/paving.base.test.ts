@@ -71,4 +71,13 @@ describe('the paving base contribution', () => {
 		releaseGroups(map, paving.id);
 		expect(other.maxzoom).toBe(24);
 	});
+
+	it('orders its layers as the plan has them: lots and ways at rank 10, edges 11, stalls 12', () => {
+		const rank = (id: string) => paving.layers.find((l) => l.id === id)?.rank;
+		expect(rank('roads.paving_ways')).toBe(10);
+		expect(rank('roads.paving_edges')).toBe(11);
+		expect(rank('roads.paving_stalls')).toBe(12);
+		expect(rank('roads.paving_ways')!).toBeLessThan(rank('roads.paving_edges')!);
+		expect(rank('roads.paving_edges')!).toBeLessThan(rank('roads.paving_stalls')!);
+	});
 });

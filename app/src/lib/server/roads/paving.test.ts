@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { STALL_M2, lotCard, parseLotId, parseWayId, wayCard } from './paving.js';
+import { STALL_M2, lotCard, parseLotId, parseWayId, pavingCard, wayCard, type Sql } from './paving.js';
 
 describe('the paving card', () => {
 	it('a lot: its area in m2 and acres, a tagged capacity, and no stall estimate when one is tagged', () => {
@@ -45,5 +45,38 @@ describe('the paving card', () => {
 		expect(parseLotId("w1'; drop")).toBeNull();
 		expect(parseWayId('55')).toBe('55');
 		expect(parseWayId('w55')).toBeNull();
+	});
+
+	it('a way with no surface tag and no material source: the surface is marked as estimated', () => {
+		const c = wayCard({
+			osm_id: 12, kind: 'service', surface: null, material_source: null,
+			width_m: 4, width_est_m: 3.4, width_source: 'tag', length_m: 10
+		});
+		expect(c.surface).toBeNull();
+		expect(c.surface_estimated).toBe(true);
+		expect(c.width_estimated).toBe(false);
+	});
+
+	it('before migration 0002 the card API is empty: no query on the paving tables, and null', async () => {
+		const seen: string[] = [];
+		const sql = ((strings: TemplateStringsArray) => {
+			seen.push(strings.join('?'));
+			return Promise.resolve([{ present: false }]);
+		}) as unknown as Sql;
+		expect(await pavingCard(sql, 'lot', 'w123')).toBeNull();
+		expect(await pavingCard(sql, 'way', '55')).toBeNull();
+		expect(seen.length).toBe(2);
+		expect(seen.every((q) => /to_regclass/.test(q))).toBe(true);
+	});
+
+	it('a lot card only reads kind lot, so a mapped stall (kind space) is not a lot', async () => {
+		const seen: string[] = [];
+		const sql = ((strings: TemplateStringsArray) => {
+			seen.push(strings.join('?'));
+			// The to_regclass check says present; the lot query finds no row (a stall is not a lot).
+			return Promise.resolve(/to_regclass/.test(strings.join('?')) ? [{ present: true }] : []);
+		}) as unknown as Sql;
+		expect(await pavingCard(sql, 'lot', 'w123')).toBeNull();
+		expect(seen.some((q) => /kind = 'lot'/.test(q))).toBe(true);
 	});
 });
