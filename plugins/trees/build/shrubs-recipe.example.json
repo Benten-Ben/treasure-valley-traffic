@@ -1,0 +1,218 @@
+{
+  "_about": "Template for the per-box shrub build recipe (plugins/trees/README.md, Rebuilding the shrubs). Copy it to the private files and fill in every <...> value; never commit the filled copy. Each box's utm is its extent in grid metres (EPSG:32611), from basemap/ground/spec.json.",
+  "_flags": "Each key maps to a build_shrubs.py option: dsm, dtm, mask, photo, points, crop, lidar, lidar_date, photo_shift (auto or east,north in metres), skip_rects (--skip-rect, repeatable), out (--out).",
+  "boxes": {
+    "a": {
+      "utm": [
+        566158,
+        4836992,
+        567624,
+        4838452
+      ],
+      "dsm": "<the box's lidar folder>/dsm.tif",
+      "dtm": "<the box's lidar folder>/dtm.tif",
+      "mask": "<the box's building mask, .npy on the DSM grid>",
+      "photo": "<the box's NAIP crop: red, green, blue, near-infrared>",
+      "points": [
+        "<the box's LAS/LAZ tiles, or an EPT's ept.json>"
+      ],
+      "crop": "<farm's crop cover export, crop_cover.tif>",
+      "lidar": "<the lidar's name, as its source states it>",
+      "lidar_date": "<the lidar's acquisition date, YYYY-MM-DD>",
+      "photo_shift": "auto",
+      "skip_rects": [],
+      "out": "<the box's shrub build folder>"
+    },
+    "b": {
+      "utm": [
+        570583,
+        4822376,
+        572053,
+        4823836
+      ],
+      "dsm": "<the box's lidar folder>/dsm.tif",
+      "dtm": "<the box's lidar folder>/dtm.tif",
+      "mask": "<the box's building mask, .npy on the DSM grid>",
+      "photo": "<the box's NAIP crop: red, green, blue, near-infrared>",
+      "points": [
+        "<the box's LAS/LAZ tiles, or an EPT's ept.json>"
+      ],
+      "crop": "<farm's crop cover export, crop_cover.tif>",
+      "lidar": "<the lidar's name, as its source states it>",
+      "lidar_date": "<the lidar's acquisition date, YYYY-MM-DD>",
+      "photo_shift": "auto",
+      "skip_rects": [],
+      "out": "<the box's shrub build folder>"
+    },
+    "c": {
+      "utm": [
+        563401,
+        4830190,
+        564868,
+        4831649
+      ],
+      "dsm": "<the box's lidar folder>/dsm.tif",
+      "dtm": "<the box's lidar folder>/dtm.tif",
+      "mask": "<the box's building mask, .npy on the DSM grid>",
+      "photo": "<the box's NAIP crop: red, green, blue, near-infrared>",
+      "points": [
+        "<the box's LAS/LAZ tiles, or an EPT's ept.json>"
+      ],
+      "crop": "<farm's crop cover export, crop_cover.tif>",
+      "lidar": "<the lidar's name, as its source states it>",
+      "lidar_date": "<the lidar's acquisition date, YYYY-MM-DD>",
+      "photo_shift": "auto",
+      "skip_rects": [],
+      "out": "<the box's shrub build folder>"
+    },
+    "d": {
+      "utm": [
+        550317,
+        4821527,
+        551783,
+        4822983
+      ],
+      "dsm": "<the box's lidar folder>/dsm.tif",
+      "dtm": "<the box's lidar folder>/dtm.tif",
+      "mask": "<the box's building mask, .npy on the DSM grid>",
+      "photo": "<the box's NAIP crop: red, green, blue, near-infrared>",
+      "points": [
+        "<the box's LAS/LAZ tiles, or an EPT's ept.json>"
+      ],
+      "crop": "<farm's crop cover export, crop_cover.tif>",
+      "lidar": "<the lidar's name, as its source states it>",
+      "lidar_date": "<the lidar's acquisition date, YYYY-MM-DD>",
+      "photo_shift": "auto",
+      "skip_rects": [],
+      "out": "<the box's shrub build folder>"
+    },
+    "e": {
+      "utm": [
+        534107,
+        4816761,
+        535570,
+        4818213
+      ],
+      "dsm": "<the box's lidar folder>/dsm.tif",
+      "dtm": "<the box's lidar folder>/dtm.tif",
+      "mask": "<the box's building mask, .npy on the DSM grid>",
+      "photo": "<the box's NAIP crop: red, green, blue, near-infrared>",
+      "points": [
+        "<the box's LAS/LAZ tiles, or an EPT's ept.json>"
+      ],
+      "crop": "<farm's crop cover export, crop_cover.tif>",
+      "lidar": "<the lidar's name, as its source states it>",
+      "lidar_date": "<the lidar's acquisition date, YYYY-MM-DD>",
+      "photo_shift": "auto",
+      "skip_rects": [],
+      "out": "<the box's shrub build folder>"
+    },
+    "f": {
+      "utm": [
+        548605,
+        4801301,
+        550075,
+        4802756
+      ],
+      "dsm": "<the box's lidar folder>/dsm.tif",
+      "dtm": "<the box's lidar folder>/dtm.tif",
+      "mask": "<the box's building mask, .npy on the DSM grid>",
+      "photo": "<the box's NAIP crop: red, green, blue, near-infrared>",
+      "points": [
+        "<the box's LAS/LAZ tiles, or an EPT's ept.json>"
+      ],
+      "crop": "<farm's crop cover export, crop_cover.tif>",
+      "lidar": "<the lidar's name, as its source states it>",
+      "lidar_date": "<the lidar's acquisition date, YYYY-MM-DD>",
+      "photo_shift": "auto",
+      "skip_rects": [],
+      "out": "<the box's shrub build folder>"
+    },
+    "downtown": {
+      "utm": [
+        564000,
+        4829000,
+        566000,
+        4831000
+      ],
+      "dsm": "<the box's lidar folder>/dsm.tif",
+      "dtm": "<the box's lidar folder>/dtm.tif",
+      "mask": "<the box's building mask, .npy on the DSM grid>",
+      "photo": "<the box's NAIP crop: red, green, blue, near-infrared>",
+      "points": [
+        "<the box's LAS/LAZ tiles, or an EPT's ept.json>"
+      ],
+      "crop": "<farm's crop cover export, crop_cover.tif>",
+      "lidar": "<the lidar's name, as its source states it>",
+      "lidar_date": "<the lidar's acquisition date, YYYY-MM-DD>",
+      "photo_shift": "auto",
+      "skip_rects": [
+        "<x0,y0,x1,y1 in grid metres: the part of this box that belongs to the North End (box c)>"
+      ],
+      "out": "<the box's shrub build folder>"
+    },
+    "h": {
+      "utm": [
+        571467,
+        4845378,
+        572933,
+        4846838
+      ],
+      "dsm": "<the box's lidar folder>/dsm.tif",
+      "dtm": "<the box's lidar folder>/dtm.tif",
+      "mask": "<the box's building mask, .npy on the DSM grid>",
+      "photo": "<the box's NAIP crop: red, green, blue, near-infrared>",
+      "points": [
+        "<the box's LAS/LAZ tiles, or an EPT's ept.json>"
+      ],
+      "crop": "<farm's crop cover export, crop_cover.tif>",
+      "lidar": "<the lidar's name, as its source states it>",
+      "lidar_date": "<the lidar's acquisition date, YYYY-MM-DD>",
+      "photo_shift": "auto",
+      "skip_rects": [],
+      "out": "<the box's shrub build folder>"
+    },
+    "i": {
+      "utm": [
+        526046,
+        4790071,
+        527514,
+        4791521
+      ],
+      "dsm": "<the box's lidar folder>/dsm.tif",
+      "dtm": "<the box's lidar folder>/dtm.tif",
+      "mask": "<the box's building mask, .npy on the DSM grid>",
+      "photo": "<the box's NAIP crop: red, green, blue, near-infrared>",
+      "points": [
+        "<the box's LAS/LAZ tiles, or an EPT's ept.json>"
+      ],
+      "crop": "<farm's crop cover export, crop_cover.tif>",
+      "lidar": "<the lidar's name, as its source states it>",
+      "lidar_date": "<the lidar's acquisition date, YYYY-MM-DD>",
+      "photo_shift": "auto",
+      "skip_rects": [],
+      "out": "<the box's shrub build folder>"
+    },
+    "j": {
+      "utm": [
+        521260,
+        4763513,
+        522732,
+        4764962
+      ],
+      "dsm": "<the box's lidar folder>/dsm.tif",
+      "dtm": "<the box's lidar folder>/dtm.tif",
+      "mask": "<the box's building mask, .npy on the DSM grid>",
+      "photo": "<the box's NAIP crop: red, green, blue, near-infrared>",
+      "points": [
+        "<the box's LAS/LAZ tiles, or an EPT's ept.json>"
+      ],
+      "crop": "<farm's crop cover export, crop_cover.tif>",
+      "lidar": "<the lidar's name, as its source states it>",
+      "lidar_date": "<the lidar's acquisition date, YYYY-MM-DD>",
+      "photo_shift": "auto",
+      "skip_rects": [],
+      "out": "<the box's shrub build folder>"
+    }
+  }
+}
