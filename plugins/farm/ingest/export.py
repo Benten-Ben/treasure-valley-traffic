@@ -47,7 +47,7 @@ FIELDS_SQL = """
 select ST_AsFlatGeobuf(q, true, 'geom') from (
   select f.id, f.field_id as csbid,
          (case f.group_now {cases} else 0 end)::smallint as crop_group,
-         f.crops[cardinality(f.crops)]::smallint as cdl,
+         coalesce(f.crops[cardinality(f.crops)]::smallint, 0::smallint) as cdl,
          coalesce(f.bearing, 0)::float8 as bearing, f.acres::float8 as acres,
          ST_Transform(f.geom, 32611) as geom
   from farm.field f where f.valid_to is null order by f.id) q"""
