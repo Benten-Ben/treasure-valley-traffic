@@ -157,7 +157,7 @@ never hides Protomaps' water with nothing drawn in its place.
 7. Every other `landscape-*.pmtiles` is deleted, so **the last two are kept**.
 
 A stopped bake leaves at most a part file, which the next bake removes (and `check --public` reports until then). Two
-bakes can't overlap: each holds a lock file in the tiles folder. `rollback` switches the entry back to the previous
+bakes can't overlap: each holds a lock file in the lock folder (`basemap/lock.py`: `$TVT_TILES_LOCK_DIR`, `data/locks` by default), never in the served tiles folder. `rollback` switches the entry back to the previous
 file, from that file's own metadata, and keeps both.
 
 ## Commands

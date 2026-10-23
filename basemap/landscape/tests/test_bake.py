@@ -15,6 +15,7 @@ import random
 import shutil
 import tempfile
 import unittest
+from unittest import mock
 
 try:
     from osgeo import gdal, ogr, osr
@@ -256,6 +257,26 @@ class BakeTest(unittest.TestCase):
         self.assertEqual(back["inputs"], b["inputs"])
         self.assertEqual(bake.check(self.tiles), [])
         self.assertEqual(P.files(self.tiles), sorted([b["file"], c["file"]]))
+
+    def test_a_late_failure_leaves_no_partial_tiles(self):
+        # The check after the tiles are written (the file with its metadata) fails: the raw tiles in --work and the
+        # .part in the tiles folder are both gone, the folder holds no landscape file, and nothing is switched in.
+        water(self.archive)
+        roads(self.archive)
+        work = os.path.join(self.dir, "work")
+        before = sorted(os.listdir(self.tiles))
+        real = pmtiles.write_with_metadata
+
+        def write_then_fail(raw, part, *a, **k):
+            real(raw, part, *a, **k)
+            self.assertTrue(os.path.exists(raw) and os.path.exists(part))     # both exist when it fails
+            raise OSError("disk full")
+        with mock.patch.object(pmtiles, "write_with_metadata", write_then_fail):
+            with self.assertRaises(OSError):
+                self.bake("--work", work)
+        self.assertEqual(os.listdir(work), [])
+        self.assertEqual(sorted(os.listdir(self.tiles)), before)
+        self.assertIsNone(self.entry().get("file") if self.entry() else None)
 
     def test_over_budget_switches_nothing(self):
         water(self.archive)

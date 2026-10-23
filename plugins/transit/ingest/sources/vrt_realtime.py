@@ -160,6 +160,27 @@ def record_positions(conn, data, lookup, status=None, decision=None, matcher=Non
     return n, match_progress(conn, rows, matcher)
 
 
+def heartbeat_fetch(conn, status, decision, nbytes):
+    """An unchanged positions feed (a service gap): log a fetch with no new records, so the stale_after
+    judgement sees the poll. Registers the source on the first call. Returns the connection, or None
+    when the database didn't answer (the loop reconnects on the next change)."""
+    try:
+        if conn is None:
+            conn = db.connect()
+            db.ensure_source(conn, SOURCE)
+            conn.commit()
+        with db.Fetch(conn, SOURCE["name"]) as f:
+            f.http_status, f.robots, f.bytes, f.records = status, decision, nbytes, 0
+        return conn
+    except Exception as err:
+        print(f"vrt_realtime: heartbeat fetch not logged: {err}", flush=True)
+        try:
+            conn and conn.close()
+        except Exception:
+            pass
+        return None
+
+
 def archive_path(root, feed, when):
     day = os.path.join(root, "vrt-gtfs-rt", when.strftime("%Y-%m-%d"))
     return os.path.join(day, f"{feed}-{when.strftime('%H%M%S')}Z.pb")
@@ -197,6 +218,8 @@ def stream(every=30):
                 continue
             digest = hashlib.sha256(data).digest()
             if last.get(feed) == digest:
+                if feed == "position_updates":
+                    conn = heartbeat_fetch(conn, status, decision, len(data))
                 continue
             last[feed] = digest
             write_archive(root, feed, data, db.now())

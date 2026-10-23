@@ -206,7 +206,7 @@ def pool(mapunits, types, flights, acc, polygons, gains_applied=False):
     def peers(pred):
         return total(tg[t] for t in soils if pred(types[t]))
 
-    status = {}
+    status, weak_fit, weak_all = {}, [], []
     for tid in sorted(types):
         t, g = types[tid], tg[tid]
         if tid in measured:
@@ -249,6 +249,9 @@ def pool(mapunits, types, flights, acc, polygons, gains_applied=False):
                 borrowed = ("albedo", st, f"L from dry albedo {t['albedo_dry']:g}; chroma, hue, spread and texture "
                                           f"from {label} ({cp.n} px)")
             elif st is not None:
+                weak_fit.append(tid)
+                if label == "all measured soils":
+                    weak_all.append(tid)
                 borrowed = ("texture", st, f"{label} on any landform ({cp.n} px), L included: the dry-albedo fit is "
                                            f"too weak to set L (r {fit['r']:.2f} under {ALBEDO_MIN_R:g})")
         if borrowed is None:
@@ -264,6 +267,14 @@ def pool(mapunits, types, flights, acc, polygons, gains_applied=False):
             s["med"] = _r(s["med"])
             s["srgb"] = "#%02x%02x%02x" % P.oklab_to_srgb(s["med"])
     report["types"] = status
+    # Said in the report too: types that would have taken L from dry albedo but keep their peers' L (labelled texture).
+    report["albedo_fallback"] = {
+        "taken": bool(weak_fit), "types": len(weak_fit), "fit_r": round(fit["r"], 3) if fit else None,
+        "min_r": ALBEDO_MIN_R,
+        "note": (f"{len(weak_fit)} types would have taken L from dry albedo, but the fit is too weak to set L "
+                 f"(r {fit['r']:.2f} under the cut of {ALBEDO_MIN_R:g}): they take their peers' L ("
+                 f"{len(weak_fit) - len(weak_all)} from texture-class peers, {len(weak_all)} from all measured soils) "
+                 f"and are labelled texture" if weak_fit and fit else "no type fell back for a weak albedo fit")}
     report["counts"] = {k: sum(1 for s in status.values() if s["status"] == k)
                         for k in ("measured", "series", "texture", "albedo", "none")}
 

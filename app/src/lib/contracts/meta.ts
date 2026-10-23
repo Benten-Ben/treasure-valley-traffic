@@ -83,7 +83,7 @@ export interface SourceStatus {
 	state: SourceState;
 	/** Its last good fetch (epoch s); null: none yet. */
 	lastOkAt: number | null;
-	/** Its schedule (s). */
+	/** Its schedule (s); for a stream, its stale_after (s), the longest age that still reads fresh. */
 	everyS: number;
 	/** Finished attempts that failed since its last good fetch (0: its newest attempt was good). */
 	failures: number;

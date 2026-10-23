@@ -36,7 +36,8 @@ Field notes, checked Oct 11, 2026 (3,932 records):
 - Lanes, bike lanes, buffers and parking add up to TotalPavement within 2 ft on most field-checked
   records, plus about 12 ft where TotalLanes counts a centre turn lane: TotalPavement is curb to
   curb, and bike lanes lie inside it; raised bike lanes, cycle tracks and multi-use paths don't.
-- MarkingLocation's meaning is unclear ⚠️ (it isn't the bike lane plus parking): kept in attributes.
+- MarkingLocation's meaning is unclear ⚠️ (it isn't the bike lane plus parking): kept in attributes
+  as MarkingLocationEBNB and MarkingLocationWBSB (the ACHD ask, #164).
 - Free text: Comments and FieldNotes go only to roads.bike_facility_note (and raw.record), never
   into roads.bike_facility, its views, exports, tiles or cards.
 

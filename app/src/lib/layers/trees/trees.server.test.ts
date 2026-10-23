@@ -118,8 +118,16 @@ describe('GET /api/trees?bbox=…', () => {
 	});
 
 	it('answers as if nothing is built before the trees migration (no 500)', async () => {
-		expect(await treesInBox(fakeSql({ trees: false }), [-116.21, 43.62, -116.2, 43.63], 10)).toEqual({ trees: [], truncated: false });
+		expect(await treesInBox(fakeSql({ trees: false }), [-116.21, 43.62, -116.2, 43.63], 10)).toEqual({ trees: [], truncated: false, catalogue: false });
 		expect(seen.map((s) => s.text).some((t) => t.includes('ST_MakeEnvelope'))).toBe(false);
+	});
+
+	it('says whether the private catalogue answers: catalogue true with its tables, false on a public install', async () => {
+		const box: [number, number, number, number] = [-116.21, 43.62, -116.2, 43.63];
+		expect((await treesInBox(fakeSql({ rows, catalogue: true }), box, 10)).catalogue).toBe(true);
+		const pub = await treesInBox(fakeSql({ rows, catalogue: false }), box, 10);
+		expect(pub.catalogue).toBe(false);
+		expect(pub.trees).toHaveLength(3);
 	});
 });
 

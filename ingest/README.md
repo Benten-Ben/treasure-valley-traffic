@@ -229,7 +229,15 @@ python3 -m ingest.builds done roads-build --note 'built by hand'   # clears what
 
 `ops.build_status` shows each build's state and age, and
 `ops.source_status` each scheduled source's last good fetch against its
-schedule. `/api/meta`'s `status` and the VM's `bin/status` report both.
+schedule, and each stream's against its `stale_after` (migration 0022):
+the stream's manifest entry says how long it may go without a good fetch
+(`"stale_after": "30 minutes"`; `vrt_realtime` 1 hour, `itd_wzdx` and
+`idaho511_api` 30 minutes), `ensure_source` copies it into `ops.source` when the
+stream starts, and the view reads fresh, stale or never (no "late" step for
+a stream). `idaho511_api` logs each endpoint under its own source, so its
+entry also lists them (`fetch_sources`) and the newest good fetch among
+them counts. `idaho511_frames` is not in the view: it keeps no `ops.fetch`
+rows, and its status file under `cameras/status/` is its measure. `/api/meta`'s `status` and the VM's `bin/status` report both.
 
 Rules carried over from the prototype, which all ingestors must follow:
 

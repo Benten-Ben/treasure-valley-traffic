@@ -24,8 +24,13 @@ work back.
    - Work on a branch.
    - Run the checks, including `python3 tools/check_public.py`, and read
      the diff for private details.
-   - Then fast-forward `main` and push it to GitHub and to the server's
-     repository. The server has no GitHub access.
+   - Push the branch to origin and open a draft PR into `main` with
+     `Closes #n` (the PR template lists the lines). Its required check is
+     `ci` ([CLAUDE.md](CLAUDE.md) Conventions: what CI runs and where the
+     other suites run). One review, then the coordinator merges the PR on
+     GitHub. Nobody fast-forwards `main` by hand.
+   - After the merge, push `main` to the server's repository (it has no
+     GitHub access), then rebuild with Compose ([deploy/](deploy/README.md)).
    - Commits are authored by the owner, with Claude as co-author.
 4. **Private plugins** live in their own private repository. It has a copy
    on the server and a private one on GitHub, and the laptop pushes to both

@@ -47,6 +47,7 @@ import numpy as np  # noqa: E402
 from osgeo import gdal, osr  # noqa: E402
 from PIL import Image  # noqa: E402
 
+from basemap import lock  # noqa: E402
 from basemap.ground import grid, inputs, paint, pmtw, tiles  # noqa: E402
 from basemap.ground import manifest as M  # noqa: E402
 
@@ -633,6 +634,12 @@ def main(argv=None):
         if args.tiles and args.partial:
             print("refused: a partial set of tiles is never switched in", file=sys.stderr)
             return 2
+        if args.tiles:
+            try:
+                lock.ensure()      # fail now, not after the files are copied
+            except OSError as err:
+                print(f"refused: {err}", file=sys.stderr)
+                return 2
         try:
             v, d, entry, digest = assemble(args.out, plan, args.partial)
             if args.tiles:

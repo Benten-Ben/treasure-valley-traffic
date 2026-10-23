@@ -204,6 +204,14 @@ CDL, public domain, and Sentinel-2, Copernicus): licence Copernicus, republish y
 Survey's 3D Elevation Program and USDA NAIP plus the crop cover's credits (each build's `credit`, in
 `trees.shrub_build` and `trees.shrub_area`). Nothing here reads a tree inventory.
 
+### Rebuilding the shrubs
+
+A rebuild of one area is reproducible from a recipe file, not from a shell history. `plugins/trees/build/shrubs-recipe.example.json` is the template: one entry per box (`a` ... `j`, and `downtown`), each with its extent in grid metres (EPSG:32611, from `basemap/ground/spec.json`) and the inputs named generically. The operator copies it to the private files on the server, fills in every `<...>` value with that server's own paths, and keeps the filled copy there, never in the repository.
+
+Per box, the recipe's keys map onto `build_shrubs.py`'s options: the box's key is `--area` (`a` ... `j`, or `downtown`; it names the rows the load replaces, so pass exactly that key), and `dsm`, `dtm`, `mask`, `photo`, `points`, `crop`, `lidar` and `lidar_date` map as given (`--dsm`, `--dtm`, `--mask`, `--photo`, `--points`, `--crop`, `--lidar`, `--lidar-date`); `photo_shift` (`auto`, or east and north in metres); `skip_rects` (`--skip-rect`, one per rectangle, in grid metres); `out` (`--out`). Downtown's entry carries the rectangle of the North End's part that its own box overlaps (box c's extent clipped to downtown's). The options a box needs only sometimes are not in the template and are passed as needed, from the same filled copy: `--points-srs` (the points' CRS, when their files say otherwise), `--photo-name` (the photo, for the record), `--crop-where` (an OGR filter on a crop vector), and, for a crop file without an export manifest, `--crop-licence`, `--crop-republish` and `--crop-credit`.
+
+Then, for each area, as a heavy job (see the Shrubs section above): run `build_shrubs.py` with that entry's options, and load the build with `python3 -m ingest shrubs-load --build <out>`. The template is documentation, not an input the code reads: no option takes a recipe path, so every value is passed on the command line from the filled copy.
+
 ## Tests
 
 `python3 -m unittest plugins.trees.tests.test_load plugins.trees.tests.test_anchors plugins.trees.tests.test_shrubs_load plugins.trees.tests.test_hedge_check`

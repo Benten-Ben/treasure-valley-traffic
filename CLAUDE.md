@@ -245,6 +245,26 @@ standard library.
 - Match the surrounding style. Cite sources inline in docs, and mark
   anything resting on secondary sources with ⚠️.
 - Commit messages: imperative summary plus a short body. Commits are
-  authored by the owner, with Claude as co-author. Develop on a branch, then
-  fast-forward `main` (the default branch) once the checks pass and the diff
-  has been checked for private details.
+  authored by the owner, with Claude as co-author.
+- **PR flow:** work on a branch, push it to origin, and open a draft PR into
+  `main` whose body says `Closes #n`, the tier, the review label, the checks
+  run and "Made by" (who built it, the model and effort, and the workflow run
+  id if any). The PR template (`.github/pull_request_template.md`) carries
+  these lines. Run `python3 tools/check_public.py --text <file>` on every body
+  before posting it. One review, then the coordinator merges through the PR;
+  nobody fast-forwards `main` by hand.
+- **CI** (`.github/workflows/ci.yml`) runs on every PR and on pushes to
+  `main`: the public check, the offline Python tests, and the front end's
+  `npm run check`, `npm test` and `npm run build`. Its required check is
+  `ci`, the one name that reports for every run, docs-only changes included.
+  CI has no database, no tiles and no browser, so the PostGIS, TimescaleDB
+  and worker-image tests skip there.
+- **Where the other suites run:** the browser specs (Playwright) run on the
+  laptop behind its browser lock, or on the server's runner for the non-map
+  specs; the database and worker-image suites (`worker-test`, the scratch
+  database) run on the VM; heavy jobs go through `heavy`. The laptop has no
+  Docker, so nothing that needs it runs there.
+- **After a merge:** the server's repository gets `main` from the laptop
+  (a push to that remote, which has no GitHub access), and the rebuild with
+  Compose follows ([deploy/](deploy/README.md)). The remote's name and
+  address are in the private server notes.

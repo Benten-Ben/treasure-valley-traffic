@@ -43,11 +43,33 @@ const segDist = (x: number, y: number, [x1, y1, x2, y2]: [number, number, number
 const discs = (page: Page): Promise<{ id: string; x: number; y: number; r: number }[]> => page.evaluate(() => (globalThis as any).__tvtTrees?.discs() ?? []);
 const selection = (page: Page) => page.evaluate(() => (globalThis as any).__tvt.layers.selection);
 
-/** Console errors with their messages (an Error argument prints only as "Error" otherwise). */
+/**
+ * Console errors with their messages (an Error argument prints only as "Error" otherwise), and the
+ * "map error detail" warnings beside them (source, tile and URL), so a failure names what failed (#368).
+ */
 async function keepErrors(page: Page) {
+	// Any /tiles/, sprite or /api/ answer that is not an image (or not 2xx/206): a decode error with no URL is traced by it.
+	const odd: string[] = [];
+	oddResponses.set(page, odd);
+	page.on('response', (r) => {
+		const u = r.url();
+		if (!/\/tiles\/|sprite|\/api\//.test(u)) return;
+		const h = r.headers();
+		const type = h['content-type'] ?? '';
+		const ok = r.status() === 200 || r.status() === 206;
+		if (ok && /^image\//.test(type)) return;
+		if (ok && !/\/tiles\/|sprite/.test(u)) return; // data answers under /api/ are not images
+		odd.push(`${r.status()} ${u} content-type=${type || '-'} length=${h['content-length'] ?? '-'}`);
+	});
 	await page.addInitScript(() => {
 		const w = globalThis as any;
 		w.__errors = [];
+		w.__details = [];
+		const warn = console.warn.bind(console);
+		console.warn = (...a: unknown[]) => {
+			if (String(a[0]).startsWith('map error detail')) w.__details.push(a.map(String).join(' '));
+			warn(...a);
+		};
 		const orig = console.error.bind(console);
 		console.error = (...a: unknown[]) => {
 			w.__errors.push(a.map((x) => (x instanceof Error ? `${x.name}: ${x.message}` : String(x))).join(' '));
@@ -55,7 +77,16 @@ async function keepErrors(page: Page) {
 		};
 	});
 }
-const errorsOf = (page: Page): Promise<string[]> => page.evaluate(() => (globalThis as any).__errors ?? []);
+const oddResponses = new WeakMap<Page, string[]>();
+const errorsOf = async (page: Page): Promise<string[]> => {
+	const out = await page.evaluate(() => {
+		const w = globalThis as any;
+		const errors: string[] = w.__errors ?? [];
+		return errors.length ? [...errors, ...(w.__details ?? [])] : errors;
+	});
+	const odd = oddResponses.get(page) ?? [];
+	return out.length && odd.length ? [...out, ...odd.map((o) => `non-image answer: ${o}`)] : out;
+};
 
 let seeded: Seeded | null = null;
 
@@ -109,8 +140,10 @@ test.describe('trees', () => {
 		expect(i.inScene).toBe(i.fetched);
 		await mapReady(page);
 		await page.screenshot({ path: screenPath('trees-3d-z17.png') });
-		// The models are drawn without a disc in sight: the attribution still credits the trees.
-		await expect.poll(() => attribution(page)).toContain('Trees: USGS 3DEP lidar, City of Boise, US Forest Service');
+		// The models are drawn without a disc in sight: the attribution still credits the trees. The (fake) catalogue
+		// answers here, so the City is named; the US Forest Service never is (no estimated trees remain).
+		await expect.poll(() => attribution(page)).toContain('Trees: USGS 3DEP lidar, City of Boise; contains modified Copernicus');
+		expect(await attribution(page)).not.toContain('Forest Service');
 
 		// The tallest catalogued tree (given a fake catalogue row when the private table isn't here).
 		const all = await placed(page);

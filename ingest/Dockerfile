@@ -19,6 +19,8 @@ COPY plugins plugins
 # an export with base layers checks them against the bake's rules before it's finished (water-export).
 COPY basemap/ground basemap/ground
 COPY basemap/landscape basemap/landscape
+# The tiles folder's locks (basemap/lock.py), which the bake's plan takes.
+COPY basemap/lock.py basemap/lock.py
 # uid 1000 owns the archive and frames folders on the server.
 USER 1000:1000
 CMD ["sh", "-c", "python3 db/migrate.py && exec python3 -m ingest serve"]

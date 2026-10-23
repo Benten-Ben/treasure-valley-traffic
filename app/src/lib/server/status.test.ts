@@ -89,7 +89,7 @@ describe('status for /api/meta', () => {
 		expect(s.sources).toEqual({ fresh: 0, late: 1, stale: 0, never: 0, failing: 1 });
 		expect(s.attention).toEqual([{ source: 'awc_metar', state: 'late', lastOkAt: 1_760_000_000.5, everyS: 600, failures: 2 }]);
 		expect(s.builds).toEqual([{ build: 'roads-build', state: 'pending', lastOkAt: null, pendingSince: 1_760_000_100, lastRunAt: null }]);
-		expect(seen.find((t) => t.includes('ops.source_status'))).toContain('extract(epoch from schedule)::float8 as every_s');
+		expect(seen.find((t) => t.includes('ops.source_status'))).toContain('extract(epoch from coalesce(schedule, stale_after))::float8 as every_s');
 		// No error text or reasons leave the server.
 		expect(seen.join(' ')).not.toMatch(/last_error|reason|pending_by/);
 	});

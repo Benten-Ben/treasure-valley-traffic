@@ -253,6 +253,8 @@ cut-first list).
   between days is over 3 (the design's rule). With the gains applied, `flight_days` reports what's left
   (`gains_applied`, `over_rule`), mostly each type's spread over the valley, and `pair_offsets` the flights' own
   offsets (per pair of days, the median paired difference over the types on both);
+- `albedo_fallback`: whether types fell back to their peers' L because the dry-albedo fit has no skill (r under 0.5),
+  how many, and the fit's r, in words the reader can use;
 - the share of colour variance the types explain; Spearman's rho of type L against dry albedo;
 - polygons whose median lies more than 3 (Mahalanobis, in the type's own spread) from their type, with 2,000 pixels
   or more: a list for review;
@@ -260,7 +262,8 @@ cut-first list).
   shifted onto the photo by the spike's NAIP-to-lidar offsets), each type's photo-v1 median against its median under
   the class mask (short dry grass, flat not green, pale surfaced). It passes at a median dE of 3 or less over the
   (box, type) pairs with 2,000 pixels under both. Boxes h, i and j have no NAIP 2025; they're measured on their NAIP
-  2023 crops with the 2023 curve.
+  2023 crops with the 2023 curve. `summary.misses` lists the boxes over the cut, with a note: the median can pass
+  while a box misses, and the note names which boxes compared only urban land (below).
 
 **The 2 m NAIP COG** for G1b (`finish`, beside its parts on the cold drive): `naip2025_2m.tif`, 4 bands, uint8, on the
 ground's 2 m grid, the extent of Ada and Canyon, DEFLATE, 512 px tiles, with an internal mask (cells at least half
@@ -337,7 +340,8 @@ each export layer it reads, whole (`photo_stats.inputs_of`), so the palette's li
 ODbL-1.0, and it credits all of them; an input that may not be republished would make `soils-export` refuse it.
 `soils.build` records the same licence for the build (`photo_load.licence_of`, the ground's export rule), and
 plugin.json lists the photo statistics as a derived source, `naip_photo`. (Migration 0001's header still says
-photo_stats adds only NAIP's licence; it's applied, so the comment is left for a later migration.)
+photo_stats adds only NAIP's licence; it's applied and can't change, so migration 0002 corrects it in a comment: the
+palette is ODbL-1.0.)
 
 **On production** (the deploy runbook): run the pass there, on production's soils export, mask v0 and farm export,
 rather than copying a scratch build: a build names the exports it read (`stats.json` `soils_export`, its inputs'
