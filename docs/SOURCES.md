@@ -39,49 +39,49 @@ Last updated Oct 7, 2026.
 | OpenStreetMap street and paving tags | `roads` (`osm_street`, `osm_paving`): street classes, paving surfaces and lane tags from the held extract, loaded by `osm-load`. ODbL; credit "© OpenStreetMap contributors" | Oct 2026 |
 | Chapter 17 Wave A pollers (Oct 7) | 22 sources in nine new plugins, started so their history exists from now on: fire restrictions, WFIGS fires and perimeters, FIRMS, NWS alerts and quakes (`hazards`); HMS smoke (`air`); NWPS gauges, SNOTEL, E. coli, river hazards, drought (`water`); R2R conditions and Greenbelt closures (`trails`); forest orders and IDPR closures (`lands`); METARs (`weather`); roadkill (`wildlife`); AgriMet ET (`farm`); aurora and Kp (`sky`). Versions in `raw.record`, lifecycles in `evt.event`; each plugin's README has its endpoints, cadence, licence and what's kept ([ch. 17 §17.4](17-sources-for-new-plugins.md#174-proposed-order-with-rough-effort)) | Oct 7 |
 
-## Not started, or only partly
+## Open sources: on the board
 
-"Found, not examined" means a layer turned up during the Oct 4–6 source
-reviews and nobody has opened it since.
+Open source work is an issue on the project's GitHub board, not a row here.
+The tracking issue for this list is
+[#4](https://github.com/Benten-Ben/treasure-valley-traffic/issues/4). Built
+sources awaiting a production load are tracked by the production-load
+issues ([#42](https://github.com/Benten-Ben/treasure-valley-traffic/issues/42)–[#50](https://github.com/Benten-Ben/treasure-valley-traffic/issues/50)).
 
-| Theme | Source | Status | Why it matters | Access |
+| Theme | Source | Status | Access | Issue |
 |---|---|---|---|---|
-| Volumes | ITD AADT by segment, 1999–2025 | Prototype script only (`tools/collect_static.py`) | Long-term growth on state routes | Open GIS |
-| Volumes | ITD permanent counters, monthly (45 in Ada and Canyon) | Prototype script only | Seasonal and year-over-year trends | Open GIS |
-| Volumes | ITD hourly counter reports | Not started | Peak spreading and growth by hour | Open PDFs; need extracting |
-| Volumes | ACHD `Traffic_Counts` layer | Checked Oct 5: 3,880 count locations, no counts | Locations only; the counts are in the private table copy | Open GIS |
-| Safety | ITD crash points, 461,521 crashes 2005–2023 | Not started; COMPASS's copy for Ada and Canyon runs to 2025 (below) | High-crash intersections, before/after studies | Open GIS |
-| Safety | COMPASS crash data: 174,038 crashes 2008–2025 linked to segments and intersections; high-injury network ([ch. 8 §8.9](08-data-inventory.md#89-second-source-review-oct-6-2026)) | Approved Oct 6; build timing with the owner | Two more years than ITD's layer, already tied to the network | Disclaimer; credit COMPASS |
-| Safety | COMPASS Regional Safety Action Plan dashboard layers: `Final_RSAP_Junctions` and `Final_RSAP_Segments_for_Dashboard` | Found, not examined | The plan's own junctions and segments (its findings are in [ch. 3](03-traffic-context-and-data.md)) | COMPASS GIS; terms not checked |
-| Safety | ITD's Numetric safety dashboards (`itd.numetric.net/itd-safety-dashboards`) | Found, not opened | ITD's own safety summaries, a check on the crash layers | Web dashboards; not checked |
-| Events | ACHD live roadwork, incidents, message signs | Not started | Same | Open GIS |
-| Network | ACHD signal-asset points (2022): 2,469 signal **poles** (about 464 intersections), 182 pedestrian signals, 33 school flashers | Built Oct 6 (`achd_signal_points`, monthly; deploy pending); confirms intersections | The backbone: intersections that tie cameras, counts, crashes and bus delay together | Open; frozen since 2022 |
-| Network | COMPASS Signalized_Intersections (585, one per intersection, with ACHD's Synchro IDs, coordination groups, right-turn lanes, phasing) and Regional_Signals (1,078) ([ch. 8 §8.9](08-data-inventory.md#89-second-source-review-oct-6-2026)) | Built Oct 6 (`compass_signals`, `compass_regional_signals`, weekly; deploy pending); seeds `core.intersection` (591, 585 active, before the OpenStreetMap load; 633 after it, below) | One record per signalized intersection | No license ("for reference"); credit COMPASS; internal until COMPASS answers |
-| Network | OpenStreetMap signals and lane tags (`lanes`, `turn:lanes`): 767 signal nodes, 10,614 valley ways with `lanes` | Built Oct 6 (`osm_valley`); **first load by hand Oct 7** ([below](#openstreetmap-first-load-oct-7)). By hand only, since Geofabrik's robots.txt disallows scripted downloads; the owner downloads the Idaho extract weekly and a note asks Geofabrik | Signal locations; lane counts and turn lanes where mapped | ODbL; own tables |
-| Network | ITD HPMS road inventory (19,801 through-lane records in the box) | Built (`itd_hpms`, monthly); sets the lanes on 1,116 ACHD segments after the Oct 7 load | Through lanes on state routes (unreliable on ACHD arterials), turn lanes, medians | Open GIS; credit ITD |
-| Network | Overture transportation | Not started; the long-term reference network is still undecided (ch. 12, decision 5) | Stable segment IDs; speed limits on about 14k segments | ODbL |
-| Network | ACHD Master Street Map: Arterials layer (1,049 arterial segments) | Built (`achd_msm`, monthly); sets the lanes on 3,776 ACHD segments after the Oct 7 load. A separate **Collectors** service exists and hasn't been examined | Existing, funded and planned lanes on Ada arterials (blank on state routes) | Open GIS; no license |
-| Network | ACHD roundabouts (190) and Five-Year Plan intersection projects (574) | Found Oct 6 | Intersection control types; planned changes for before/after | Open GIS |
-| Network | ACHD Five-Year Plan road projects (`gis.achdidaho.org/server/rest/services/ArcGIS_Hub/FYP_Road_Projects/FeatureServer/1`): 991 project features with design, right-of-way and construction years and cost. Example: State St, Pierce Park to Collister, widened to 7 lanes, design 2029–30. The 2026–30 plan has 266 projects, about $1.2B ([ch. 3](03-traffic-context-and-data.md)) | Not started | Planned changes, for before/after | Open GIS |
-| Network | COMPASS RegionalCenterline (62,213 segments, Ada and Canyon) | Built (`compass_centerline`, monthly); sets the lanes on 206 ACHD segments after the Oct 7 load | Canyon County speeds and lanes; `pm_id` links COMPASS's counts, crashes and model | Disclaimer; reachable again |
-| Network | Other COMPASS layers: Intersection Nodes with Type, the Communities in Motion (CIM) model links, detectors and Bluetooth readers, sidewalks and bike facilities, schools | Found, not examined | Intersection types; the regional model's network; where agencies already sense traffic | COMPASS GIS; not checked |
-| Network | FRA highway–rail crossings, 433 in Ada and Canyon (131 open public at grade) | Built Oct 6 (`fra_crossings`, weekly; history not loaded; deploy pending) | Rail crossings near signals; preemption (filled only for Boise Valley Railroad) | Public domain |
-| Congestion | COMPASS congestion measures 2018–2025 by segment and commute travel times ([ch. 8 §8.9](08-data-inventory.md#89-second-source-review-oct-6-2026)) | Approved Oct 6 for internal use; republishing waits on COMPASS | The official congestion history; a baseline for bus-derived speeds | Not offered as open data |
-| Congestion | COMPASS `Congestion_Management_Performance_Measures_2018_2021` | Found, not examined; not yet compared with the 2018–2025 measures above | A second congestion-measures layer; how it differs from the one above is unknown | COMPASS GIS; not checked |
-| Congestion | COMPASS "Change in Motion" dashboard and the interactive congestion measures 2018–2024 web app ([ch. 3](03-traffic-context-and-data.md) links the congestion map) | Found, not examined | COMPASS's own presentation of the measures | Web apps; not checked |
-| Transit | National Transit Database monthly data (data.transportation.gov resource `8bui-9xvu`; `ntd_id='00011'` is VRT): by mode, type of service (`tos`) and month (`date`), vehicles operated at peak (`voms`) and trips (`upt`) | Used once, Oct 5, to confirm the bus feed covers the whole 42-bus peak fleet ([ch. 8](08-data-inventory.md)); could be re-checked monthly | A monthly check of the buses we see against VRT's peak fleet; ridership over time (ch. 3 cites it for 2019–2025 ridership) | Public domain; robots.txt allows `/resource/` with Crawl-delay 1 (as for FRA) |
-| Context | Boise airport weather history (IEM ASOS) | Not started | Tests the fog → detector fallback → long greens theory (ch. 2) | Open; 120 s crawl delay |
-| Context | ACHD 3-inch aerial imagery, 2024 and 2025 (really COMPASS's) | View on request only (owner, Oct 6); asked of ACHD and COMPASS; if yes, a private 2–4 GB copy around signals and cameras | Lane markings, turn-bay lengths, signal heads, calibration points | No license stated |
-| Context | COMPASS growth and counts: traffic-zone demographics (forecasts to 2055), building permits since 2000, preliminary plats, latest counts from every agency ([ch. 8 §8.9](08-data-inventory.md#89-second-source-review-oct-6-2026)) | Approved Oct 6; build timing with the owner | Growth and demand; Canyon County volumes | Disclaimer; credit COMPASS |
-| Context | City of Boise open data (88 entries) ([ch. 8 §8.9](08-data-inventory.md#89-second-source-review-oct-6-2026)) | Reviewed Oct 6; development pipeline and police-call aggregates queued after the core pieces (owner) | Development pipeline; crash-call timing by tract; street lights and parking meters | City disclaimer |
-| Context | Federal: FARS fatal crashes, census commuting (ACS), TTI Urban Mobility | Not started | Benchmarks | Public domain |
-| Context | Mapillary street-level photos | Coverage unchecked | Lane and sign checks | Free token; CC BY-SA |
-| Oregon | ODOT TripCheck cameras and data | New, needs vetting | The Ontario end of the I-84 corridor | Registration |
-| Cameras | ITD's own camera views on 511 | Left out: PNGs of 0.4–2.5 MB, mostly ACHD cameras republished. Two of them (I-184 Exit 0, I-184 & Chinden) are ACHD cameras missing from 511's ACHD list | Two more angles | 511 route |
-| Cameras | ITD's ITS layer (`IntelligentTransportationSystems/FeatureServer/0`): 82 CCTV locations statewide | Found, not examined | Where ITD's own cameras are, to check against 511's list | Open GIS; ITD's GIS contact is GIS-Info@itd.idaho.gov |
-| Cameras | The 18 ACHD cameras not on 511: mostly IDs 717–729 and a few I-184 cameras (e.g. Chinden & SH-16 southbound ramp, 619) | Ongoing capture needs ACHD's OK. A one-off look at ACHD's own images of them, to see what they cover, was suggested Oct 5 under the one-off-checks rule; no record that it was done. Only 619 is described ([ch. 11](11-camera-validation-layer.md)) | Missing angles | Asked in the draft ACHD note |
-| Our own | Volunteer GPS drive runs | Tool ready (`tools/gps_runs.py`), no runs yet | Travel time and stops per signal | Consent rules (ch. 7) |
-| Our own | Sidewalk signal observations | Not started | Cycle lengths and splits | Fully ours |
+| Volumes | ITD AADT by segment, 1999–2025 | Prototype script only (`tools/collect_static.py`) | Open GIS | [#85](https://github.com/Benten-Ben/treasure-valley-traffic/issues/85) |
+| Volumes | ITD permanent counters, monthly (45 in Ada and Canyon) | Prototype script only | Open GIS | [#86](https://github.com/Benten-Ben/treasure-valley-traffic/issues/86) |
+| Volumes | ITD hourly counter reports | Not started | Open PDFs; need extracting | [#87](https://github.com/Benten-Ben/treasure-valley-traffic/issues/87) |
+| Volumes | ACHD `Traffic_Counts` layer | Checked Oct 5: 3,880 locations, no counts | Open GIS | [#4](https://github.com/Benten-Ben/treasure-valley-traffic/issues/4) |
+| Safety | ITD crash points, 2005–2023 | Not started | Open GIS | [#88](https://github.com/Benten-Ben/treasure-valley-traffic/issues/88) |
+| Safety | COMPASS crash data, 2008–2025, and high-injury network | Approved Oct 6; build timing with the owner | Disclaimer; credit COMPASS | [#185](https://github.com/Benten-Ben/treasure-valley-traffic/issues/185) |
+| Safety | COMPASS Regional Safety Action Plan layers (`Final_RSAP_Junctions`, `Final_RSAP_Segments_for_Dashboard`) | Found, not examined | COMPASS GIS; terms not checked | [#89](https://github.com/Benten-Ben/treasure-valley-traffic/issues/89) |
+| Safety | ITD Numetric safety dashboards | Found, not opened | Web dashboards; not checked | [#90](https://github.com/Benten-Ben/treasure-valley-traffic/issues/90) |
+| Events | ACHD live roadwork, incidents, message signs | Not started | Open GIS | [#91](https://github.com/Benten-Ben/treasure-valley-traffic/issues/91) |
+| Network | Overture transportation | Not started; the long-term reference network is undecided (ch. 12, decision 5) | ODbL | [#255](https://github.com/Benten-Ben/treasure-valley-traffic/issues/255) |
+| Network | ACHD Master Street Map: Collectors service | Not examined (Arterials built) | Open GIS; no license | [#92](https://github.com/Benten-Ben/treasure-valley-traffic/issues/92) |
+| Network | ACHD roundabouts (190) and Five-Year Plan intersection projects (574) | Found Oct 6 | Open GIS | [#93](https://github.com/Benten-Ben/treasure-valley-traffic/issues/93) |
+| Network | ACHD Five-Year Plan road projects (991 features; 2026–30 plan) | Not started | Open GIS | [#94](https://github.com/Benten-Ben/treasure-valley-traffic/issues/94) |
+| Network | Other COMPASS layers: node types, CIM model links, detectors and Bluetooth readers, sidewalks, bike facilities, schools | Found, not examined | COMPASS GIS; not checked | [#95](https://github.com/Benten-Ben/treasure-valley-traffic/issues/95) |
+| Congestion | COMPASS `Congestion_Management_Performance_Measures_2018_2021` | Found, not compared | COMPASS GIS; not checked | [#96](https://github.com/Benten-Ben/treasure-valley-traffic/issues/96) |
+| Congestion | COMPASS "Change in Motion" dashboard and congestion web app | Found, not examined | Web apps; not checked | [#97](https://github.com/Benten-Ben/treasure-valley-traffic/issues/97) |
+| Transit | National Transit Database monthly data (`ntd_id='00011'`) | Used once, Oct 5; could be re-checked monthly | Public domain; robots.txt allows `/resource/` with Crawl-delay 1 | [#98](https://github.com/Benten-Ben/treasure-valley-traffic/issues/98), [#99](https://github.com/Benten-Ben/treasure-valley-traffic/issues/99) |
+| Context | Boise airport weather history (IEM ASOS) | Not started | Open; 120 s crawl delay | [#100](https://github.com/Benten-Ben/treasure-valley-traffic/issues/100) |
+| Context | ACHD and COMPASS 3-inch aerial imagery, 2024 and 2025 | View on request only (owner, Oct 6) | No license stated | [#101](https://github.com/Benten-Ben/treasure-valley-traffic/issues/101) |
+| Context | COMPASS growth and counts (traffic zones, permits, plats, counts) | Approved Oct 6; build timing with the owner | Disclaimer; credit COMPASS | [#186](https://github.com/Benten-Ben/treasure-valley-traffic/issues/186) |
+| Context | City of Boise open data (88 entries) | Reviewed Oct 6; queued after the core pieces | City disclaimer | [#102](https://github.com/Benten-Ben/treasure-valley-traffic/issues/102) |
+| Context | Federal benchmarks: FARS, ACS commuting, TTI Urban Mobility | Not started | Public domain | [#103](https://github.com/Benten-Ben/treasure-valley-traffic/issues/103) |
+| Context | Mapillary street-level photos | Coverage unchecked | Free token; CC BY-SA | [#105](https://github.com/Benten-Ben/treasure-valley-traffic/issues/105) |
+| Oregon | ODOT TripCheck cameras and data | New, needs vetting | Registration | [#106](https://github.com/Benten-Ben/treasure-valley-traffic/issues/106) |
+| Cameras | ITD's own camera views on 511 | Left out; two ACHD cameras missing from 511's list | 511 route | [#157](https://github.com/Benten-Ben/treasure-valley-traffic/issues/157) |
+| Cameras | ITD's ITS layer: 82 CCTV locations statewide | Found, not examined | Open GIS | [#107](https://github.com/Benten-Ben/treasure-valley-traffic/issues/107) |
+| Cameras | The 18 ACHD cameras not on 511 | Ongoing capture needs ACHD's OK; a one-off look was suggested Oct 5 | Asked in the draft ACHD note | [#108](https://github.com/Benten-Ben/treasure-valley-traffic/issues/108), [#109](https://github.com/Benten-Ben/treasure-valley-traffic/issues/109) |
+| Our own | Volunteer GPS drive runs | Tool ready (`tools/gps_runs.py`), no runs yet | Consent rules (ch. 7) | [#110](https://github.com/Benten-Ben/treasure-valley-traffic/issues/110) |
+| Our own | Sidewalk signal observations | Not started | Fully ours | [#111](https://github.com/Benten-Ben/treasure-valley-traffic/issues/111) |
+
+Built sources still to be checked or loaded are on the board too
+([#42](https://github.com/Benten-Ben/treasure-valley-traffic/issues/42)–[#50](https://github.com/Benten-Ben/treasure-valley-traffic/issues/50),
+[#163](https://github.com/Benten-Ben/treasure-valley-traffic/issues/163)).
 
 ### OpenStreetMap first load (Oct 7)
 
@@ -117,24 +117,31 @@ after the load gave 633 in `core.intersection` (585 active, 43 candidates,
 signal nodes with no COMPASS match and need review
 ([ingest/README](../ingest/README.md)).
 
-## Needs the owner's network (the local helper could fetch these)
+## Built, awaiting a production load or a history load
 
-- ACHD's main website (agendas, minutes, budget documents): blocks
-  datacenter traffic.
-- ITD's count database (`itd.ms2soft.com`): detailed count records.
-- Overpass (OSM queries), Geofabrik's downloads and the Internet Archive (OpenStreetMap is processed on the server instead).
+These are built and checked (scratch or the server), with the deploy, the
+history load or the owner's decision still to come. Each row keeps what
+the source covers and why it matters; the open items are on the board
+(the issue links are in the table above and in [DEFERRED.md](DEFERRED.md)).
 
-## Needs a request
+| Theme | Source | Status | Why it matters | Access |
+|---|---|---|---|---|
+| Safety | ITD crash points, 461,521 crashes 2005–2023 | Not started; COMPASS's copy for Ada and Canyon runs to 2025 (below) | High-crash intersections, before/after studies | Open GIS |
+| Safety | COMPASS crash data: 174,038 crashes 2008–2025 linked to segments and intersections; high-injury network ([ch. 8 §8.9](08-data-inventory.md#89-second-source-review-oct-6-2026)) | Approved Oct 6; build timing with the owner | Two more years than ITD's layer, already tied to the network | Disclaimer; credit COMPASS |
+| Congestion | COMPASS congestion measures 2018–2025 by segment and commute travel times ([ch. 8 §8.9](08-data-inventory.md#89-second-source-review-oct-6-2026)) | Approved Oct 6 for internal use; republishing waits on COMPASS | The official congestion history; a baseline for bus-derived speeds | Not offered as open data |
+| Network | ACHD signal-asset points (2022): 2,469 signal **poles** (about 464 intersections), 182 pedestrian signals, 33 school flashers | Built Oct 6 (`achd_signal_points`, monthly; deploy pending); confirms intersections | The backbone: intersections that tie cameras, counts, crashes and bus delay together | Open; frozen since 2022 |
+| Network | COMPASS Signalized_Intersections (585, one per intersection, with ACHD's Synchro IDs, coordination groups, right-turn lanes, phasing) and Regional_Signals (1,078) ([ch. 8 §8.9](08-data-inventory.md#89-second-source-review-oct-6-2026)) | Built Oct 6 (`compass_signals`, `compass_regional_signals`, weekly; deploy pending); seeds `core.intersection` (591, 585 active, before the OpenStreetMap load; 633 after it, below) | One record per signalized intersection | No license ("for reference"); credit COMPASS; internal until COMPASS answers |
+| Network | FRA highway–rail crossings, 433 in Ada and Canyon (131 open public at grade) | Built Oct 6 (`fra_crossings`, weekly; history not loaded; deploy pending) | Rail crossings near signals; preemption (filled only for Boise Valley Railroad) | Public domain |
 
-| Data | Holder | Route |
-|---|---|---|
-| Signal timing sheets, coordination plans, last-retimed dates | ACHD (ITD for state routes) | Records request; the draft note to ACHD waits on the owner |
-| **High-resolution controller event logs (ATSPM)**: the single most valuable dataset | ACHD | Records request or data-sharing agreement |
-| Detector configuration and trouble tickets | ACHD | Records request |
-| ACHD Connect service requests (e.g. "signal malfunction") | ACHD | Records request |
-| ACHD's internal traffic and signal GIS layers | ACHD | Login only |
-| Probe speeds (NPMRDS, INRIX) | ITD, COMPASS | Partnership |
-| Police crash narratives | Police, ITD | $7 per report, or records request |
+## Needs the owner's network, or a request
+
+These are on the board: the owner's network route is
+[#176](https://github.com/Benten-Ben/treasure-valley-traffic/issues/176), and
+the requests are [#163](https://github.com/Benten-Ben/treasure-valley-traffic/issues/163)
+(ACHD: timing sheets, ATSPM, detectors, Connect requests, internal layers) and
+[#177](https://github.com/Benten-Ben/treasure-valley-traffic/issues/177) (probe speeds from ITD or COMPASS, police crash narratives).
+The Overpass, Geofabrik and Internet Archive routes are covered by
+[#78](https://github.com/Benten-Ben/treasure-valley-traffic/issues/78) and the server-side OpenStreetMap processing.
 
 ## Candidate sources for new plugins (researched Oct 7)
 
@@ -159,15 +166,11 @@ per persona, the sources to avoid and why, and the open questions are in
 | Trails, camping and recreation | [sources/trails.md](sources/trails.md) | 29 |
 | Cycling and walking | [sources/cycling.md](sources/cycling.md) | 28 |
 
-Several of them keep only their current state, so their history exists only
+Each catalog's sources are on the board: weather [#112](https://github.com/Benten-Ben/treasure-valley-traffic/issues/112)–[#115](https://github.com/Benten-Ben/treasure-valley-traffic/issues/115), hazards [#116](https://github.com/Benten-Ben/treasure-valley-traffic/issues/116)–[#122](https://github.com/Benten-Ben/treasure-valley-traffic/issues/122), lands [#123](https://github.com/Benten-Ben/treasure-valley-traffic/issues/123)–[#131](https://github.com/Benten-Ben/treasure-valley-traffic/issues/131), wildlife [#140](https://github.com/Benten-Ben/treasure-valley-traffic/issues/140)–[#142](https://github.com/Benten-Ben/treasure-valley-traffic/issues/142), sky [#143](https://github.com/Benten-Ben/treasure-valley-traffic/issues/143)–[#148](https://github.com/Benten-Ben/treasure-valley-traffic/issues/148), trails [#132](https://github.com/Benten-Ben/treasure-valley-traffic/issues/132)–[#137](https://github.com/Benten-Ben/treasure-valley-traffic/issues/137), farm [#151](https://github.com/Benten-Ben/treasure-valley-traffic/issues/151)–[#155](https://github.com/Benten-Ben/treasure-valley-traffic/issues/155), gardening [#149](https://github.com/Benten-Ben/treasure-valley-traffic/issues/149)–[#150](https://github.com/Benten-Ben/treasure-valley-traffic/issues/150), cycling [#138](https://github.com/Benten-Ben/treasure-valley-traffic/issues/138)–[#139](https://github.com/Benten-Ben/treasure-valley-traffic/issues/139). Several of them keep only their current state, so their history exists only
 if we poll from now on (ch. 17 §17.1).
 
 ## Suggested order
 
-1. **Signals and intersections** (COMPASS's signals, ACHD's poles,
-   OpenStreetMap), then **rail crossings** and **lanes** (Master Street
-   Map, ITD HPMS, OpenStreetMap): approved Oct 6.
-2. **Crashes** (COMPASS's linked copy to 2025, ITD's for history).
-3. **Work zones and incidents** (ITD WZDx: recording since Oct 6; ACHD live layers).
-4. **Traffic volumes** (ITD AADT, counters, hourly reports).
-5. **The 511 API**: recording since Oct 6.
+The order is on the board: signals and intersections, crashes, work zones
+and incidents, traffic volumes, then the 511 API, which is recording. Each
+step's issues are linked from [#4](https://github.com/Benten-Ben/treasure-valley-traffic/issues/4).
