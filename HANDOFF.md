@@ -37,33 +37,11 @@ work back.
 7. Follow the data rules in `CLAUDE.md`. They apply to anything a session
    fetches.
 
-## Current state (2026-10-07)
+## Current state
 
-- **Research:** chapters 1–8 are done (`README.md`).
-- **Decided:** see `docs/DECISIONS.md`.
-- **Running on the server:**
-  - the database (TimescaleDB + PostGIS);
-  - the app and the video library over HTTPS on the tailnet;
-  - the collectors: cameras (34 key cameras, daily videos), road-weather
-    views, the 511 API, ITD work zones and VRT buses;
-  - the data builds: intersections, crossings, lanes, COMPASS and NAIP 2025
-    detail imagery.
-
-  The collectors run on the plugin code from refactor step 1.
-- **UI v2** ([docs/14](docs/14-ui-v2.md)):
-  - waves A–C are on `main`, not yet deployed;
-  - wave D came back from the cloud session on its branch, and waves E–H
-    were built here on the integration branch (WP15 last: docs, the
-    screenshot matrix and the owner's review page);
-  - deploying follows the runbook in [deploy/](deploy/README.md#deploying-ui-v2-runbook);
-    what's left for the next round is in [docs/DEFERRED.md](docs/DEFERRED.md).
-- **Plugins** ([docs/15](docs/15-plugins.md)):
-  - step 1 (ingest) is done;
-  - the private plugins have started;
-  - aircraft is in progress and will deploy switched off until the courtesy
-    note to adsb.lol is sent.
-- **Waiting on the owner:** see "Owner actions" in `docs/DECISIONS.md`.
-- **Data sources still to go through:** `docs/SOURCES.md`.
+This file does not restate status. One session drives the project (since Oct 7, 2026). Outstanding work lives on the
+project's GitHub board as work-order issues. Decisions are logged in [docs/DECISIONS.md](docs/DECISIONS.md). How agents
+work, with their tiers and checks, is in [docs/agent-work.md](docs/agent-work.md).
 
 ## Handing a task to a cloud session
 
