@@ -22,7 +22,8 @@ import type { Tracks } from '../../src/lib/contracts/tracks.js';
  *   rule needs one);
  * - with no input at z15–17 the map renders no faster than the loop's
  *   formula, clamp(2 × the fastest on-screen bus speed in px/s, 2, 60), the
- *   scene's JS stays ≤ 1 ms p95 per frame, and nothing calls setData inside
+ *   scene's JS stays ≤ 3 ms p95 per frame (a buses-only regression guard; the scene's budget is 8 ms p95 with
+ *   everything on, scene-budget.spec.ts: owner, Oct 22, #32), and nothing calls setData inside
  *   an animation frame;
  * - stale, unknown-route, selected and spotlit looks; stop posts and names;
  *   buses stay discs when the scene can't load;
@@ -410,7 +411,7 @@ test.describe('buses3d', () => {
 		record('readable.json', results);
 	});
 
-	test('with no input at z15–17 the map renders within the loop formula, the scene JS stays ≤ 1 ms p95, and no setData runs in an animation frame', { tag: '@wp10' }, async ({ page }) => {
+	test('with no input at z15–17 the map renders within the loop formula, the scene JS stays ≤ 3 ms p95, and no setData runs in an animation frame', { tag: '@wp10' }, async ({ page }) => {
 		test.setTimeout(900_000);
 		await open(page, `15.3/${DOWNTOWN}/0/0`);
 		// Count setData/updateData on every GeoJSON source, and which ran inside a frame (MapLibre's render or any rAF callback).
@@ -507,7 +508,7 @@ test.describe('buses3d', () => {
 			expect(m.frames, 'buses move, so frames come').toBeGreaterThan(0);
 			expect(m.frames, `frames at z${zoom} vs the loop formula`).toBeLessThanOrEqual(m.expected * 1.2 + 3);
 			expect(m.p95, `scene JS p95 at z${zoom} (ms)`).not.toBeNull();
-			expect(m.p95!, `scene JS p95 at z${zoom} (ms)`).toBeLessThanOrEqual(1);
+			expect(m.p95!, `scene JS p95 at z${zoom} (ms)`).toBeLessThanOrEqual(3);
 			expect(m.setData.inFrame, `setData inside an animation frame at z${zoom}`).toBe(0);
 		}
 		// A camera animation too: still no setData in its frames.
