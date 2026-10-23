@@ -102,6 +102,13 @@ jobs:
         run: python3 -m pip install -r requirements.txt -r ingest/requirements.txt
       - name: tvt prototype
         run: python3 -m unittest discover tests
+      # tools/test_gh_app_token.py builds a PATH ending in /usr/bin and /bin and expects no `gh` there
+      # (test_no_real_gh_is_exit_127). GitHub-hosted runners ship one in /usr/bin, so the test fails on them
+      # for that reason alone. Set it aside for the job until the test builds its PATH without the system's.
+      - name: Set aside the runner's gh (tools/test_gh_app_token.py expects none on its PATH)
+        run: |
+          if [ -e /usr/bin/gh ]; then sudo mv /usr/bin/gh /usr/bin/gh.set-aside; fi
+          if command -v gh > /dev/null; then echo "gh still on PATH: $(command -v gh)"; fi
       - name: tools
         run: python3 -m unittest discover tools
       - name: ingest core
