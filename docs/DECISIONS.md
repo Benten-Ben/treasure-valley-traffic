@@ -99,11 +99,8 @@ Open questions for the owner are not kept in this file. They are issues on the p
 Each issue carries the question, the recommendation and where it was discussed. When one is decided, its label comes off
 with a "Decided (who, date):" comment, and a lasting decision is added to the Decided table above.
 
-One open question has no board issue yet, so it stays here until one is filed:
-
-| Question | Recommendation | Where discussed |
-|---|---|---|
-| Freight rail layer (owner: "would be cool if there is live location data") | No public live train positions exist: railroads don't publish them, and the blocked-crossing feeds some share with Waze are private and off-limits to us. Possible layers: rail lines (OSM) and FRA's crossing inventory (433 crossings in Ada and Canyon); FRA's public blocked-crossing reports as history (whether they download is unchecked); and our own "train at the crossing" detection from cameras near crossings, once the camera vision pipeline exists. | Oct 5 chat; [ch. 8](08-data-inventory.md) |
+The freight rail question (whether a live train layer is possible; it isn't, publicly) is kept on #184, the rail
+layer's issue, with its recommendation and sources.
 
 ## Promised and not done yet
 
