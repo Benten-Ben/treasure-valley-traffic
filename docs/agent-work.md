@@ -76,16 +76,18 @@ comments and issue edits show as the App's bot, and they spend the App's own API
     project flags (`--project`, `--add-project`, `--remove-project`, and `-p` on `issue|pr create|edit`); and GraphQL
     query text naming `projectV2`, `projectsV2`, `projectV2Item`, `projectItems` or `viewer`, given as
     `-f|-F|--field|--raw-field query=...` or `query=@file` (the file is read; an unreadable one goes to the login);
-  - the owner's own identity: `@me` as a whole token (`--assignee @me`, `assignee:@me` in a search, `@me` in a comma
-    list) and `gh api user` or `gh api /user`. Body, title and other field text is never checked, so a body that
+  - the owner's own identity: `@me` as a whole token (`--assignee @me`, `--assignee=@me,bob`, `-a@me`, `assignee:@me`
+    in a search, `@me` in a comma list) and `gh api user` or `gh api /user`. Body, title and other field text is never checked, so a body that
     says "@media" or "projectItems" stays on the App;
-  - `gh auth`, and approvals (`gh pr review`), which are the owner's own act;
+  - `--json` field lists naming `projectItems` (a Project item list the App can't read);
+  - `gh auth`, and approvals (`gh pr review`), which are the owner's own act; `-R`/`--repo` before the subcommand
+    (`gh pr -R o/r review`) changes nothing;
   - any call made with `TVT_GH_AS_USER=1`.
 - **Tokens already in the environment:** a `GH_TOKEN` the caller set (no `TVT_GH_APP_TOKEN=1` beside it) is the
   caller's own and is kept, even with `TVT_GH_AS_USER=1`. A token the wrapper set is marked with `TVT_GH_APP_TOKEN=1`;
-  when a wrapped `gh` runs another program that calls `gh` again, the marked token is dropped for a call that routes to
-  the login and kept for the App's calls. A nested call from the wrapper's own `gh` (`TVT_GH_WRAPPED=1`) is not routed
-  at all.
+  when a wrapped `gh` runs another program that calls `gh` again (an extension, a `!` alias), the marked token is
+  dropped for a call that routes to the login and kept for the App's calls. Such a nested call (`TVT_GH_WRAPPED=1`) is
+  never given a token: it mints and sets nothing.
 - **When the App is unavailable:** not configured (the wrapper finds no config file): the login, silently. Configured
   but failing (exit 2): the login, with one line on stderr, `agent-bin/gh: the App token isn't available
   (gh-app-token exit 2); using the login`; the token and `gh-app-token`'s own messages are never printed.

@@ -206,7 +206,10 @@ class WrapperRoutingTest(unittest.TestCase):
         self.real = os.path.join(self.dir, "real")
         os.makedirs(self.real)
         self.make_exec(os.path.join(self.real, "gh"),
-                       '#!/usr/bin/env bash\necho "token=${GH_TOKEN:-none}"\n'
+                       '#!/usr/bin/env bash\n'
+                       # an "extension": the real gh runs another gh call through PATH (the wrapper is first on it)
+                       '[ "${1:-}" != myext ] || { shift; exec gh "$@"; }\n'
+                       'echo "token=${GH_TOKEN:-none}"\n'
                        '[ -z "${FAKE_GH_SHOW:-}" ] || echo "marker=${TVT_GH_APP_TOKEN:-} wrapped=${TVT_GH_WRAPPED:-}"\n')
         self.make_exec(self.wrapper, None)
         # the bash that runs the scripts (the test run's first on PATH: macOS's 3.2 or a newer one), alone in its
@@ -264,7 +267,17 @@ class WrapperRoutingTest(unittest.TestCase):
                      ("issue", "list", "--assignee", "@me"), ("issue", "list", "--assignee=@me"),
                      ("issue", "list", "--assignee", "bob,@me"), ("issue", "list", "--assignee", "@me,bob"),
                      ("issue", "list", "--search", "is:open assignee:@me"),
-                     ("issue", "list", "--search", "assignee:@me,x")):
+                     ("issue", "list", "--search", "assignee:@me,x"),
+                     # @me as a list item behind --flag=, or attached to a short flag
+                     ("issue", "list", "--assignee=@me,bob"), ("issue", "edit", "5", "--add-assignee=@me,monalisa"),
+                     ("issue", "list", "-a@me"), ("issue", "list", "-a@me,bob"), ("issue", "list", "-a=@me"), ("issue", "list", "--assignee=bob,@me"),
+                     # a Project item list
+                     ("issue", "view", "5", "--json", "projectItems"), ("issue", "view", "5", "--json=projectItems"),
+                     ("pr", "view", "5", "--json", "title,projectItems"),
+                     # -R / --repo before the subcommand
+                     ("pr", "-R", "o/r", "review", "5", "--approve"), ("pr", "--repo", "o/r", "review", "5", "--approve"),
+                     ("pr", "--repo=o/r", "review", "5", "--approve"), ("issue", "-R", "o/r", "create", "-p", "Board"),
+                     ("-R", "o/r", "project", "list")):
             self.assertEqual(self.run_gh(*args), "token=none", args)
 
     def test_text_that_only_mentions_these_words_stays_on_the_app(self):
@@ -281,6 +294,9 @@ class WrapperRoutingTest(unittest.TestCase):
                      ("api", "repos/o/r/issues/9/comments", "-F", "body=@me"),
                      ("api", "graphql", "-F", "query=@" + os.path.join(self.dir, "ok.graphql")),
                      ("issue", "list", "--search", "@media in:title"),
+                     ("issue", "list", "--assignee=bob,alice"), ("issue", "list", "-a", "bob"), ("issue", "list", "-abob"),
+                     ("issue", "view", "5", "--json", "title,number"), ("issue", "view", "5", "--json=title"),
+                     ("pr", "-R", "o/r", "view", "5"), ("gist", "-R", "o/r", "create", "-p", "f.txt"), ("issue", "-R", "o/r", "list"),
                      # -p is a project flag only on issue|pr create|edit: on gist create it is --public
                      ("gist", "create", "-p", "notes.txt")):
             self.assertEqual(self.run_gh(*args), "token=app-token", args)
@@ -327,10 +343,21 @@ class WrapperRoutingTest(unittest.TestCase):
         self.wrapper = os.path.join(second, "gh")
         self.assertEqual(self.run_gh("issue", "view", "9"), "token=app-token")
 
-    def test_a_nested_call_does_no_routing(self):
-        # TVT_GH_WRAPPED=1: straight to the real gh, environment untouched (no token minted, none dropped)
+    def test_a_nested_call_mints_and_sets_nothing(self):
+        # TVT_GH_WRAPPED=1: straight to the real gh; no token minted
         self.assertEqual(self.run_gh("issue", "view", "9", TVT_GH_WRAPPED="1"), "token=none")
-        self.assertEqual(self.run_gh("project", "list", TVT_GH_WRAPPED="1", GH_TOKEN="x", TVT_GH_APP_TOKEN="1"), "token=x")
+        # a caller's own token is kept, for the login's calls too
+        self.assertEqual(self.run_gh("project", "list", TVT_GH_WRAPPED="1", GH_TOKEN="x"), "token=x")
+        # our marked token is kept for an App call
+        self.assertEqual(self.run_gh("issue", "view", "9", TVT_GH_WRAPPED="1", GH_TOKEN="x", TVT_GH_APP_TOKEN="1"), "token=x")
+
+    def test_a_call_made_by_a_wrapped_gh_drops_the_marked_token_for_the_login(self):
+        marked = dict(TVT_GH_WRAPPED="1", GH_TOKEN="x", TVT_GH_APP_TOKEN="1")
+        self.assertEqual(self.run_gh("project", "list", **marked), "token=none")
+        self.assertEqual(self.run_gh("issue", "list", "--assignee", "@me", **marked), "token=none")
+        # end to end: an extension of the real gh calls `gh project list` and `gh issue view` through PATH
+        self.assertEqual(self.run_gh("myext", "project", "list"), "token=none")
+        self.assertEqual(self.run_gh("myext", "issue", "view", "9"), "token=app-token")
 
     def test_no_real_gh_is_exit_127(self):
         self.path = os.pathsep.join([os.path.dirname(self.wrapper)] + self.tail)
