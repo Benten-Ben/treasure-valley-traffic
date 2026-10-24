@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { DASH, NHD_FINER, TONES } from '#lib/base/water/palette.js';
 	import { HAIRLINE_PX, SEASON_ZOOM_NOTE } from '#lib/base/water/season.js';
+	import { wetlandTuft } from '#lib/base/water/wetlands.base.js';
 	import type { LegendProps } from '../types.js';
 	import type { WaterModule } from './index.svelte.js';
 	import { ageText, CREDITS, STRUCTURE_WORD } from './water.js';
@@ -28,6 +29,17 @@
 	]);
 	const dashed = (w: number, d: readonly number[] | null) => (d ? d.map((x) => Math.round(x * w * 10) / 10).join(' ') : undefined);
 
+	/**
+	 * The two wetland tufts, drawn with the same look the map uses (wetlandTuft). A dash in the map is in line widths,
+	 * so the swatch scales it by the stroke width, as the rows above do. The 1981 tuft is the sparser one.
+	 */
+	const recentTuft = wetlandTuft(false);
+	const oldTuft = wetlandTuft(true);
+	const wetlandRows = [
+		{ id: 'wetland', word: 'Wetland tufts', note: 'National Wetlands Inventory, from z14. Not a legal (regulatory) wetland boundary.', width: recentTuft.width, dash: recentTuft.dash },
+		{ id: 'wetland-1981', word: 'Sparser tufts', note: 'mapped from 1981 photos, from z15. Not a legal (regulatory) wetland boundary.', width: oldTuft.width, dash: oldTuft.dash }
+	];
+
 	const credits = $derived(
 		water.bakedCredit.length ? water.bakedCredit : ['© OpenStreetMap contributors', 'U.S. Geological Survey, National Hydrography Dataset']
 	);
@@ -52,12 +64,14 @@
 		</svg>
 		<span><b>Lake, pond, reservoir</b> <span class="how">(a dashed rim when it dries up)</span></span>
 	</li>
-	<li>
-		<svg viewBox="0 0 40 12" width="40" height="12" aria-hidden="true">
-			<line x1="1" y1="6" x2="39" y2="6" stroke={t.line} stroke-width="1.2" stroke-dasharray="0.8 4" />
-		</svg>
-		<span><b>Wetland tufts</b> <span class="how">(National Wetlands Inventory, from z14; sparser and finer where mapped from 1981 photos, from z15). Not a legal (regulatory) wetland boundary.</span></span>
-	</li>
+	{#each wetlandRows as w (w.id)}
+		<li>
+			<svg viewBox="0 0 40 12" width="40" height="12" aria-hidden="true">
+				<line x1="1" y1="6" x2="39" y2="6" stroke={t.line} stroke-width={w.width} stroke-dasharray={dashed(w.width, w.dash)} />
+			</svg>
+			<span><b>{w.word}</b> <span class="how">({w.note})</span></span>
+		</li>
+	{/each}
 </ul>
 {#if water.baked}
 	<ul class="keys" aria-label="Canal season" data-canal-season-legend>
