@@ -45,7 +45,7 @@ python3 basemap/camera_points.py --signals # COMPASS's signal locations (kept lo
 python3.12 basemap/imagery.py --detail-source usda --detail-maxzoom 18 \
     --detail data/cameras/cameras.geojson@250 \
     --detail data/imagery/points/compass-signals.geojson@150   # imagery (NAIP 2025 detail)
-TILES_DIR=/srv/tvt/tiles basemap/build.sh  # on the server
+TVT_TILES_LOCK_DIR=/srv/tvt/work/locks TILES_DIR=/srv/tvt/tiles basemap/build.sh  # on the server
 ```
 
 Each step adds its entry to `manifest.json`, and the app shows whatever is
