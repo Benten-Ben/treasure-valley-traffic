@@ -230,6 +230,8 @@ class OutsideCheckoutTest(Base):
         self.assertNotEqual(r.returncode, 0)
         self.assertIn(lock.ENV, r.stdout + r.stderr)
         self.assertFalse(os.path.exists(os.path.join(out, "manifest.json")))
+        self.assertFalse(os.path.exists(os.path.join(out, "valley.pmtiles")))   # refused before the extract
+        self.assertFalse(os.path.exists(os.path.join(out, "fonts")))
 
 
 class ManifestWriterTest(Base):
