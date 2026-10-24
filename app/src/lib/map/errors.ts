@@ -9,8 +9,21 @@ export interface MapErrorLike {
 	tile?: { tileID?: { canonical?: { z: number; x: number; y: number } } };
 }
 
-/** The error's name, message, HTTP status and URL, and the source and tile it came from. */
-export function errorDetail(ev: MapErrorLike): string {
+/** One answer of the PMTiles protocol (pmtiles-protocol.ts): what the decoder was handed for a URL. */
+export interface AnswerLike {
+	url: string;
+	bytes: number;
+	aborted: boolean;
+	head: string;
+}
+
+/**
+ * The error's name, message, HTTP status and URL, and the source and tile it came from. With the
+ * protocol's recent answers, the last ones for that tile too: the byte length handed to the decoder,
+ * the first bytes, and whether the request had been aborted (a PMTiles range answer is always
+ * application/octet-stream, so the network log cannot tell an image from anything else).
+ */
+export function errorDetail(ev: MapErrorLike, answers: readonly AnswerLike[] = []): string {
 	const e = ev.error ?? {};
 	const c = ev.tile?.tileID?.canonical;
 	const parts = [
@@ -20,5 +33,11 @@ export function errorDetail(ev: MapErrorLike): string {
 		ev.sourceId ? `source ${ev.sourceId}` : null,
 		c ? `tile ${c.z}/${c.x}/${c.y}` : null
 	];
+	if (c) {
+		const tail = `/${c.z}/${c.x}/${c.y}`;
+		for (const a of answers.filter((x) => x.url.endsWith(tail)).slice(-3)) {
+			parts.push(`handed ${a.url.split('/').slice(-4, -3)[0]}: ${a.bytes} bytes, head ${a.head || '-'}, ${a.aborted ? 'aborted' : 'not aborted'}`);
+		}
+	}
 	return parts.filter(Boolean).join(' · ');
 }

@@ -4,6 +4,7 @@ import { AttributionControl, Map, ScaleControl, addProtocol, setWorkerUrl, type 
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
 import type { Protocol } from 'pmtiles';
 import { dev } from '$app/env';
+import { tileAnswers, tileProtocol } from './pmtiles-protocol.js';
 import { errorDetail, type MapErrorLike } from './errors.js';
 import { buildStyle, loadManifest, type BasemapManifest } from './style.js';
 import './controls.css';
@@ -37,7 +38,7 @@ export function setupMapLibre(): void {
 				throw e;
 			}));
 	reader().catch(() => {}); // start it now; each tile request reports its own failure
-	addProtocol('pmtiles', async (params, abort) => (await reader()).tile(params, abort));
+	addProtocol('pmtiles', tileProtocol(reader) as never);
 }
 
 /**
@@ -109,7 +110,7 @@ export async function createMap(container: HTMLElement, o: MapOptions = {}): Pro
 	// failed beside it, as a warning.
 	map.on('error', (ev) => {
 		console.error('map error', ev.error);
-		console.warn('map error detail:', errorDetail(ev as MapErrorLike));
+		console.warn('map error detail:', errorDetail(ev as MapErrorLike, tileAnswers()));
 	});
 	return { map, manifest: m };
 }
