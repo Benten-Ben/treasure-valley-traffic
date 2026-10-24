@@ -24,6 +24,77 @@ export interface GroundSource {
 	queryTerrainElevation(lngLat: [number, number]): number | null;
 }
 
+/** The part of a map that says which tiles draw the terrain (MapLibre's `terrain.getCoverageIndex`). */
+export interface CoverageMap {
+	terrain?: { getCoverageIndex?: () => unknown } | null;
+}
+
+/**
+ * Tells when the drawn ground may have changed under things that haven't moved.
+ *
+ * The drawn surface a `queryTerrainElevation` reads is set by the tiles the terrain draws and their DEM data.
+ * MapLibre keeps an index of those tiles and drops it when the set changes or a DEM tile arrives, so a new
+ * index object means the ground may differ, while the same object means it doesn't, however the camera moved.
+ * A map without that method can't say, so the scene falls back to treating every move as a change (`reliable`).
+ */
+export class DrawnGroundWatch {
+	#index: unknown = undefined;
+
+	/** Whether this map can say when its drawn ground changes (always, without terrain: nothing is read then). */
+	static reliable(map: CoverageMap): boolean {
+		return !map.terrain || typeof map.terrain.getCoverageIndex === 'function';
+	}
+
+	/** Whether the drawn ground changed since the last call (the first call reports a change). */
+	changed(map: CoverageMap): boolean {
+		const t = map.terrain;
+		const index = t && typeof t.getCoverageIndex === 'function' ? t.getCoverageIndex() : null;
+		const changed = index !== this.#index;
+		this.#index = index;
+		return changed;
+	}
+}
+
+/**
+ * The scene's ground epoch: bumped when the drawn ground may have changed, and counting the frames drawn in it.
+ *
+ * A move bumps it only for a map that can't say when its ground changes; otherwise the watch decides per frame.
+ * `rereading` is true while a changed epoch still has scenery to re-read (the scene asks the loop for frames then).
+ */
+export class GroundEpoch {
+	#epoch = 0;
+	#seen = -1;
+	#frames = 0;
+	#watch = new DrawnGroundWatch();
+
+	get epoch(): number {
+		return this.#epoch;
+	}
+
+	/** Terrain tiles or settings changed, or the context was restored. */
+	bump(): void {
+		this.#epoch++;
+	}
+
+	/** The camera moved: a change only for a map that can't say when its drawn ground changes. */
+	moved(map: CoverageMap): void {
+		if (!DrawnGroundWatch.reliable(map)) this.#epoch++;
+	}
+
+	/** Start a frame: bumps on a new tile index (with terrain), counts the frames in this epoch, returns the epoch. */
+	frame(map: CoverageMap, terrain: boolean): number {
+		if (terrain && this.#watch.changed(map)) this.#epoch++;
+		this.#frames = this.#epoch === this.#seen ? this.#frames + 1 : 1;
+		this.#seen = this.#epoch;
+		return this.#epoch;
+	}
+
+	/** Whether the scenery has not yet had its turn in this epoch, given the frames the share needs. */
+	rereading(terrain: boolean, maxShare: number): boolean {
+		return terrain && this.#frames < maxShare;
+	}
+}
+
 interface Track {
 	lng: number;
 	lat: number;

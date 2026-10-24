@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { along, GroundTracker, renderedZ, slopePitch, TWEEN_MS } from './ground.js';
+import { along, DrawnGroundWatch, GroundEpoch, GroundTracker, renderedZ, slopePitch, TWEEN_MS } from './ground.js';
 import { pickLayer } from './textures.js';
 import { PickIndex, priorityOf, segmentDistance, selectionKey } from './pick.js';
 import { hprBasis, packColor, pickSpan } from './index.js';
@@ -123,6 +123,66 @@ describe('ground', () => {
 		g.begin();
 		g.sample('a', -116.001, 43, q(1000), 1, 96, false, 5, 2, true);
 		expect(queries).toBe(5);
+	});
+
+	it('the drawn ground counts as changed only when MapLibre’s terrain tile index is a new object', () => {
+		const a = { tiles: 'a' };
+		const map = { terrain: { getCoverageIndex: () => a as unknown } };
+		const w = new DrawnGroundWatch();
+		expect(DrawnGroundWatch.reliable(map)).toBe(true);
+		// The first look reports a change; the same index after the camera moved doesn't.
+		expect(w.changed(map)).toBe(true);
+		expect(w.changed(map)).toBe(false);
+		expect(w.changed(map)).toBe(false);
+		// A tile arrived or the rendered tile set changed: the index is rebuilt.
+		const b = { tiles: 'b' };
+		map.terrain.getCoverageIndex = () => b;
+		expect(w.changed(map)).toBe(true);
+		expect(w.changed(map)).toBe(false);
+		// No renderable terrain tile (null) and back.
+		map.terrain.getCoverageIndex = () => null;
+		expect(w.changed(map)).toBe(true);
+		expect(w.changed(map)).toBe(false);
+		map.terrain.getCoverageIndex = () => a;
+		expect(w.changed(map)).toBe(true);
+	});
+
+	it('a map that can’t say when its drawn ground changes is unreliable, so every move counts; one without terrain is fine', () => {
+		expect(DrawnGroundWatch.reliable({ terrain: {} })).toBe(false);
+		expect(DrawnGroundWatch.reliable({ terrain: undefined })).toBe(true);
+		expect(DrawnGroundWatch.reliable({ terrain: null })).toBe(true);
+		const w = new DrawnGroundWatch();
+		expect(w.changed({ terrain: {} })).toBe(true);
+	});
+
+	it('the ground epoch: a move with an unchanged tile index adds no epoch, a new index gives share frames and then stops asking', () => {
+		const idx = { a: 1 };
+		const map = { terrain: { getCoverageIndex: () => idx as unknown } };
+		const e = new GroundEpoch();
+		const first = e.frame(map, true);
+		e.moved(map);
+		const second = e.frame(map, true);
+		e.moved(map);
+		const third = e.frame(map, true);
+		expect(second).toBe(first);
+		expect(third).toBe(first);
+		// Three frames in this epoch: a share of 3 is done, a share of 4 is still reading.
+		expect(e.rereading(true, 3)).toBe(false);
+		expect(e.rereading(true, 4)).toBe(true);
+		expect(e.rereading(false, 4)).toBe(false);
+		// A tile arrives: a new index, a new epoch, and the count starts over.
+		map.terrain.getCoverageIndex = () => ({ a: 2 });
+		const next = e.frame(map, true);
+		expect(next).toBe(first + 1);
+		expect(e.rereading(true, 4)).toBe(true);
+		// A map that can't say counts every move.
+		const blind = { terrain: {} };
+		const b = new GroundEpoch();
+		const before = b.epoch;
+		b.moved(blind);
+		expect(b.epoch).toBe(before + 1);
+		e.bump();
+		expect(e.epoch).toBe(next + 1);
 	});
 
 	it('under reduced motion heights jump', () => {
