@@ -362,9 +362,15 @@ It is **not a legal (regulatory) wetland boundary**; every card says so.
   `recent` (imagery of 1999 or later: 12,178), `old` (July 1981 or 1983 photos: 1,572), `interim` (the "Scalable"
   product: 3) or `unknown` (none). NWI's ponds, lakes and riverine polygons are not kept: the bodies and reaches already
   draw that water. Hydric soils stay a row on the soils card.
-- **The presence check** applies to `old` and `interim` polygons. A worker step (rasterio, on the ground's grid, from
-  mask v0's exact roofs, roads and paving, the held CDL clips and CSB's eight yearly codes) writes five shares per
-  polygon to a JSON file, which `nwi-presence --from` loads (the file's format is in the module's docstring). The
+- **The presence check** applies to `old` and `interim` polygons. A worker step
+  ([`build/presence.py`](build/presence.py), the worker image: GDAL and NumPy through the ground's window helper, no
+  database) measures five shares of each polygon's area on the ground's grid (0.5 m cells for a polygon under 1.5 km
+  across, then 2 m, then 10 m): mask v0's exact roofs, roads and paving, CDL 2024 and 2025 (developed classes
+  122-124 in both years; wetland classes 190 and 195 in either), and CSB's eight yearly codes (a field cropped, in
+  alfalfa or fallow in 6 of the 8 years 2018-2025 is `cultivated`; 37 or 176 in 4 of 8 is `hay_pasture`). It writes
+  them to a JSON file (its format is in `wetlands.py`'s docstring), which `nwi-presence --from` loads. A `--keys` file
+  names the old and interim polygons (`select key from water.nwi_wetland where era in ('old', 'interim')`). The
+  1,575 polygons of the Oct 23 cut take about 3 minutes and under 1 GB. The
   rules are `wetlands.presence()`: retired as `built` (built half or more, or a quarter with CDL developed at half and
   no support); retired as `farmed` (cultivated half or more, no support), or flagged `farmed_supported` with support;
   flagged `hay_pasture` (half or more); otherwise kept. Support is CDL wetland classes over a quarter of the
@@ -396,10 +402,28 @@ It is **not a legal (regulatory) wetland boundary**; every card says so.
   earliest, z16 at the latest). Measured on the Oct 23 cut: the 12,178 recent polygons, simplified, are about 6 MB as
   FlatGeobuf (22.5 MB unsimplified), and 6,825 of the drawn ones start at z14, 4,391 at z15 and 934 at z16. The bake's
   budget binds per z16 tile of the downtown box (basemap/landscape/spec.json), where wetlands are sparse.
-- **Checks and the QA sheet:** `wetland-qa [--build N] [--boxes] [--out DIR]` prints the outcome counts of the old
-  polygons (per test box with `--boxes`) and writes `qa-old-mapped.csv`, the retired first, for the owner's QA sheet;
-  `--out` is a folder in the private files, never the repository. Retired polygons stay in `water.wetland_check` with
-  the reason and the shares.
+- **Checks and the QA sheet:** `wetland-qa [--build N] [--boxes] [--sweep] [--out DIR]` prints the outcome counts of the
+  old polygons and, with `--boxes`, one table of every NWI polygon by what became of it, valley-wide and per test box:
+  retired, unchecked, kept, then of the kept ones nwi_only, too_small, nothing_left, leftover, dropped_reach,
+  dropped_remainder and dropped_both (`leftover_outcome()` restates the build's leftover rules from the stored
+  geometry; its `disagree` column counts polygons where that and the build differ, and is 0 on the Oct 23 data).
+  `--sweep` prints what other thresholds would do, one parameter at a time: the presence check's (`PRESENCE_SWEEP`)
+  and the reach rule's distance, minimum area and share-based minimum. It changes no value; the values in
+  `wetlands.py` stay the coordinator's to set. `--out` is a folder in the private files, never the repository: it
+  gets `qa-old-mapped.csv` (the retired first, for the owner's QA sheet) and `qa-reach.csv` (the grazing and
+  offset-strip cases of the reach rule). Retired polygons stay in `water.wetland_check` with the reason and the
+  shares.
+- **Measured Oct 24, 2026** (the scratch copy: the Oct 23 NWI cut, the Oct 11 OSM load, mask v0 of Oct 11): of the
+  1,575 old and interim polygons the presence check retired 234 (70 built, 164 farmed), flagged 80 (55 farmed with
+  support, 25 hay or pasture) and kept 1,261. How sensitive each threshold is, over those 1,575: `built_retires` 0.35
+  to 0.65 moves 240 to 232 retired; `cultivated_retires` 0.35, 0.5, 0.65 and 0.8 retire 267, 234, 206 and 170;
+  `hay_pasture_flags` 0.35, 0.5 and 0.65 flag 90, 80 and 74 (`wetland-qa --sweep`). Only 40 OSM wetlands overlap the
+  valley's 13,753 polygons at all, so the reach rule decides just 56 of them (20 draw a leftover, 20 leave nothing, 16
+  are dropped: 3 by the reach rule, 3 by the 2,000 m2 floor, 10 by both); 10, 15, 20 and 25 m would drop 12, 13, 16
+  and 19. The ten test boxes hold 50 NWI polygons (boxes a and b, all mapped from 1999 or later), so they have no
+  old-mapped ones to tune on. The wetlands alone, baked as `water.bodies` (13,511 features, 5.2 MB), have a busiest
+  tile of 7.2 KB at z14, 5.8 KB at z15 and 3.4 KB at z16 (gzip); water's two base layers together, 21.5 MB, have a
+  busiest tile of 20.7 KB (z10, reaches).
 - **Credit:** "Wetlands: U.S. Fish and Wildlife Service, National Wetlands Inventory" wherever NWI's classes or outlines
   show; the bodies layer's manifest lists `nwi` as an input beside OSM and NHD.
 
@@ -532,8 +556,9 @@ python plugins/water/build/prepare.py hydroshare --zip $TVT_SOURCES/hydroshare/<
 python3 -m ingest nhd-load --from DIR/nhd.gpkg              # replaces water.nhd_*; skips a file already loaded
 python3 -m ingest hydroshare-load --from DIR/hydroshare.gpkg
 python3 -m ingest nwi-load --from nwi_mapbox.gpkg [--dry-run]   # the NWI cut kept on the server (water 0004)
+python plugins/water/build/presence.py --nwi nwi_mapbox.gpkg --csb csb_mapbox.gpkg --cdl-dir CDL --archive ARCHIVE --keys keys.txt  # worker image
 python3 -m ingest nwi-presence --from shares.json [--dry-run]   # the worker step's presence shares
-python3 -m ingest wetland-qa [--build N] [--boxes] [--out DIR]  # after water-build; DIR in the private files
+python3 -m ingest wetland-qa [--build N] [--boxes] [--sweep] [--out DIR]  # after water-build; DIR in the private files
 python3 -m ingest osm-load --only water.osm_waterways        # on the valley cut we hold (light)
 python3 -m ingest run idwr_irrigation_orgs idwr_season_of_use
 python3 -m ingest water-build [--dry-run]
