@@ -435,12 +435,24 @@ def _bake_file(plan, tiles_dir, work, digest, writer, threads=2):
                     os.unlink(os.path.join(work, f))
 
 
+def _lock_ok(tiles_dir):
+    """True when the lock folder is usable for a run on tiles_dir; else say why (a refusal, not a crash)."""
+    try:
+        P.lock.ensure(tiles_dir)
+    except OSError as err:
+        _err(f"refused: {err}")
+        return False
+    return True
+
+
 def cmd_bake(args):
     tiles_dir = args.tiles
     if not os.path.isdir(tiles_dir):
         _err(f"refused: no tiles folder at {tiles_dir}")
         return EXIT_REFUSED
-    with P.locked():
+    if not _lock_ok(tiles_dir):
+        return EXIT_REFUSED
+    with P.locked(tiles=tiles_dir):
         for f in os.listdir(tiles_dir):                       # an earlier bake that was stopped
             if f.startswith(P.PART_PREFIX):
                 os.unlink(os.path.join(tiles_dir, f))
@@ -609,7 +621,9 @@ def cmd_check(args):
 
 def cmd_rollback(args):
     tiles_dir = args.tiles
-    with P.locked():
+    if not _lock_ok(tiles_dir):
+        return EXIT_REFUSED
+    with P.locked(tiles=tiles_dir):
         try:
             old = P.current(tiles_dir)
         except P.BakeError as err:

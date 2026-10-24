@@ -39,6 +39,12 @@ for tool in pmtiles git curl python3; do
 	command -v "$tool" >/dev/null || { echo "missing tool: $tool (see basemap/README.md)" >&2; exit 1; }
 done
 mkdir -p "$OUT"
+# Refuse before any download or file replaced if the lock folder isn't usable for this tiles folder (step 3 needs it).
+python3 -c 'import sys; from basemap import lock
+try:
+    lock.ensure(sys.argv[1])
+except OSError as err:
+    sys.exit(f"refused: {err}")' "$OUT"
 
 # 1. Valley extract from the latest daily planet build. pmtiles reads only the
 #    byte ranges it needs, so this downloads well under 1 GB, not the planet.
@@ -64,7 +70,7 @@ cp -r "$tmp/assets/fonts" "$tmp/assets/sprites" "$OUT/"
 precompress_glyphs "$OUT"
 
 # 3. Manifest. Later steps (terrain, buildings) add their own entries.
-python3 -m basemap.lock manifest.lock -- python3 - "$OUT" "$BBOX" "$CENTER" "$BUILD" "$FLAVOR" <<'EOF'
+python3 -m basemap.lock --tiles "$OUT" manifest.lock -- python3 - "$OUT" "$BBOX" "$CENTER" "$BUILD" "$FLAVOR" <<'EOF'
 import json, os, sys, datetime, tempfile
 out, bbox, center, build, flavor = sys.argv[1:]
 path = os.path.join(out, "manifest.json")

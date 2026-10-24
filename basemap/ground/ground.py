@@ -21,6 +21,7 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
+from basemap import lock  # noqa: E402
 from basemap.ground import grid, inputs, manifest, tiles  # noqa: E402
 
 
@@ -116,6 +117,11 @@ def cmd_flat(args):
             print("the ground can be painted; nothing to record as flat", file=sys.stderr)
             return 2
         reason = plan.reason
+    try:
+        lock.ensure(args.tiles)
+    except OSError as err:
+        print(f"refused: {err}", file=sys.stderr)
+        return 2
     path = tiles.update_manifest(args.tiles, tiles.flat_entry(reason))
     print(f"{path}: ground is flat ({reason})")
     return 0

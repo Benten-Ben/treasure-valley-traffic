@@ -256,7 +256,7 @@ def update_manifest(tiles_dir, entry):
     entries are kept as they are."""
     check_entry(entry)
     path = os.path.join(tiles_dir, "manifest.json")
-    with lock.locked(lock.MANIFEST):               # the same lock as the landscape bake's and build.sh's writes
+    with lock.locked(lock.MANIFEST, tiles_dir):             # the same lock as the landscape bake's and build.sh's writes
         with open(path, encoding="utf-8") as f:
             m = json.load(f)
         m[ENTRY] = entry

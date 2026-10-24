@@ -170,6 +170,69 @@ class LockTest(Base):
         release()
         self.assertEqual(p.wait(10), 0)
 
+class OutsideCheckoutTest(Base):
+    """A run that writes a tiles folder outside the checkout needs TVT_TILES_LOCK_DIR (#392)."""
+
+    def unset(self):
+        env = mock.patch.dict(os.environ)
+        env.start()
+        self.addCleanup(env.stop)
+        del os.environ[lock.ENV]
+
+    def test_ensure_refuses_outside_the_checkout_without_the_variable(self):
+        self.unset()
+        with self.assertRaises(OSError) as cm:
+            lock.ensure(self.tiles)
+        self.assertIn(lock.ENV, str(cm.exception))
+        self.assertIn("deploy/README.md", str(cm.exception))
+        with self.assertRaises(OSError):
+            with lock.locked(lock.MANIFEST, self.tiles):
+                pass
+
+    def test_it_runs_with_the_variable_or_inside_the_checkout_or_with_no_folder(self):
+        self.assertEqual(lock.ensure(self.tiles), self.locks)     # the variable is set (Base)
+        self.unset()
+        with mock.patch.object(lock, "_checkout", return_value=self.dir), \
+                mock.patch.object(lock, "lock_dir", return_value=self.locks):
+            self.assertEqual(lock.ensure(self.tiles), self.locks)  # self.tiles is under self.dir
+        with mock.patch.object(lock, "lock_dir", return_value=self.locks):
+            lock.ensure()                                          # no folder named: unchanged
+
+    def test_the_command_form_takes_the_folder_as_an_option(self):
+        env = {k: v for k, v in os.environ.items() if k != lock.ENV}
+        cmd = [sys.executable, "-m", "basemap.lock", "--tiles", self.tiles, "x.lock", "--", sys.executable, "-c", "pass"]
+        r = subprocess.run(cmd, cwd=ROOT, env=env, capture_output=True, text=True)
+        self.assertEqual(r.returncode, 2)
+        self.assertIn(lock.ENV, r.stderr)
+        r = subprocess.run(cmd, cwd=ROOT, env=dict(env, **{lock.ENV: self.locks}), capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_a_caller_passes_its_folder(self):
+        self.unset()
+        entry = ground_tiles.flat_entry("Flat ground: not built yet.")
+        with self.assertRaises(OSError) as cm:
+            ground_tiles.update_manifest(self.tiles, entry)
+        self.assertIn(lock.ENV, str(cm.exception))
+        with self.assertRaises(OSError):
+            P.update_manifest(self.tiles, dict(P.empty_entry("x"), previous=None))
+        self.assertNotIn("ground", self.manifest())
+
+    def test_build_sh_refuses_without_the_variable(self):
+        bin_dir = os.path.join(self.dir, "bin")
+        os.makedirs(bin_dir)
+        _stubs(bin_dir)
+        out = os.path.join(self.dir, "out")
+        os.makedirs(out)
+        env = {k: v for k, v in os.environ.items() if k != lock.ENV}
+        env.update(PATH=bin_dir + os.pathsep + env["PATH"], TILES_DIR=out, BUILD="20261012.pmtiles", PYTHONPATH=ROOT)
+        r = subprocess.run(["bash", os.path.join(ROOT, "basemap", "build.sh")], cwd=self.dir, env=env,
+                           capture_output=True, text=True, timeout=60)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn(lock.ENV, r.stdout + r.stderr)
+        self.assertFalse(os.path.exists(os.path.join(out, "manifest.json")))
+        self.assertFalse(os.path.exists(os.path.join(out, "valley.pmtiles")))   # refused before the extract
+        self.assertFalse(os.path.exists(os.path.join(out, "fonts")))
+
 
 class ManifestWriterTest(Base):
     def test_ground_update_manifest_waits_for_the_lock(self):

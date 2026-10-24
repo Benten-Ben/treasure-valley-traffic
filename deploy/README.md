@@ -288,11 +288,14 @@ own, never in the served tiles folder:
   does the G1a job script (`w.sh`, in the VM's work area, outside this repository).
 - **The path is the same inside and out** because a container and a host run must lock the same files, and they do
   only when the folder is one bind mount seen at one path.
-- **A host-side run** sets the variable in its environment. That covers `bake.py rollback --tiles` and `ground.py flat
-  --tiles` as much as the build: without it the lock lands in the checkout's `data/locks`, where a running bake does
-  not see it and both can rewrite the landscape entry. For example `TVT_TILES_LOCK_DIR=/srv/tvt/work/locks
-  TILES_DIR=/srv/tvt/tiles basemap/build.sh`, or from the server's checkout `TVT_TILES_LOCK_DIR=/srv/tvt/work/locks
-  python3 -m basemap.lock manifest.lock -- COMMAND`.
+- **A host-side run** sets the variable in its environment, and **refuses to start without it** when the tiles folder
+  it writes is outside the project's checkout (`lock.ensure()` names `TVT_TILES_LOCK_DIR` and this section). That
+  covers `bake.py rollback --tiles` and `ground.py flat --tiles` as much as the build: without the variable the lock
+  would land in the checkout's `data/locks`, where a running bake does not see it and both can rewrite the landscape
+  entry. A laptop run into the checkout's own `data/tiles` is unchanged. For example
+  `TVT_TILES_LOCK_DIR=/srv/tvt/work/locks TILES_DIR=/srv/tvt/tiles basemap/build.sh`, or from the server's checkout
+  `TVT_TILES_LOCK_DIR=/srv/tvt/work/locks python3 -m basemap.lock --tiles /srv/tvt/tiles manifest.lock -- COMMAND`
+  (`--tiles` names the folder the command writes; `build.sh` passes its `TILES_DIR`).
 - **Compose** sets nothing: its only mount of the tiles folder is the app's, read-only (`docker-compose.yml`), and no
   service rewrites the manifest.
 - **Checking it** (light, but it goes through `heavy`, so it needs an open window and waits behind any running heavy

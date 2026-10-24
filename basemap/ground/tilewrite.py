@@ -636,7 +636,7 @@ def main(argv=None):
             return 2
         if args.tiles:
             try:
-                lock.ensure()      # fail now, not after the files are copied
+                lock.ensure(args.tiles)  # fail now, not after the files are copied
             except OSError as err:
                 print(f"refused: {err}", file=sys.stderr)
                 return 2

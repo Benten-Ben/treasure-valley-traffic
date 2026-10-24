@@ -12,9 +12,15 @@ variable must name a writable folder: ensure() checks that up front and says so.
 The folder is setgid and shared by the job users, so a lock file is made mode 0o664 (whatever the umask), and ensure()
 opens every lock a run takes read-write, so a file another user left at 0o644 fails at the start, naming the file.
 
-From a shell (macOS has no flock(1)): `python3 -m basemap.lock manifest.lock -- COMMAND ...` takes the lock, runs
-the command, releases the lock and exits with the command's status.
+A run that writes a tiles folder says which (ensure(tiles=...), locked(name, tiles=...)). When that folder is outside
+the main checkout and the variable is unset, the run refuses: the default folder would be an unshared one in the
+checkout, and a bake running elsewhere would never see its locks (deploy/README.md, "The tiles folder's locks").
+
+From a shell (macOS has no flock(1)): `python3 -m basemap.lock [--tiles DIR] NAME -- COMMAND ...` takes the lock,
+runs the command, releases the lock and exits with the command's status. --tiles names the folder the command
+writes, for the check above; the command line states it, the environment is not read for it.
 """
+import errno
 import fcntl
 import os
 import subprocess
@@ -44,12 +50,28 @@ def _main_checkout(root):
     return root
 
 
+def _checkout():
+    return _main_checkout(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
 def lock_dir():
     d = os.environ.get(ENV)
     if d:
         return d
-    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    return os.path.join(_main_checkout(root), "data", "locks")
+    return os.path.join(_checkout(), "data", "locks")
+
+
+def _check_shared(tiles):
+    """Refuse a tiles folder outside the main checkout when the variable is unset (see the module note)."""
+    if not tiles or os.environ.get(ENV):
+        return
+    root = os.path.realpath(_checkout())
+    path = os.path.realpath(tiles)
+    if os.path.commonpath([root, path]) != root:
+        raise OSError(errno.EINVAL, f"the tiles folder {tiles} is outside the checkout, so {ENV} must be set: "
+                                    f"without it the lock is an unshared one in the checkout's data/locks, which a "
+                                    f"bake running elsewhere never sees (deploy/README.md, \"The tiles folder's "
+                                    f"locks\")")
 
 
 def _open(path):
@@ -81,9 +103,11 @@ def _open(path):
     return fd
 
 
-def ensure():
+def ensure(tiles=None):
     """Make the lock folder and prove it writable now, so a run that would fail at the end fails at the start.
-    Also open each lock the run will take, so a file another user left unwritable fails here, naming it."""
+    Also open each lock the run will take, so a file another user left unwritable fails here, naming it. `tiles` is
+    the tiles folder the run writes, if any (see the module note)."""
+    _check_shared(tiles)
     d = lock_dir()
     try:
         os.makedirs(d, exist_ok=True)
@@ -104,11 +128,12 @@ def ensure():
 
 
 @contextmanager
-def locked(name):
-    """An exclusive lock on the file `name` in the lock folder, held for the block (it waits for another holder)."""
+def locked(name, tiles=None):
+    """An exclusive lock on the file `name` in the lock folder, held for the block (it waits for another holder).
+    `tiles` is the tiles folder the block writes, if any."""
     if not name or os.path.basename(name) != name:
         raise ValueError(f"a lock name is a bare file name, not {name!r}")
-    d = ensure()
+    d = ensure(tiles)
     fd = _open(os.path.join(d, name))
     try:
         fcntl.flock(fd, fcntl.LOCK_EX)
@@ -118,11 +143,14 @@ def locked(name):
 
 
 def main(argv):
+    tiles = None
+    if len(argv) >= 2 and argv[0] == "--tiles":
+        tiles, argv = argv[1], argv[2:]
     if len(argv) < 3 or argv[1] != "--":
-        print("usage: python3 -m basemap.lock NAME -- COMMAND [ARG ...]", file=sys.stderr)
+        print("usage: python3 -m basemap.lock [--tiles DIR] NAME -- COMMAND [ARG ...]", file=sys.stderr)
         return 2
     try:
-        with locked(argv[0]):
+        with locked(argv[0], tiles):
             return subprocess.call(argv[2:])
     except (ValueError, OSError) as err:
         print(f"basemap.lock: {err}", file=sys.stderr)
