@@ -119,6 +119,8 @@ describe('wetland tufts', () => {
 		expect(wetlandWords(false)).toEqual([NOT_A_BOUNDARY]);
 		expect(wetlandWords(true)).toEqual([NOT_A_BOUNDARY, MAPPED_FROM_1981]);
 		expect(NOT_A_BOUNDARY).toBe('Not a legal (regulatory) wetland boundary.');
+		// thin also covers the interim NWI product and NHD's marsh alone, so the line never claims 1981 photos.
+		expect(MAPPED_FROM_1981).toBe('Mapped from older photos or maps (1981-era).');
 	});
 
 	it('is its own contribution on the bodies source-layer, with the FWS credit and the images in `live`', () => {

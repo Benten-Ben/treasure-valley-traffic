@@ -13,8 +13,8 @@ import { BODIES } from './water.base.js';
  * - **Zooms.** Recent mapping draws from z14 with the dense pattern. The older mapping (the 1981-83 photos and the
  *   interim product that passed the presence check; the bake's `thin` flag) draws from z15 with the same glyph on a
  *   sparser grid. The form differs by density and zoom, so it never rests on colour alone.
- * - **Not a legal boundary.** Every wetland card and the legend say so; the 1981 ones also say they were mapped
- *   from 1981 photos. Credit: FWS, National Wetlands Inventory (public domain).
+ * - **Not a legal boundary.** Every wetland card and the legend say so; the older ones also say they were mapped
+ *   from older photos or maps (1981-era). Credit: FWS, National Wetlands Inventory (public domain).
  * - **Clicks.** A fill layer is hit by its whole polygon, not by the pattern's strokes, so the Water layer picks a
  *   wetland anywhere inside it (`WETLAND_LAYER_IDS`).
  */
@@ -30,7 +30,7 @@ export const WETLAND_CREDIT = 'U.S. Fish and Wildlife Service, National Wetlands
 
 /** The wording every wetland card and the legend share. */
 export const NOT_A_BOUNDARY = 'Not a legal (regulatory) wetland boundary.';
-export const MAPPED_FROM_1981 = 'Mapped from 1981 photos.';
+export const MAPPED_FROM_1981 = 'Mapped from older photos or maps (1981-era).';
 
 export interface TuftLook {
 	/** The first zoom it draws from. */

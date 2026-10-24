@@ -35,7 +35,7 @@
 	 */
 	const wetlandRows = [
 		{ id: 'wetland', thin: false, word: 'Wetland tufts', note: 'National Wetlands Inventory, from z14. Not a legal (regulatory) wetland boundary.' },
-		{ id: 'wetland-1981', thin: true, word: 'Sparser tufts', note: 'mapped from 1981 photos, from z15. Not a legal (regulatory) wetland boundary.' }
+		{ id: 'wetland-1981', thin: true, word: 'Sparser tufts', note: 'mapped from older photos or maps (1981-era), from z15. Not a legal (regulatory) wetland boundary.' }
 	].map((r) => ({ ...r, cell: wetlandTuft(r.thin).cell, pixels: tuftPixels(r.thin) }));
 
 	const credits = $derived(
