@@ -8,7 +8,7 @@
 #
 # Needs: pmtiles (go-pmtiles CLI), git, curl, python3, gzip.
 # Usage: basemap/build.sh            # output in data/tiles/
-#        TILES_DIR=/srv/tvt/tiles basemap/build.sh
+#        TVT_TILES_LOCK_DIR=/srv/tvt/work/locks TILES_DIR=/srv/tvt/tiles basemap/build.sh  # on the server
 #        basemap/build.sh --precompress-glyphs   # only step 2b, on an existing folder
 # The manifest is written under the lock the bake and the ground paint take (basemap/lock.py; the lock folder is
 # $TVT_TILES_LOCK_DIR, data/locks by default), through a temporary file and a rename.
