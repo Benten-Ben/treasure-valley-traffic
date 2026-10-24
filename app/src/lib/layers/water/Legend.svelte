@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { DASH, NHD_FINER, TONES } from '#lib/base/water/palette.js';
+	import { HAIRLINE_PX, SEASON_ZOOM_NOTE } from '#lib/base/water/season.js';
 	import type { LegendProps } from '../types.js';
 	import type { WaterModule } from './index.svelte.js';
 	import { ageText, CREDITS, STRUCTURE_WORD } from './water.js';
@@ -52,6 +53,30 @@
 		<span><b>Lake, pond, reservoir</b> <span class="how">(a paler wash for wetlands, a dashed rim when it dries up)</span></span>
 	</li>
 </ul>
+{#if water.baked}
+	<ul class="keys" aria-label="Canal season" data-canal-season-legend>
+		<li>
+			<svg viewBox="0 0 40 12" width="40" height="12" aria-hidden="true">
+				<rect x="1" y="2" width="38" height="8" fill={t.line} />
+			</svg>
+			<span><b>Canal, solid: water on</b> <span class="how">(the canal’s own tone, full width)</span></span>
+		</li>
+		<li>
+			<svg viewBox="0 0 40 12" width="40" height="12" aria-hidden="true">
+				<line x1="1" y1="2.6" x2="39" y2="2.6" stroke={t.line} stroke-width="1.2" />
+				<line x1="1" y1="9.4" x2="39" y2="9.4" stroke={t.line} stroke-width="1.2" />
+			</svg>
+			<span><b>Canal, hollow: water off</b> <span class="how">(two thin edges, the same width)</span></span>
+		</li>
+		<li>
+			<svg viewBox="0 0 40 12" width="40" height="12" aria-hidden="true">
+				<line x1="1" y1="6" x2="39" y2="6" stroke={t.line} stroke-width={HAIRLINE_PX} />
+			</svg>
+			<span><b>Canal, thin centre line: season unknown</b> <span class="how">(no reading for 48 hours, the season job behind, or no rule)</span></span>
+		</li>
+	</ul>
+	<p class="hint">{SEASON_ZOOM_NOTE} A canal on IDWR’s legal season of use says so on its card: the legal window is not delivery dates.</p>
+{/if}
 <p class="hint">True width from z15 (widths are estimates until measured). Lines never carry a dark edge, so they sit quietly under the streets.</p>
 <ul class="shapes" aria-label="Badges">
 	<li>
@@ -95,7 +120,7 @@
 		{#if notices.polled.boise_ecoli}E. coli results checked {ageText(notices.polled.boise_ecoli)}.{/if}
 	</p>
 {/if}
-<p class="credit">{credits.join(' · ')} · {CREDITS.nwps}; {STRUCTURE_WORD.gauge.toLowerCase()} observations courtesy of USGS where NWPS names a USGS site · {CREDITS.boiseHazards}; {CREDITS.boiseEcoli}</p>
+<p class="credit">{credits.join(' · ')} · {CREDITS.nwps}{#if water.baked} · {CREDITS.idwrSeason}{/if}; {STRUCTURE_WORD.gauge.toLowerCase()} observations courtesy of USGS where NWPS names a USGS site · {CREDITS.boiseHazards}; {CREDITS.boiseEcoli}</p>
 
 <style>
 	li {

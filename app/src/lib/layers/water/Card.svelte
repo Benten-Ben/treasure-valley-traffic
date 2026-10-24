@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { canalSeason, isLegalWindow, loadSeason, seasonWords, type Season } from '#lib/base/water/season.js';
 	import type { CardProps } from '../types.js';
 	import type { Details, WaterModule, WaterSelectionData } from './index.svelte.js';
 	import {
@@ -39,7 +40,8 @@
 	 * The water cards (landscape sprint plan v3 §4.2 P4-app, the UI v2 card pattern): a reach or canal, an
 	 * area, a gauge, a structure, a river hazard or an E. coli site. Details come from /api/water/…, what the
 	 * click already told us shows at once. Each card says where its facts came from and how we know; widths and
-	 * flows say when they are estimates; the canal's card names the irrigation service areas it runs through;
+	 * flows say when they are estimates; the canal's card names the irrigation service areas it runs through and
+	 * says its water season (on, off or unknown) and what that rests on, from /api/water/season (P5-app);
 	 * the City's notices are in its own words and we make no swim call.
 	 */
 	let { selection, module }: CardProps = $props();
@@ -92,6 +94,28 @@
 	const kindWord = $derived(data.type === 'reach' ? KIND_WORD[reach?.kind ?? data.kind] : '');
 	const flow = $derived(reach?.flow ?? (data.type === 'reach' ? (data.intermittent ? 'intermittent' : 'unknown') : 'unknown'));
 	const canal = $derived(reach?.canal ?? null);
+
+	// The canal's season: its state and the basis, in words (never colour alone). The line carries it only where it is wide.
+	let season = $state<Season | null>(null);
+	let seasonProblem = $state<string | null>(null);
+	$effect(() => {
+		if (!canal) return;
+		let live = true;
+		seasonProblem = null;
+		loadSeason().then(
+			(got) => {
+				if (live) season = got;
+			},
+			(e) => {
+				if (live) seasonProblem = `Couldn't load the canal season: ${e instanceof Error ? e.message : e}`;
+			}
+		);
+		return () => {
+			live = false;
+		};
+	});
+	const canalState = $derived(canal && season ? canalSeason(season, canal.id) : null);
+	const reachCredit = $derived([...new Set([...(reach?.credit ?? []), ...(canalState && season ? canalState.credit.map((i) => season!.credits[i]).filter(Boolean) : [])])]);
 	const nhdOnly = $derived(data.type === 'reach' || data.type === 'body' ? data.nhd_only : false);
 </script>
 
@@ -142,6 +166,16 @@
 					{lengthText(canal.length_m)}
 					{#if canal.piped_m > 0}<span class="how">, {lengthText(canal.piped_m)} of it piped</span>{/if}
 				</dd>
+				{#if season}
+					<dt>Season</dt>
+					<dd data-canal-season={canalState?.state ?? 'unknown'}>
+						{seasonWords(canalState)}
+						{#if isLegalWindow(canalState)}<br /><span class="how">IDWR’s legal season of use is internal data, credited, for this map only.</span>{/if}
+					</dd>
+				{:else if seasonProblem}
+					<dt>Season</dt>
+					<dd class="how" role="alert">▲ {seasonProblem}</dd>
+				{/if}
 				{#if canalSourceWords(canal.source)}
 					<dt>Water from</dt>
 					<dd>{canalSourceWords(canal.source)}</dd>
@@ -274,7 +308,7 @@
 	<p class="meta" role="alert">▲ {problem}</p>
 {/if}
 <p class="credit">
-	{#if reach}{reach.credit.join(' · ')}
+	{#if reach}{reachCredit.join(' · ')}
 	{:else if body}{body.credit.join(' · ')}
 	{:else if structure}{structure.credit.join(' · ')}
 	{:else if gauge}{gauge.credit.join(' · ')}
