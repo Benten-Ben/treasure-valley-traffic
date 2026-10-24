@@ -7,7 +7,7 @@ rules, the loaders and the rows the build reads.
 
     python3 -m ingest nwi-load --from nwi_mapbox.gpkg [--force] [--dry-run]
     python3 -m ingest nwi-presence --from shares.json [--dry-run]
-    python3 -m ingest wetland-qa [--build N] [--out DIR] [--boxes]
+    python3 -m ingest wetland-qa [--build N] [--out DIR] [--boxes] [--sweep]
 
 nwi-load reads the GeoPackage kept on the server (the eight HU8 watershed files cut to the map box: layers `wetlands`
 and `project_metadata`, in NAD83 Albers) with the standard library, and keeps only the vegetated palustrine wetlands
@@ -21,7 +21,7 @@ Each wetland gets the mapping project whose polygon holds its point, hence its i
     unknown   no project polygon holds it: drawn as mapped, and counted
 
 The presence check (the review, section 6) measures five shares of an old or interim polygon from public inputs. A
-worker step (rasterio, on the ground's grid) computes them and writes a JSON file that nwi-presence loads:
+worker step (plugins/water/build/presence.py: GDAL and NumPy, on the ground's grid) computes them and writes a JSON file that nwi-presence loads:
 
     {"computed_on": "2026-10-24", "inputs": {...},
      "polygons": [{"key": "...", "built": 0.0, "developed": 0.0, "cultivated": 0.0, "hay_pasture": 0.0,
@@ -742,8 +742,12 @@ def fetch_reach_rows(conn, build_id, reaches=REACH_SWEEP_M):
         cols = [c.name for c in cur.description]
         return [dict(zip(cols, r)) for r in cur.fetchall()]
     finally:
-        for t in ("q_osm", "q_nwi", "q_rows"):
-            conn.execute(f"drop table if exists pg_temp.{t}")
+        try:
+            for t in ("q_osm", "q_nwi", "q_rows"):
+                conn.execute(f"drop table if exists pg_temp.{t}")
+        except Exception:
+            # An aborted transaction cannot run the drops; keep the original error, not this one.
+            pass
 
 
 def tally(rows, boxes, decide):

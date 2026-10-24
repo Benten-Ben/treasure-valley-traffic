@@ -417,8 +417,8 @@ It is **not a legal (regulatory) wetland boundary**; every card says so.
   1,575 old and interim polygons the presence check retired 234 (70 built, 164 farmed), flagged 80 (55 farmed with
   support, 25 hay or pasture) and kept 1,261. How sensitive each threshold is, over those 1,575: `built_retires` 0.35
   to 0.65 moves 240 to 232 retired; `cultivated_retires` 0.35, 0.5, 0.65 and 0.8 retire 267, 234, 206 and 170;
-  `hay_pasture_flags` 0.35, 0.5 and 0.65 flag 90, 80 and 74 (`wetland-qa --sweep`). Only 40 OSM wetlands overlap the
-  valley's 13,753 polygons at all, so the reach rule decides just 56 of them (20 draw a leftover, 20 leave nothing, 16
+  `hay_pasture_flags` 0.35, 0.5 and 0.65 flag 90, 80 and 74 (`wetland-qa --sweep`). The scratch copy holds only 40 OSM wetlands
+  (Oct 11 load; rerun the reach counts after a newer OSM load), and they overlap just 56 of the 13,753 polygons, so the reach rule decides just those 56 (20 draw a leftover, 20 leave nothing, 16
   are dropped: 3 by the reach rule, 3 by the 2,000 m2 floor, 10 by both); 10, 15, 20 and 25 m would drop 12, 13, 16
   and 19. The ten test boxes hold 50 NWI polygons (boxes a and b, all mapped from 1999 or later), so they have no
   old-mapped ones to tune on. The wetlands alone, baked as `water.bodies` (13,511 features, 5.2 MB), have a busiest
