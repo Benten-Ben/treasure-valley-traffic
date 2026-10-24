@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test';
 import { expect, mapReady, screenPath, test } from './fixtures.js';
-import { cleanWater, GAUGE, NHD_ONLY_ID, SERVICE_AREAS, seedWater, type Seeded } from './water-seed.js';
+import { cleanWater, GAUGE, NHD_ONLY_ID, SERVICE_AREAS, seedWater, WETLAND_ID, WETLAND_THIN_ID, type Seeded } from './water-seed.js';
 
 /**
  * water (landscape sprint plan v3 §4.2 P4-app): the baked water network and the Water layer, on the synthetic
@@ -14,7 +14,9 @@ import { cleanWater, GAUGE, NHD_ONLY_ID, SERVICE_AREAS, seedWater, type Seeded }
  * - no water layer has a casing, and the only `line-gap-width` is the canal season's, on the solid reach layer;
  * - Auto stays Valley with Water on, and goes Clay with a layer that doesn't keep Valley;
  * - the Water layer's badges, italic names and picked shape come and go with it;
- * - a click on the canal opens its card (its gauge, its irrigation service areas, nothing said about who runs it).
+ * - a click on the canal opens its card (its gauge, its irrigation service areas, nothing said about who runs it);
+ * - wetlands (issue #31) are a tuft pattern with no fill colour: dense from z14, sparser (the 1981 mapping) from z15,
+ *   and their cards say they are not a legal boundary, the older one also that it was mapped from 1981 photos.
  */
 
 const FIXTURE_TILES = 'landscape fixture';
@@ -52,6 +54,45 @@ async function ready(page: Page, hash: string) {
 /** Rendered features of the baked layers in view. */
 const rendered = (page: Page, layers: string[]) =>
 	page.evaluate((layers) => (globalThis as any).__tvt.map.queryRenderedFeatures({ layers: layers.filter((l) => (globalThis as any).__tvt.map.getLayer(l)) }).map((f: any) => ({ layer: f.layer.id, id: f.properties.id, name: f.properties.name })), layers);
+
+/** The wetlands' centres (water-seed.ts, the fixture's water.bodies 8002 and 8003). */
+const WETLAND: [number, number] = [-116.197, 43.6135];
+const WETLAND_THIN: [number, number] = [-116.2035, 43.6095];
+const WETLAND_LAYERS = ['water.wetlands.tufts', 'water.wetlands.thin-tufts'];
+
+/**
+ * How many pixels of a clip around a point are clearly blue against the sand (the tuft strokes, read back from a
+ * screenshot). The map's tiles land between screen pixels, so a stroke is not exactly its tone: any pixel whose blue
+ * exceeds its red by 30 counts (Valley's tone is 112 over, Clay's 69, the ground is under).
+ */
+async function strokeCount(page: Page, point: [number, number], half = { x: 60, y: 35 }): Promise<number> {
+	const at = await page.evaluate((p) => {
+		const pt = (globalThis as any).__tvt.map.project(p);
+		return { x: Math.round(pt.x), y: Math.round(pt.y) };
+	}, point);
+	const png = await page.screenshot({ clip: { x: at.x - half.x, y: at.y - half.y, width: half.x * 2, height: half.y * 2 } });
+	return page.evaluate(async (b64) => {
+		const img = new Image();
+		img.src = `data:image/png;base64,${b64}`;
+		await img.decode();
+		const c = document.createElement('canvas');
+		c.width = img.width;
+		c.height = img.height;
+		const g = c.getContext('2d')!;
+		g.drawImage(img, 0, 0);
+		const d = g.getImageData(0, 0, img.width, img.height).data;
+		let n = 0;
+		for (let i = 0; i < d.length; i += 4) if (d[i + 2] - d[i] > 30) n++;
+		return n;
+	}, png.toString('base64'));
+}
+
+/** The pattern-and-fill facts of the wetland layers, from the running style. */
+const wetlandStyle = (page: Page) =>
+	page.evaluate((ids) => {
+		const map = (globalThis as any).__tvt.map;
+		return ids.map((id) => ({ id, type: map.getLayer(id)?.type, pattern: map.getPaintProperty(id, 'fill-pattern'), fillColor: map.getPaintProperty(id, 'fill-color') ?? null, hasImage: map.hasImage(map.getPaintProperty(id, 'fill-pattern')) }));
+	}, WETLAND_LAYERS);
 
 let seeded: Seeded | null = null;
 
@@ -304,6 +345,94 @@ test.describe('water: the layer', () => {
 	});
 });
 
+test.describe('water: wetlands', () => {
+	test('draw as a tuft pattern from z14 with no fill colour, and the 1981 mapping only from z15', { tag: '@water' }, async ({ page, consoleErrors }) => {
+		test.setTimeout(300_000);
+		await ready(page, `#map=14/43.6115/-116.2/0/0&layers=water`);
+		await expect.poll(() => hasLayer(page, WETLAND_LAYERS[0]), { timeout: 30_000 }).toBe(true);
+		// z14: the recent wetland draws as tufts; the older mapping waits a zoom.
+		await expect.poll(async () => (await rendered(page, [WETLAND_LAYERS[0]])).some((f: { id: number }) => f.id === WETLAND_ID), { timeout: 60_000 }).toBe(true);
+		expect(await rendered(page, [WETLAND_LAYERS[1]])).toEqual([]);
+		// Pattern layers only: a fill pattern in the look's image, never a fill colour, and no line layer that selects wetlands.
+		const style = await wetlandStyle(page);
+		expect(style.map((l) => [l.id, l.type, l.pattern, l.fillColor])).toEqual([
+			[WETLAND_LAYERS[0], 'fill', 'water-wetland-tuft-valley', null],
+			[WETLAND_LAYERS[1], 'fill', 'water-wetland-tuft-thin-valley', null]
+		]);
+		expect(style.every((l) => l.hasImage)).toBe(true);
+		const lines = await page.evaluate(() => (globalThis as any).__tvt.map.getStyle().layers.filter((l: any) => l.type === 'line' && l['source-layer'] === 'water.bodies' && JSON.stringify(l.filter ?? null).includes('["==",["get","kind"],"wetland"]')).map((l: any) => l.id));
+		expect(lines).toEqual([]);
+		// The bodies' fill and rim leave wetlands out: nothing they draw is a wetland.
+		const bodies = await page.evaluate(() => (globalThis as any).__tvt.map.queryRenderedFeatures({ layers: ['water.network.bodies', 'water.network.bodies-intermittent'] }).map((f: any) => f.properties.kind));
+		expect(bodies).toContain('pond');
+		expect(bodies).not.toContain('wetland');
+		// The tuft strokes are on the screen over the wetland, and not over bare ground beside it.
+		await expect.poll(() => strokeCount(page, WETLAND), { timeout: 30_000 }).toBeGreaterThan(100);
+		expect(await strokeCount(page, [-116.1867, 43.6098])).toBe(0);
+		await page.screenshot({ path: screenPath('water-wetlands-z14.png') });
+		expect(consoleErrors).toEqual([]);
+	});
+
+	test('draw the 1981 mapping with the same tuft on a sparser grid at z15, in either look', { tag: '@water' }, async ({ browser, baseURL }) => {
+		test.setTimeout(300_000);
+		for (const flavor of ['map', 'clay'] as const) {
+			const ctx = await browser.newContext({ baseURL: baseURL!, viewport: { width: 1280, height: 800 } });
+			const page = await ctx.newPage();
+			await look(page, flavor);
+			const f = flavor === 'map' ? 'valley' : 'clay';
+			await ready(page, `#map=15/43.611/-116.2/0/0&layers=water`);
+			await expect.poll(async () => (await rendered(page, [WETLAND_LAYERS[1]])).some((x: { id: number }) => x.id === WETLAND_THIN_ID), { timeout: 60_000 }).toBe(true);
+			await expect.poll(async () => (await rendered(page, [WETLAND_LAYERS[0]])).some((x: { id: number }) => x.id === WETLAND_ID), { timeout: 60_000 }).toBe(true);
+			expect((await wetlandStyle(page)).map((l) => l.pattern)).toEqual([`water-wetland-tuft-${f}`, `water-wetland-tuft-thin-${f}`]);
+			// The same glyph on a bigger tile: the older mapping has fewer stroke pixels in the same patch of screen, but some.
+			await expect.poll(() => strokeCount(page, WETLAND_THIN), { timeout: 30_000 }).toBeGreaterThan(30);
+			const sparse = await strokeCount(page, WETLAND_THIN);
+			const dense = await strokeCount(page, WETLAND);
+			expect(dense, `${f}: dense ${dense} vs sparse ${sparse}`).toBeGreaterThan(sparse * 2);
+			if (flavor === 'map') await page.screenshot({ path: screenPath('water-wetlands-z15.png') });
+			else await page.screenshot({ path: screenPath('water-wetlands-z15-clay.png') });
+			await ctx.close();
+		}
+	});
+
+	test('open a wetland’s card: not a legal boundary, and the older one also says it was mapped from 1981 photos', { tag: '@water' }, async ({ page }) => {
+		test.setTimeout(300_000);
+		await ready(page, `#map=15/43.611/-116.2/0/0&layers=water`);
+		await expect.poll(async () => (await water(page))?.visible, { timeout: 60_000 }).toBe(true);
+		const clickAt = async (id: number, layer: string, point: [number, number]) => {
+			await expect.poll(async () => (await rendered(page, [layer])).some((f: { id: number }) => f.id === id), { timeout: 60_000 }).toBe(true);
+			const at = await page.evaluate((p) => {
+				const pt = (globalThis as any).__tvt.map.project(p);
+				return { x: pt.x, y: pt.y };
+			}, point);
+			await page.mouse.click(at.x, at.y);
+			await expect.poll(async () => (await info(page)).selection?.id, { timeout: 30_000 }).toBe(`body:${id}`);
+		};
+		const card = page.locator('section.inspect');
+		await clickAt(WETLAND_ID, WETLAND_LAYERS[0], WETLAND);
+		await expect(card).toContainText('Fixture Marsh');
+		await expect(card).toContainText('Wetland');
+		await expect(card).toContainText('Outline from the National Wetlands Inventory');
+		await expect(card).toContainText('Not a legal (regulatory) wetland boundary.');
+		await expect(card).not.toContainText('Mapped from 1981 photos.');
+		await page.keyboard.press('Escape');
+		await expect.poll(async () => (await info(page)).selection).toBeNull();
+		await clickAt(WETLAND_THIN_ID, WETLAND_LAYERS[1], WETLAND_THIN);
+		await expect(card).toContainText('Fixture Old Marsh');
+		await expect(card).toContainText('Not a legal (regulatory) wetland boundary.');
+		await expect(card).toContainText('Mapped from 1981 photos.');
+		// The legend shows both patterns as the map draws them, and no wetland row calls them lighter or a wash.
+		const legend = await page.evaluate(() => [...document.querySelectorAll('[data-wetland-swatch]')].map((li) => ({ id: li.getAttribute('data-wetland-swatch'), text: li.textContent ?? '', rects: li.querySelectorAll('pattern rect').length })));
+		expect(legend.map((l) => l.id)).toEqual(['wetland', 'wetland-1981']);
+		for (const l of legend) {
+			expect(l.rects).toBeGreaterThan(0);
+			expect(l.text).toContain('Not a legal (regulatory) wetland boundary.');
+			expect(l.text).not.toMatch(/lighter|wash/i);
+		}
+		expect(legend[1].text).toContain('1981');
+	});
+});
+
 test.describe('water: the APIs', () => {
 	test('answer from the synthetic rows: reach and canal, body, structure, gauge, points and notices', { tag: '@water' }, async ({ request }) => {
 		const reach = await (await request.get('/api/water/reach/7001')).json();
@@ -316,7 +445,10 @@ test.describe('water: the APIs', () => {
 			{ label: 'Flow', value: 1660, unit: 'cfs' }
 		]);
 		expect(JSON.stringify(reach)).not.toMatch(/operated by/i);
-		expect(await (await request.get('/api/water/body/8001')).json()).toMatchObject({ kind: 'pond', name: 'Fixture Pond' });
+		expect(await (await request.get('/api/water/body/8001')).json()).toMatchObject({ kind: 'pond', name: 'Fixture Pond', thin: false });
+		// A wetland’s detail says whether it was mapped from the older photos (the card’s second sentence rests on it).
+		expect(await (await request.get(`/api/water/body/${WETLAND_ID}`)).json()).toMatchObject({ kind: 'wetland', thin: false, geometry_from: 'nwi' });
+		expect(await (await request.get(`/api/water/body/${WETLAND_THIN_ID}`)).json()).toMatchObject({ kind: 'wetland', thin: true });
 		expect(await (await request.get('/api/water/structure/9001')).json()).toMatchObject({ kind: 'dam', head_of: [{ id: 1, name: 'Fixture Main Canal' }] });
 		const gauge = await (await request.get(`/api/water/gauge/${GAUGE.toLowerCase()}`)).json();
 		expect(gauge).toMatchObject({ lid: GAUGE, usgs: false, flood: null });

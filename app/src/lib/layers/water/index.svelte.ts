@@ -3,6 +3,7 @@ import type { GeoJSONSource } from 'maplibre-gl';
 import { MapScope } from '#lib/app/cleanup.js';
 import type { AppCtx } from '#lib/app/context.js';
 import contribution, { BODIES_LAYER, ID as CONTRIBUTION_ID, PICKABLE_LAYERS } from '#lib/base/water/water.base.js';
+import { WETLAND_LAYER_IDS } from '#lib/base/water/wetlands.base.js';
 import type { FlavorName } from '#lib/map/flavors.js';
 import { addSlotted } from '#lib/map/order.js';
 import { flavorKit } from '#lib/map/style.js';
@@ -114,7 +115,7 @@ export class WaterModule implements LayerModule {
 	}
 	interactive: Interactive[] = [
 		{
-			layerIds: [...PICKABLE_LAYERS],
+			layerIds: [...PICKABLE_LAYERS, ...WETLAND_LAYER_IDS],
 			priority: PRIORITY.water,
 			pick: (f) => (this.#visible ? this.#pickBaked(f) : null)
 		},
@@ -210,7 +211,8 @@ export class WaterModule implements LayerModule {
 		const id = Number(p.id);
 		if (!Number.isFinite(id)) return null;
 		const nhdOnly = bool(p.nhd_only);
-		if (f.layer.id === BODIES_LAYER) {
+		// A wetland is its own tuft layer (a fill pattern, hit across its whole polygon), not the bodies' fill.
+		if (f.layer.id === BODIES_LAYER || (WETLAND_LAYER_IDS as readonly string[]).includes(f.layer.id)) {
 			const kind = String(p.kind) as BodyKind;
 			if (!(kind in BODY_WORD)) return null;
 			const name = String(p.name ?? '') || null;

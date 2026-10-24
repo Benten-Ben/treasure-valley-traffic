@@ -29,6 +29,8 @@ export interface WaterTones {
 	line: string;
 	/** Lines the federal map alone shows: lighter. */
 	lineNhd: string;
+	/** The wetland tufts (a fill pattern, no fill colour): a deeper blue than the lines so a few thin strokes read on the ground. */
+	wetland: string;
 	/** The rim of an intermittent area. */
 	edge: string;
 	/** Italic names. */
@@ -45,6 +47,7 @@ export const TONES: Record<FlavorName, WaterTones> = {
 		fillNhd: '#a0d3ea',
 		line: '#4a9fcc',
 		lineNhd: '#7fb5d6',
+		wetland: '#2f7f9f',
 		edge: '#4a9fcc',
 		label: '#2f6f8f',
 		halo: '#fffbf4',
@@ -55,6 +58,7 @@ export const TONES: Record<FlavorName, WaterTones> = {
 		fillNhd: '#dbe7ec',
 		line: '#7aa3b5',
 		lineNhd: '#a3bfcc',
+		wetland: '#4f7f94',
 		edge: '#7aa3b5',
 		label: '#3e6678',
 		halo: '#fffbf4',
@@ -139,8 +143,8 @@ export function trueWidth(widthM: number, zoom: number): number {
 	return Math.max(MIN_PX, widthM / metresPerPixel(zoom));
 }
 
-/** Fill opacity by kind: wetlands are a pale wash; an intermittent area is paler. */
-export const FILL_OPACITY = { wetland: 0.5, intermittent: 0.65, solid: 1 } as const;
+/** Fill opacity by kind: an intermittent area is paler. Wetlands have no fill: they are tufts (wetlands.base.ts). */
+export const FILL_OPACITY = { intermittent: 0.65, solid: 1 } as const;
 
 /** WCAG contrast ratio of two #rrggbb colours. */
 export function contrast(a: string, b: string): number {

@@ -118,8 +118,10 @@ export interface BodyDetail {
 	name: string | null;
 	intermittent: boolean;
 	area_m2: number;
-	geometry_from: 'osm' | 'nhd';
+	geometry_from: 'osm' | 'nhd' | 'nwi';
 	confirmed: boolean;
+	/** A wetland mapped from older photos (the bake's `thin` flag; false for every other body): the card says so. */
+	thin: boolean;
 	/** The OpenStreetMap object it comes from, as text ("way 123"), when it has one. */
 	osm: string | null;
 	gauge: GaugeSummary | null;
@@ -249,6 +251,7 @@ export const SOURCE_NAME: Record<SourceId, string> = {
 export const CREDITS = {
 	osm: '© OpenStreetMap contributors',
 	nhd: 'USGS National Hydrography Dataset',
+	nwi: 'U.S. Fish and Wildlife Service, National Wetlands Inventory (public domain)',
 	// The source record's own credit (plugins/water/plugin.json; a test keeps the two equal): CC BY 4.0 asks for the
 	// creators, the DOI and a note that the material was modified.
 	hydroshare:
@@ -335,7 +338,8 @@ export function geometryWords(from: 'osm' | 'nhd', confirmed: boolean): string {
 }
 
 /** Where an area's outline comes from, in words. */
-export function outlineWords(from: 'osm' | 'nhd', confirmed: boolean): string {
+export function outlineWords(from: 'osm' | 'nhd' | 'nwi', confirmed: boolean): string {
+	if (from === 'nwi') return 'Outline from the National Wetlands Inventory (U.S. Fish and Wildlife Service).';
 	if (from === 'nhd') return "Outline from the federal hydrography map (USGS NHD) alone: OpenStreetMap doesn't have this area.";
 	return confirmed ? "Outline from OpenStreetMap, which the federal map (USGS NHD) agrees with." : "Outline from OpenStreetMap; the federal map (USGS NHD) doesn't clearly agree with it.";
 }

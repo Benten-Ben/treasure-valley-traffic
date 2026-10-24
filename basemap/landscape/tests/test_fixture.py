@@ -190,6 +190,14 @@ class Fixture(unittest.TestCase):
         self.assertTrue(self.ids_at(15, "roads.surfaces_z15"))
         self.assertEqual(self.ids_at(16, "roads.surfaces_z15"), set())
 
+    def test_the_wetlands_are_bodies_and_one_is_thin(self):
+        # The @water spec relies on a recent wetland and a 1981-mapped one (`thin`) in water.bodies, from z14.
+        self.assertTrue({8002, 8003} <= self.ids_at(14, "water.bodies"))
+        self.assertNotIn(8002, self.ids_at(13, "water.bodies"))
+        props = {f["id"]: f["props"] for t in self.tiles_at(16) for f in t.get("water.bodies", [])}
+        self.assertEqual({i: (props[i]["kind"], props[i]["thin"]) for i in (8001, 8002, 8003)},
+                         {8001: ("pond", False), 8002: ("wetland", False), 8003: ("wetland", True)})
+
     def test_a_large_id_survives(self):
         self.assertIn(2 ** 51 + 991, self.ids_at(16, "water.reaches"))
 

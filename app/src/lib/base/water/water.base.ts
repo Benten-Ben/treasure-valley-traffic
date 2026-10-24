@@ -21,6 +21,8 @@ import { seasonLive, seasonPaint } from './season.js';
  *   `season`: an off canal is hollow inside its own line, at its true footprint (two thin edges in the reach's own
  *   tone, so no casing and no second line); an unknown one is a thin centre line. The `live` hook sets the state
  *   from `/api/water/season`. The dashed layers keep their dashes, so they have no season cue.
+ * - **Wetlands** are not drawn here: neither the fill nor the intermittent rim takes them (`notWetland`). They are
+ *   tufts, a fill pattern of their own (`wetlands.base.ts`).
  * - **Cards.** `cardsWhen: 'water'`: the Water layer makes these layers clickable while it's on.
  * - **Known limit (box edge).** The bake is clipped to the water plugin's box (plugins/water/ingest/build.py, `BOX`),
  *   but the map can pan 0.15 degrees past the manifest's bounds, and Protomaps' water group is hidden everywhere once
@@ -52,12 +54,14 @@ export const PICKABLE_LAYERS = [BODIES_LAYER, ...REACH_LAYERS] as const;
 
 const flag = (field: string) => ['to-boolean', ['get', field]];
 const no = (field: string) => ['!', flag(field)];
+/** Wetlands have no fill and no rim here: they are tufts (`wetlands.base.ts`, a fill pattern of their own). */
+const notWetland = ['!=', ['get', 'kind'], 'wetland'];
 
 function bodyPaint(flavor: FlavorName) {
 	const t = TONES[flavor];
 	return {
 		'fill-color': ['case', flag('nhd_only'), t.fillNhd, t.fill],
-		'fill-opacity': ['case', ['==', ['get', 'kind'], 'wetland'], FILL_OPACITY.wetland, flag('intermittent'), FILL_OPACITY.intermittent, FILL_OPACITY.solid]
+		'fill-opacity': ['case', flag('intermittent'), FILL_OPACITY.intermittent, FILL_OPACITY.solid]
 	};
 }
 
@@ -109,6 +113,7 @@ const layers: BaseLayer[] = [
 		slot: 'water',
 		rank: 10,
 		sourceLayer: BODIES,
+		filter: notWetland,
 		valley: bodyPaint('valley'),
 		clay: bodyPaint('clay')
 	},
@@ -120,7 +125,7 @@ const layers: BaseLayer[] = [
 		slot: 'water',
 		rank: 11,
 		sourceLayer: BODIES,
-		filter: flag('intermittent'),
+		filter: ['all', flag('intermittent'), notWetland],
 		minzoom: 11,
 		valley: { 'line-color': TONES.valley.edge, 'line-width': 1.2, 'line-dasharray': [...DASH.intermittent] },
 		clay: { 'line-color': TONES.clay.edge, 'line-width': 1.2, 'line-dasharray': [...DASH.intermittent] }
