@@ -121,6 +121,17 @@ class LockTest(Base):
             mode = stat.S_IMODE(os.stat(os.path.join(self.locks, name)).st_mode)
             self.assertEqual(mode, 0o664, name)
 
+    def test_a_leftover_temporary_file_does_not_block_a_new_lock(self):
+        # Worker containers often run the job as pid 1, so a pid-named temporary file would be shared between them,
+        # and one left by a killed run would stop every later one.
+        os.makedirs(self.locks)
+        for pid in (1, os.getpid()):
+            open(os.path.join(self.locks, f"{lock.MANIFEST}.{pid}.tmp"), "w").close()
+        lock.ensure()
+        self.assertTrue(os.path.isfile(os.path.join(self.locks, lock.MANIFEST)))
+        left = sorted(n for n in os.listdir(self.locks) if n.endswith(".tmp"))
+        self.assertEqual(left, sorted(f"{lock.MANIFEST}.{pid}.tmp" for pid in (1, os.getpid())))
+
     @unittest.skipIf(hasattr(os, "geteuid") and os.geteuid() == 0, "root can open any file")
     def test_ensure_fails_at_the_start_on_a_lock_file_it_cannot_open(self):
         os.makedirs(self.locks)

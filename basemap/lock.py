@@ -19,6 +19,7 @@ import fcntl
 import os
 import subprocess
 import sys
+import tempfile
 from contextlib import contextmanager
 
 ENV = "TVT_TILES_LOCK_DIR"
@@ -54,13 +55,14 @@ def lock_dir():
 def _open(path):
     """Open (creating if missing) a lock file read-write. A file made here gets MODE exactly: os.open's mode is
     masked by the umask (022 gives 0o644), so it is made under a temporary name, set to MODE, and linked into place,
-    so no other user ever sees it at the wrong mode (a second job user starting at the same time would fail to open it)."""
+    so no other user ever sees it at the wrong mode (a second job user starting at the same time would fail to open it).
+    The temporary name is random, not the pid: in a worker container the job is often pid 1, so two containers would
+    share a pid-named file."""
     try:
         return os.open(path, os.O_RDWR)
     except FileNotFoundError:
         pass
-    tmp = f"{path}.{os.getpid()}.tmp"
-    fd = os.open(tmp, os.O_RDWR | os.O_CREAT | os.O_EXCL, MODE)
+    fd, tmp = tempfile.mkstemp(prefix=os.path.basename(path) + ".", suffix=".tmp", dir=os.path.dirname(path))
     try:
         os.fchmod(fd, MODE)
         try:
