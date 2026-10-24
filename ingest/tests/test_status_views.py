@@ -131,6 +131,15 @@ class ViewsTest(unittest.TestCase):
             self.assertEqual(self.conn.execute("select stale_after, fetch_sources from ops.source where name = %s",
                                                (name,)).fetchone(), (None, None))
 
+    def test_ensure_source_registers_a_scheduled_source(self):
+        # A scheduled source isn't a stream: it gets no stale_after (and the insert must still bind one).
+        from ingest import db
+        db.ensure_source(self.conn, {"name": self.p + "_hourly", "title": "t", "url": "https://example.test/",
+                                     "access": "open", "schedule": "1 hour"})
+        row = self.conn.execute("select schedule, stale_after, fetch_sources from ops.source where name = %s",
+                                (self.p + "_hourly",)).fetchone()
+        self.assertEqual((row[0].total_seconds(), row[1], row[2]), (3600, None, None))
+
     def test_a_source_is_scheduled_or_a_stream(self):
         import psycopg
         with self.assertRaises(psycopg.errors.CheckViolation):
