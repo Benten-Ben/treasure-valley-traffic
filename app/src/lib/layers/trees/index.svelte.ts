@@ -5,6 +5,7 @@ import { addSlotted } from '#lib/map/order.js';
 import type { Scene, SceneInstance } from '#lib/scene/index.js';
 import { historyOf } from '#lib/state/history.svelte.js';
 import { take } from '../prefetch.js';
+import { TREES_SCENE } from './scene-options.js';
 import { PRIORITY, type Interactive, type LayerModule, type LayerStatus, type Selection } from '../types.js';
 import Card from './Card.svelte';
 import def, { AREAS_URL } from './def.js';
@@ -306,7 +307,7 @@ export class TreesModule implements LayerModule {
 		this.#capped = inView > list.length;
 		this.#fade = -1;
 		this.#applyFade(fade);
-		scene.set(TREES_3D, list, { priority: PRIORITY.tree });
+		scene.set(TREES_3D, list, TREES_SCENE);
 		if (this.view.capped !== this.#capped || this.view.cap !== this.#cap) this.view = { ...this.view, capped: this.#capped, cap: this.#cap };
 	}
 
@@ -370,7 +371,7 @@ export class TreesModule implements LayerModule {
 			map.setPaintProperty(DISCS, 'circle-opacity', discOpacity(true) as never);
 			map.setPaintProperty(DISCS, 'circle-stroke-opacity', discOpacity(true) as never);
 		}
-		scene.set(TREES_3D, this.#instances, { priority: PRIORITY.tree });
+		scene.set(TREES_3D, this.#instances, TREES_SCENE);
 		scene.show(TREES_3D, false);
 		this.#modelsOn = false;
 		this.#syncScene();
