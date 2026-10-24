@@ -7,6 +7,7 @@ import water from './water.base.js';
 import wetlands, {
 	addTuftImages,
 	MAPPED_FROM_1981,
+	FROM_NHD_MARSH,
 	NOT_A_BOUNDARY,
 	TUFT_IMAGES,
 	tuftImage,
@@ -118,9 +119,12 @@ describe('wetland tufts', () => {
 	it('says it is not a legal boundary on every wetland, and adds the 1981 note only where mapped then', () => {
 		expect(wetlandWords(false)).toEqual([NOT_A_BOUNDARY]);
 		expect(wetlandWords(true)).toEqual([NOT_A_BOUNDARY, MAPPED_FROM_1981]);
+		expect(wetlandWords(true, 'nwi')).toEqual([NOT_A_BOUNDARY, MAPPED_FROM_1981]);
+		// thin also covers NHD's marsh alone, which isn't from NWI's photos: its card names the older USGS map.
+		expect(wetlandWords(true, 'nhd')).toEqual([NOT_A_BOUNDARY, FROM_NHD_MARSH]);
+		expect(wetlandWords(false, 'nhd')).toEqual([NOT_A_BOUNDARY]);
 		expect(NOT_A_BOUNDARY).toBe('Not a legal (regulatory) wetland boundary.');
-		// thin also covers the interim NWI product and NHD's marsh alone, so the line never claims 1981 photos.
-		expect(MAPPED_FROM_1981).toBe('Mapped from older photos or maps (1981-era).');
+		expect(MAPPED_FROM_1981).toBe('Mapped from 1981 photos.');
 	});
 
 	it('is its own contribution on the bodies source-layer, with the FWS credit and the images in `live`', () => {

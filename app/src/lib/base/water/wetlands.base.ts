@@ -13,8 +13,9 @@ import { BODIES } from './water.base.js';
  * - **Zooms.** Recent mapping draws from z14 with the dense pattern. The older mapping (the 1981-83 photos and the
  *   interim product that passed the presence check; the bake's `thin` flag) draws from z15 with the same glyph on a
  *   sparser grid. The form differs by density and zoom, so it never rests on colour alone.
- * - **Not a legal boundary.** Every wetland card and the legend say so; the older ones also say they were mapped
- *   from older photos or maps (1981-era). Credit: FWS, National Wetlands Inventory (public domain).
+ * - **Not a legal boundary.** Every wetland card and the legend say so. The older NWI ones also say they were
+ *   mapped from 1981 photos (the owner's wording; the interim product's few polygons are of the same age), and
+ *   NHD's marsh alone says it comes from an older USGS map. Credit: FWS, National Wetlands Inventory (public domain).
  * - **Clicks.** A fill layer is hit by its whole polygon, not by the pattern's strokes, so the Water layer picks a
  *   wetland anywhere inside it (`WETLAND_LAYER_IDS`).
  */
@@ -30,7 +31,9 @@ export const WETLAND_CREDIT = 'U.S. Fish and Wildlife Service, National Wetlands
 
 /** The wording every wetland card and the legend share. */
 export const NOT_A_BOUNDARY = 'Not a legal (regulatory) wetland boundary.';
-export const MAPPED_FROM_1981 = 'Mapped from older photos or maps (1981-era).';
+export const MAPPED_FROM_1981 = 'Mapped from 1981 photos.';
+/** The older mapping that isn't NWI's: NHD's marsh alone, drawn thinned where nothing else covers it. */
+export const FROM_NHD_MARSH = "Drawn from an older USGS map's marsh area (NHD).";
 
 export interface TuftLook {
 	/** The first zoom it draws from. */
@@ -83,9 +86,11 @@ export function tuftImage(thin: boolean, flavor: FlavorName): { width: number; h
 	return { width: cell, height: cell, data };
 }
 
-/** The lines a wetland's card (or the legend's note) says, in order. */
-export function wetlandWords(thin: boolean): string[] {
-	return thin ? [NOT_A_BOUNDARY, MAPPED_FROM_1981] : [NOT_A_BOUNDARY];
+/** The lines a wetland's card says, in order. An older (thin) one says where its outline came from: NWI's 1981
+ * photos, or NHD's marsh on an older USGS map (`geometryFrom` 'nhd'). */
+export function wetlandWords(thin: boolean, geometryFrom?: string): string[] {
+	if (!thin) return [NOT_A_BOUNDARY];
+	return [NOT_A_BOUNDARY, geometryFrom === 'nhd' ? FROM_NHD_MARSH : MAPPED_FROM_1981];
 }
 
 function tuftLayer(id: string, thin: boolean, rank: number): BaseLayer {

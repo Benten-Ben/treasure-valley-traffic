@@ -16,7 +16,7 @@ import { cleanWater, GAUGE, NHD_ONLY_ID, SERVICE_AREAS, seedWater, WETLAND_ID, W
  * - the Water layer's badges, italic names and picked shape come and go with it;
  * - a click on the canal opens its card (its gauge, its irrigation service areas, nothing said about who runs it);
  * - wetlands (issue #31) are a tuft pattern with no fill colour: dense from z14, sparser (the 1981 mapping) from z15,
- *   and their cards say they are not a legal boundary, the older one also that it was mapped from older photos or maps (1981-era).
+ *   and their cards say they are not a legal boundary, the older one also that it was mapped from 1981 photos.
  */
 
 const FIXTURE_TILES = 'landscape fixture';
@@ -395,7 +395,7 @@ test.describe('water: wetlands', () => {
 		}
 	});
 
-	test('open a wetland’s card: not a legal boundary, and the older one also says it was mapped from older photos or maps', { tag: '@water' }, async ({ page }) => {
+	test('open a wetland’s card: not a legal boundary, and the older one also says it was mapped from 1981 photos', { tag: '@water' }, async ({ page }) => {
 		test.setTimeout(300_000);
 		await ready(page, `#map=15/43.611/-116.2/0/0&layers=water`);
 		await expect.poll(async () => (await water(page))?.visible, { timeout: 60_000 }).toBe(true);
@@ -414,13 +414,13 @@ test.describe('water: wetlands', () => {
 		await expect(card).toContainText('Wetland');
 		await expect(card).toContainText('Outline from the National Wetlands Inventory');
 		await expect(card).toContainText('Not a legal (regulatory) wetland boundary.');
-		await expect(card).not.toContainText('Mapped from older photos or maps (1981-era).');
+		await expect(card).not.toContainText('Mapped from 1981 photos.');
 		await page.keyboard.press('Escape');
 		await expect.poll(async () => (await info(page)).selection).toBeNull();
 		await clickAt(WETLAND_THIN_ID, WETLAND_LAYERS[1], WETLAND_THIN);
 		await expect(card).toContainText('Fixture Old Marsh');
 		await expect(card).toContainText('Not a legal (regulatory) wetland boundary.');
-		await expect(card).toContainText('Mapped from older photos or maps (1981-era).');
+		await expect(card).toContainText('Mapped from 1981 photos.');
 		// The legend shows both patterns as the map draws them, and no wetland row calls them lighter or a wash.
 		const legend = await page.evaluate(() => [...document.querySelectorAll('[data-wetland-swatch]')].map((li) => ({ id: li.getAttribute('data-wetland-swatch'), text: li.textContent ?? '', rects: li.querySelectorAll('pattern rect').length })));
 		expect(legend.map((l) => l.id)).toEqual(['wetland', 'wetland-1981']);

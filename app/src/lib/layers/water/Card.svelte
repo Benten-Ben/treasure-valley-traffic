@@ -218,7 +218,7 @@
 		</dl>
 		<p class="explain">{outlineWords(body.geometry_from, body.confirmed)}</p>
 		{#if body.kind === 'wetland'}
-			{#each wetlandWords(body.thin) as line (line)}
+			{#each wetlandWords(body.thin, body.geometry_from) as line (line)}
 				<p class="how">{line}</p>
 			{/each}
 		{/if}
