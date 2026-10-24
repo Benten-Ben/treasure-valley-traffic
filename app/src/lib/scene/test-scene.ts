@@ -285,6 +285,7 @@ export function startSceneTest(app: AppCtx, scene: Scene, count = 1000): SceneTe
 				pick: { kind: 'sprite', id: `bf${i}`, layer: 'scene-test', title: `Test fence ${i}` }
 			});
 		}
+		// scenery: true matches the production trees group (app/src/lib/layers/trees/index.svelte.ts, TREES_SCENE); the cap is this case's own.
 		scene.set('scene-test-trees', forest, { cap: 4000, capPhone: 1000, scenery: true });
 		scene.set('scene-test-posts', poles, { cap: 1500, capPhone: 0, radiusM: 300, scenery: true });
 		scene.setStatic('scene-test-fences', fences);
