@@ -495,9 +495,10 @@ def _check_entry(e, in_manifest):
 
 # --- tiles/manifest.json ----------------------------------------------------------------------------------------
 
-def locked(name=lock.LANDSCAPE):
-    """An exclusive lock (basemap/lock.py: a file in the lock folder, not the served tiles folder), held for the block."""
-    return lock.locked(name)
+def locked(name=lock.LANDSCAPE, tiles=None):
+    """An exclusive lock (basemap/lock.py: a file in the lock folder, not the served tiles folder), held for the block.
+    `tiles` is the tiles folder the block writes (a host run outside the checkout needs TVT_TILES_LOCK_DIR)."""
+    return lock.locked(name, tiles)
 
 
 def read_tiles_manifest(tiles_dir):
@@ -523,7 +524,7 @@ def update_manifest(tiles_dir, entry):
     """Put the landscape entry into tiles/manifest.json atomically (the app fetches it with no-cache), keeping every
     other entry as it is."""
     check_entry(entry)
-    with locked(lock.MANIFEST):
+    with locked(lock.MANIFEST, tiles_dir):
         m = read_tiles_manifest(tiles_dir)
         m[ENTRY] = entry
         fd, tmp = tempfile.mkstemp(prefix=".manifest-", suffix=".json", dir=tiles_dir)

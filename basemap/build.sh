@@ -64,7 +64,7 @@ cp -r "$tmp/assets/fonts" "$tmp/assets/sprites" "$OUT/"
 precompress_glyphs "$OUT"
 
 # 3. Manifest. Later steps (terrain, buildings) add their own entries.
-python3 -m basemap.lock manifest.lock -- python3 - "$OUT" "$BBOX" "$CENTER" "$BUILD" "$FLAVOR" <<'EOF'
+python3 -m basemap.lock --tiles "$OUT" manifest.lock -- python3 - "$OUT" "$BBOX" "$CENTER" "$BUILD" "$FLAVOR" <<'EOF'
 import json, os, sys, datetime, tempfile
 out, bbox, center, build, flavor = sys.argv[1:]
 path = os.path.join(out, "manifest.json")

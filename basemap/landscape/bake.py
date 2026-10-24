@@ -440,7 +440,7 @@ def cmd_bake(args):
     if not os.path.isdir(tiles_dir):
         _err(f"refused: no tiles folder at {tiles_dir}")
         return EXIT_REFUSED
-    with P.locked():
+    with P.locked(tiles=tiles_dir):
         for f in os.listdir(tiles_dir):                       # an earlier bake that was stopped
             if f.startswith(P.PART_PREFIX):
                 os.unlink(os.path.join(tiles_dir, f))
@@ -609,7 +609,7 @@ def cmd_check(args):
 
 def cmd_rollback(args):
     tiles_dir = args.tiles
-    with P.locked():
+    with P.locked(tiles=tiles_dir):
         try:
             old = P.current(tiles_dir)
         except P.BakeError as err:
