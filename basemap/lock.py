@@ -6,9 +6,11 @@ live in one folder of their own, so the tiles folder (served at /tiles/) holds o
 
 The folder is $TVT_TILES_LOCK_DIR. Unset, it is data/locks in the project's main checkout (a worktree uses its main
 checkout's, so parallel worktrees on the laptop still queue). On the server the heavy jobs and Compose set it to a
-folder under the work area (deploy/README.md).
-Nothing in deploy/ sets it yet, and a worker run mounts the checkout read-only, so there the variable must name a
-writable folder: ensure() checks that up front and says so.
+folder under the work area (deploy/README.md sets it). A worker run mounts the checkout read-only, so there the
+variable must name a writable folder: ensure() checks that up front and says so.
+
+The folder is setgid and shared by the job users, so a lock file is made mode 0o664 (whatever the umask), and ensure()
+opens every lock a run takes read-write, so a file another user left at 0o644 fails at the start, naming the file.
 
 From a shell (macOS has no flock(1)): `python3 -m basemap.lock manifest.lock -- COMMAND ...` takes the lock, runs
 the command, releases the lock and exits with the command's status.
@@ -17,11 +19,14 @@ import fcntl
 import os
 import subprocess
 import sys
+import tempfile
 from contextlib import contextmanager
 
 ENV = "TVT_TILES_LOCK_DIR"
 LANDSCAPE = "landscape.lock"      # a landscape bake, start to end
 MANIFEST = "manifest.lock"        # one read-modify-write of tiles/manifest.json
+LOCKS = (LANDSCAPE, MANIFEST)     # the locks a run takes; ensure() opens each up front
+MODE = 0o664                      # the folder is setgid, so the group is shared
 
 
 def _main_checkout(root):
@@ -47,8 +52,38 @@ def lock_dir():
     return os.path.join(_main_checkout(root), "data", "locks")
 
 
+def _open(path):
+    """Open (creating if missing) a lock file read-write. A file made here gets MODE exactly: os.open's mode is
+    masked by the umask (022 gives 0o644), so it is made under a temporary name, set to MODE, and linked into place,
+    so no other user ever sees it at the wrong mode (a second job user starting at the same time would fail to open it).
+    The temporary name is random, not the pid: in a worker container the job is often pid 1, so two containers would
+    share a pid-named file."""
+    try:
+        return os.open(path, os.O_RDWR)
+    except FileNotFoundError:
+        pass
+    fd, tmp = tempfile.mkstemp(prefix=os.path.basename(path) + ".", suffix=".tmp", dir=os.path.dirname(path))
+    try:
+        os.fchmod(fd, MODE)
+        try:
+            os.link(tmp, path)
+        except FileExistsError:
+            os.close(fd)
+            fd = os.open(path, os.O_RDWR)
+    except OSError:
+        os.close(fd)
+        raise
+    finally:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+    return fd
+
+
 def ensure():
-    """Make the lock folder and prove it writable now, so a run that would fail at the end fails at the start."""
+    """Make the lock folder and prove it writable now, so a run that would fail at the end fails at the start.
+    Also open each lock the run will take, so a file another user left unwritable fails here, naming it."""
     d = lock_dir()
     try:
         os.makedirs(d, exist_ok=True)
@@ -57,6 +92,14 @@ def ensure():
     except OSError as err:
         raise OSError(err.errno, f"the lock folder {d} is not usable ({err.strerror}): set {ENV} to a writable "
                                  f"folder (e.g. one under the work area)") from err
+    for name in LOCKS:
+        path = os.path.join(d, name)
+        try:
+            os.close(_open(path))
+        except OSError as err:
+            raise OSError(err.errno, f"the lock file {path} can't be opened for writing ({err.strerror}): "
+                                     f"make it writable by the job users (chmod 664 it, or remove it so it is "
+                                     f"recreated)") from err
     return d
 
 
@@ -66,7 +109,7 @@ def locked(name):
     if not name or os.path.basename(name) != name:
         raise ValueError(f"a lock name is a bare file name, not {name!r}")
     d = ensure()
-    fd = os.open(os.path.join(d, name), os.O_RDWR | os.O_CREAT, 0o644)
+    fd = _open(os.path.join(d, name))
     try:
         fcntl.flock(fd, fcntl.LOCK_EX)
         yield

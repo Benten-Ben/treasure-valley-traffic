@@ -278,8 +278,8 @@ update) and `basemap/build.sh`. The older layer scripts (`imagery.py`, `imagery_
 own, never in the served tiles folder:
 
 - **The folder** is `/srv/tvt/work/locks`, made group-writable with the setgid bit (mode 2775) so every job user can
-  create files in it. `landscape.lock` and `manifest.lock` are made in it ahead of time with mode 664, because
-  `basemap/lock.py` creates a missing file with 644, which a second user could not open for writing.
+  create files in it. `landscape.lock` and `manifest.lock` may be made in it ahead of time with mode 664;
+  `basemap/lock.py` also creates a missing file with 664 itself, so this is only a fallback.
 - **`TVT_TILES_LOCK_DIR=/srv/tvt/work/locks`** is set by each caller, not by `heavy` (which only adds its label). A
   worker container that writes the tiles or the manifest gets `-e TVT_TILES_LOCK_DIR=/srv/tvt/work/locks -v
   /srv/tvt/work/locks:/srv/tvt/work/locks`: the checkout is mounted read-only there, so without the variable the job
