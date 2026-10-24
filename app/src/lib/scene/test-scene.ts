@@ -1,5 +1,6 @@
 import type { AppCtx } from '#lib/app/context.js';
 import type { LngLatAlt, ProbeRow, Scene, SceneInstance, StaticSegment, Vec3 } from './index.js';
+import { TREES_SCENE } from '#lib/layers/trees/scene-options.js';
 import { Builder, registerMeshKind, rgb, unregisterMeshKind } from './meshes.js';
 
 /**
@@ -285,8 +286,8 @@ export function startSceneTest(app: AppCtx, scene: Scene, count = 1000): SceneTe
 				pick: { kind: 'sprite', id: `bf${i}`, layer: 'scene-test', title: `Test fence ${i}` }
 			});
 		}
-		// scenery: true matches the production trees group (app/src/lib/layers/trees/index.svelte.ts, TREES_SCENE); the cap is this case's own.
-		scene.set('scene-test-trees', forest, { cap: 4000, capPhone: 1000, scenery: true });
+		// The trees group takes production's own scene options (TREES_SCENE), so this case measures production's trees.
+		scene.set('scene-test-trees', forest, TREES_SCENE);
 		scene.set('scene-test-posts', poles, { cap: 1500, capPhone: 0, radiusM: 300, scenery: true });
 		scene.setStatic('scene-test-fences', fences);
 		return { trees, posts, segments };

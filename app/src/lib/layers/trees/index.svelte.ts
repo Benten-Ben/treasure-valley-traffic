@@ -5,6 +5,7 @@ import { addSlotted } from '#lib/map/order.js';
 import type { Scene, SceneInstance } from '#lib/scene/index.js';
 import { historyOf } from '#lib/state/history.svelte.js';
 import { take } from '../prefetch.js';
+import { TREES_SCENE } from './scene-options.js';
 import { PRIORITY, type Interactive, type LayerModule, type LayerStatus, type Selection } from '../types.js';
 import Card from './Card.svelte';
 import def, { AREAS_URL } from './def.js';
@@ -47,13 +48,6 @@ import {
 export const FETCH_DEBOUNCE_MS = 250;
 /** Tree details kept for the panel. */
 const DETAILS_KEPT = 40;
-/**
- * The trees group's scene options. Trees never move, so they are scenery: while the camera moves, the scene
- * reads the ground under a share of them each frame instead of all of them. The scene budget case
- * (test-scene.ts, its tree group) also sets scenery: true, but keeps its own cap and no priority, so only the
- * scenery flag is shared: its numbers measure production's scenery setting, not its whole options.
- */
-const TREES_SCENE = { priority: PRIORITY.tree, scenery: true } as const;
 const EMPTY: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: [] };
 
 /** What the legend shows about the view (written when it changes, never per frame). */
