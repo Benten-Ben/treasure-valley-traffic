@@ -41,7 +41,7 @@ export interface SceneTestHandle {
 	/** Remove the grid and any placed instances. */
 	clear(): void;
 	/**
-	 * The budget case (@scene-budget): `trees` tree instances (cap 4,000; 1,000 on a phone), `posts` of a registered
+	 * The budget case (@scene-budget): `trees` tree instances (production's TREES_SCENE: the scene caps nothing, the trees layer does), `posts` of a registered
 	 * test kind with a low-detail mesh (cap 1,500 within 300 m, off on a phone) and `segments` static fence segments,
 	 * spread round the view's centre. Replaces any earlier one.
 	 */

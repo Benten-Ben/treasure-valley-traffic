@@ -13,7 +13,8 @@ import { expect, mapReady, screenPath, test } from './fixtures.js';
  * - 4,000 tree instances, 1,500 of a registered test kind and 1,500 static segments at z17, pitch 60,
  *   with the view turning: the scene's JS time (update, placement, upload and draw calls) is ≤ 8 ms at
  *   p95. Draw calls and what the caps dropped are logged, not capped.
- * - On a phone-sized screen the trees are capped at 1,000 and the registered kind is off.
+ * - On a phone-sized screen the registered kind is off and the trees are not capped by the scene (production's
+ *   trees layer caps its own list; the scene gets no cap for them).
  *
  * The scene's own numbers come through the `?scene-test` hooks (`__tvtSceneTest`, test-scene.ts).
  */
@@ -221,16 +222,17 @@ test.describe('scene budget', () => {
 		}
 	});
 
-	test('on a phone-sized screen the trees are capped at 1,000 and the registered kind is off', { tag: '@scene-budget' }, async ({ page }) => {
+	test('on a phone-sized screen the registered kind is off and the scene drops no trees', { tag: '@scene-budget' }, async ({ page }) => {
 		test.setTimeout(900_000);
 		await page.setViewportSize({ width: 390, height: 780 });
 		await openBudget(page);
 		await page.evaluate(() => (globalThis as any).__tvtSceneTest.budget({ trees: 4000, posts: 1500, segments: 300 }));
 		await mapReady(page);
-		await expect.poll(async () => (await stats(page)).droppedByGroup['scene-test-trees'] ?? 0, { timeout: 60_000 }).toBe(3000);
+		await expect.poll(async () => (await stats(page)).droppedByGroup['scene-test-posts'] ?? 0, { timeout: 60_000 }).toBe(1500);
 		const s = await stats(page);
 		console.log(`scene budget on a phone: ${s.instances} instances, dropped ${JSON.stringify(s.droppedByGroup)}, ${s.drawCalls} draw calls`);
 		expect(s.droppedByGroup['scene-test-posts']).toBe(1500);
+		expect(s.droppedByGroup['scene-test-trees'] ?? 0).toBe(0);
 		expect(s.staticSegments).toBe(300);
 	});
 
