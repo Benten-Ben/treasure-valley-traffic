@@ -33,7 +33,7 @@ To write only the files: `python3 -m basemap.landscape.fixture --out DIR [--grou
 | File | Geometry | Zooms | What |
 |---|---|---|---|
 | `water.reaches` | LineString | 8-16, per feature from `minzoom` | a main canal (z10) and a lateral (z12), a ditch and a piped lateral (z13), an NHD-only line (id above 2^51) and an intermittent one |
-| `water.bodies` | Polygon | 8-16 | a pond (z11) |
+| `water.bodies` | Polygon | 8-16 | a pond (z11), and two wetlands from z14 (8002 recent, 8003 mapped from 1981 photos: `thin`) |
 | `roads.lines` | LineString | 14-16, alleys and service ways from 15 | two streets, a service way and an alley |
 | `roads.surfaces_z15`, `roads.surfaces` | MultiPolygon | 15 and 16 | carriageways, a junction, an island and a median |
 | `roads.edges`, `roads.markings` | MultiLineString | 16 | curbs, a shoulder; edge, lane, centre, stop-bar and bike lines |

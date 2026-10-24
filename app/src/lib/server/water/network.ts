@@ -123,8 +123,10 @@ export async function bodyDetail(sql: Sql, idRaw: string): Promise<BodyDetail | 
 	const id = parseId(idRaw);
 	if (!(await schema(sql)).network) return null;
 	const [b] = await sql`
-		select id, kind, name, intermittent, area_m2, geometry_from, confirmed, osm_type, osm_id, gauge_lid
-		from water.body where id = ${id}`;
+		select id, kind, name, intermittent, area_m2, geometry_from, confirmed, osm_type, osm_id, gauge_lid,
+		       -- the wetland columns arrive with water 0004: before it every body reads as not thin
+		       coalesce((to_jsonb(b) ->> 'thin')::boolean, false) as thin
+		from water.body b where id = ${id}`;
 	if (!b) return null;
 	let lid = str(b.gauge_lid);
 	if (!lid) {
@@ -135,7 +137,8 @@ export async function bodyDetail(sql: Sql, idRaw: string): Promise<BodyDetail | 
 	const gauge = lid ? await gaugeSummary(sql, lid) : null;
 	const credit: string[] = [];
 	if (b.geometry_from === 'osm') credit.push(CREDITS.osm);
-	credit.push(CREDITS.nhd);
+	if (b.geometry_from === 'nwi') credit.push(CREDITS.nwi);
+	else credit.push(CREDITS.nhd);
 	if (gauge) credit.push(...gaugeCredits(gauge.usgs));
 	return {
 		id: Number(b.id),
@@ -145,6 +148,7 @@ export async function bodyDetail(sql: Sql, idRaw: string): Promise<BodyDetail | 
 		area_m2: round(Number(b.area_m2), 0),
 		geometry_from: b.geometry_from,
 		confirmed: Boolean(b.confirmed),
+		thin: Boolean(b.thin),
 		osm: osmType && b.osm_id !== null && b.osm_id !== undefined ? `${osmType} ${b.osm_id}` : null,
 		gauge,
 		credit

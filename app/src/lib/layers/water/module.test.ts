@@ -2,6 +2,7 @@ import type { MapGeoJSONFeature } from 'maplibre-gl';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppCtx } from '#lib/app/context.js';
 import { BODIES_LAYER, REACH_SOLID_LAYER } from '#lib/base/water/water.base.js';
+import { WETLAND_THIN_LAYER, WETLAND_TUFT_LAYER } from '#lib/base/water/wetlands.base.js';
 import { basemapReady, type BasemapManifest } from '#lib/map/style.js';
 import { PRIORITY, type Selection } from '../types.js';
 import { NOTICES_URL, POINTS_URL } from './def.js';
@@ -189,6 +190,9 @@ describe('the Water module', () => {
 		expect(pointInteractive.priority).toBe(PRIORITY.water + 1);
 		expect(baseInteractive.layerIds).toContain(REACH_SOLID_LAYER);
 		expect(baseInteractive.layerIds).toContain(BODIES_LAYER);
+		// A wetland is the tuft layers' polygon (the bodies' fill leaves it out), so a click on either kind opens its card.
+		expect(baseInteractive.layerIds).toContain(WETLAND_TUFT_LAYER);
+		expect(baseInteractive.layerIds).toContain(WETLAND_THIN_LAYER);
 		const canal = feature(REACH_SOLID_LAYER, { id: 7001, kind: 'canal', name: 'Fixture Main Canal', width_m: 14, intermittent: false, piped: false, nhd_only: false, canal: 1 });
 		expect(baseInteractive.pick(canal)).toBeNull();
 		water.setVisible(true);
@@ -203,6 +207,10 @@ describe('the Water module', () => {
 		const pond = baseInteractive.pick(feature(BODIES_LAYER, { id: 8001, kind: 'pond', name: 'Fixture Pond', intermittent: false, nhd_only: false }, { type: 'Polygon', coordinates: [] }))!;
 		expect(pond).toMatchObject({ id: 'body:8001', title: 'Fixture Pond', fact: 'Pond' });
 		expect(baseInteractive.pick(feature(BODIES_LAYER, { id: 8002, kind: 'not-a-kind' }))).toBeNull();
+		for (const layer of [WETLAND_TUFT_LAYER, WETLAND_THIN_LAYER]) {
+			const marsh = baseInteractive.pick(feature(layer, { id: 8003, kind: 'wetland', name: '', intermittent: false, nhd_only: false, thin: layer === WETLAND_THIN_LAYER }, { type: 'Polygon', coordinates: [] }))!;
+			expect(marsh, layer).toMatchObject({ id: 'body:8003', title: 'Unnamed wetland', fact: 'Wetland', data: { type: 'body', id: 8003, kind: 'wetland' } });
+		}
 		expect(baseInteractive.pick(feature(REACH_SOLID_LAYER, { kind: 'canal' }))).toBeNull();
 	});
 

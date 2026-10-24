@@ -93,6 +93,9 @@ describe('titles and facts', () => {
 		expect(geometryWords('osm', true)).toContain('agrees');
 		expect(geometryWords('osm', false)).toContain("doesn't clearly agree");
 		expect(outlineWords('nhd', false)).toContain("doesn't have this area");
+		// A wetland drawn from the National Wetlands Inventory alone says so, not that OpenStreetMap or NHD outlined it.
+		expect(outlineWords('nwi', false)).toContain('National Wetlands Inventory');
+		expect(outlineWords('nwi', false)).not.toMatch(/OpenStreetMap|NHD/);
 		const e: Evidence = { source: 'nhd_hr', source_id: 'NHD-X', role: 'attributes', share: 0.93, distance_m: 4.2 };
 		expect(evidenceWords(e)).toBe('Its facts (flow, size class, name): USGS National Hydrography Dataset, NHD-X (93% of its length within 20 m, median 4 m apart)');
 		expect(evidenceWords({ source: 'osm_waterways', source_id: 'w900', role: 'geometry', share: null, distance_m: null })).toBe('Its line: OpenStreetMap, w900');

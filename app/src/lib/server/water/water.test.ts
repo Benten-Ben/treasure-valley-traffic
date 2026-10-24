@@ -81,6 +81,28 @@ describe('with the tables but no such row', () => {
 	});
 });
 
+describe('a body’s detail', () => {
+	const body = (extra: Record<string, unknown>) => ({ id: 8003, kind: 'wetland', name: null, intermittent: false, area_m2: 38000, geometry_from: 'nwi', confirmed: false, osm_type: null, osm_id: null, gauge_lid: null, ...extra });
+	const ask = (row: Record<string, unknown>, seen: Seen[] = []) => bodyDetail(fakeSql({ rows: (t) => (t.includes('from water.body') ? [row] : undefined) }, seen), '8003');
+
+	it('says whether a wetland was mapped from the older photos, so the card can say so', async () => {
+		expect(await ask(body({ thin: true }))).toMatchObject({ kind: 'wetland', thin: true });
+		expect(await ask(body({ thin: false }))).toMatchObject({ kind: 'wetland', thin: false });
+	});
+
+	it('reads every body as not thin when the row has no such column (before water 0004), and still asks for it', async () => {
+		const seen: Seen[] = [];
+		expect(await ask(body({}), seen)).toMatchObject({ thin: false });
+		expect(seen.find((s) => s.text.includes('from water.body'))!.text).toContain("'thin'");
+	});
+
+	it('credits the Inventory for a wetland drawn from it, not the hydrography map', async () => {
+		const detail = (await ask(body({ thin: true })))!;
+		expect(detail.credit[0]).toContain('National Wetlands Inventory');
+		expect(detail.credit.join(' ')).not.toContain('Hydrography');
+	});
+});
+
 describe('readings', () => {
 	it('read the newest record of a gauge by its own time, and say nothing when it holds none or no value', async () => {
 		const sql = (payload: unknown) => fakeSql({ rows: (t) => (t.includes("source_id like") ? (payload === undefined ? [] : [{ payload }]) : undefined) });

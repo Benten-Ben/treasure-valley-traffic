@@ -4,7 +4,8 @@
  * written by `app/scripts/tiles-fixture.mjs`), so a click on a fixture line finds its row:
  *
  * - **the plugin's tables:** water 0001 (applied here only when the database lacks it, and then dropped again);
- * - **the network:** the fixture's six reaches and its pond as `water.reach` and `water.body` rows, two canals
+ * - **the network:** the fixture's six reaches, its pond and its two wetlands (one `thin`, mapped from 1981 photos)
+ *   as `water.reach` and `water.body` rows, two canals
  *   (a main canal with a gauge, a diversion dam at its head and two invented IDWR-style service areas, and a
  *   lateral), a dam, a gauge `FXTEST1` and a made-up reading from half an hour ago;
  * - **the notices:** one invented river hazard and one invented E. coli site, in the City's field names.
@@ -21,6 +22,9 @@ import { APP_DIR } from '../../scripts/harness-env.mjs';
 const REPO = resolve(APP_DIR, '..');
 const NOTE = 'water e2e seed (synthetic)';
 export const NHD_ONLY_ID = 2251799813686239;
+/** The two wetlands (the fixture's water.bodies 8002 and 8003): a recent one and one mapped from 1981 photos (`thin`). */
+export const WETLAND_ID = 8002;
+export const WETLAND_THIN_ID = 8003;
 export const GAUGE = 'FXTEST1';
 export const SERVICE_AREAS = ['Fixture Irrigation District', 'Fixture Ditch Company'] as const;
 const SOURCES = ['nwps_gauges', 'boise_river_hazards', 'boise_ecoli'] as const;
@@ -46,10 +50,13 @@ export async function seedWater(): Promise<Seeded> {
 		if (!has.ok) {
 			// One transaction, so a failure leaves no half-made schema behind (the migrations aren't recorded in ops.schema_migration here).
 			await sql.begin(async (tx) => {
-				for (const f of ['0001_hydrography.sql', '0002_canal_season.sql']) await tx.unsafe(readFileSync(join(REPO, 'plugins', 'water', 'migrations', f), 'utf8'));
+				for (const f of ['0001_hydrography.sql', '0002_canal_season.sql', '0004_wetlands.sql']) await tx.unsafe(readFileSync(join(REPO, 'plugins', 'water', 'migrations', f), 'utf8'));
 			});
 			madeSchema = true;
 		}
+		// The wetland rows need water 0004's columns (thin, wetland_class, ...): an older schema is a setup error, said plainly.
+		const [wet] = await sql`select exists (select 1 from information_schema.columns where table_schema = 'water' and table_name = 'body' and column_name = 'thin') as ok`;
+		if (!wet.ok) throw new Error('water.body has no `thin` column: apply the water plugin migrations through 0004 (python3 db/migrate.py)');
 		await clean(sql);
 		for (const name of SOURCES) {
 			const [r] = await sql`select 1 as ok from ops.source where name = ${name}`;
@@ -85,6 +92,11 @@ export async function seedWater(): Promise<Seeded> {
 			         values (${GAUGE}, 'Fixture Canal Diversion', 7001, 1, 'name', 10, ST_GeomFromEWKT('SRID=4326;POINT(-116.24 43.606)'), ${build})`;
 			await tx`insert into water.body (id, kind, name, intermittent, area_m2, minzoom, geometry_from, confirmed, osm_type, osm_id, geom, build_id)
 			         select 8001, 'pond', 'Fixture Pond', false, 4200, 11, 'osm', true, 'w', 800100, ST_Multi(ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON(${JSON.stringify(pondShape())}), 4326))), ${build}`;
+			// The wetlands, from the National Wetlands Inventory (made up here): a recent one and one from the 1981 photos.
+			await tx`insert into water.body (id, kind, name, intermittent, area_m2, minzoom, geometry_from, confirmed, wetland_class, image_year, thin, geom, build_id)
+			         select ${WETLAND_ID}::bigint, 'wetland', 'Fixture Marsh', false, 38000, 14, 'nwi', false, 'PEM1C', 2019, false, ST_Multi(ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON(${JSON.stringify(blobShape(-116.197, 43.6135))}), 4326))), ${build}::bigint
+			         union all
+			         select ${WETLAND_THIN_ID}::bigint, 'wetland', 'Fixture Old Marsh', false, 38000, 14, 'nwi', false, 'PEM1C', 1981, true, ST_Multi(ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON(${JSON.stringify(blobShape(-116.2035, 43.6095))}), 4326))), ${build}::bigint`;
 			await tx`insert into water.canal_org (canal_id, objectid, name, share, at_head, build_id)
 			         values (1, 99001, ${SERVICE_AREAS[0]}, 0.7, true, ${build}), (1, 99002, ${SERVICE_AREAS[1]}, 0.3, false, ${build})`;
 			return build as number;
@@ -118,6 +130,18 @@ function pondShape() {
 		const a = (i / 16) * 2 * Math.PI;
 		const r = 1 + 0.25 * Math.sin(3 * a);
 		ring.push([c[0] + r * 0.0007 * Math.cos(a), c[1] + r * 0.0005 * Math.sin(a)]);
+	}
+	ring.push(ring[0]);
+	return { type: 'Polygon', coordinates: [ring] };
+}
+
+/** A wetland-sized blob (about 340 by 200 m) around a point, as GeoJSON. */
+function blobShape(lon: number, lat: number) {
+	const ring: [number, number][] = [];
+	for (let i = 0; i < 20; i++) {
+		const a = (i / 20) * 2 * Math.PI;
+		const r = 1 + 0.18 * Math.sin(3 * a);
+		ring.push([lon + r * 0.0022 * Math.cos(a), lat + r * 0.0013 * Math.sin(a)]);
 	}
 	ring.push(ring[0]);
 	return { type: 'Polygon', coordinates: [ring] };
