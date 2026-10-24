@@ -177,7 +177,7 @@ function report(label: string, r: Budget) {
 function checkLoads(s: Stats) {
 	expect(s.staticSegments).toBe(1500);
 	expect(s.instances).toBeGreaterThan(1000);
-	// The shrub-like kind keeps to its 300 m radius: the scatter reaches 350 m, so some of it is dropped; the trees' cap of 4,000 drops none.
+	// The shrub-like kind keeps to its 300 m radius: the scatter reaches 350 m, so some of it is dropped; the trees group has no cap (production's options), so the scene drops none.
 	expect(s.droppedByGroup['scene-test-posts'] ?? 0).toBeGreaterThan(0);
 	expect(s.droppedByGroup['scene-test-trees'] ?? 0).toBe(0);
 }
