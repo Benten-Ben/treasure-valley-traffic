@@ -110,6 +110,29 @@ class LockTest(Base):
                 lock.ensure()
         self.assertIn(lock.ENV, str(cm.exception))
 
+    def test_a_new_lock_file_is_group_writable_whatever_the_umask(self):
+        old = os.umask(0o022)
+        try:
+            with lock.locked("new.lock"):
+                pass
+            lock.ensure()
+        finally:
+            os.umask(old)
+        for name in ("new.lock", *lock.LOCKS):
+            mode = stat.S_IMODE(os.stat(os.path.join(self.locks, name)).st_mode)
+            self.assertEqual(mode, 0o664, name)
+
+    @unittest.skipIf(hasattr(os, "geteuid") and os.geteuid() == 0, "root can open any file")
+    def test_ensure_fails_at_the_start_on_a_lock_file_it_cannot_open(self):
+        os.makedirs(self.locks)
+        bad = os.path.join(self.locks, lock.MANIFEST)
+        open(bad, "w").close()
+        os.chmod(bad, 0o444)
+        with self.assertRaises(OSError) as cm:
+            lock.ensure()
+        self.assertIn(bad, str(cm.exception))
+        self.assertIn("chmod", str(cm.exception))
+
     def test_a_name_is_a_bare_file_name(self):
         for bad in ("", "../x.lock", "a/b.lock"):
             with self.assertRaises(ValueError):
