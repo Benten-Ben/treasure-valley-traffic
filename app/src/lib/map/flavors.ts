@@ -520,6 +520,10 @@ export function contributionLayer(c: BaseContribution, l: BaseLayer, state: Base
 /**
  * Whether `layerShown` can hide this layer, whatever the state: a Valley-only or ground contribution, an Aerial gate,
  * or a `show`. (A layer with none of these always draws.)
+ *
+ * Keep this in step with `layerShown`: a gate added there and not here leaves a source layer without a keeper, and #389
+ * (a layer turned on later draws nothing at overzoom) comes back. The issue suggested gating by opacity 0 or a filter
+ * instead; the keepers were chosen so that visibility stays the gate (see `sourceLayerKeepers`).
  */
 function canBeHidden(c: BaseContribution, l: BaseLayer): boolean {
 	return c.looks === 'valley' || c.source.kind === 'ground' || Boolean(l.aerial) || Boolean(l.show);

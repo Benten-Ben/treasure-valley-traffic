@@ -128,7 +128,8 @@ test.describe('lanes', () => {
 		await expect.poll(() => layerOn(page, SURFACE), { message: 'hidden under Aerial' }).toBe(false);
 		await page.evaluate(() => (globalThis as any).__tvt.map.jumpTo({ zoom: 17, center: [-116.2, 43.615], bearing: 0, pitch: 0 }));
 		await mapReady(page);
-		await page.waitForTimeout(3000);
+		// Regression check only: it passes without the keepers too. The unit test covers the Aerial gate.
+		await expect.poll(() => page.evaluate(() => (globalThis as any).__tvt.map.areTilesLoaded()), { message: 'the close view loaded' }).toBe(true);
 		expect(await layerOn(page, SURFACE)).toBe(false);
 		await page.getByRole('toolbar', { name: 'Map layers' }).getByRole('button', { name: 'Base' }).click();
 		await pop.getByRole('switch', { name: /Aerial photos/ }).uncheck();
