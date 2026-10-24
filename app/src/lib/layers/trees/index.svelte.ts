@@ -47,6 +47,12 @@ import {
 export const FETCH_DEBOUNCE_MS = 250;
 /** Tree details kept for the panel. */
 const DETAILS_KEPT = 40;
+/**
+ * The trees group's scene options. Trees never move, so they are scenery: while the camera moves, the scene
+ * reads the ground under a share of them each frame instead of all of them (the scene budget case, test-scene.ts,
+ * sets the same, so its numbers are production's).
+ */
+const TREES_SCENE = { priority: PRIORITY.tree, scenery: true } as const;
 const EMPTY: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: [] };
 
 /** What the legend shows about the view (written when it changes, never per frame). */
@@ -306,7 +312,7 @@ export class TreesModule implements LayerModule {
 		this.#capped = inView > list.length;
 		this.#fade = -1;
 		this.#applyFade(fade);
-		scene.set(TREES_3D, list, { priority: PRIORITY.tree });
+		scene.set(TREES_3D, list, TREES_SCENE);
 		if (this.view.capped !== this.#capped || this.view.cap !== this.#cap) this.view = { ...this.view, capped: this.#capped, cap: this.#cap };
 	}
 
@@ -370,7 +376,7 @@ export class TreesModule implements LayerModule {
 			map.setPaintProperty(DISCS, 'circle-opacity', discOpacity(true) as never);
 			map.setPaintProperty(DISCS, 'circle-stroke-opacity', discOpacity(true) as never);
 		}
-		scene.set(TREES_3D, this.#instances, { priority: PRIORITY.tree });
+		scene.set(TREES_3D, this.#instances, TREES_SCENE);
 		scene.show(TREES_3D, false);
 		this.#modelsOn = false;
 		this.#syncScene();
