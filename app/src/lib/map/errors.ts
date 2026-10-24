@@ -35,8 +35,12 @@ export function errorDetail(ev: MapErrorLike, answers: readonly AnswerLike[] = [
 	];
 	if (c) {
 		const tail = `/${c.z}/${c.x}/${c.y}`;
-		for (const a of answers.filter((x) => x.url.endsWith(tail)).slice(-3)) {
-			parts.push(`handed ${a.url.split('/').slice(-4, -3)[0]}: ${a.bytes} bytes, head ${a.head || '-'}, ${a.aborted ? 'aborted' : 'not aborted'}`);
+		const same = answers.filter((x) => x.url.endsWith(tail));
+		// Several archives can answer the same z/x/y: prefer the ones whose archive is the source's, else show all of them.
+		const ofSource = ev.sourceId ? same.filter((x) => x.url.includes(`/${ev.sourceId}.pmtiles/`)) : [];
+		for (const a of (ofSource.length ? ofSource : same).slice(-3)) {
+			const name = a.url.split('/').slice(-4, -3)[0];
+			parts.push(`handed ${name}: ${a.bytes} bytes, head ${a.head || '-'}, ${a.aborted ? 'aborted' : 'not aborted'}`);
 		}
 	}
 	return parts.filter(Boolean).join(' · ');

@@ -38,7 +38,7 @@ export function setupMapLibre(): void {
 				throw e;
 			}));
 	reader().catch(() => {}); // start it now; each tile request reports its own failure
-	addProtocol('pmtiles', tileProtocol(reader) as never);
+	addProtocol('pmtiles', tileProtocol(reader) as Parameters<typeof addProtocol>[1]);
 }
 
 /**

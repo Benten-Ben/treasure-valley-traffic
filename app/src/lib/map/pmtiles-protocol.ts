@@ -5,7 +5,7 @@ export interface TileAnswer {
 	url: string;
 	/** Bytes handed to the decoder; -1 when the request failed or was dropped. */
 	bytes: number;
-	/** The request's abort signal had fired by the time the reader answered. */
+	/** The request's abort signal had fired by the time the handler finished (answered or threw). */
 	aborted: boolean;
 	/** The first bytes in hex (a PNG starts 89504e47, a WebP 52494646), to tell an image from anything else. */
 	head: string;
@@ -31,24 +31,11 @@ function record(a: TileAnswer): void {
 
 const hex = (d: Uint8Array): string => Array.from(d.subarray(0, 4), (b) => b.toString(16).padStart(2, '0')).join('');
 
-/** An AbortError, as MapLibre expects to ignore. */
-function abortError(signal: AbortSignal): Error {
-	const r = signal.reason;
-	if (r instanceof Error) return r;
-	const e = new Error('The tile request was aborted');
-	e.name = 'AbortError';
-	return e;
-}
-
 /**
- * The `pmtiles://` protocol handler for MapLibre's `addProtocol`.
- *
- * - A request that was aborted gets no answer: it throws the abort. The reader can resolve a request
- *   whose signal fired during its last await (its own check runs one step earlier), and MapLibre would
- *   then decode bytes nobody asked for any more (#368).
- * - The bytes are copied out of the reader's buffer, so the decoder never shares memory with the reader.
- * - Every answer is logged (url, byte length, aborted, first bytes), and the log is on
- *   `globalThis.__tvtTileAnswers`, so a decode error can say which bytes it was given.
+ * The `pmtiles://` protocol handler for MapLibre's `addProtocol`. It answers exactly as the pmtiles
+ * Protocol does and only records what was handed over: every tile answer is logged (url, byte length,
+ * whether the request's signal had fired, first bytes) on `globalThis.__tvtTileAnswers`, so a decode
+ * error can say which bytes it was given (#368).
  */
 export function tileProtocol(
 	reader: () => Promise<Pick<Protocol, 'tile'>>
@@ -57,18 +44,15 @@ export function tileProtocol(
 		const answer: TileAnswer = { url: params.url, bytes: -1, aborted: false, head: '' };
 		try {
 			const r = (await (await reader()).tile(params as never, abort)) as ProtocolResult & { data: unknown };
-			answer.aborted = abort.signal.aborted;
-			if (answer.aborted) throw abortError(abort.signal);
-			if (!(r.data instanceof Uint8Array)) return r; // TileJSON, or a missing tile (null)
-			if (r.data.byteLength === 0) {
+			if (r.data instanceof Uint8Array && r.data.byteLength > 0) {
+				answer.bytes = r.data.byteLength;
+				answer.head = hex(r.data);
+			} else if (r.data instanceof Uint8Array) {
 				answer.bytes = 0;
-				return r; // a missing vector tile: empty, and MapLibre does not decode it
 			}
-			const copy = r.data.slice();
-			answer.bytes = copy.byteLength;
-			answer.head = hex(copy);
-			return { ...r, data: copy };
+			return r;
 		} finally {
+			answer.aborted = abort.signal.aborted;
 			if (!params.url.endsWith('.json') && params.type !== 'json') record(answer);
 		}
 	};
