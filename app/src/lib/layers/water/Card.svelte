@@ -1,7 +1,9 @@
 <script lang="ts">
 	import { canalSeason, isLegalWindow, loadSeason, seasonWords, type Season } from '#lib/base/water/season.js';
+	import { wetlandWords } from '#lib/base/water/wetlands.base.js';
 	import type { CardProps } from '../types.js';
 	import type { Details, WaterModule, WaterSelectionData } from './index.svelte.js';
+	import type { BodyDetail } from './water.js';
 	import {
 		ageText,
 		areaText,
@@ -217,7 +219,9 @@
 		</dl>
 		<p class="explain">{outlineWords(body.geometry_from, body.confirmed)}</p>
 		{#if body.kind === 'wetland'}
-			<p class="how">Not a legal (regulatory) wetland boundary.</p>
+			{#each wetlandWords((body as BodyDetail & { thin?: boolean }).thin === true) as line (line)}
+				<p class="how">{line}</p>
+			{/each}
 		{/if}
 	{/if}
 {:else if data.type === 'gauge'}

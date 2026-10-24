@@ -50,7 +50,13 @@
 		<svg viewBox="0 0 40 12" width="40" height="12" aria-hidden="true">
 			<rect x="3" y="1" width="34" height="10" rx="4" fill={t.fill} />
 		</svg>
-		<span><b>Lake, pond, reservoir</b> <span class="how">(a paler wash for wetlands, a dashed rim when it dries up)</span></span>
+		<span><b>Lake, pond, reservoir</b> <span class="how">(a dashed rim when it dries up)</span></span>
+	</li>
+	<li>
+		<svg viewBox="0 0 40 12" width="40" height="12" aria-hidden="true">
+			<line x1="1" y1="6" x2="39" y2="6" stroke={t.line} stroke-width="1.2" stroke-dasharray="0.8 4" />
+		</svg>
+		<span><b>Wetland tufts</b> <span class="how">(National Wetlands Inventory, from z14; sparser and finer where mapped from 1981 photos, from z15). Not a legal (regulatory) wetland boundary.</span></span>
 	</li>
 </ul>
 {#if water.baked}
