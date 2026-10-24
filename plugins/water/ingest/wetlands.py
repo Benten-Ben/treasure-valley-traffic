@@ -7,7 +7,7 @@ rules, the loaders and the rows the build reads.
 
     python3 -m ingest nwi-load --from nwi_mapbox.gpkg [--force] [--dry-run]
     python3 -m ingest nwi-presence --from shares.json [--dry-run]
-    python3 -m ingest wetland-qa [--build N] [--out DIR] [--boxes]
+    python3 -m ingest wetland-qa [--build N] [--out DIR] [--boxes] [--sweep]
 
 nwi-load reads the GeoPackage kept on the server (the eight HU8 watershed files cut to the map box: layers `wetlands`
 and `project_metadata`, in NAD83 Albers) with the standard library, and keeps only the vegetated palustrine wetlands
@@ -21,7 +21,7 @@ Each wetland gets the mapping project whose polygon holds its point, hence its i
     unknown   no project polygon holds it: drawn as mapped, and counted
 
 The presence check (the review, section 6) measures five shares of an old or interim polygon from public inputs. A
-worker step (rasterio, on the ground's grid) computes them and writes a JSON file that nwi-presence loads:
+worker step (plugins/water/build/presence.py: GDAL and NumPy, on the ground's grid) computes them and writes a JSON file that nwi-presence loads:
 
     {"computed_on": "2026-10-24", "inputs": {...},
      "polygons": [{"key": "...", "built": 0.0, "developed": 0.0, "cultivated": 0.0, "hay_pasture": 0.0,
@@ -64,6 +64,10 @@ HAY_PASTURE_FLAGS = 0.5        # hay or pasture this much: kept, flagged
 CDL_SUPPORT = 0.25             # CDL wetland classes over this share of the polygon count as support
 SUPPORT_OVERLAP = 0.1          # an OSM wetland or NHD marsh overlapping this share is listed as evidence (not support)
 
+THRESHOLDS = {"built_retires": BUILT_RETIRES, "built_with_developed": BUILT_WITH_DEVELOPED,
+              "developed_retires": DEVELOPED_RETIRES, "cultivated_retires": CULTIVATED_RETIRES,
+              "hay_pasture_flags": HAY_PASTURE_FLAGS}
+
 ERA_OLD_BEFORE = 1999          # a project whose imagery is older than this is "old"
 OVERLAP_SHARE = 0.5            # an NWI polygon is absorbed into an OSM wetland when this much of it lies inside; an OSM
                                # wetland is confirmed, and takes NWI's class, when NWI polygons cover this much of it
@@ -97,7 +101,7 @@ def checked_era(era):
     return era in ("old", "interim")
 
 
-def presence(era, *, built=0.0, developed=0.0, cultivated=0.0, hay_pasture=0.0, support=False):
+def presence(era, *, built=0.0, developed=0.0, cultivated=0.0, hay_pasture=0.0, support=False, thresholds=None):
     """(presence, reason) for one polygon: ('kept', None), ('flagged', reason) or ('retired', reason). Recent and
     unknown eras are kept as mapped. Older ones, in order:
       retired as 'built' when built is half or more, or a quarter or more with developed at half or more and no
@@ -105,14 +109,17 @@ def presence(era, *, built=0.0, developed=0.0, cultivated=0.0, hay_pasture=0.0, 
       retired as 'farmed' when cultivated is half or more and there's no support; with support it stays, flagged
         'farmed_supported' ("in a crop field since at least 2018");
       kept, flagged 'hay_pasture', when hay or pasture is half or more (wet meadows are often hayed or grazed);
-      kept otherwise."""
+      kept otherwise.
+    thresholds overrides the module's values by name (THRESHOLDS), for the sweeps that tune them (presence_sweep)."""
+    t = {**THRESHOLDS, **(thresholds or {})}
     if not checked_era(era):
         return "kept", None
-    if built >= BUILT_RETIRES or (built >= BUILT_WITH_DEVELOPED and developed >= DEVELOPED_RETIRES and not support):
+    if built >= t["built_retires"] or (built >= t["built_with_developed"] and developed >= t["developed_retires"]
+                                       and not support):
         return "retired", "built"
-    if cultivated >= CULTIVATED_RETIRES:
+    if cultivated >= t["cultivated_retires"]:
         return ("flagged", "farmed_supported") if support else ("retired", "farmed")
-    if hay_pasture >= HAY_PASTURE_FLAGS:
+    if hay_pasture >= t["hay_pasture_flags"]:
         return "flagged", "hay_pasture"
     return "kept", None
 
@@ -557,12 +564,20 @@ def write_qa(conn, build_id, out_dir):
     return path, n
 
 
+def _boxes():
+    """{box id: (west, south, east, north)} in EPSG:32611 of the ten test boxes."""
+    from basemap.sheets import places
+    return {f.box or f.id: f.bounds for f in places.select(["boxes"])}
+
+
 def qa_main(argv=None):
     ap = argparse.ArgumentParser(prog="python3 -m ingest wetland-qa",
                                  description="the presence check's counts and the QA sheet's rows for a water-build")
     ap.add_argument("--build", type=int, help="a water.build id (default: the newest finished one)")
     ap.add_argument("--out", help="a folder in the private files for qa-old-mapped.csv (never in the repository)")
     ap.add_argument("--boxes", action="store_true", help="counts per test box (basemap.sheets.places)")
+    ap.add_argument("--sweep", action="store_true",
+                    help="what other thresholds would do, per box: the presence check's and the reach rule's")
     args = ap.parse_args(argv)
     from ingest import db
     with db.connect() as conn:
@@ -576,14 +591,286 @@ def qa_main(argv=None):
                                (build_id,)).fetchall())
         print(f"wetland-qa: build {build_id}: old and interim polygons by outcome: {json.dumps(by)}")
         if args.boxes:
-            from basemap.sheets import places
-            boxes = {f.box or f.id: f.bounds for f in places.select(["boxes"])}
+            boxes = _boxes()
             for b, c in box_counts(conn, build_id, boxes).items():
                 print(f"  box {b}: {json.dumps(c)}")
+            outcomes = box_outcomes(conn, build_id, boxes)
+            print(format_table("all NWI polygons", OUTCOME_COLUMNS,
+                               [(b, outcomes.get(b, {})) for b in ["all", *boxes]]))
+        if args.sweep:
+            boxes = _boxes()
+            rows = [dict(zip([c.name for c in cur.description], r)) for cur in [conn.execute(SWEEP_ROWS_SQL)]
+                    for r in cur.fetchall()]
+            for name, value, by in presence_sweep(rows, boxes):
+                mark = "  (now)" if value == THRESHOLDS[name] else ""
+                print(format_table(f"{name} {value:g}{mark}", ("retired", "flagged", "kept"),
+                                   [(b, by.get(b, {})) for b in ["all", *boxes]]))
+            reach = fetch_reach_rows(conn, build_id)
+            for label, by in reach_sweep(reach, boxes):
+                print(format_table(label, ("dropped",), [(b, {"dropped": by.get(b, 0)}) for b in ["all", *boxes]]))
         if args.out:
             path, n = write_qa(conn, build_id, args.out)
             print(f"wetland-qa: {n} rows in {path}")
+            path, n = write_reach_qa(conn, build_id, args.out)
+            print(f"wetland-qa: {n} reach rows in {path}")
     return 0
+
+
+# ---- the tuning counts: what each rule drops, per box ------------------------------------------------------------
+
+# The presence thresholds and the reach rule are the review's first guesses; these tables count what other values
+# would do on the ten boxes (the coordinator reads the counts and decides; nothing here changes a value).
+PRESENCE_SWEEP = (("built_retires", (0.35, 0.5, 0.65)),
+                  ("built_with_developed", (0.15, 0.25, 0.35)),
+                  ("developed_retires", (0.35, 0.5, 0.65)),
+                  ("cultivated_retires", (0.35, 0.5, 0.65, 0.8)),
+                  ("hay_pasture_flags", (0.35, 0.5, 0.65)))
+REACH_SWEEP_M = (10.0, 15.0, 20.0, 25.0)
+REACH_SWEEP_MIN_M2 = (100.0, 200.0, 400.0, 800.0)
+REACH_SWEEP_SHARES = (0.1, 0.25, 0.5)        # a share-based minimum: the far part is at least this share of the leftover
+
+SWEEP_ROWS_SQL = f"""
+select s.key, s.era, s.attribute, s.checked, s.built, s.developed, s.cultivated, s.hay_pasture, s.cdl_wetland, s.osm,
+       s.nhd, ST_X(k.p) x, ST_Y(k.p) y, round(ST_X(ST_Transform(k.p, 4326))::numeric, 6) lon,
+       round(ST_Y(ST_Transform(k.p, 4326))::numeric, 6) lat
+from ({SUPPORT_SQL}) s
+join (select key, ST_Transform(ST_PointOnSurface(geom), 32611) p from water.nwi_wetland) k using (key)
+where s.era in ('old', 'interim')"""
+
+
+def in_box(x, y, bounds):
+    w, s, e, n = bounds
+    return w <= x <= e and s <= y <= n
+
+
+def presence_sweep(rows, boxes, sweep=PRESENCE_SWEEP):
+    """Counts of the presence call under other thresholds. rows: dicts from SWEEP_ROWS_SQL (old and interim polygons
+    with their shares; polygons with no shares yet are skipped); boxes: {id: (west, south, east, north)} in EPSG:32611.
+    Returns [(parameter, value, {box id or 'all': {'retired': n, 'flagged': n, 'kept': n, plus
+    'built'/'farmed'/'hay_pasture' reasons}})]: each parameter varied alone, the others at their module values; the
+    module's own value is marked by being equal to THRESHOLDS[parameter]."""
+    rows = [r for r in rows if r["checked"]]
+    out = []
+    for name, values in sweep:
+        for v in values:
+            by = {}
+            for r in rows:
+                support = (r["cdl_wetland"] or 0) >= CDL_SUPPORT
+                pres, reason = presence(r["era"], built=r["built"] or 0.0, developed=r["developed"] or 0.0,
+                                        cultivated=r["cultivated"] or 0.0, hay_pasture=r["hay_pasture"] or 0.0,
+                                        support=support, thresholds={name: v})
+                where = ["all"] + [b for b, bb in boxes.items() if in_box(r["x"], r["y"], bb)]
+                for b in where:
+                    c = by.setdefault(b, {})
+                    for k in (pres, f"{pres}/{reason}" if reason else None):
+                        if k:
+                            c[k] = c.get(k, 0) + 1
+            out.append((name, v, by))
+    return out
+
+
+LEFTOVER_OUTCOMES = ("nwi_only", "too_small", "nothing_left", "leftover", "dropped_reach", "dropped_remainder",
+                     "dropped_both")
+
+REACH_ROWS_SQL = f"""
+create temp table q_osm as
+select (d).geom g from (select ST_Dump(ST_Union(ST_CollectionExtract(ST_MakeValid(ST_Transform(geom, 32611)), 3))) d
+                         from water.body
+                         where build_id = %(build)s and kind = 'wetland' and geometry_from = 'osm') u;
+create index on q_osm using gist (g);
+create temp table q_nwi as
+select k.key, c.era, c.presence, ST_Multi(ST_CollectionExtract(ST_MakeValid(ST_Transform(k.geom, 32611)), 3)) g,
+       ST_Transform(ST_PointOnSurface(k.geom), 32611) p, ST_PointOnSurface(k.geom) ll
+from water.wetland_check c join water.nwi_wetland k using (key)
+where c.build_id = %(build)s and c.presence in ('kept', 'flagged');
+delete from q_nwi where ST_IsEmpty(g);
+create index on q_nwi using gist (g);
+create temp table q_rows as
+select k.key, k.era, k.presence, ST_X(k.p) x, ST_Y(k.p) y, round(ST_X(k.ll)::numeric, 6) lon,
+       round(ST_Y(k.ll)::numeric, 6) lat, ST_Area(k.g) area_m2, o.inside_m2, o.inside_m2 >= 1 overlapped,
+       o.inside_m2 >= {OVERLAP_SHARE} * ST_Area(k.g) mostly_inside, r.left_m2,
+       {{reach_columns}}
+from q_nwi k
+cross join lateral (select coalesce(ST_Area(ST_Intersection(k.g, u.g)), 0) inside_m2, u.g union_g
+                    from (select ST_Union(p.g) g from q_osm p where p.g && k.g and ST_Intersects(p.g, k.g)) u) o
+cross join lateral (select case when o.inside_m2 >= 1 then ST_Difference(k.g, o.union_g) else k.g end g) l
+cross join lateral (select ST_Area(ST_CollectionExtract(ST_MakeValid(ST_SimplifyPreserveTopology(l.g, {SIMPLIFY_M})), 3))
+                           left_m2) r
+cross join lateral (select ST_Union(p.g) g from q_osm p
+                    where o.inside_m2 >= 1 and p.g && ST_Expand(k.g, {{max_reach}})) near"""
+
+
+def reach_rows_sql(reaches=REACH_SWEEP_M):
+    cols = ", ".join(f"case when o.inside_m2 >= 1 then ST_Area(ST_Difference(l.g, ST_Buffer(near.g, {r}))) end "
+                     f"reach_{int(r)}_m2" for r in reaches)
+    return REACH_ROWS_SQL.replace("{reach_columns}", cols).replace("{max_reach}", str(max(reaches)))
+
+
+def leftover_outcome(row, reach_m=REMAINDER_REACH_M, min_m2=REMAINDER_REACH_MIN_M2, reach_share=None):
+    """What the build does with one kept or flagged NWI polygon's leftover (REACH_ROWS_SQL's row) under the reach
+    rule's values: nwi_only (no OSM wetland on it, drawn), too_small (no OSM, under the drawing minimum), nothing_left
+    (OSM's wetlands leave under the minimum), leftover (drawn beside OSM's outline), dropped_reach (fails the reach
+    rule only), dropped_remainder (fails the 2,000 m2 floor of a polygon at least half inside OSM only) or
+    dropped_both. reach_share, when given, also asks the far part to be that share of the leftover."""
+    if not row["overlapped"]:
+        return "nwi_only" if row["left_m2"] >= MIN_AREA_M2 else "too_small"
+    if row["left_m2"] < MIN_AREA_M2:
+        return "nothing_left"
+    far = row[f"reach_{int(reach_m)}_m2"] or 0.0
+    reach_ok = far >= min_m2 and (reach_share is None or far >= reach_share * row["left_m2"])
+    remainder_ok = not row["mostly_inside"] or row["left_m2"] >= REMAINDER_MIN_M2
+    if reach_ok and remainder_ok:
+        return "leftover"
+    return "dropped_both" if not reach_ok and not remainder_ok else ("dropped_reach" if not reach_ok
+                                                                    else "dropped_remainder")
+
+
+def outcome_drawn(outcome):
+    return outcome in ("nwi_only", "leftover")
+
+
+def fetch_reach_rows(conn, build_id, reaches=REACH_SWEEP_M):
+    """The kept and flagged NWI polygons of a build with their leftover measures (REACH_ROWS_SQL), as dicts. Uses
+    temporary tables on the connection and drops them."""
+    for t in ("q_osm", "q_nwi", "q_rows"):
+        conn.execute(f"drop table if exists pg_temp.{t}")
+    try:
+        for stmt in reach_rows_sql(reaches).split(";\n"):
+            if stmt.strip():
+                conn.execute(stmt, {"build": build_id} if "%(build)s" in stmt else None)
+        cur = conn.execute("select * from q_rows order by key")
+        cols = [c.name for c in cur.description]
+        return [dict(zip(cols, r)) for r in cur.fetchall()]
+    finally:
+        try:
+            for t in ("q_osm", "q_nwi", "q_rows"):
+                conn.execute(f"drop table if exists pg_temp.{t}")
+        except Exception:
+            # An aborted transaction cannot run the drops; keep the original error, not this one.
+            pass
+
+
+def tally(rows, boxes, decide):
+    """{box id or 'all': {outcome: count}} of decide(row) over rows (each with x and y in EPSG:32611)."""
+    out = {}
+    for r in rows:
+        o = decide(r)
+        for b in ["all"] + [b for b, bb in boxes.items() if in_box(r["x"], r["y"], bb)]:
+            c = out.setdefault(b, {})
+            c[o] = c.get(o, 0) + 1
+    return out
+
+
+def reach_sweep(rows, boxes):
+    """Polygons whose leftover the reach rule drops under other values: [(label, {box or 'all': count})] for each
+    reach distance at the current minimum, each minimum at the current distance, and each share-based minimum (at the
+    current distance, with the current minimum as well). A polygon is counted when its outcome is dropped_reach or
+    dropped_both."""
+    def dropped(**kw):
+        return lambda r: leftover_outcome(r, **kw) in ("dropped_reach", "dropped_both")
+
+    def count(decide):
+        return {b: c.get(True, 0) for b, c in tally(rows, boxes, lambda r: decide(r)).items()}
+    out = []
+    for m in REACH_SWEEP_M:
+        out.append((f"reach {m:g} m, minimum {REMAINDER_REACH_MIN_M2:g} m2", count(dropped(reach_m=m))))
+    for n in REACH_SWEEP_MIN_M2:
+        out.append((f"reach {REMAINDER_REACH_M:g} m, minimum {n:g} m2", count(dropped(min_m2=n))))
+    for sh in REACH_SWEEP_SHARES:
+        out.append((f"reach {REMAINDER_REACH_M:g} m, minimum {REMAINDER_REACH_MIN_M2:g} m2 and {sh:.0%} of the leftover",
+                    count(dropped(reach_share=sh))))
+    return out
+
+
+REACH_CSV_COLUMNS = ("key", "era", "lon", "lat", "area_m2", "inside_m2", "mostly_inside", "left_m2",
+                     *(f"reach_{int(r)}_m2" for r in REACH_SWEEP_M), "outcome", "case")
+
+
+def reach_cases(rows):
+    """The QA sheet's reach rows: [(case, row)] for the two edges the reach rule has. grazing: a small polygon
+    (under 700 m2) that overlaps OSM a little and is dropped by the reach rule; offset: a polygon whose leftover is
+    drawn at 15 m but dropped at 20 m (an NWI copy shifted 15 to 20 m draws its whole offset strip)."""
+    out = []
+    for r in rows:
+        if not r["overlapped"]:
+            continue
+        now = leftover_outcome(r)
+        if now in ("dropped_reach", "dropped_both") and r["area_m2"] < 700 and not r["mostly_inside"]:
+            out.append(("grazing", r))
+        elif now == "leftover" and leftover_outcome(r, reach_m=20.0) in ("dropped_reach", "dropped_both"):
+            out.append(("offset", r))
+    return out
+
+
+OUTCOME_SQL = """
+select c.key, c.era, c.presence, c.drawn, b.geometry_from body_from,
+       ST_X(ST_Transform(ST_PointOnSurface(k.geom), 32611)) x, ST_Y(ST_Transform(ST_PointOnSurface(k.geom), 32611)) y
+from water.wetland_check c join water.nwi_wetland k using (key)
+left join water.body b on b.id = c.body_id and b.build_id = c.build_id
+where c.build_id = %s"""
+
+
+def box_outcomes(conn, build_id, boxes):
+    """{box id or 'all': {...}}: every NWI polygon of the build by what became of it. nwi: all polygons with a point in
+    the box; retired and unchecked (the presence check); kept (the rest); then of the kept ones, by the leftover rules
+    (REACH_ROWS_SQL, at the module's values): nwi_only, too_small, nothing_left, leftover, dropped_reach,
+    dropped_remainder, dropped_both; absorbed: at least half inside OSM wetlands (counted among the above too);
+    disagree: kept polygons whose recomputed outcome differs from what the build drew (should be 0)."""
+    rows = fetch_reach_rows(conn, build_id)
+    by_key = {r["key"]: r for r in rows}
+    out = {}
+    for r in conn.execute(OUTCOME_SQL, (build_id,)).fetchall():
+        key, era, presence_, drawn, body_from, x, y = r
+        where = ["all"] + [b for b, bb in boxes.items() if in_box(x, y, bb)]
+        got = {"nwi": 1}
+        if presence_ in ("retired", "unchecked"):
+            got[presence_] = 1
+        else:
+            got["kept"] = 1
+            row = by_key.get(key)
+            if row is not None:
+                o = leftover_outcome(row)
+                got[o] = 1
+                if row["mostly_inside"]:
+                    got["absorbed"] = 1
+                own = body_from == "nwi"
+                if own != outcome_drawn(o):
+                    got["disagree"] = 1
+        for b in where:
+            c = out.setdefault(b, {})
+            for k, v in got.items():
+                c[k] = c.get(k, 0) + v
+    return out
+
+
+OUTCOME_COLUMNS = ("nwi", "retired", "unchecked", "kept", "nwi_only", "too_small", "nothing_left", "leftover",
+                   "dropped_reach", "dropped_remainder", "dropped_both", "absorbed", "disagree")
+
+
+def format_table(title, columns, rows):
+    """A plain-text table: rows is [(label, {column: value})]."""
+    width = max([len(str(label)) for label, _ in rows] + [len(title)])
+    head = title.ljust(width) + "  " + "  ".join(f"{c[:12]:>12}" for c in columns)
+    lines = [head]
+    for label, vals in rows:
+        lines.append(str(label).ljust(width) + "  " + "  ".join(f"{vals.get(c, 0):>12}" for c in columns))
+    return "\n".join(lines)
+
+
+def write_reach_qa(conn, build_id, out_dir):
+    """Write qa-reach.csv (the grazing and offset cases, see reach_cases) into out_dir, which belongs in the private
+    files. Returns the path and the number of rows."""
+    os.makedirs(out_dir, exist_ok=True)
+    path = os.path.join(out_dir, "qa-reach.csv")
+    n = 0
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(REACH_CSV_COLUMNS)
+        for case, r in reach_cases(fetch_reach_rows(conn, build_id)):
+            w.writerow([*(round(r[c], 1) if isinstance(r.get(c), float) else r.get(c)
+                          for c in REACH_CSV_COLUMNS[:-2]), leftover_outcome(r), case])
+            n += 1
+    return path, n
 
 
 # ---- command line -----------------------------------------------------------------------------------------------

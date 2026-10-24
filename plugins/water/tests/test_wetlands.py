@@ -224,6 +224,89 @@ class SharesFileTest(unittest.TestCase):
                 wetlands.read_shares(self.write(doc))
 
 
+def reach_row(area=10000.0, inside=0.0, left=None, **reach):
+    """A REACH_ROWS_SQL row (reach_N_m2 given by keyword in metres squared)."""
+    left = area - inside if left is None else left
+    row = {"area_m2": area, "inside_m2": inside, "overlapped": inside >= 1, "mostly_inside": inside >= 0.5 * area,
+           "left_m2": left, "x": 0.0, "y": 0.0}
+    for r in wetlands.REACH_SWEEP_M:
+        row[f"reach_{int(r)}_m2"] = reach.get(f"reach_{int(r)}_m2", reach.get("far")) if inside >= 1 else None
+    return row
+
+
+class LeftoverOutcomeTest(unittest.TestCase):
+    def test_no_osm_wetland_on_it(self):
+        self.assertEqual(wetlands.leftover_outcome(reach_row()), "nwi_only")
+        self.assertEqual(wetlands.leftover_outcome(reach_row(area=40.0)), "too_small")
+
+    def test_an_offset_strip_inside_the_reach_is_dropped(self):
+        self.assertEqual(wetlands.leftover_outcome(reach_row(inside=3000, far=0.0)), "dropped_reach")
+
+    def test_a_far_piece_draws_and_a_small_one_beyond_the_floor_does_not(self):
+        self.assertEqual(wetlands.leftover_outcome(reach_row(inside=4000, far=3000.0)), "leftover")
+        self.assertEqual(wetlands.leftover_outcome(reach_row(inside=4000, far=150.0)), "dropped_reach")
+
+    def test_the_remainder_floor_applies_to_a_polygon_mostly_inside(self):
+        row = reach_row(area=10000.0, inside=9000, left=1000.0, far=500.0)
+        self.assertEqual(wetlands.leftover_outcome(row), "dropped_remainder")
+        self.assertEqual(wetlands.leftover_outcome({**row, "reach_15_m2": 0.0}), "dropped_both")
+
+    def test_nothing_left_of_a_polygon_inside_osm(self):
+        self.assertEqual(wetlands.leftover_outcome(reach_row(inside=9990, left=10.0, far=0.0)), "nothing_left")
+
+    def test_the_cliff_a_16_m_shift_draws_its_whole_strip_a_20_m_reach_does_not(self):
+        # a 400 m square copy shifted 16 m: the leftover is two strips of 16 x 400 m, 6,400 m2, of which 1 m x 400 m
+        # lies beyond 15 m (400 m2) and none beyond 20 m
+        row = reach_row(area=160000.0, inside=153600.0, left=6400.0, reach_10_m2=2400.0, reach_15_m2=400.0,
+                        reach_20_m2=0.0, reach_25_m2=0.0)
+        self.assertEqual(wetlands.leftover_outcome(row), "leftover")
+        self.assertEqual(wetlands.leftover_outcome(row, reach_m=20.0), "dropped_reach")
+        self.assertEqual(wetlands.leftover_outcome(row, min_m2=800.0), "dropped_reach")
+        self.assertEqual(wetlands.leftover_outcome(row, reach_share=0.25), "dropped_reach")   # 400 of 6,400 is 6%
+        self.assertEqual([c for c, _ in wetlands.reach_cases([row])], ["offset"])
+
+    def test_the_grazing_case_a_small_polygon_touching_a_wetland(self):
+        row = reach_row(area=500.0, inside=30.0, far=120.0)
+        self.assertEqual(wetlands.leftover_outcome(row), "dropped_reach")
+        self.assertEqual([c for c, _ in wetlands.reach_cases([row])], ["grazing"])
+        self.assertEqual(wetlands.reach_cases([reach_row(area=5000.0, inside=30.0, far=120.0)]), [])
+
+
+class SweepTest(unittest.TestCase):
+    def test_thresholds_override_the_module_values_by_name(self):
+        kw = dict(built=0.4, developed=0.0, cultivated=0.0, hay_pasture=0.0)
+        self.assertEqual(wetlands.presence("old", **kw), ("kept", None))
+        self.assertEqual(wetlands.presence("old", thresholds={"built_retires": 0.35}, **kw), ("retired", "built"))
+        self.assertEqual(wetlands.presence("old", **kw, thresholds={}), ("kept", None))
+        self.assertEqual(set(wetlands.THRESHOLDS), {n for n, _ in wetlands.PRESENCE_SWEEP})
+
+    def test_presence_sweep_counts_per_box_and_overall(self):
+        def row(key, x, **shares):
+            return {"key": key, "era": "old", "checked": True, "x": x, "y": 0.0, "built": 0.0, "developed": 0.0,
+                    "cultivated": 0.0, "hay_pasture": 0.0, "cdl_wetland": 0.0, **shares}
+        rows = [row("a", 10, cultivated=0.55), row("b", 10, cultivated=0.4), row("c", 500, cultivated=0.9),
+                row("u", 10, cultivated=0.9, checked=False)]
+        boxes = {"one": (0, -1, 100, 1), "two": (400, -1, 600, 1)}
+        got = {(n, v): by for n, v, by in wetlands.presence_sweep(rows, boxes, (("cultivated_retires", (0.35, 0.5)),))}
+        self.assertEqual(got[("cultivated_retires", 0.5)]["all"], {"retired": 2, "retired/farmed": 2, "kept": 1})
+        self.assertEqual(got[("cultivated_retires", 0.35)]["one"], {"retired": 2, "retired/farmed": 2})
+        self.assertEqual(got[("cultivated_retires", 0.5)]["two"], {"retired": 1, "retired/farmed": 1})
+
+    def test_reach_sweep_counts_the_polygons_each_value_would_drop(self):
+        rows = [reach_row(inside=9000, reach_10_m2=500.0, reach_15_m2=300.0, reach_20_m2=100.0, reach_25_m2=0.0),
+                reach_row(inside=9000, reach_10_m2=900.0, reach_15_m2=900.0, reach_20_m2=900.0, reach_25_m2=100.0)]
+        got = dict(wetlands.reach_sweep(rows, {"b": (-1, -1, 1, 1)}))
+        self.assertEqual(got["reach 10 m, minimum 200 m2"]["all"], 0)
+        self.assertEqual(got["reach 20 m, minimum 200 m2"]["all"], 1)
+        self.assertEqual(got["reach 25 m, minimum 200 m2"]["all"], 2)
+        self.assertEqual(got["reach 15 m, minimum 400 m2"]["b"], 1)
+
+    def test_format_table(self):
+        text = wetlands.format_table("t", ("a", "b"), [("all", {"a": 3}), ("x", {"b": 4})])
+        self.assertEqual(text.splitlines()[1].split(), ["all", "3", "0"])
+        self.assertEqual(text.splitlines()[2].split(), ["x", "0", "4"])
+
+
 def need_db(cls):
     return unittest.skipUnless(DB_URL, "set TVT_TEST_DATABASE_URL to a scratch database (with water 0003)")(cls)
 
@@ -697,6 +780,41 @@ class ConflationTest(unittest.TestCase):
         counts = wetlands.box_counts(self.conn, self.build_id, {"hit": (x - 100, y - 100, x + 100, y + 100),
                                                                "miss": (x + 20000, y, x + 20200, y + 100)})
         self.assertEqual(counts, {"hit": {"retired": 1}, "miss": {}})
+
+    def test_recomputed_outcomes_agree_with_what_the_build_drew(self):
+        rows = wetlands.fetch_reach_rows(self.conn, self.build_id)
+        own = {k for (k,) in self.q("select nwi_key from water.body where geometry_from = 'nwi' and nwi_key is not null")}
+        self.assertTrue(rows)
+        for r in rows:
+            with self.subTest(key=r["key"]):
+                self.assertEqual(wetlands.outcome_drawn(wetlands.leftover_outcome(r)), r["key"] in own,
+                                 (wetlands.leftover_outcome(r), r["left_m2"], r["reach_15_m2"]))
+        by = {r["key"]: wetlands.leftover_outcome(r) for r in rows}
+        self.assertEqual(by["B"], "nwi_only")
+        self.assertEqual(by["A"], "dropped_both")              # NWI's outline 10 m off OSM's: all within 15 m, and small
+        self.assertEqual(by["W"], "leftover")                  # 25 m longer on one side: a real piece
+        self.assertEqual(by["P"], "dropped_reach")              # a 15 m shift: an L-shaped strip within the reach
+        self.assertEqual(by["U"], "dropped_remainder")         # a compact lobe under the 2,000 m2 floor
+        self.assertNotIn("C", by)                              # retired: not in the kept set
+
+    def test_box_outcomes_count_every_polygon_once_and_agree_with_the_build(self):
+        boxes = {"everything": (-1e9, -1e9, 1e9, 1e9)}
+        got = wetlands.box_outcomes(self.conn, self.build_id, boxes)["everything"]
+        self.assertEqual(got, wetlands.box_outcomes(self.conn, self.build_id, boxes)["all"])
+        self.assertEqual(got["nwi"], 34)
+        self.assertEqual((got["retired"], got["unchecked"]), (2, 1))
+        self.assertEqual(got["kept"], 31)
+        self.assertEqual(got["disagree"] if "disagree" in got else 0, 0)
+        self.assertEqual(sum(got.get(o, 0) for o in wetlands.LEFTOVER_OUTCOMES), got["kept"])
+
+    def test_reach_qa_sheet_lists_the_grazing_and_offset_cases(self):
+        import csv
+        with tempfile.TemporaryDirectory() as d:
+            path, n = wetlands.write_reach_qa(self.conn, self.build_id, d)
+            with open(path, newline="") as f:
+                rows = list(csv.DictReader(f))
+        self.assertEqual(n, len(rows))
+        self.assertEqual(list(rows[0]) if rows else list(wetlands.REACH_CSV_COLUMNS), list(wetlands.REACH_CSV_COLUMNS))
 
     def test_export_credits_nwi_and_carries_thin(self):
         from plugins.water.ingest import export
