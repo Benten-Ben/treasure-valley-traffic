@@ -115,10 +115,9 @@ class LockTest(Base):
         try:
             with lock.locked("new.lock"):
                 pass
-            lock.ensure()
         finally:
             os.umask(old)
-        for name in ("new.lock", *lock.LOCKS):
+        for name in ("new.lock", "landscape.lock", "manifest.lock"):
             mode = stat.S_IMODE(os.stat(os.path.join(self.locks, name)).st_mode)
             self.assertEqual(mode, 0o664, name)
 

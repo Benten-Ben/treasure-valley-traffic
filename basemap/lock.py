@@ -53,16 +53,29 @@ def lock_dir():
 
 def _open(path):
     """Open (creating if missing) a lock file read-write. A file made here gets MODE exactly: os.open's mode is
-    masked by the umask (022 gives 0o644), so it is set again after creating."""
+    masked by the umask (022 gives 0o644), so it is made under a temporary name, set to MODE, and linked into place,
+    so no other user ever sees it at the wrong mode (a second job user starting at the same time would fail to open it)."""
     try:
-        fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_EXCL, MODE)
-    except FileExistsError:
         return os.open(path, os.O_RDWR)
+    except FileNotFoundError:
+        pass
+    tmp = f"{path}.{os.getpid()}.tmp"
+    fd = os.open(tmp, os.O_RDWR | os.O_CREAT | os.O_EXCL, MODE)
     try:
         os.fchmod(fd, MODE)
+        try:
+            os.link(tmp, path)
+        except FileExistsError:
+            os.close(fd)
+            fd = os.open(path, os.O_RDWR)
     except OSError:
         os.close(fd)
         raise
+    finally:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
     return fd
 
 
