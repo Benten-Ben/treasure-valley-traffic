@@ -517,6 +517,66 @@ export function contributionLayer(c: BaseContribution, l: BaseLayer, state: Base
 	} as LayerSpecification;
 }
 
+/**
+ * Whether `layerShown` can hide this layer, whatever the state: a Valley-only or ground contribution, an Aerial gate,
+ * or a `show`. (A layer with none of these always draws.)
+ *
+ * Keep this in step with `layerShown`: a gate added there and not here leaves a source layer without a keeper, and #389
+ * (a layer turned on later draws nothing at overzoom) comes back. The issue suggested gating by opacity 0 or a filter
+ * instead; the keepers were chosen so that visibility stays the gate (see `sourceLayerKeepers`).
+ */
+function canBeHidden(c: BaseContribution, l: BaseLayer): boolean {
+	return c.looks === 'valley' || c.source.kind === 'ground' || Boolean(l.aerial) || Boolean(l.show);
+}
+
+/** The id of the keep-alive layer for a source layer of a vector source. */
+export const keeperId = (source: string, sourceLayer: string): string => `keep:${source}:${sourceLayer}`;
+
+/**
+ * Keep-alive layers: one for each source layer that only layers which `layerShown` can hide read.
+ *
+ * Why (#389): above a vector source's maxzoom MapLibre cuts a tile out of the deepest one it has. The worker keeps
+ * only the source layers that some layer with `visibility` other than `none` reads *when the tile is cut*, and caches
+ * that cut. A source layer that every reader hides at that moment (the markings with Lanes off; the surfaces under
+ * Aerial) is dropped from it, and showing a layer later reloads the source from the same cut, so it draws nothing
+ * until the tile is cut again. The keeper is a visible layer that reads the source layer and draws nothing (zoom 24
+ * and up: MapLibre builds no buckets for it and never draws it, but it still counts as a reader), so the cut is
+ * whole. The layers stay gated by visibility as before, and showing one reloads the source as MapLibre does.
+ * A raster has no source layer, and a source layer that something always draws needs no keeper.
+ */
+export function sourceLayerKeepers(list: readonly BaseContribution[]): { slot: BaseLayer['slot']; rank: number; layer: LayerSpecification }[] {
+	const found = new Map<string, { source: string; sourceLayer: string; slot: BaseLayer['slot']; rank: number; always: boolean }>();
+	for (const c of list) {
+		for (const l of c.layers) {
+			if (!l.sourceLayer || l.type === 'raster') continue;
+			const source = sourceId(c, l);
+			const id = keeperId(source, l.sourceLayer);
+			const hidden = canBeHidden(c, l);
+			const f = found.get(id);
+			if (f) f.always ||= !hidden;
+			else found.set(id, { source, sourceLayer: l.sourceLayer, slot: l.slot, rank: l.rank, always: !hidden });
+		}
+	}
+	return [...found]
+		.filter(([, f]) => !f.always)
+		.map(([id, f]) => ({
+			slot: f.slot,
+			rank: f.rank,
+			layer: {
+				id,
+				type: 'line',
+				source: f.source,
+				'source-layer': f.sourceLayer,
+				minzoom: KEEPER_MINZOOM,
+				layout: { visibility: 'visible' },
+				paint: { 'line-opacity': 0 }
+			} as LayerSpecification
+		}));
+}
+
+/** MapLibre's highest zoom: a keeper starts here, so it builds and draws nothing. */
+const KEEPER_MINZOOM = 24;
+
 /** What suppressing a group needs of a map (so tests pass a fake). */
 export type SuppressMap = Pick<GlMap, 'getLayer' | 'setLayoutProperty' | 'getLayoutProperty' | 'setLayerZoomRange'>;
 
@@ -625,6 +685,10 @@ export function syncContributions(
 				const before = beforeSlot(map as never, l.slot, l.rank);
 				map.addLayer(contributionLayer(c, l, state, m), before);
 				added.set(l.id, { c, l, flavor: state.flavor });
+			}
+			for (const k of sourceLayerKeepers([c])) {
+				if (map.getLayer(k.layer.id)) continue;
+				map.addLayer(k.layer, beforeSlot(map as never, k.slot, k.rank));
 			}
 		}
 		for (const l of c.layers) {

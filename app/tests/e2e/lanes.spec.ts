@@ -21,6 +21,8 @@ const CENTRE: [number, number] = [-116.2, 43.615];
 const STREET: [number, number] = [-116.2, 43.6136];
 const at = (zoom: number, layers = 'none') => `/#map=${zoom}/${CENTRE[1]}/${CENTRE[0]}/0/0&layers=${layers}`;
 const MARKINGS = 'roads.markings.solid';
+const SURFACE = 'roads.surfaces.z16.asphalt';
+const CROSSWALK = 'roads.markings.crosswalk';
 
 type Info = { enabled: string[]; flavor: 'valley' | 'clay'; clay: boolean; selection: { kind: string; id: string; layer: string; title: string } | null };
 const info = (page: Page): Promise<Info> => page.evaluate(() => (globalThis as any).__tvt.layers);
@@ -75,10 +77,11 @@ test.describe('lanes', () => {
 	test('markings show in Clay only with Lanes on, and stay under Aerial with it', { tag: '@lanes' }, async ({ page }) => {
 		test.setTimeout(300_000);
 		await look(page, 'clay');
-		// Lanes is on from the start: a base layer that starts hidden in the style isn't cut into tiles by the browser
-		// when it is shown later (a known limit, recorded in the PR), so the drawing is checked with it on at load and the
-		// hide and show by the layer's visibility.
-		await ready(page, at(17.5, 'lanes'));
+		// Lanes is off at load (the markings start hidden in the style) and turned on with 8 once the map is up: the
+		// layers must draw without their tiles being cut again (#389).
+		await ready(page, at(17.5));
+		await expect.poll(() => layerOn(page, MARKINGS), { message: 'Clay without Lanes' }).toBe(false);
+		await page.keyboard.press('Digit8');
 		await expect.poll(() => layerOn(page, MARKINGS), { message: 'Clay with Lanes' }).toBe(true);
 		await expect.poll(() => rendered(page, [MARKINGS, 'roads.markings.dashed']), { message: 'the markings are drawn in Clay with Lanes', timeout: 60_000 }).toBeGreaterThan(0);
 		await page.screenshot({ path: screenPath('lanes-markings-clay.png') });
@@ -94,6 +97,45 @@ test.describe('lanes', () => {
 		await page.getByRole('toolbar', { name: 'Map layers' }).getByRole('button', { name: 'Base' }).click();
 		await pop.getByRole('switch', { name: /Aerial photos/ }).uncheck();
 		await expect.poll(() => layerOn(page, MARKINGS), { message: 'Clay without Lanes' }).toBe(false);
+	});
+
+	test('the crosswalks, another source layer gated by Lanes, draw when Lanes is turned on after the map loads', { tag: '@lanes' }, async ({ page }) => {
+		test.setTimeout(300_000);
+		await look(page, 'clay');
+		// The crosswalks read their own source layer (`roads.crosswalks`), which only layers that Lanes shows read (#389).
+		await ready(page, at(17.5));
+		await expect.poll(() => layerOn(page, CROSSWALK), { message: 'Clay without Lanes' }).toBe(false);
+		await page.keyboard.press('Digit8');
+		await expect.poll(() => layerOn(page, CROSSWALK), { message: 'Clay with Lanes' }).toBe(true);
+		await expect.poll(() => rendered(page, [CROSSWALK]), { message: 'the crosswalks are drawn once Lanes is on', timeout: 60_000 }).toBeGreaterThan(0);
+		// Off and on again: the same layers draw again.
+		await page.keyboard.press('Digit8');
+		await expect.poll(() => layerOn(page, CROSSWALK)).toBe(false);
+		await page.keyboard.press('Digit8');
+		await expect.poll(() => rendered(page, [CROSSWALK]), { message: 'the crosswalks again', timeout: 60_000 }).toBeGreaterThan(0);
+	});
+
+	test('road surfaces hidden under Aerial when their tiles are cut draw when Aerial goes off', { tag: '@lanes' }, async ({ page }) => {
+		test.setTimeout(300_000);
+		await look(page, 'map');
+		// Far out first, so the tiles of the close view are not cut yet when Aerial goes on (the other gate of the base pass:
+		// `aerial: 'hide'`, as the Lanes key is `show`) (#389).
+		await ready(page, at(12));
+		await page.getByRole('toolbar', { name: 'Map layers' }).getByRole('button', { name: 'Base' }).click();
+		const pop = page.getByRole('dialog', { name: 'Base map' });
+		await pop.getByRole('switch', { name: /Aerial photos/ }).check();
+		await page.keyboard.press('Escape');
+		await expect.poll(() => layerOn(page, SURFACE), { message: 'hidden under Aerial' }).toBe(false);
+		await page.evaluate(() => (globalThis as any).__tvt.map.jumpTo({ zoom: 17, center: [-116.2, 43.615], bearing: 0, pitch: 0 }));
+		await mapReady(page);
+		// Regression check only: it passes without the keepers too. The unit test covers the Aerial gate.
+		await expect.poll(() => page.evaluate(() => (globalThis as any).__tvt.map.areTilesLoaded()), { message: 'the close view loaded' }).toBe(true);
+		expect(await layerOn(page, SURFACE)).toBe(false);
+		await page.getByRole('toolbar', { name: 'Map layers' }).getByRole('button', { name: 'Base' }).click();
+		await pop.getByRole('switch', { name: /Aerial photos/ }).uncheck();
+		await page.keyboard.press('Escape');
+		await expect.poll(() => layerOn(page, SURFACE), { message: 'back without Aerial' }).toBe(true);
+		await expect.poll(() => rendered(page, [SURFACE]), { message: 'the surfaces are drawn once Aerial is off', timeout: 60_000 }).toBeGreaterThan(0);
 	});
 
 	test('the ▲ marks and the turn arrows come and go with the layer', { tag: '@lanes' }, async ({ page }) => {

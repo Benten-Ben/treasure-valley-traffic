@@ -4,7 +4,7 @@ import { layers as protomapsLayers, namedFlavor } from '@protomaps/basemaps';
 import type { BaseContribution, BaseLayer } from '#lib/base/types.js';
 import type { DataMeta } from '#lib/contracts/meta.js';
 import { ANCHOR_IDS, ANCHORS } from './order.js';
-import { contributionStatus, releaseGroups, suppressGroups, syncContributions, type SyncMap } from './flavors.js';
+import { clayPaintDiff, contributionStatus, releaseGroups, sourceLayerKeepers, suppressGroups, syncContributions, type SyncMap } from './flavors.js';
 import {
 	addAerial,
 	aerialAfter,
@@ -444,6 +444,41 @@ describe('base contributions', () => {
 		const ids = map.getLayersOrder();
 		expect(ids.indexOf('scars-fill')).toBeLessThan(ids.indexOf(ANCHORS.areas));
 		expect(ids.indexOf('scars-fill')).toBeGreaterThan(ids.indexOf('landcover'));
+	});
+
+	it('keeps every source layer a hideable layer reads in the cut tiles, with a visible layer that builds and draws nothing (#389)', () => {
+		// MapLibre cuts a tile above the source's maxzoom from the source layers that a not-`none` layer reads at that
+		// moment, and caches the cut; a source layer only hidden layers read (Lanes off, Aerial, Clay) is left out, and
+		// showing a layer later reloads from the same cut and draws nothing. The keeper holds the source layer in.
+		const keepers = sourceLayerKeepers(ALL).map((k) => k.layer.id);
+		// Gated by Aerial, `show`, or a Valley-only look: kept. Always drawn (the fences), a raster, or an unbuilt source: not.
+		expect(keepers).toEqual(['keep:landscape:roads.surfaces', 'keep:landscape:water.reaches']);
+		for (const flavor of ['valley', 'clay'] as const) {
+			const style = buildStyle(built, 'http://x', false, flavor, { contributions: ALL });
+			for (const id of keepers) {
+				expect(style.layers.find((l) => l.id === id), `${id} in ${flavor}`).toMatchObject({ source: 'landscape', minzoom: 24, layout: { visibility: 'visible' } });
+			}
+			// Each sits among the layers of its slot, so the draped run stays one run.
+			const at = (id: string) => style.layers.findIndex((l) => l.id === id);
+			expect(at('keep:landscape:roads.surfaces')).toBeGreaterThan(at(ANCHORS.water));
+			expect(at('keep:landscape:roads.surfaces')).toBeLessThan(at(ANCHORS.surfaces) + 5);
+		}
+		// The same layers in both flavors, so the Valley/Clay diff holds no keeper.
+		const v = buildStyle(built, 'http://x', false, 'valley', { contributions: ALL }).layers;
+		const c = buildStyle(built, 'http://x', false, 'clay', { contributions: ALL }).layers;
+		expect(c.map((l) => l.id)).toEqual(v.map((l) => l.id));
+		expect(clayPaintDiff(v, c).filter((d) => d.layer.startsWith('keep:'))).toEqual([]);
+		// A toggled layer's tiles get theirs when they join the running map; the layers' own gating stays visibility.
+		const gatedTiles = contribution('fire.scars', { kind: 'tiles', plugin: 'fire', layer: 'scars', minzoom: 8, maxzoom: 15 }, 'both', [
+			bl('scars-fill', 'fill', 'areas', 10, { sourceLayer: 'scars', aerial: 'hide' })
+		]);
+		const map = syncMap(buildStyle(built, 'http://x', false, 'valley', { contributions: [gatedTiles] }));
+		syncContributions(map, built, 'http://x', metaWith({ 'fire.scars': 'v1' }), state('valley', { aerial: true }), [gatedTiles]);
+		expect(map.getLayer('keep:fire.scars:scars')).toMatchObject({ source: 'fire.scars', minzoom: 24 });
+		expect(visibility(map, 'scars-fill')).toBe('none');
+		syncContributions(map, built, 'http://x', metaWith({ 'fire.scars': 'v1' }), state('valley'), [gatedTiles]);
+		expect(visibility(map, 'scars-fill')).toBe('visible');
+		expect(map.getLayersOrder().filter((id) => id === 'keep:fire.scars:scars')).toHaveLength(1);
 	});
 
 	it('hides Valley-only layers in Clay, runs `show`, and hides the basemap groups only while shown', () => {

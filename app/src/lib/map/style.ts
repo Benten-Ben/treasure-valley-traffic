@@ -643,11 +643,15 @@ export function buildStyle(
 	const state: BaseState = { flavor, aerial, layers: new Set() };
 	const ranks = {};
 	const kit = flavorKit();
+	const built: BaseContribution[] = [];
 	for (const c of opts.contributions ?? BASE_CONTRIBUTIONS) {
 		if (c.source.kind !== 'landscape' || !kit.contributionStatus(c, m, opts.meta).built) continue;
+		built.push(c);
 		Object.assign(style.sources, kit.contributionSources(c, m, origin, opts.meta));
 		for (const l of c.layers) style.layers = insertSlotted(style.layers, [{ slot: l.slot, layer: kit.contributionLayer(c, l, state, m) }], l.rank, ranks);
 	}
+	// A source layer that only hideable layers read still has to be in the tiles when they are shown (#389).
+	for (const k of kit.sourceLayerKeepers(built)) style.layers = insertSlotted(style.layers, [{ slot: k.slot, layer: k.layer }], k.rank, ranks);
 	return style;
 }
 
