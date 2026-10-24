@@ -39,6 +39,7 @@ def ensure_source(conn, s):
     row = {"schedule": None, "license": None, "credit": None, "notes": None, **s}
     if "stale_after" not in row and row["schedule"] is None:    # only an unscheduled source can be a stream
         row["stale_after"], row["fetch_sources"] = manifest.stream_staleness(_plugins(), row["name"]) or (None, None)
+    row.setdefault("stale_after", None)                          # a scheduled source isn't judged by one
     row.setdefault("fetch_sources", None)
     conn.execute(
         """insert into ops.source (name, title, url, access, schedule, license, credit, notes,
