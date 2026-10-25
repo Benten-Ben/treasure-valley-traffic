@@ -227,7 +227,7 @@ class BuildTest(unittest.TestCase):
                     ds.write(arr, 1)
             out = os.path.join(tmp, "out")
             build.main(["--area", "t", "--dsm", os.path.join(tmp, "dsm.tif"), "--dtm", os.path.join(tmp, "dtm.tif"),
-                        "--lidar", "synthetic", "--out", out])
+                        "--lidar", "synthetic", "--no-mask", "--out", out])
             with open(os.path.join(out, "trees.geojson")) as f:
                 fc = json.load(f)
             with open(os.path.join(out, "build.json")) as f:
