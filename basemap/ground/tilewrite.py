@@ -633,6 +633,9 @@ def main(argv=None):
     p.add_argument("--out", required=True, help="a folder: <box>-z<zoom>.tif")
     p.add_argument("--margin", type=float, default=100.0, help="metres around each box")
     p.add_argument("--all", action="store_true", help="one file of the whole map box (low zooms) instead")
+    p.add_argument("--bounds", action="append", metavar="NAME=W,S,E,N",
+                   help="one more file, NAME-z<zoom>.tif, for these grid metres (EPSG:32611) instead of the boxes; "
+                        "repeat it (a county line, a flight seam)")
     p = sub.add_parser("estimate", help="the default view's first load from a full valley file, from tile sizes")
     p.add_argument("--pmtiles", required=True, help="a valley file holding (at least) the view's tiles")
     p.add_argument("--view", required=True, help="app/scripts/ground-firstload.mjs's result (JSON, --out)")
@@ -652,6 +655,20 @@ def main(argv=None):
         return 0
     if args.cmd == "readback":
         os.makedirs(args.out, exist_ok=True)
+        if args.bounds:
+            for spec_ in args.bounds:
+                try:
+                    name, _, nums = spec_.partition("=")
+                    w, s, e, n = (float(v) for v in nums.split(","))
+                    if not name or not (w < e and s < n):
+                        raise ValueError
+                except ValueError:
+                    print(f"refused: --bounds {spec_!r}: NAME=W,S,E,N with W < E and S < N", file=sys.stderr)
+                    return 2
+                path = os.path.join(args.out, f"{name}-z{args.zoom}.tif")
+                found, missing = readback(args.pmtiles, args.zoom, (w, s, e, n), path)
+                print(f"  {name}: {found} tiles, {missing} missing -> {path}")
+            return 0
         if args.all:
             path = os.path.join(args.out, f"valley-z{args.zoom}.tif")
             found, missing = readback(args.pmtiles, args.zoom, grid.EXTENT, path)

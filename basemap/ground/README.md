@@ -627,7 +627,7 @@ noise.
 
 **Tile size.** Measured on a synthetic tile (z15's 1.73 m pixel, WebP quality 80, L noise only): noise of sd 0.009
 in L is 5.4 KB, 0.018 is 12 KB and 0.029 is 20 KB. The photo's variation carries finer detail than the noise and adds
-to that. The real figure comes from the valley run, with `estimate --budget`; none has been made yet.
+to that. The valley run's real figures are under "The valley run" below: tiles average 16.6 KB, not 40.
 
 ## The tiles
 
@@ -649,7 +649,7 @@ What G1a's writer makes (`spec.json` "tiles", `tiles.py`):
   `spec.json` (`tiles.detail.minzoom`).
 - **Size:** planned at about 0.6 GB valley-wide, about 40 KB a tile, and tens of MB for the detail file. G1a's flat
   paint is far smaller: the 558 valley tiles painted around the boxes and at the default view average 3.7 KB (2.1 MB),
-  the 612 detail tiles 12 KB (7.4 MB). G1b's texture and photo variation set the real size (see its tile-size note above; no valley run yet).
+  the 612 detail tiles 12 KB (7.4 MB). G1b's texture and photo variation set the real size: the valley file is 241.6 MB and the detail file 11.8 MB ("The valley run", below).
 - **Versions:** `<digest>` is `tiles.digest(plan, painter)`, where the writer's `painter` is `PAINTER_VERSION` and the
   sha256 of the painter's and writer's code (`tiles.code_digest`: `tilewrite.py` and every module of this folder it
   reads, in turn). It covers the spec, the painter and its code, the version of every raw input the plan reads, and
@@ -707,24 +707,90 @@ harness's S1.
   against the budget's 14 and 600,000. G1b's texture and photo variation will add bytes to every tile: that leaves
   about 33 KB a tile of headroom on average. `tilewrite.py estimate --budget` exits 1 over the budget, so the same
   estimate is a check once G1b's tiles exist.
-- **Why the valley run waits** (Oct 24). The DEM is built (above). The painter's other real inputs are not: the soils,
-  farm and water exports don't exist yet (`ground.py status` on the production archive and on the scratch one says
-  "no soils export", "no farm export", "no water export", "no ground_mask export", and the scratch database's
-  `soils.polygon`, `soils.ground_type`, `soils.photo_stats`, `farm.field` and `water.body` hold no rows), because the
-  production loads are still open (#42 soils, #44 water, and farm's). With no soil types and no palette spread, a run
-  would paint the flat Valley colour plus noise: no photo variation to look at, no seam to judge, and no tile sizes to
-  measure. So the valley-wide paint, the seam sheets and the first-load estimate on textured tiles stay to do, and
-  start when those exports are built.
-- **Still to do** (Oct 24). G1b's code and unit tests are in, and so is the DEM; what needs the real exports and the heavy window is not:
-  - the valley-wide runs (at most two, under `heavy --deadline` with the cold-data drive) and the first-load estimate
-    on textured tiles (`tilewrite.py estimate --budget`: 0.6 MB, 14 requests, tiles near 40 KB);
-  - the seam sheets for the ten boxes and the county lines (private files), and the check of the per-flight colour
-    gains at the flight seams (kept for now, owner Oct 22 answer 12);
-  - the darkest soils (Boise Front north slopes) and box i's lidar-dark desert floor, which the classes may read as
-    surfaced ground: the Mahalanobis, slope and shadow cuts above are set from the plan, not yet judged on them;
-  - the slope cut (30 degrees now; 15 is the plan's fallback) and the NDVI cut for crop clusters (0.30), to be set
-    from the sheets. The DEM gives the slope counts already (`dem.py slopes`, 2 m cells, Oct 24); the owner judges
-    them with the sheets:
+
+### The valley run (G1b, Oct 24-25)
+
+One run, `g1b-valley-1`, painter `g1b-1`, digest `10a0dfbcd0df`, on the scratch archive's exports (soils `20261015T224558Z`,
+farm `20261011T130710Z`, water `20261024T070659Z`, mask v0 `20261011T144701Z`, the boxes' classes `20261023T203911Z`), the
+2 m COG `photo-20261011T2012Z` and the DEM above. Never switched into the map: it is a development run on the cold drive.
+
+- **Cost.** `tilewrite.py paint --valley --pyramid --detail --naip-2m ... --dem ...` ran as 11 chunks of 80 blocks (the
+  first 36) under `heavy` (4 GB cap, 2 CPUs), through one night and morning window: 728 z13 blocks at about 16 s each,
+  then 48 detail blocks, then the pyramid, **3.4 hours in all, peak 1.2 GB** (the largest of the chunks' own peaks, 0.9 GB for the last). Most of a block is reading the 2 m COG and the DEM window. `assemble`
+  took 39 seconds and 119 MB. Every block is resumable, so the chunks cost nothing extra.
+- **Size.** Valley file **241.6 MB**, 14,573 tiles (z15 10,807 at a mean 15.9 KB, z14 18.4 KB, z13 19.2 KB, z12 19.3 KB;
+  maximum 60 KB); detail file **11.8 MB**, 612 tiles at a mean 19.3 KB (maximum 50 KB). That is 16.6 KB a tile, well under
+  the plan's 40 KB, and the whole valley is about 40% of the planned 0.6 GB.
+- **First load (budget).** Measured with the map library on the whole file (`app/scripts/ground-firstload.mjs`): **13
+  requests, 251,030 bytes** for the default view's 12 z10 tiles, against 14 requests and 600,000 bytes. `tilewrite.py
+  estimate --budget` agrees (13 requests, 251,030 bytes, no tile missing, exit 0).
+- **Seam sheets** (private files on the project's server, package `g1b`; never published). `tilewrite.py readback` gained
+  `--bounds NAME=W,S,E,N` (grid metres) for frames that are not boxes. The runs: `g1b-boxes` (the ten boxes at 1 m,
+  the painted z17 tiles beside the NAIP crop), `g1b-seams` (15 frames of 2 km at 1 m from the valley file's z15 tiles:
+  four on the Ada/Canyon line, seven on the seams between flight days, three over the darkest large soil types, one on
+  the Boise Front's north slopes) and `g1b-judge-slope`, `-shadow`, `-cluster` and `-sun` (the judgement calls, below).
+  Where the frames are: the county line at about UTM 539.4 to 542.5 km east, 4,799 to 4,837 km north; the flight seams
+  between 2025-05-25, 05-30, 06-18 and 07-24 near 523 to 577 km east, 4,802 to 4,817 km north.
+- **What the sheets show** (the builder's reading; the owner judges in review 2, #35):
+  - *County line.* The two mosaics' balancing meets at the line, and in four frames of the paint no step shows across it
+    (the soil base and the photo's variation are both kept to their type's spread, so a small tone difference between
+    mosaics is absorbed).
+  - *Flight seams.* The per-flight gains show no hard seam in the painted frames at the seams that were sampled. The one
+    visible step, in the July 24 frame near -116.074, 43.367, is a soil polygon edge (the base colour of two types
+    meeting), and it is not in the photo: the photo has no step there, the paint has a hard one. That is a base-colour
+    problem for the soils' palette (two types with a large colour gap, no feathering between polygons), not the gains.
+  - *Darkest soils.* The darkest measured types (Schiller, Chardoton, Banbury, Catchell, Dolman, Montezuma) are desert
+    soils in the south of the map box, and read as flat dark brown-grey with little photo variation. The Boise Front's
+    north slopes are not dark in the paint: the illumination normalisation lifts them to the tone of the sunlit slopes
+    (box a, Dry Creek), which is what it is for, though the lit north slopes look a little flat.
+  - *Box i, the desert floor.* **A problem.** The COG does not cover boxes h, i and j at all (Owyhee County is outside
+    both county mosaics; 0 of 533,000 cells in box i have a photo), so they get the soil base, noise and classes only and
+    no photo variation. In box i the class build paints dark grey patches over the lidar-dark desert floor (right half
+    of the frame) where the photo is tan: the classes read it as dark surfaced ground (`DARK`, asphalt colour). Fixing it
+    belongs to the class rules (`classrules.py`), outside this issue; it needs an owner call.
+- **The judgement calls**, with the values left as they are. Counts are 2 m cells of the box (box h, i and j: no photo, so none of the photo-based columns exist for them; their slope is in the DEM table under "Still to do", which gives only the over-15 and over-30 counts):
+
+  | box | cells | slope 15-30 deg | over 30 deg | shadow (within 40 m of a roof) | dark and blue, any distance | crop clusters, conf. 3 | confirmed at NDVI 0.30 | at 0.20 | at 0.40 | sun differs over 5% | over 15% |
+  |---|---|---|---|---|---|---|---|---|---|---|---|
+  | a | 535,090 | 214,065 | 185,809 | 4,795 | 178,700 | 0 | 0 | 0 | 0 | 472,627 | 335,001 |
+  | b | 537,280 | 26,064 | 8,968 | 101,116 | 357,065 | 1,800 | 1,716 | 1,749 | 1,686 | 157,298 | 59,326 |
+  | c | 535,820 | 4,050 | 3,893 | 435,347 | 440,328 | 0 | 0 | 0 | 0 | 43,464 | 11,507 |
+  | d | 535,086 | 10,129 | 54 | 200,820 | 249,197 | 6,500 | 3,433 | 4,407 | 2,750 | 67,064 | 11,106 |
+  | e | 532,164 | 5,322 | 48 | 26,134 | 158,421 | 6,575 | 2,884 | 3,492 | 2,585 | 15,070 | 2,467 |
+  | f | 535,808 | 16,717 | 1,625 | 0 | 2,482 | 0 | 0 | 0 | 0 | 22,386 | 3,030 |
+  | downtown | 1,000,000 | 65,828 | 22,291 | 556,518 | 597,460 | 0 | 0 | 0 | 0 | 250,427 | 122,791 |
+
+  - *Slope cut, 30 degrees against 15.* The 15-30 band is 40% of box a, 4.9% of b, 0.8% of c, 1.9% of d, 3.1% of f and
+    6.6% of downtown. Slopes are the map's 3.5 m terrain, smoother than the lidar's (the whole-box shares are in the
+    table of the "Still to do" list). Sheet: `g1b-judge-slope`.
+  - *NDVI 0.30 for crop clusters.* 6,842 of the 14,875 cluster cells in boxes b, d and e are not confirmed (46%, almost all in d and e);
+    moving the cut to 0.20 confirms 1,615 more, to 0.40 drops 1,012. Boxes a, c and f have none. Sheet: `g1b-judge-cluster`.
+  - *Shadow within 40 m of roofs.* In the dense boxes (c, downtown) 81 and 56% of cells are "dark and blue and near a
+    roof": the test reads every tree, roof and street there as shadow, which is harmless (those cells are covered anyway
+    and the base shows), but means the count is not a count of shadows. In open boxes it is small (b 19%, d 38%, e 5%,
+    a 0.9%, f 0). Sheet: `g1b-judge-shadow`.
+  - *One sun for the valley.* The sun each flight's own time gives against the reference day's differs by more than 5%
+    in the illumination gain on 88% of box a, 25% of downtown and 3-29% of the others, over 15% on 63% of a and 12% of
+    downtown; the median is 20% in a, 2% in b and downtown and about 1% elsewhere. It matters on the foothills (box a,
+    flown on a different day from the reference), not on the flat valley. The per-flight sun is already what the painter
+    uses; the "one sun" is only the fallback for pixels outside a flight polygon. Sheet: `g1b-judge-sun`.
+- **The digest after this change.** The run's digest `10a0dfbcd0df` was taken before `tilewrite.py` changed in this PR. `tilewrite.py` is part of the code digest, so main's code digest differs from it once this merges, and a repaint then gets a new run folder rather than resuming this one.
+- **Not done here:** the app wiring and the page budget (below); a repaint after the soil, water and farm exports are
+  made on production (the digest names that run anew); a fix for box i's dark floor and for the soil-polygon step.
+
+- **Still to do** (Oct 25).
+  - the app wiring (S3a's follow-up, wave 2): the page's total at the default view (at most 6 MB) isn't measured with
+    the ground in it yet, since the app doesn't load the ground until it's wired (the ground source on first Valley use,
+    hidden under Aerial; Clay flat). Then the first load becomes a `perf.mjs` scenario with a budget that fails (the
+    ground's 0.6 MB and 14 requests through `tiles.first_load`, and the page's 6 MB), measured on textured tiles;
+  - boxes h, i and j have no photo (the COG stops at the county mosaics): decide whether they stay without photo
+    variation, or whether the Owyhee imagery is added;
+  - the soil-polygon step seen in the July 24 frame (a feather between polygons of very different base colours);
+  - box i's dark desert floor read as surfaced ground by the classes (`classrules.py`);
+  - the owner's calls on the four judgement values, with the sheets (#35);
+  - a sun from each flight's own place rather than the valley's middle (the DEM itself is done: `dem.py`, above);
+  - repainting once production holds the exports, into a new run folder.
+  - The DEM's slope counts (`dem.py slopes`, 2 m cells, Oct 24):
 
     | | over 15 degrees | over 30 degrees |
     |---|---|---|
@@ -739,17 +805,6 @@ harness's S1.
     | h Bogus Basin | 76.0% | 7.5% |
     | i Owyhee front | 25.4% | 0.5% |
     | j Owyhee Mountains | 66.8% | 9.5% |
-
-    Moving the cut from 30 to 15 degrees takes the photo's variation off about 14 percent more of the box, and off
-    50 to 69 percent more of boxes a, h and j (67 to 76 percent in all; the foothills and the mountains). Slope is of the map's own 3.5 m terrain
-    resampled to 2 m, so it is smoother than the lidar's.
-  - a sun from each flight's own place rather than the valley's middle (the DEM itself is done: `dem.py`, above);
-  - repainting after the water and mask exports land, into new run folders (the digest takes care of the names);
-  - the app wiring (S3a's follow-up, wave 2): the page's total at the default view (at most 6 MB) isn't measured with
-    the ground in it yet, since the app doesn't load the ground until it's wired (the ground source on first Valley use,
-    hidden under Aerial; Clay flat). Then the first load becomes a `perf.mjs` scenario with a budget that fails (the
-    ground's 0.6 MB and 14 requests through `tiles.first_load`, and the page's 6 MB), measured on textured tiles rather
-    than G1a's flat ones.
 
 ## Commands and tests
 
@@ -767,6 +822,7 @@ python basemap/ground/tilewrite.py paint --out DIR --valley --pyramid --detail \
   --naip-2m COGDIR [--dem DEM.tif]                                  # every block (G1b; resumable); assemble takes the same
 python basemap/ground/tilewrite.py assemble --out DIR [--partial | --tiles TILES]  # the PMTiles files (and switch in)
 python basemap/ground/tilewrite.py readback --pmtiles F --zoom 15 --out DIR       # tiles around the boxes, for sheets
+python basemap/ground/tilewrite.py readback --pmtiles F --zoom 15 --out DIR --bounds NAME=W,S,E,N   # named frames instead (grid metres)
 node app/scripts/ground-firstload.mjs --pmtiles F --out view.json   # the default view's requests (laptop)
 python basemap/ground/tilewrite.py estimate --pmtiles F --view view.json [--budget]   # ... from a full file's directory
 python3 -m unittest discover -s basemap/ground -t .                 # the worker tests skip here (test_texture.py needs only NumPy)

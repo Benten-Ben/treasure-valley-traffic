@@ -151,6 +151,19 @@ class TestTiles(unittest.TestCase):
         self.assertEqual(digest, TW.run_digest(stub_plan()))
         self.assertEqual(digest, T.digest(stub_plan(), painter=f"{TW.paint.PAINTER_VERSION} code {TW.CODE}"))
 
+    def test_readback_of_named_bounds(self):
+        x, y, *_ = tile_of(LINE_X, 4810000.0, 13)
+        blocks = begun(self.dir)
+        TW.paint_valley_block(StubPainter(), blocks, x, y, 80)
+        valley, _detail, _entry, _digest = TW.assemble(self.dir, stub_plan(), partial=True, log=lambda *_: None)
+        out = os.path.join(self.dir, "rb")
+        argv = ["readback", "--pmtiles", valley, "--zoom", "15", "--out", out]
+        b = f"{LINE_X - 500},4809500,{LINE_X + 500},4810500"
+        self.assertEqual(TW.main(argv + ["--bounds", f"seam={b}"]), 0)
+        self.assertTrue(os.path.getsize(os.path.join(out, "seam-z15.tif")) > 0)
+        self.assertEqual(TW.main(argv + ["--bounds", "bad=1,2,0,3"]), 2)            # W must be under E
+        self.assertEqual(TW.main(argv + ["--bounds", "=1,2,3,4"]), 2)               # a name is needed
+
     def test_a_whole_file_needs_every_tile(self):
         x, y, *_ = tile_of(LINE_X, 4810000.0, 13)
         blocks = begun(self.dir)
