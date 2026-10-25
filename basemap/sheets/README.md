@@ -164,6 +164,7 @@ node scripts/map-sheets.mjs --list --places boxes        # the shot list, no bro
   A layer set is one `--layers`, ids joined by `+`; `none` is an explicit empty set, so a first visit's defaults
   never apply. A layer the build doesn't know is noted in `index.json`, not drawn.
 - `--clean` hides the app's chrome and keeps the map and its credits.
+- `--hillshade terrain|capped` passes the app's `?hillshade=` look on every shot (the Table Rock and Dry Creek sheets); the default leaves the app's own look.
 - The preview's address isn't in the repository: pass `--url` or set `TVT_SHEETS_URL`. The browser resolves only that
   host. The screenshots stay on the laptop until they're copied to the VM's private files
   (`data/dev/README-sheets.md`), then are deleted here.
