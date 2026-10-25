@@ -191,3 +191,94 @@ class TestVariation(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipIf(np is None, "needs NumPy")
+class TestFlightBalance(unittest.TestCase):
+    """#415: the photo is measured against each type's median within its own flight."""
+
+    def two_flights(self, offset=0.06, n=100):
+        """(fid, gt, lab) on n x n cells: the left half flight 1, the right flight 2 (lighter by `offset` in L), one ground
+        type; a patch of 0.03 more L sits inside flight 1."""
+        rng = np.random.default_rng(3)
+        fid = np.where(np.arange(n)[None, :] < n // 2, 1, 2).astype(np.uint32) * np.ones((n, 1), np.uint32)
+        gt = np.full((n, n), 5, np.uint8)
+        lab = np.empty((n, n, 3), np.float32)
+        lab[..., 0] = 0.80 + 0.004 * rng.standard_normal((n, n)) + np.where(fid == 2, offset, 0.0)
+        lab[..., 1], lab[..., 2] = 0.01, 0.04
+        lab[40:50, 10:20, 0] += 0.03
+        return fid, gt, lab
+
+    def balance(self, fid, gt, lab, keep=None):
+        acc = T.FlightBalance()
+        acc.add(fid, gt, lab, np.ones(fid.shape, bool) if keep is None else keep)
+        return T.Balance.from_json(acc.to_json()), acc
+
+    def test_the_median_is_the_flights_own(self):
+        fid, gt, lab = self.two_flights()
+        _bal, acc = self.balance(fid, gt, lab)
+        m = acc.medians()
+        self.assertEqual(set(m), {(1, 5), (2, 5)})
+        self.assertEqual(m[(1, 5)][0], 5000)
+        self.assertAlmostEqual(m[(1, 5)][1][0], 0.80, delta=0.002)
+        self.assertAlmostEqual(m[(2, 5)][1][0], 0.86, delta=0.002)
+        self.assertAlmostEqual(m[(2, 5)][1][1], 0.01, delta=0.001)
+
+    def test_a_level_offset_between_flights_disappears_and_a_patch_inside_one_stays(self):
+        fid, gt, lab = self.two_flights()
+        bal, _ = self.balance(fid, gt, lab, keep=np.ones(fid.shape, bool))
+        valley = np.broadcast_to(np.float32([0.80, 0.01, 0.04]), lab.shape)
+        med = bal.medians(fid, gt, valley)
+        delta = lab - med
+        left, right = delta[:, :50, 0], delta[:, 50:, 0]
+        self.assertAlmostEqual(float(np.median(left)), 0.0, delta=0.002)
+        self.assertAlmostEqual(float(np.median(right)), 0.0, delta=0.002)         # the step is gone ...
+        self.assertAlmostEqual(float(delta[45, 15, 0]), 0.03, delta=0.015)         # ... the patch in flight 1 is not
+        step_before = float(np.median((lab - valley)[:, 50:, 0]) - np.median((lab - valley)[:, :50, 0]))
+        self.assertAlmostEqual(step_before, 0.06, delta=0.002)
+
+    def test_a_window_with_one_flight_is_unchanged(self):
+        fid, gt, lab = self.two_flights(offset=0.0)
+        fid[:] = 1
+        bal, _ = self.balance(fid, gt, lab)
+        valley = np.broadcast_to(np.float32([0.80, 0.01, 0.04]), lab.shape)
+        med = bal.medians(fid, gt, valley)
+        # one flight at the valley's level: its median is the valley's to within the histogram's bin and the noise
+        self.assertLess(float(np.abs(med - valley).max()), 0.003)
+
+    def test_under_the_floor_the_valley_median_is_kept(self):
+        fid, gt, lab = self.two_flights(n=40)                                       # 800 cells a flight: under 2,000
+        bal, _ = self.balance(fid, gt, lab)
+        valley = np.broadcast_to(np.float32([0.80, 0.01, 0.04]), lab.shape)
+        self.assertTrue(np.array_equal(bal.medians(fid, gt, valley), valley))
+        low = T.Balance(bal.cells, floor=500)
+        self.assertGreater(float(low.medians(fid, gt, valley)[0, -1, 0]), 0.85)    # a lower floor takes the flight's own
+
+    def test_other_types_and_cells_outside_flights_are_left_alone(self):
+        fid, gt, lab = self.two_flights()
+        gt[:, 78:] = 7                                                              # type 7 in flight 2: 2,090 cells
+        fid[:5] = T.NO_FLIGHT
+        bal, acc = self.balance(fid, gt, lab)
+        self.assertNotIn((T.NO_FLIGHT, 5), acc.medians())
+        valley = np.broadcast_to(np.float32([0.80, 0.01, 0.04]), lab.shape)
+        med = bal.medians(fid, gt, valley)
+        self.assertTrue(np.array_equal(med[:5], valley[:5]))                        # no flight: the valley's
+        self.assertAlmostEqual(float(med[50, 90, 0]), 0.86, delta=0.002)            # type 7 has enough cells in flight 2 ...
+        self.assertAlmostEqual(float(med[50, 70, 0]), 0.86, delta=0.002)
+
+    def test_the_json_round_trips_and_a_foreign_file_is_refused(self):
+        fid, gt, lab = self.two_flights()
+        _bal, acc = self.balance(fid, gt, lab)
+        again = T.Balance.from_json(acc.to_json())
+        self.assertEqual(sorted(again.cells), [(1, 5), (2, 5)])
+        with self.assertRaises(ValueError):
+            T.Balance.from_json({"schema": "other/1", "cells": {}})
+
+    def test_windows_added_one_by_one_give_the_whole_windows_medians(self):
+        fid, gt, lab = self.two_flights()
+        whole = T.FlightBalance()
+        whole.add(fid, gt, lab, np.ones(fid.shape, bool))
+        parts = T.FlightBalance()
+        for r in range(0, 100, 25):
+            parts.add(fid[r:r + 25], gt[r:r + 25], lab[r:r + 25], np.ones((25, 100), bool))
+        self.assertEqual(whole.medians(), parts.medians())

@@ -581,7 +581,7 @@ Each window is painted 64 m bigger and cut back, so windows meet without a seam 
 ### G1b: texture and the photo's variation
 
 [`texture.py`](texture.py) holds the rules (NumPy only, tested anywhere: `test_texture.py`); `paint.py` applies them.
-`PAINTER_VERSION` is `g1b-1`. The inputs are optional and named on the command line (`tilewrite.py paint|assemble
+`PAINTER_VERSION` is `g1b-2`. The inputs are optional and named on the command line (`tilewrite.py paint|assemble
 --naip-2m DIR [--dem FILE]`, the same values for both, since they go into the run's digest as the raw inputs
 `naip-2m`, named by the COG sidecar's sha256, and `3dep`, by the DEM's). Without `--naip-2m` the ground is G1a's plus the
 noise.
@@ -626,6 +626,18 @@ noise.
   flight seams and the county line are in the COG already (soils' per-flight gains, one mosaic per place), and
   are for the seam sheets to judge. The gains do not remove every seam, and the variation carries what is left into
   the paint (the July 24 step, about 8 dE in the COG and about 6 dE painted; #415).
+- **Flight balance** (#415, painter `g1b-2`). The photo's variation is measured against each ground type's median **within
+  the flight that took the pixel** (the polygons in `flights.fgb`), not the valley-wide median, so a flight that is
+  lighter or darker overall adds nothing and what varies inside a flight stays. Fading the variation near flight edges
+  was not chosen: it leaves the two levels different and only spreads the step. Where a flight holds fewer than
+  `TX.BALANCE_FLOOR` (2,000) cells of a type, about 8,000 m² at 2 m, its median would follow whatever happens to be there (a
+  field edge, one farmyard), so the type keeps the valley-wide median (the palette's) in that flight. A floor of 50,000 cells
+  was tried on the seam frames and was worse (a seam went from dE 0.9 to 3.0) without helping the one it was tried for; the
+  floor is applied when the medians are read, so it can change without measuring again. The medians are
+  `paint.build_balance(painter)`: histograms per flight and type over the cells the variation keeps (not shadow, not mapped
+  surface or its band, not crop), a window at a time, optionally every few windows (`stride`); they are written as
+  `flight_balance.json` beside the COG, and a `Photo` opened there takes it up (the report says so). Without the file the
+  paint is as before.
 
 **Tile size.** Measured on a synthetic tile (z15's 1.73 m pixel, WebP quality 80, L noise only): noise of sd 0.009
 in L is 5.4 KB, 0.018 is 12 KB and 0.029 is 20 KB. The photo's variation carries finer detail than the noise and adds
@@ -744,8 +756,14 @@ farm `20261011T130710Z`, water `20261024T070659Z`, mask v0 `20261011T144701Z`, t
     20 m ramp already softens), and no mapped surface, crop, water or class edge is there. The step is the **flight
     seam between the May 25 and July 24 passes** in the 2 m photo itself (raw COG L 0.665 to 0.75, about 8 dE across
     about 25 m, with no step in the sun-normalising gain), carried through the photo's variation (weight 1 on both sides,
-    inside Mahalanobis 2.5 of the type): about 6 dE across it in the painted z15 tile. (Inputs: run g1b-valley-1, the window of 2 km at 2 m around that point, flights 1733 and 2195; the scripts were one-off and are not kept, and #415 re-measures it.) Feathering the soil base cannot
-    remove it; the fix belongs to the photo variation or the COG's per-flight balancing (#415).
+    inside Mahalanobis 2.5 of the type): about 6 dE across it in the painted z15 tile. (Inputs: run g1b-valley-1, the window of 2 km at 2 m around that point, flights 1733 and 2195; the scripts were one-off and are not kept, and #415 re-measured it.) Feathering the soil base cannot
+    remove it; the fix is the flight balance above (#415): measured the same way (the median OKLab of the painted pixels 10 to
+    60 m either side of the seam, z15 readbacks, seven 3 km frames), that seam went from dE 8.55 to 2.23 (L 0.654 against
+    0.739, then 0.689 against 0.709), the 06-18 / 07-24 seam in the north from 5.04 to 0.28, and 05-25 / 05-30 from 3.98 to 0.9.
+    Not fixed: two seams where the dark band is inside one flight along its edge (raw COG dE 9.3 at the 05-30 / 06-18 seam in
+    frame s2, painted 9.8 to 10.5), and a flight sliver that the flight's own median does not describe (05-25 / 06-18 in
+    s3, 5.9 to 6.9). The same frames painted with no photo at all differ across those two seams by dE 4.0, so part of each
+    is the ground itself.
   - *Darkest soils.* The darkest measured types (Schiller, Chardoton, Banbury, Catchell, Dolman, Montezuma) are desert
     soils in the south of the map box, and read as flat dark brown-grey with little photo variation. The Boise Front's
     north slopes are not dark in the paint: the illumination normalisation lifts them to the tone of the sunlit slopes

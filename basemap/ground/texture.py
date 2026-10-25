@@ -40,6 +40,13 @@ SHADOW_DB = 0.010                           # ... and this much bluer (OKLab b l
 SHADOW_REACH_M = 40.0                       # ... and within this of something tall
 CLUSTER_NDVI = 0.30                         # a crop cluster outside the fields is confirmed when the photo's NDVI >= this
 LOCAL_UTC_OFFSET_H = -6                     # NAIP's local times are read as MDT (soils' flights.fgb note)
+BALANCE_FLOOR = 2000                        # cells a flight must hold of a ground type before its own median is used: under it
+                                            # the median of a few cells follows what happens to be there (a field edge, one
+                                            # farmyard) and would pull the type's level off, so the type keeps the palette's
+                                            # valley-wide median in that flight
+BALANCE_BINS = 2048                         # the median is read from a histogram per flight and type (bin 0.0005 in L, a, b)
+BALANCE_RANGE = ((0.0, 1.0), (-0.5, 0.5), (-0.5, 0.5))
+NO_FLIGHT = 0xFFFFFFFF                      # the flight id where no flight polygon covers a cell
 SUN_LAT, SUN_LON = 43.6, -116.4             # where a flight's sun is computed when it has no place of its own: the valley
 
 
@@ -283,6 +290,84 @@ def photo_variation_by_type(photo_lab, type_lab, gt, inv_table, ok):
         has[sel] = True
     w = variation_weight(dist) * (ok & has)
     return dev, w.astype(np.float32)
+
+
+class FlightBalance:
+    """The photo's median OKLab per ground type within each flight (#415). Two flights of different days differ in
+    level (light, haze, sensor) by more than the soil's own spread, so the photo less one valley-wide type median carries
+    the step between them into the paint. Measured against the median of the type within the flight that took the pixel,
+    a flight that is lighter or darker overall adds nothing, and what varies inside a flight stays.
+
+    Fed windows with `add` (the photo's flat-light OKLab on the cells the variation can use, the flight id and the ground
+    type of each), it keeps a histogram per (flight, type), so a valley of 2 m cells is read a window at a time and the
+    median is the histogram's. `medians` gives {(flight, type): (n, (L, a, b))}; `to_json` and Balance.from_json carry it."""
+    SCHEMA = "ground.flight-balance/1"
+
+    def __init__(self):
+        self.hist = {}                                  # (flight, gid) -> int64 (3, BALANCE_BINS)
+
+    def add(self, fid, gt, lab, keep):
+        """Count the cells of `keep` (bool) by (flight id, type id): fid (uint32, NO_FLIGHT outside the flights), gt (type
+        ids), lab (rows, cols, 3)."""
+        sel = np.asarray(keep, bool) & (np.asarray(fid) != NO_FLIGHT) & np.all(np.isfinite(lab), axis=-1)
+        if not sel.any():
+            return
+        f, g, v = np.asarray(fid)[sel].astype(np.int64), np.asarray(gt)[sel].astype(np.int64), np.asarray(lab)[sel]
+        key = f * 65536 + g
+        order = np.argsort(key, kind="stable")
+        key, v = key[order], v[order]
+        cuts = np.flatnonzero(np.diff(key)) + 1
+        for k, vals in zip(key[np.r_[0, cuts]], np.split(v, cuts)):
+            h = self.hist.setdefault((int(k // 65536), int(k % 65536)), np.zeros((3, BALANCE_BINS), np.int64))
+            for c, (lo, hi) in enumerate(BALANCE_RANGE):
+                b = np.clip(((vals[:, c] - lo) / (hi - lo) * BALANCE_BINS).astype(np.int64), 0, BALANCE_BINS - 1)
+                h[c] += np.bincount(b, minlength=BALANCE_BINS)
+
+    def medians(self):
+        out = {}
+        for key, h in self.hist.items():
+            n = int(h[0].sum())
+            med = []
+            for c, (lo, hi) in enumerate(BALANCE_RANGE):
+                i = int(np.searchsorted(np.cumsum(h[c]), (n + 1) / 2.0))
+                med.append(lo + (min(i, BALANCE_BINS - 1) + 0.5) * (hi - lo) / BALANCE_BINS)
+            out[key] = (n, tuple(round(m, 5) for m in med))
+        return out
+
+    def to_json(self):
+        return {"schema": self.SCHEMA, "floor": BALANCE_FLOOR, "bins": BALANCE_BINS,
+                "cells": {f"{f}:{g}": {"n": n, "med": list(m)} for (f, g), (n, m) in sorted(self.medians().items())}}
+
+
+class Balance:
+    """FlightBalance's medians as a lookup: for any window, the median each cell is measured against."""
+
+    def __init__(self, cells, floor=BALANCE_FLOOR):
+        self.floor = floor
+        self.cells = {k: (n, np.asarray(m, np.float32)) for k, (n, m) in cells.items()}
+
+    @classmethod
+    def from_json(cls, doc):
+        if not isinstance(doc, dict) or doc.get("schema") != FlightBalance.SCHEMA:
+            raise ValueError(f"not a flight balance (schema {FlightBalance.SCHEMA!r})")
+        cells = {}
+        for key, v in doc["cells"].items():
+            f, _, g = key.partition(":")
+            cells[(int(f), int(g))] = (int(v["n"]), v["med"])
+        return cls(cells)
+
+    def medians(self, fid, gt, default):
+        """default (rows, cols, 3), the valley-wide median of each cell's type, with the flight's own median where its
+        flight holds at least `floor` cells of the type."""
+        out = np.array(default, np.float32)
+        f, g = np.asarray(fid).astype(np.int64), np.asarray(gt).astype(np.int64)
+        for fl in np.unique(f[f != NO_FLIGHT]):
+            in_f = f == fl
+            for ty in np.unique(g[in_f]):
+                n, med = self.cells.get((int(fl), int(ty)), (0, None))
+                if n >= self.floor:
+                    out[in_f & (g == ty)] = med
+        return out
 
 
 def confirm_cluster(ndvi, covered):

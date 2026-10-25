@@ -42,6 +42,7 @@ Windows are painted with a HALO_M halo and cut back, so neighbouring windows mee
 it).
 """
 
+import hashlib
 import json
 import math
 import os
@@ -59,7 +60,7 @@ from basemap.ground import texture as TX
 
 gdal.UseExceptions()
 
-PAINTER_VERSION = "g1b-1"
+PAINTER_VERSION = "g1b-2"
 FEATHER_M = 20.0          # soil types' soft edges
 WATER_FILL_M = 50.0       # SSURGO Water units take the nearest soil's colour within this
 HALO_M = 64.0             # every window is painted this much bigger and cut back (>= WATER_FILL_M + FEATHER_M / 2)
@@ -248,8 +249,17 @@ class Photo:
     the report); without flights every pixel takes the reference day's sun."""
     REFERENCE_SUN_LOCAL = "06/18/2025 13:00"        # the reference flight day (soils' colour gains), when no flights
 
-    def __init__(self, cog, flights=None, dem=None):
+    def __init__(self, cog, flights=None, dem=None, balance=None):
         self.cog, self.flights, self.dem = cog, flights, dem
+        self.balance_sha = None                         # the balance file's sha256, which the run's digest names (tilewrite.photo_of)
+        if balance is None:                             # flight_balance.json beside the COG (build_balance), if one is there
+            side = os.path.join(os.path.dirname(os.path.abspath(cog)), BALANCE_FILE)
+            if os.path.isfile(side):
+                with open(side, "rb") as f:
+                    raw = f.read()
+                self.balance_sha = hashlib.sha256(raw).hexdigest()
+                balance = TX.Balance.from_json(json.loads(raw))
+        self.balance = balance                          # TX.Balance, or None: every flight is measured against the valley's
         self._ds = None
         self._sun = None
         self.dem_cells = self.dem_finite = 0
@@ -334,6 +344,12 @@ class Photo:
         self.dem_cells, self.dem_finite = self.dem_cells + fin.size, self.dem_finite + int(fin.sum())
         ok &= fin & (np.degrees(slope) <= TX.MAX_SLOPE_DEG)
         return gain, ok
+
+    def flight_ids(self, P):
+        """The flight (src_fid) that took each cell of P, TX.NO_FLIGHT where no polygon covers it."""
+        if not self.flights:
+            return np.full(P.shape, TX.NO_FLIGHT, np.uint32)
+        return R.rasterize(P, self.flights, attribute="src_fid", dtype="uint32", fill=TX.NO_FLIGHT)
 
     def window(self, P):
         W = P.at(2.0)
@@ -606,10 +622,27 @@ class Painter:
         BAND_M band, where the crop's own colour shows, and wherever the photo or its light isn't usable."""
         lab, _ndvi, _cov, ok = photo
         med = self.palette.lab[gt]
+        if self.photo.balance is not None:                  # #415: against the type's median within the cell's own flight
+            med = self.photo.balance.medians(self.photo.flight_ids(P), gt, med)
         shadow = TX.shadow_cells(lab, med, self.roofs_near(P))
         keep = ok & ~shadow & ~outside_grid(P) & ~(surf | R.grow(surf, BAND_M, P.res))
         delta, w = TX.photo_variation_by_type(lab, med, gt, self.palette.inv_cov, keep)
         return delta, w * (1.0 - crop_w)
+
+    def measure_balance(self, win, acc):
+        """Add the cells of `win` (the core of a padded window) that the photo's variation can use to acc, a
+        TX.FlightBalance: the same cells `variation` keeps (not shadow, not on mapped surfaces or their band, not crop),
+        counted by flight and ground type, which is what the flight medians are read from."""
+        P = win.pad_m(HALO_M)
+        base, gt = self.soil_base(P)
+        surf = self.surfaces(P)
+        photo = self.photo.window(P)
+        _paint, crop_w = self.crops(P, base, surf, None)
+        lab, _ndvi, _cov, ok = photo
+        shadow = TX.shadow_cells(lab, self.palette.lab[gt], self.roofs_near(P))
+        keep = ok & ~shadow & ~outside_grid(P) & ~(surf | R.grow(surf, BAND_M, P.res)) & (crop_w <= 0)
+        inner = win.inner(P)
+        acc.add(self.photo.flight_ids(P)[inner], gt[inner], lab[inner], keep[inner])
 
     def add_texture(self, win, v, gt_win, w_photo):
         """v (OKLab on win) with the procedural noise: each cell's type energies, by the absolute coordinates, in the
@@ -665,6 +698,29 @@ class _ManifestOf:
         return self._layers[name]
 
 
+BALANCE_FILE = "flight_balance.json"
+
+
+def build_balance(painter, bounds=None, size_cells=1024, stride=1, log=None):
+    """The photo's median per ground type within each flight (TX.FlightBalance), read from the cells the variation can
+    use, a window of size_cells at 2 m at a time over bounds (default: the whole grid). Write it with
+    `json.dump(acc.to_json(), ...)` as BALANCE_FILE beside the COG; a Photo opened there takes it up. Measure it on a
+    painter whose photo has no balance of its own (the cell test is the palette's median either way). stride: take
+    every stride-th window along both axes (3 reads a ninth of the grid): a flight's median needs thousands of cells of
+    a type, not all of them, so the valley can be sampled by windows."""
+    if painter.photo is None:
+        raise PaintError("the flight balance is measured from the photo: this painter has none")
+    acc = TX.FlightBalance()
+    area = grid.full(2.0) if bounds is None else grid.window(bounds, 2.0).clip()
+    for core, _padded in grid.windows(2.0, size_cells, bounds=bounds):
+        if area is None or ((core.col - area.col) // size_cells % stride) or ((core.row - area.row) // size_cells % stride):
+            continue
+        painter.measure_balance(core, acc)
+        if log:
+            log(f"balance: window at col {core.col}, row {core.row}: {len(acc.hist)} flight-type groups")
+    return acc
+
+
 def versions(**given):
     """The raw-input versions the painter names for inputs.resolve(..., versions=), e.g. {"naip-2m": <sha256>}. G1a's
     painter reads exports only, so none; with G1b's photo variation, naip-2m (the COG sidecar's sha256) and, when a DEM
@@ -705,7 +761,10 @@ def photo_report(painter):
                         "dem_cover": (round(ph.dem_finite / ph.dem_cells, 4) if ph.dem_cells else None) if ph.dem else None,
                         "light": "slope and aspect from the DEM at each flight's sun" if ph.dem else
                         "not normalised: no DEM given",
-                        "sun": "each flight's own" if ph.flights else "the reference day's (no flights given)"}
+                        "sun": "each flight's own" if ph.flights else "the reference day's (no flights given)",
+                        "balance": (f"each ground type's median within its own flight (floor {ph.balance.floor:,} cells, "
+                                    f"{len(ph.balance.cells):,} flight-type medians)") if ph.balance is not None else
+                        "none: the valley-wide median of each type"}
     return out
 
 
