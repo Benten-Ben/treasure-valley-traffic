@@ -315,6 +315,17 @@ class TestTexturePhoto(unittest.TestCase):
         fine = p.paint_lab(self.win(X0, Y0, 545300.0, Y1))
         self.assertLess(float(K.delta_e(fine.reshape(-1, 3).mean(0), lab.reshape(-1, 3).mean(0))), 1.5)
 
+    def test_a_level_the_photo_cant_sit_on_exactly_is_refused(self):
+        p = self.painter(photo=paint.Photo(self.cog))
+        with self.assertRaises(paint.PaintError):
+            p.paint_lab(self.win(X0, Y0, 545300.0, Y1, res=5.0))
+
+    def test_texture_off_ignores_the_photo(self):
+        on = self.painter(photo=paint.Photo(self.cog), texture=False)
+        off = self.painter(texture=False)
+        w = self.win(X0, Y0, 545300.0, Y1)
+        self.assertTrue(np.allclose(on.paint_lab(w), off.paint_lab(w)))
+
     def test_no_variation_on_a_mapped_surface_or_its_band(self):
         bw, bs, be, bn = BOX.utm
         x = G.ORIGIN_X + 2 * round((bw + 200.0 - G.ORIGIN_X) / 2)               # on the 2 m grid

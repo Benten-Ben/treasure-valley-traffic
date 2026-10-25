@@ -252,6 +252,7 @@ class Photo:
         self.cog, self.flights, self.dem = cog, flights, dem
         self._ds = None
         self._sun = None
+        self.dem_cells = self.dem_finite = 0
 
     def _open(self):
         if self._ds is None:
@@ -329,7 +330,9 @@ class Photo:
         del z
         slope, aspect = TX.slope_aspect(elev, W.res)
         gain, ok = TX.illumination_gain(slope, aspect, az, el)
-        ok &= np.isfinite(slope) & (np.degrees(slope) <= TX.MAX_SLOPE_DEG)
+        fin = np.isfinite(slope)
+        self.dem_cells, self.dem_finite = self.dem_cells + fin.size, self.dem_finite + int(fin.sum())
+        ok &= fin & (np.degrees(slope) <= TX.MAX_SLOPE_DEG)
         return gain, ok
 
     def window(self, P):
@@ -348,6 +351,10 @@ def _level(a, W, P, nan=False):
     half; NaN-aware when nan) onto a coarser one."""
     if P.res == W.res:
         return a
+    ratio = max(P.res, W.res) / min(P.res, W.res)
+    if abs(ratio - round(ratio)) > 1e-9 or (P.res > W.res and tuple(W.bounds) != tuple(P.bounds)):
+        raise PaintError(f"the 2 m photo can't be put on the {P.res:g} m level exactly (its cells must be a whole number "
+                         f"of 2 m cells with edges on the 2 m grid); paint that level from a 2, 4, 10, 20 or 40 m grid")
     if P.res < W.res:
         k = int(round(W.res / P.res))
         up = np.repeat(np.repeat(a, k, 0), k, 1)
@@ -601,7 +608,7 @@ class Painter:
         med = self.palette.lab[gt]
         shadow = TX.shadow_cells(lab, med, self.roofs_near(P))
         keep = ok & ~shadow & ~outside_grid(P) & ~(surf | R.grow(surf, BAND_M, P.res))
-        delta, w = TX.photo_variation(lab, med, self.palette.inv_cov[gt], keep)
+        delta, w = TX.photo_variation_by_type(lab, med, gt, self.palette.inv_cov, keep)
         return delta, w * (1.0 - crop_w)
 
     def add_texture(self, win, v, gt_win, w_photo):
@@ -617,7 +624,7 @@ class Painter:
         base, gt = self.soil_base(P)
         surf = self.surfaces(P)
         photo = self.photo.window(P) if self.photo is not None else None
-        confirmed = TX.confirm_cluster(photo[1], photo[2]) if photo is not None else None
+        confirmed = TX.confirm_cluster(photo[1], photo[2]) if photo is not None and self.texture else None
         crop_paint, crop_w = self.crops(P, base, surf, confirmed)
         if photo is not None and self.texture:
             delta, w_photo = self.variation(P, gt, surf, crop_w, photo)
@@ -695,6 +702,7 @@ def photo_report(painter):
            "photo": None}
     if ph is not None:
         out["photo"] = {"cog": os.path.basename(ph.cog), "flights": bool(ph.flights),
+                        "dem_cover": (round(ph.dem_finite / ph.dem_cells, 4) if ph.dem_cells else None) if ph.dem else None,
                         "light": "slope and aspect from the DEM at each flight's sun" if ph.dem else
                         "not normalised: no DEM given",
                         "sun": "each flight's own" if ph.flights else "the reference day's (no flights given)"}

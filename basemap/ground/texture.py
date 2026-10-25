@@ -268,6 +268,23 @@ def photo_variation(photo_lab, type_lab, inv_cov, ok):
     return dev, w.astype(np.float32)
 
 
+def photo_variation_by_type(photo_lab, type_lab, gt, inv_table, ok):
+    """photo_variation with the spread given per ground type (inv_table (n, 3, 3), gt the cells' type ids): one 3x3 per
+    type instead of a gathered (rows, cols, 3, 3), which at a 2 m block with its halo is hundreds of MB."""
+    dev = (photo_lab - type_lab).astype(np.float32)
+    dist = np.zeros(gt.shape, np.float32)
+    has = np.zeros(gt.shape, bool)
+    for t in np.unique(gt):
+        inv = inv_table[t]
+        if not np.all(np.isfinite(inv)):
+            continue
+        sel = gt == t
+        dist[sel] = mahalanobis(dev[sel], inv)
+        has[sel] = True
+    w = variation_weight(dist) * (ok & has)
+    return dev, w.astype(np.float32)
+
+
 def confirm_cluster(ndvi, covered):
     """Crop clusters outside the fields (the crop cover's confidence 3) are painted only where the photo confirms
     them: it covers the cell and its NDVI is at least CLUSTER_NDVI."""
