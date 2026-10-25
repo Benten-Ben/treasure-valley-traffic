@@ -222,6 +222,13 @@ class SheetTest(unittest.TestCase):
         with self.assertRaises(S.SheetError):
             S.draw_raster(S.file_overlay(f"{one},kind=rgb", "raster", "#ffffff"), frame)
 
+    def test_an_rgb_picture_is_a_base_under_the_data_layers(self):
+        def ov(kind, ref, style):
+            return S.Overlay(kind, ref, [], style, "#ffffff")
+        mixed = [ov("vector", "a", {}), ov("raster", "b", {"kind": "cat"}), ov("raster", "paint", {"kind": "rgb"}),
+                 ov("vector", "c", {})]
+        self.assertEqual([o.ref for o in S.base_first(mixed)], ["paint", "a", "b", "c"])
+
     def test_raster_categories_ramp_and_nodata(self):
         frame = P.select(["c"], res=2)[0]
         ov = S.export_overlays("farm/crop_cover,alpha=1", self.archive, "#56B4E9")[0]
