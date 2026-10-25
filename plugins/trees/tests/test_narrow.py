@@ -199,7 +199,7 @@ class TypePlacedTest(unittest.TestCase):
         p = {"top_m": 10.0, "drop_1m": 0.2, "drop_2m": 0.4, "drop_3m": 0.6, "rough": 0.05}
         self.assertEqual(build.placed_type(p, 9.2, "broadleaf", self.model), "narrow")
         self.assertEqual(build.placed_type(p, 7.9, "broadleaf", self.model), "broadleaf")    # top not its own
-        self.assertEqual(build.placed_type(p, 7.9, "conifer", self.model), "conifer")
+        self.assertEqual(build.placed_type(p, 7.9, "conifer", self.model), "broadleaf")    # the curve's conifer call is gone
         self.assertEqual(build.placed_type(None, 9.2, "narrow", self.model), "broadleaf")
 
 
