@@ -3,7 +3,10 @@
     docker run --rm --memory 5g --memory-swap 5g --user $(id -u):$(id -g) -v "$PWD":/repo -v /srv/tvt:/srv/tvt \\
       -w /repo tvt-worker python plugins/trees/build/build.py --area c --dsm .../dsm.tif --dtm .../dtm.tif \\
       --mask .../zero_mask_c.npy --spring .../sentinel2/april2025 \\
-      --summer .../sentinel2/july2025 --out $TVT_ARCHIVE/trees/<build-id>
+      --summer .../sentinel2/july2025 --out $TVT_ARCHIVE/trees/builds/<build-id>
+
+Give --mask (the area's building mask: its file name is recorded in build.json) or --no-mask (an area with no
+buildings, or a test window: build.json records null). A build given neither is refused.
 
 Then `python3 -m ingest trees-load --build <dir>` loads it.
 
@@ -349,7 +352,10 @@ def main(argv=None):
     ap.add_argument("--area", required=True)
     ap.add_argument("--dsm", required=True)
     ap.add_argument("--dtm", required=True)
-    ap.add_argument("--mask", help="building mask (.npy, the DSM's grid)")
+    ap.add_argument("--mask", help="building mask (.npy, the DSM's grid); the build records its file name. Give this or "
+                                   "--no-mask")
+    ap.add_argument("--no-mask", action="store_true", help="build with no building mask (an area with no buildings, or a "
+                                                           "test window); the build records mask null")
     ap.add_argument("--anchors", help="an inventory's trunk points (CSV: " + ", ".join(anchor_file.CSV_FIELDS) + "); see anchors.py")
     ap.add_argument("--private-out", help="with --anchors: the folder for anchors.jsonl, under the private root and "
                                           "outside --out and the archive (never a folder the scratch jobs can read)")
@@ -368,6 +374,9 @@ def main(argv=None):
     a = ap.parse_args(argv)
     if bool(a.spring) != bool(a.summer):
         ap.error("--spring and --summer go together")
+    if bool(a.mask) == a.no_mask:
+        ap.error("give --mask FILE (the area's building mask, so roofs are left out) or --no-mask (an area with no "
+                 "buildings, or a test window), not both and not neither")
     if bool(a.anchors) != bool(a.private_out):
         ap.error("--anchors and --private-out go together")
     if a.anchors:
@@ -517,7 +526,8 @@ def main(argv=None):
     build = {"build_id": build_id, "area": a.area, "started_at": started.isoformat(),
              "finished_at": dt.datetime.now(dt.timezone.utc).isoformat(),
              "params": {"theta": a.theta, "lam": a.lam, "sweeps": a.sweeps, "lidar": a.lidar, "lidar_date": a.lidar_date,
-                        "window": a.window, "model": cm["source"][:200],
+                        "window": a.window, "mask": os.path.basename(a.mask) if a.mask else None,
+                        "model": cm["source"][:200],
                         "narrow_rule": {"drop_3m": list(NARROW_DROP_3M), "rough_max": NARROW_ROUGH_MAX,
                                         "min_top_m": round(narrow_min_top(model), 2), "own_top_m": NARROW_OWN_TOP_M},
                         "spring": seasons.about() if seasons else None, "sources": sources(a, seasons)},
