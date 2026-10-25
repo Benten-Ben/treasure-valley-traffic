@@ -90,9 +90,9 @@ step-4 load close them.
 1. **Pick the window** as for any `ingest` restart ([deploy/README.md](../../deploy/README.md), "Updating"), in the day
    window above. In the VM's shell the archive is `/srv/tvt/archive` (`$TVT_ARCHIVE` is set only inside containers,
    where the archive is `/srv/archive`; the commands below use these paths, never the variable). List the trees builds
-   that exist now: they are the old format, and step 7 moves exactly these. Builds are under `trees/builds/` (the folder
-   of each build is named by its build id), so list there and leave out `shrubs/`, which holds the shrub builds (no
-   inventory data in them): `ls /srv/tvt/archive/trees/builds | grep -vx shrubs > <private files>/trees-builds-before-0003.txt`.
+   that exist now: they are the old format, and step 7 moves exactly these. Tree builds are under `trees/builds/` (the
+   folder of each build is named by its build id); the shrub builds sit in `trees/shrubs/`, outside that folder and not
+   listed here: `ls /srv/tvt/archive/trees/builds > <private files>/trees-builds-before-0003.txt`.
 2. **Back up the trees schema** (check the free space first, `df -h`), under `heavy` with the dump under `timeout` (the
    deadline cannot reach a command run inside the database's container):
    `/srv/tvt/work/bin/heavy --deadline HH:MM --runtime 20 --peak 1 "trees dump (0003)" sh -c 'docker exec tvt-db-1 timeout -k 60 $((HEAVY_DEADLINE_EPOCH - $(date +%s))) pg_dump -U tvt -Fc -n trees tvt' > <private files>/tvt-before-trees-0003-$(date +%F).dump`.
@@ -137,7 +137,7 @@ step-4 load close them.
    `ingest` and `app`, then in one transaction `delete from ops.schema_migration where name = 'trees/0003_no_city_rows.sql'`
    and `pg_restore -c -n trees` the dump from step 2 (it recreates `trees` as it was, shrubs included).
 7. **Old-format builds out of the archive** (after the loads are checked): the dump, not these folders, is the way back.
-   Move the folders listed in step 1 (not `shrubs/`, not step 3's builds) to the private files, creating the target
+   Move the folders listed in step 1 (not step 3's builds) to the private files, creating the target
    first (`mv` into a missing folder renames the first build to it), and check that nothing old-format is left under the
    archive: `mkdir -p <private files>/trees-old-builds && while read b; do mv "/srv/tvt/archive/trees/builds/$b" <private files>/trees-old-builds/; done < <private files>/trees-builds-before-0003.txt`,
    then `grep -rlE '"(catalogue|catalogue_id|dbh_in|trunk_to_crown_m)"|"kind": ?"(catalogued|estimated)"|boise-' /srv/tvt/archive/trees; echo "grep exit $?"`

@@ -68,8 +68,10 @@ class RunbookTest(unittest.TestCase):
         self.assertIn("trees/builds/<new build name>", self.s[4])
         self.assertIn("/srv/tvt/archive/trees/builds", self.s[1])
 
-    def test_old_builds_leave_the_archive_without_the_shrub_builds(self):
-        self.assertIn("grep -vx shrubs", self.s[1])
+    def test_old_builds_list_the_tree_builds_folder_only(self):
+        self.assertIn("ls /srv/tvt/archive/trees/builds >", self.s[1])
+        self.assertNotIn("grep -vx shrubs", self.s[1])
+        self.assertIn("trees/shrubs/", self.s[1])
         self.assertIn("mkdir -p <private files>/trees-old-builds &&", self.s[7])
         self.assertIn('echo "grep exit $?"', self.s[7])
 
