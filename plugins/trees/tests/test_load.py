@@ -101,7 +101,7 @@ def ensure_tables(conn):
     """The trees schema as the migrations leave it, inside the caller's transaction (rolled back by the test)."""
     if conn.execute("select to_regclass('trees.tree')").fetchone()[0] is None:
         for name in sorted(os.listdir(MIGRATIONS)):
-            if name[:4] in ("0001", "0003"):
+            if name[:4] in ("0001", "0003", "0004"):
                 with open(os.path.join(MIGRATIONS, name)) as f:
                     conn.execute(f.read())
 
@@ -122,9 +122,6 @@ class DatabaseTest(unittest.TestCase):
                                               " and tree_id like 'tvt-test-%'").fetchone()[0], 2)
                 self.assertEqual(conn.execute(
                     "select count(*) from trees.tree where fit ? 'dbh_in' or fit ? 'trunk_to_crown_m'").fetchone()[0], 0)
-                # the loader never writes the City fields (the columns stay, empty, after 0003)
-                self.assertEqual(conn.execute(
-                    "select count(*) from trees.tree where catalogue is not null or catalogue_id is not null").fetchone()[0], 0)
                 self.assertEqual(conn.execute(
                     "select count(*) from trees.tree_log where detail ? 'dbh_in' or detail ? 'trunk_to_crown_m'").fetchone()[0], 0)
                 # the table itself refuses any other kind, whatever loads it
