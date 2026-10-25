@@ -10,8 +10,8 @@ Then `python3 -m ingest trees-load --build <dir>` loads it.
 1. The placer fills the area from the lidar alone (place.py), tallest first, then repairs. Each crown's size and shape
    come from the width curve that explains the lidar best. Its type: narrow by the narrow rule (narrow_rule below), not
    by that curve; else conifer when the spring Sentinel-2 cue sees an evergreen crown in an area where its calls were
-   checked against labelled trees (--spring and --summer: Seasons, spring_conifer and SPRING_CHECKED_AREAS below); else
-   the curve's conifer call stands for now (KEEP_WIDTH_CONIFER), and broadleaf otherwise.
+   checked against labelled trees (--spring and --summer: Seasons, spring_conifer and SPRING_CHECKED_AREAS below);
+   otherwise broadleaf.
 2. Writes trees.geojson (WGS84 points with the tree's fields), log.jsonl (one event per line) and build.json: crowns
    found in the lidar and nothing from an inventory.
 3. Only then, when --anchors is given (a CSV of an inventory's trunk points, anchors.py; with --private-out, a folder
@@ -60,10 +60,6 @@ NARROW_REACH_M = 3.0
 NARROW_DROP_3M = (0.45, 0.95)
 NARROW_ROUGH_MAX = 0.2
 NARROW_OWN_TOP_M = 2.0
-# Pending the owner (docs/DECISIONS.md): a placed tree that neither the narrow rule nor the spring cue types keeps the
-# width curve's conifer call. That call is weak (of the 14 labelled trees the Oct 8 build called conifer, one was);
-# False would leave conifers to the spring cue and an inventory's genus (docs/19 §19.3).
-KEEP_WIDTH_CONIFER = True
 # The spring cue (docs/19 §19.3; decision 24, Oct 8): an early-April 2025 Sentinel-2 image against July's. Evergreen
 # crowns are green in early April and broadleaf crowns are still bare. But by then the valley's lawns and pastures are
 # green too, under the crowns and around them, and a yard tree is a fraction of a 10 m cell, so in the valley a bare
@@ -179,15 +175,15 @@ def spring_conifer(c):
 def placed_type(p, H, width_curve, model, spring=None):
     """A placed tree's type from its profile, its height, the width curve that sized its crown and its spring cue.
     Narrow when the narrow rule says so (first: one labelled narrow tree was sized by the conifer curve). Otherwise
-    conifer when the spring cue types it (spring_conifer: an evergreen crown in a checked area). Otherwise conifer when
-    that curve was the conifer one and KEEP_WIDTH_CONIFER (pending the owner), else broadleaf. The curve's narrow call
+    conifer when the spring cue types it (spring_conifer: an evergreen crown in a checked area). Otherwise broadleaf.
+    The width curve's conifer call is dropped (docs/DECISIONS.md, Oct 22). The curve's narrow call
     isn't kept: on the labels, 2 of its 23 narrow calls on real trees were narrow trees (Oct 8: neighbours squeeze
     crowns, so width is a cue to the type only on lone trees)."""
     if narrow_rule(p, H, model):
         return "narrow"
     if spring_conifer(spring):
         return "conifer"
-    return "conifer" if KEEP_WIDTH_CONIFER and width_curve == "conifer" else "broadleaf"
+    return "broadleaf"
 
 
 def type_placed(h, t, model, spring=None):
@@ -524,7 +520,6 @@ def main(argv=None):
                         "window": a.window, "model": cm["source"][:200],
                         "narrow_rule": {"drop_3m": list(NARROW_DROP_3M), "rough_max": NARROW_ROUGH_MAX,
                                         "min_top_m": round(narrow_min_top(model), 2), "own_top_m": NARROW_OWN_TOP_M},
-                        "conifer_from_width_curve": KEEP_WIDTH_CONIFER,
                         "spring": seasons.about() if seasons else None, "sources": sources(a, seasons)},
              "counts": {"trees": len(out_trees),
                         "types": {k: sum(1 for tr in out_trees if tr["type"] == k) for k in ("broadleaf", "conifer", "narrow")},

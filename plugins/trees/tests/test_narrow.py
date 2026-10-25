@@ -149,11 +149,6 @@ class TypePlacedTest(unittest.TestCase):
     def setUp(self):
         import build
         self.model = model()
-        self.keep = build.KEEP_WIDTH_CONIFER
-
-    def tearDown(self):
-        import build
-        build.KEEP_WIDTH_CONIFER = self.keep
 
     def tree(self, H, R_m, width_curve, a=0.952, n=2.089):
         return {"y": 40.0, "x": 40.0, "H": H, "R": R_m / 0.5, "type": width_curve, "a": a, "n": n}
@@ -189,16 +184,14 @@ class TypePlacedTest(unittest.TestCase):
             self.assertEqual(fit["width_curve"], curve)
             self.assertEqual(fit["crowded"], curve != "broadleaf")      # a lone broadleaf top, crowded for the others
 
-    def test_the_conifer_curves_call_stands_until_the_owner_decides(self):
-        # pending (docs/DECISIONS.md): a tree the narrow rule doesn't call narrow keeps the conifer curve's call
+    def test_the_conifer_curve_doesnt_make_a_tree_conifer(self):
+        # docs/DECISIONS.md (Oct 22): a tree the narrow rule and the spring cue don't type is broadleaf, whatever its curve
         import build
         cases = [(dome((80, 80), 40, 40, 15.0, 6.0), 15.0), (dome((80, 80), 40, 40, 9.0, 2.5), 9.0),
                  (cone((80, 80), 40, 40, 6.0, 5.0), 6.0)]
-        for keep, want in ((True, "conifer"), (False, "broadleaf")):
-            build.KEEP_WIDTH_CONIFER = keep
-            for h, H in cases:
-                typ, _ = build.type_placed(h, self.tree(H, 2.5, "conifer"), self.model)
-                self.assertEqual(typ, want, (keep, H))
+        for h, H in cases:
+            typ, _ = build.type_placed(h, self.tree(H, 2.5, "conifer"), self.model)
+            self.assertEqual(typ, "broadleaf", H)
 
     def test_placed_type_takes_the_stored_fit(self):
         # placed_type works from what the fit stores (profile, height, curve), so a build can be retyped without placing
@@ -251,7 +244,7 @@ class BuildTest(unittest.TestCase):
                                                        "rough_max": build.NARROW_ROUGH_MAX,
                                                        "min_top_m": round(build.narrow_min_top(m), 2),
                                                        "own_top_m": build.NARROW_OWN_TOP_M})
-        self.assertEqual(bj["params"]["conifer_from_width_curve"], build.KEEP_WIDTH_CONIFER)
+        self.assertNotIn("conifer_from_width_curve", bj["params"])
         # without --spring there is no spring cue: no Sentinel-2 source, and no tree's fit has one
         self.assertIsNone(bj["params"]["spring"])
         self.assertIsNone(bj["counts"]["spring"])
