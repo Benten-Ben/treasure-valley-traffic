@@ -17,8 +17,8 @@ Every tree we can find in the lidar ([docs/19](../../docs/19-trees.md)), and the
   half the April views around it were snow. In the valley the April lawns are as green as an evergreen at 10 m, so the
   cue only tells in the mountains, and it types trees only in areas where its calls were checked against the owner's
   labels (`SPRING_CHECKED_AREAS`: Bogus Basin, `h`, so far); elsewhere it is kept in the fit but types nothing. Otherwise
-  it is broadleaf, or conifer where the conifer curve sized it
-  (`KEEP_WIDTH_CONIFER`, pending the owner). The fit keeps the curve, the crown's profile and its spring cue. It writes
+  it is broadleaf (the width curve's conifer call was dropped, Oct 22). The fit keeps the curve, the crown's profile
+  and its spring cue. It writes
   `trees.geojson`, `log.jsonl` and `build.json` (with the Sentinel-2 files' sha256 and the sources it read) to a build
   folder: crowns found in the lidar, nothing from an inventory (see "Anchors" below).
 - `python3 -m ingest trees-load --build DIR` loads a build: the area's trees are replaced, its log events added. It takes

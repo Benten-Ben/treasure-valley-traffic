@@ -52,8 +52,8 @@ How wide a crown can be for its height and type, and the shape of its top.
   crown falls away from its top (the narrow rule, §19.3), and whether it is
   a conifer from a spring Sentinel-2 image where that can tell and its
   calls have been checked (over Bogus Basin's April snow so far, §19.3);
-  the width curve sizes and shapes the crown, and elsewhere for now still
-  makes the conifer call (pending, §19.3). In the mountains, narrow means conifer. In the valley it is its
+  the width curve sizes and shapes the crown, and the type is narrow,
+  conifer where the spring image types it, else broadleaf (§19.3). In the mountains, narrow means conifer. In the valley it is its
   own type ("narrow": spruce, young street trees, poplars) unless a
   catalogue says otherwise. Only about 1% of the North End's street trees
   are conifers.
@@ -146,8 +146,7 @@ of a bigger tree and 6 not a tree. What that showed:
   open-stand conifer below those heights isn't called narrow either: in the
   windows, 166 of the 3,418 trees with their own top of 8.3 m or more.
   These trees are conifer where the spring image types them (Bogus Basin
-  so far) or, for now, where the conifer curve sized them, else broadleaf
-  (the next points). Letting the width fit's narrow call stand for crowns that
+  so far), else broadleaf (the next points). Letting the width fit's narrow call stand for crowns that
   end within 3 m was tried: on the labels it typed no more trees rightly
   and called two more conifers narrow, so it isn't used.
 - **Conifers from a spring image (Oct 11).** Evergreen crowns are green in
@@ -210,13 +209,13 @@ of a bigger tree and 6 not a tree. What that showed:
 - **Where the spring image can't tell.** Anywhere without April snow,
   which in 2025 means the whole valley and the foothills below about the
   snow line; crowns under 50 m² (a lone tree under about 8 m wide); and
-  trees whose cells read dark over snow. Those trees are narrow,
-  broadleaf, or conifer where the conifer curve sized them (next points).
+  trees whose cells read dark over snow. Those trees are narrow or
+  broadleaf (next points).
 - **In the mountains most trees stay broadleaf.** Over snow, a crown the
   cue can't type falls back as a valley tree does. In Bogus Basin's window
   it can tell for 337 of the 1,315 trees and sees 177 evergreen; 1,055
   trees stay broadleaf without the width fit's conifer call and 980 with
-  it, though every real tree the owner labelled there is a conifer, and the
+  it (the build draws those 980 broadleaf, see below), though every real tree the owner labelled there is a conifer, and the
   7 labelled conifers the cue misses stay broadleaf either way. A default
   of "over snow, conifer unless the cue reads the crown dark" would catch
   14 of Bogus Basin's 16 labelled conifers and type 1,087 of its window's
@@ -224,16 +223,14 @@ of a bigger tree and 6 not a tree. What that showed:
   broadleaf trees conifers (and 3,313 of that window's 3,669 trees). So it
   would need checked areas too. Whether to have it, or more labels first,
   is the owner's call ([DECISIONS](DECISIONS.md#pending-owner-to-decide)).
-- **The width fit's conifer call: pending (Oct 11).** Where the spring
-  cue doesn't type a tree, a placed tree the narrow rule doesn't call
-  narrow keeps the width fit's conifer call until the owner decides
-  ([DECISIONS](DECISIONS.md#pending-owner-to-decide)). That call is weak:
-  of the 14 labelled trees the Oct 8 build called conifer, one was (ten
-  weren't trees of their own). It puts cones on 7–8% of the North End's
-  and downtown's trees 8 m and taller, where about 1% of the North End's
-  street trees are conifers. The photo's darkness only looked like a cue
-  because the forest area's photo is darker. Proposed: drop it, so that
-  the spring cue and a catalogue's genus say conifer.
+- **The width fit's conifer call: dropped (Oct 22, owner answer 7).** A placed
+  tree that the narrow rule and the spring cue don't type is broadleaf, whatever
+  curve sized it. That call was weak: of the 14 labelled trees the Oct 8 build
+  called conifer, one was (ten weren't trees of their own). It put cones on 7–8%
+  of the North End's and downtown's trees 8 m and taller, where about 1% of the
+  North End's street trees are conifers. The photo's darkness only looked like a
+  cue because the forest area's photo is darker. Conifers now come from the
+  spring cue and a catalogue's genus.
 
 ## 19.4 Data
 
