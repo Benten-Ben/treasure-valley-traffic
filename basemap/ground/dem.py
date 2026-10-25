@@ -256,10 +256,17 @@ def build(terrain_path, out, window=None, size=BLOCK, zoom=None, limit=None, log
     return info
 
 
+def _open(path):
+    try:
+        return gdal.Open(path)
+    except RuntimeError as e:                                    # GDAL's exceptions are on: a missing or non-raster file
+        raise DemError(f"{path}: not a raster GDAL can open ({e})")
+
+
 def check(path):
     """Is `path` a DEM the painter can use? Returns the problems found (an empty list: it can)."""
     problems = []
-    ds = gdal.Open(path)
+    ds = _open(path)
     gt = ds.GetGeoTransform()
     if ds.RasterCount != 1:
         problems.append(f"{ds.RasterCount} bands, not 1")
@@ -287,8 +294,12 @@ def _slope_block(ds, col, row, width, height):
 
 def slope_shares(path, cuts=(15.0, 30.0), size=BLOCK):
     """The share of known cells steeper than each cut (degrees), over the whole DEM and in each of the ten boxes:
-    {"valley": {"cells": n, "over": {15: share, ...}}, "a": {...}, ...}. For judging the photo variation's slope cut."""
-    ds = gdal.Open(path)
+    {"valley": {"cells": n, "over": {15: share, ...}}, "a": {...}, ..., "skipped_boxes": [ids not wholly inside the DEM]}.
+    Refuses (DemError) a file `check` would not accept. For judging the photo variation's slope cut."""
+    problems = check(path)
+    if problems:
+        raise DemError(f"{path}: not usable ({'; '.join(problems)})")
+    ds = _open(path)
 
     def count(windows):
         n, over = 0, {c: 0 for c in cuts}
@@ -303,11 +314,14 @@ def slope_shares(path, cuts=(15.0, 30.0), size=BLOCK):
     out = {"valley": count([(c, r, min(size, ds.RasterXSize - c), min(size, ds.RasterYSize - r))
                             for r in range(0, ds.RasterYSize, size) for c in range(0, ds.RasterXSize, size)])}
     gt = ds.GetGeoTransform()
+    out["skipped_boxes"] = []
     for b in grid.boxes():
         w = b.window(RES)
         c, r = int(round((w.west - gt[0]) / RES)), int(round((gt[3] - w.north) / RES))
         if c >= 0 and r >= 0 and c + w.width <= ds.RasterXSize and r + w.height <= ds.RasterYSize:
             out[b.id] = count([(c, r, w.width, w.height)])
+        else:
+            out["skipped_boxes"].append(b.id)
     return out
 
 

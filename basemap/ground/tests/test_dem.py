@@ -135,7 +135,35 @@ class TestDem(unittest.TestCase):
         self.assertTrue(np.isnan(D.gdal.Open(out).ReadAsArray()).all())
         self.assertEqual(info["finite_share"], 0.0)
         self.assertIsNone(info["min_m"])
-        self.assertGreater(info["tiles_wanted"], info["tiles_read"] - 1)
+        self.assertEqual(info["tiles_read"], 0)
+        self.assertGreater(info["tiles_wanted"], 0)
+
+    def test_one_missing_tile_leaves_a_nan_hole_and_the_rest_finite(self):
+        gap = os.path.join(self.dir, "gap.pmtiles")
+        w = pmtw.Writer(gap, 2, {"encoding": "mapbox", "format": "png", "minzoom": "13", "maxzoom": str(Z),
+                                 "name": "terrain"})
+        for x, y in self.tiles[:-1]:                                      # the last of the four is left out
+            w.add(Z, x, y, encode(tile_pixels(x, y)))
+        w.finish((-117.05, 43.0, -115.95, 43.85), (-116.4, 43.4, 10))
+        out = os.path.join(self.dir, "gap.tif")
+        info = D.build(gap, out, window=self.window, log=lambda *_: None)
+        got = D.gdal.Open(out).ReadAsArray()
+        self.assertEqual(info["tiles_read"], 3)
+        self.assertTrue(np.isnan(got).any())
+        self.assertTrue(np.isfinite(got).any())
+        self.assertTrue(np.isnan(got[-20:, -20:]).all())                 # the missing tile's corner of the window
+        self.assertTrue(np.isfinite(got[:20, :20]).all())                # the far corner, on a present tile
+        self.assertTrue(0.0 < info["finite_share"] < 1.0)
+
+    def test_a_missing_or_non_raster_file_is_a_dem_error(self):
+        with self.assertRaises(D.DemError):
+            D.check(os.path.join(self.dir, "nope.tif"))
+        junk = os.path.join(self.dir, "junk.tif")
+        with open(junk, "w") as f:
+            f.write("not a raster")
+        with self.assertRaises(D.DemError):
+            D.slope_shares(junk)
+        self.assertEqual(D.main(["check", junk]), 2)
 
     def test_the_sidecar_names_the_source_and_the_file(self):
         out, info = self.build("s.tif")
@@ -188,7 +216,8 @@ class TestDem(unittest.TestCase):
     def test_slope_shares_count_known_cells(self):
         out, _ = self.build("sl.tif")
         shares = D.slope_shares(out, cuts=(1.0, 10.0), size=100)
-        self.assertEqual(list(shares), ["valley"])                      # the window holds none of the ten boxes
+        self.assertEqual(list(shares), ["valley", "skipped_boxes"])
+        self.assertEqual(len(shares["skipped_boxes"]), 10)              # the window holds none of the ten boxes
         self.assertEqual(shares["valley"]["cells"], self.window.width * self.window.height)
         # the plane falls about 0.07 on the ground: 4 degrees, so every cell is over 1 and none over 10
         self.assertEqual(shares["valley"]["over"][1.0], 1.0)

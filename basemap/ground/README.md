@@ -741,7 +741,7 @@ harness's S1.
     | j Owyhee Mountains | 66.8% | 9.5% |
 
     Moving the cut from 30 to 15 degrees takes the photo's variation off about 14 percent more of the box, and off
-    two thirds to three quarters of boxes a, h and j (the foothills and the mountains). Slope is of the map's own 3.5 m terrain
+    50 to 69 percent more of boxes a, h and j (67 to 76 percent in all; the foothills and the mountains). Slope is of the map's own 3.5 m terrain
     resampled to 2 m, so it is smoother than the lidar's.
   - a sun from each flight's own place rather than the valley's middle (the DEM itself is done: `dem.py`, above);
   - repainting after the water and mask exports land, into new run folders (the digest takes care of the names);
@@ -807,7 +807,9 @@ run per digest (a resume or an assemble after the inputs changed is refused, as 
 the first-load estimate; `test_tiles.py` the code digest and the builds the live tiles name; `test_pmtw.py`
 (standard library) the PMTiles writer against the bake's reader, deduplication and leaf directories.
 
-G1b's DEM: `test_dem.py` writes a synthetic terrain-RGB PMTiles file (a plane, four z14 tiles meeting at a corner, a z13 tile that must not be read) and checks the decode, the surface on the 2 m grid across the tile corner and between blocks, a missing tile, the sidecar, no overwriting, a stopped build, the files it refuses, `check`, the slope counts, and that `paint.Photo` reads the file. G1b's: `test_texture.py` (NumPy only) checks the noise (unit variance, a function of the absolute coordinates, octaves
+G1b's DEM: `test_dem.py` writes a synthetic terrain-RGB PMTiles file (a plane, four z14 tiles meeting at a corner, a z13 tile that must not be read) and checks the decode, the surface on the 2 m grid across the tile corner and between blocks, a missing tile, the sidecar, no overwriting, a stopped build, the files it refuses, `check`, the slope counts, and that `paint.Photo` reads the file.
+
+G1b's: `test_texture.py` (NumPy only) checks the noise (unit variance, a function of the absolute coordinates, octaves
 skipped on coarse levels), the sun over Boise, slope and aspect of planes, the illumination gain, the Mahalanobis
 distance and its ramp, cast shadows and the NDVI band. `TestTexturePhoto` in `test_paint.py` paints the synthetic world
 with a synthetic COG, DEM and no flights (the reference sun): the palette's spread and energies, noise energy and
