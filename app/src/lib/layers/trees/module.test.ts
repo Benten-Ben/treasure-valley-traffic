@@ -284,7 +284,7 @@ describe('the Trees module draws shrubs from z17 (docs/19 §19.8)', () => {
 		expect(shrubRequests).toHaveLength(0);
 		await moveTo(Z16);
 		expect(shrubRequests).toHaveLength(0);
-		expect(scene.shown.get(SHRUBS_3D) ?? false).toBe(false);
+		expect(scene.shown.get(SHRUBS_3D)).toBe(false);
 		expect(trees.view.shrubs.drawn).toBe(false);
 	});
 
@@ -320,6 +320,28 @@ describe('the Trees module draws shrubs from z17 (docs/19 §19.8)', () => {
 		expect(scene.sets.filter((x) => x.group === SHRUBS_3D).at(-1)!.list).toEqual([]);
 	});
 
+	it('fetches at z16.7 but the scene group stays hidden, also after Trees is turned off', async () => {
+		await start();
+		await moveTo({ ...Z17, zoom: 16.7 });
+		expect(shrubRequests).toHaveLength(1);
+		shrubRequests[0].answer([shrub('a', Z17)]);
+		await settle();
+		expect(scene.shown.get(SHRUBS_3D)).toBe(false);
+		trees.setVisible(false);
+		expect(scene.shown.get(SHRUBS_3D)).toBe(false);
+	});
+
+	it('asks again for the same cell after an answer was aborted by hiding Trees', async () => {
+		await start();
+		await moveTo(Z17);
+		expect(shrubRequests).toHaveLength(1);
+		trees.setVisible(false);
+		trees.setVisible(true);
+		await settle();
+		await moveTo(Z17);
+		expect(shrubRequests).toHaveLength(2);
+	});
+
 	it('hands the scene all 1,500 the API gave (the scene keeps the nearest within 300 m)', async () => {
 		await start();
 		await moveTo(Z17);
@@ -334,7 +356,7 @@ describe('the Trees module draws shrubs from z17 (docs/19 §19.8)', () => {
 		await moveTo(Z17);
 		expect(shrubRequests).toHaveLength(0);
 		expect(trees.view.shrubs.phone).toBe(true);
-		expect(scene.shown.get(SHRUBS_3D) ?? false).toBe(false);
+		expect(scene.shown.get(SHRUBS_3D)).toBe(false);
 	});
 
 	it('asks for nothing where no shrubs are built', async () => {

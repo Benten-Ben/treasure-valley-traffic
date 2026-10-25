@@ -178,7 +178,10 @@ export class TreesModule implements LayerModule {
 	#shrubUrl: string | null = null;
 	#shrubAbort: AbortController | null = null;
 	#shrubsOn = false;
-	#phone = isPhone();
+	/** Read live: the scene tests the same media query on every frame. */
+	get #phone() {
+		return isPhone();
+	}
 	/** Requests made to /api/trees/shrubs (tests and the console). */
 	shrubRequests = 0;
 	#details = new globalThis.Map<string, Promise<TreeDetail | null>>();
@@ -451,6 +454,9 @@ export class TreesModule implements LayerModule {
 		}
 		scene.set(TREES_3D, this.#instances, TREES_SCENE);
 		scene.show(TREES_3D, false);
+		// A new scene group is visible: hide the shrubs until z17 asks for them.
+		scene.show(SHRUBS_3D, false);
+		this.#shrubsOn = false;
 		this.#modelsOn = false;
 		this.#syncScene();
 		this.#syncShrubs();
@@ -475,6 +481,8 @@ export class TreesModule implements LayerModule {
 	#cancelShrubs() {
 		this.#shrubAbort?.abort();
 		this.#shrubAbort = null;
+		// An aborted request has no answer: the same box must be asked for again.
+		this.#shrubUrl = null;
 	}
 
 	/**

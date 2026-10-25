@@ -55,6 +55,7 @@ test.describe('shrubs', () => {
 		await page.evaluate(() => (globalThis as any).__tvt.map.jumpTo({ zoom: 16.7 }));
 		await expect.poll(async () => (await shrubInfo(page)).fetched, { timeout: 60_000 }).toBeGreaterThan(0);
 		expect((await shrubInfo(page)).shown).toBe(false);
+		expect(await shrubsPlaced(page)).toEqual([]);
 	});
 
 	test('at z17 at most 1,500 are drawn, the nearest the middle; a click opens the small card; the legend names them', { tag: '@shrubs' }, async ({ page }) => {
