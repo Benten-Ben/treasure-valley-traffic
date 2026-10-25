@@ -20,6 +20,8 @@
  *   --zoom Z            one zoom for every shot (default: each frame fits the viewport's height)
  *   --size WxH          the viewport (default 1280x800)
  *   --clean             hide the app's chrome (toolbars, cards), keeping the map and its credits
+ *   --hillshade MODE    terrain or capped: passes the app's ?hillshade= parameter on every shot
+ *                       (as hillshade-compare.mjs does); default none, the app's own default
  *   --label NAME        the run's name (its folder's suffix)
  *   --out DIR           default ../data/sheets (git-ignored); the run goes in <out>/<time>[-label]/
  *   --max-shots N       refuse a longer list (default 300)
@@ -120,9 +122,22 @@ function parseOptions() {
 		pitch: num('--pitch', 0),
 		bearing: num('--bearing', 0),
 		zoom: num('--zoom', null),
+		hillshade: parseHillshade(opt('--hillshade', '')),
 		maxShots: num('--max-shots', 300),
 		timeout: num('--timeout', 120) * 1000
 	};
+}
+
+/** The app's ?hillshade= modes (hillshade-compare.mjs); '' means the app's own default. */
+function parseHillshade(v) {
+	if (v === '' || v === 'none') return '';
+	if (v === 'terrain' || v === 'capped') return v;
+	throw new Error('--hillshade takes terrain or capped');
+}
+
+/** The page's path: the hillshade parameter (if any) before the map hash. */
+function pathOf(shot, hillshade) {
+	return `${hillshade ? `?hillshade=${hillshade}` : ''}${shot.hash}`;
 }
 
 /** Hide everything that isn't the map or inside it (MapLibre's credits stay). */
@@ -151,7 +166,7 @@ async function shoot(context, base, shot, o, folder) {
 			sessionStorage.clear();
 			localStorage.setItem('tvt:v2:base', JSON.stringify(b));
 		}, { look: look.look, buildings: true, terrain: true, labels: 'full' });
-		await page.goto(`${base}/${shot.hash}`);
+		await page.goto(`${base}/${pathOf(shot, o.hillshade)}`);
 		record.ready = (await mapReady(page, { timeout: o.timeout })).how;
 		if (look.aerial) {
 			const button = page.getByRole('group', { name: 'Map view' }).getByRole('button', { name: 'Aerial', exact: true });
