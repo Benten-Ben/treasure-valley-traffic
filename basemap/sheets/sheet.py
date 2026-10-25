@@ -1067,7 +1067,13 @@ def build_overlays(args):
     refs = [ov.ref for ov in overlays]
     if len(refs) != len(set(refs)):
         raise SheetError("the same layer is named twice")
-    return overlays
+    return base_first(overlays)
+
+
+def base_first(overlays):
+    """A picture drawn as it is (kind=rgb, the painted ground) is a base: it goes under the data layers, whatever
+    order the arguments came in (it is opaque, so drawn last it would hide them all). Otherwise the order stays."""
+    return sorted(overlays, key=lambda ov: ov.style.get("kind") != "rgb")
 
 
 def draw(args):

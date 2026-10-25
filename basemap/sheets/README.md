@@ -101,6 +101,8 @@ Credit: USDA NAIP (public domain).
   `kind=rgb` draws a picture as it is: bands 1-3 (8-bit) as red, green and blue, fully opaque unless `alpha=` says
   otherwise (the painted ground's tiles, read back into a GeoTIFF; G1a).
   Nodata, and NaN whether it's declared or not, stays clear.
+  A `kind=rgb` picture is a base: it is drawn under the data layers, whatever order the arguments came in, so
+  roads, paths, water and the rest show over the painted ground.
 - Colours: Okabe-Ito first, never red against green alone, and every colour is named in the legend.
 
 The style options are in `python -m basemap.sheets.sheet draw -h`.
