@@ -286,12 +286,12 @@ class TestTiles(unittest.TestCase):
             TW.photo_of(d, os.path.join(d, "nope.tif"))
         bal = os.path.join(d, "flight_balance.json")                    # #415: a flight balance beside the COG is part of the name
         with open(bal, "w") as f:
-            json.dump({"schema": "ground.flight-balance/1", "cells": {"1:2": {"n": 3000, "med": [0.7, 0.01, 0.04]}}}, f)
+            json.dump({"schema": "ground.flight-balance/2", "cells": {"1:2": {"n": 3000, "med": [0.7, 0.01, 0.04]}}}, f)
         with_bal, v1 = TW.photo_of(d)
         self.assertIsNotNone(with_bal.balance)
         self.assertTrue(v1["naip-2m"].startswith("ab" * 32 + "+flight-balance."))
         with open(bal, "w") as f:
-            json.dump({"schema": "ground.flight-balance/1", "cells": {"1:2": {"n": 3000, "med": [0.71, 0.01, 0.04]}}}, f)
+            json.dump({"schema": "ground.flight-balance/2", "cells": {"1:2": {"n": 3000, "med": [0.71, 0.01, 0.04]}}}, f)
         self.assertNotEqual(TW.photo_of(d)[1], v1)                      # another balance, another digest
 
     def test_the_digest_names_the_photo(self):

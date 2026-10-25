@@ -626,7 +626,7 @@ noise.
   flight seams and the county line are in the COG already (soils' per-flight gains, one mosaic per place), and
   are for the seam sheets to judge. The gains do not remove every seam, and the variation carries what is left into
   the paint (the July 24 step, about 8 dE in the COG and about 6 dE painted; #415).
-- **Flight balance** (#415, painter `g1b-2`). The photo's variation is measured against each ground type's median **within
+- **Flight balance** (#415, painter `g1b-3`). The photo's variation is measured against each ground type's median **within
   the flight that took the pixel** (the polygons in `flights.fgb`), not the valley-wide median, so a flight that is
   lighter or darker overall adds nothing and what varies inside a flight stays. Fading the variation near flight edges
   was not chosen: it leaves the two levels different and only spreads the step. Where a flight holds fewer than
@@ -641,6 +641,20 @@ noise.
   it with `stride=1` for the valley (a stride of 3 missed 147 flights); there is no command yet: open a `Painter` on the
   photo (with `--dem`'s file if the paint uses one), call `paint.build_balance`, and write `acc.to_json()` as
   `flight_balance.json`. Without the file the paint is as before.
+  **Local medians** (the second step of #415, painter `g1b-3`, file schema `ground.flight-balance/2`). One median per
+  flight is not enough where a flight is not one level all over: a dark band along its own edge, or a sliver whose
+  whole-flight median does not describe the ground beside it. The file therefore also holds each flight and type's median
+  per block of `TX.BLOCK_M` (1,024 m, 512 cells at 2 m, on the grid from its origin: the paint's windows are 1,024 cells,
+  so the blocks are not the paint's), kept for blocks of at least `TX.BLOCK_STORE` (500) cells. The reference a cell is
+  measured against is carried between the centres of the blocks around it, bilinearly, so the blocks themselves never
+  show. A block counts only where it holds the floor (2,000 cells) of that type in that flight. A corner block that does
+  not (past the flight's edge, a sliver's far side) counts for nothing and the others are renormalised, instead of
+  averaging in the flight's median: that would pull a cell on an edge band half way back to the level it differs from.
+  The counting blocks' level keeps full weight while their total bilinear weight at the cell is 1/2 or more (a cell
+  beside a counting block), and fades into the flight's median by smoothstep as that weight falls from 1/2 to 0, so the
+  reference has no step where their support ends (a lone counting block of weight 0.4 gives a level part-way to the
+  flight's median, not the block's own). Where none of the four blocks around a cell counts, the reference is the
+  flight's median, and where the flight is under the floor, the valley's, as before. Histograms for blocks are 512 bins (0.002 in L, a and b, 0.2 dE).
 
 **Tile size.** Measured on a synthetic tile (z15's 1.73 m pixel, WebP quality 80, L noise only): noise of sd 0.009
 in L is 5.4 KB, 0.018 is 12 KB and 0.029 is 20 KB. The photo's variation carries finer detail than the noise and adds
