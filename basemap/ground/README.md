@@ -720,7 +720,7 @@ farm `20261011T130710Z`, water `20261024T070659Z`, mask v0 `20261011T144701Z`, t
   took 39 seconds and 119 MB. Every block is resumable, so the chunks cost nothing extra.
 - **Size.** Valley file **241.6 MB**, 14,573 tiles (z15 10,807 at a mean 15.9 KB, z14 18.4 KB, z13 19.2 KB, z12 19.3 KB;
   maximum 60 KB); detail file **11.8 MB**, 612 tiles at a mean 19.3 KB (maximum 50 KB). That is 16.6 KB a tile, well under
-  the plan's 40 KB, and the whole valley is a third of the planned 0.6 GB.
+  the plan's 40 KB, and the whole valley is about 40% of the planned 0.6 GB.
 - **First load (budget).** Measured with the map library on the whole file (`app/scripts/ground-firstload.mjs`): **13
   requests, 251,030 bytes** for the default view's 12 z10 tiles, against 14 requests and 600,000 bytes. `tilewrite.py
   estimate --budget` agrees (13 requests, 251,030 bytes, no tile missing, exit 0).
@@ -748,7 +748,7 @@ farm `20261011T130710Z`, water `20261024T070659Z`, mask v0 `20261011T144701Z`, t
     no photo variation. In box i the class build paints dark grey patches over the lidar-dark desert floor (right half
     of the frame) where the photo is tan: the classes read it as dark surfaced ground (`DARK`, asphalt colour). Fixing it
     belongs to the class rules (`classrules.py`), outside this issue; it needs an owner call.
-- **The judgement calls**, with the values left as they are. Counts are 2 m cells of the box (box h, i and j: no photo):
+- **The judgement calls**, with the values left as they are. Counts are 2 m cells of the box (box h, i and j: no photo, so none of the photo-based columns exist for them; their slope is in the DEM table under "Still to do", which gives only the over-15 and over-30 counts):
 
   | box | cells | slope 15-30 deg | over 30 deg | shadow (within 40 m of a roof) | dark and blue, any distance | crop clusters, conf. 3 | confirmed at NDVI 0.30 | at 0.20 | at 0.40 | sun differs over 5% | over 15% |
   |---|---|---|---|---|---|---|---|---|---|---|---|
@@ -774,6 +774,7 @@ farm `20261011T130710Z`, water `20261024T070659Z`, mask v0 `20261011T144701Z`, t
     downtown; the median is 20% in a, 2% in b and downtown and about 1% elsewhere. It matters on the foothills (box a,
     flown on a different day from the reference), not on the flat valley. The per-flight sun is already what the painter
     uses; the "one sun" is only the fallback for pixels outside a flight polygon. Sheet: `g1b-judge-sun`.
+- **The digest after this change.** The run's digest `10a0dfbcd0df` was taken before `tilewrite.py` changed in this PR. `tilewrite.py` is part of the code digest, so main's code digest differs from it once this merges, and a repaint then gets a new run folder rather than resuming this one.
 - **Not done here:** the app wiring and the page budget (below); a repaint after the soil, water and farm exports are
   made on production (the digest names that run anew); a fix for box i's dark floor and for the soil-polygon step.
 
