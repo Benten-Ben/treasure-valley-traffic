@@ -328,6 +328,20 @@ class TestFlightBalance(unittest.TestCase):
         bal.floor = 10 ** 6                                                 # the flight itself under: the valley's
         self.assertTrue(np.array_equal(bal.medians(fid, gt, valley, xs, ds), valley))
 
+    def test_a_valid_block_beside_short_ones_hands_over_to_the_flights_median_smoothly(self):
+        cols, B = 220, 128.0
+        fid, gt = np.ones((1, cols), np.uint32), np.full((1, cols), 5, np.uint8)
+        xs, ds = (np.arange(cols) + 0.5) * 2.0, np.array([64.0])
+        lo, med = np.float32([0.70, 0.01, 0.04]), np.float32([0.80, 0.01, 0.04])
+        blocks = {(1, 5, 0, 0): (4000, lo), (1, 5, 1, 0): (100, lo), (1, 5, 2, 0): (100, lo)}
+        bal = T.Balance({(1, 5): (5000, med)}, floor=2000, blocks=blocks, block_m=B)
+        valley = np.broadcast_to(med, (1, cols, 3))
+        ref = bal.medians(fid, gt, valley, xs, ds)[0, :, 0]
+        self.assertAlmostEqual(float(ref[0]), 0.70, delta=0.002)         # beside the valid block: its full level, not a mean
+        self.assertAlmostEqual(float(ref[-1]), 0.80, delta=0.002)        # past its support: the flight's
+        self.assertLess(float(np.abs(np.diff(ref)).max()), 0.02)         # and no 0.10 step between
+        self.assertTrue(np.all(np.diff(ref) >= -1e-6))
+
     def test_the_blocks_of_windows_added_one_by_one_are_the_whole_windows(self):
         fid, gt, lab, xs, ds = self.banded()
         whole = T.FlightBalance(block_m=128.0)

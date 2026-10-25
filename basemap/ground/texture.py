@@ -384,7 +384,8 @@ class Balance:
     never show. A block counts only where it holds `floor` cells of the type in the flight: a cell between a block that
     does and one that does not (past the flight's edge, a sliver) takes the one that does, not a mean with the flight's
     median, which would pull an edge band half way to the level it differs from; where none of the four blocks around a
-    cell counts it takes the flight's median, and where the flight itself is under `floor`, the valley's."""
+    cell counts it takes the flight's median, and the blocks' level fades into the flight's median as their total weight
+    falls from 1/2 to 0, so no step appears where their support ends; where the flight itself is under `floor`, the valley's."""
 
     def __init__(self, cells, floor=BALANCE_FLOOR, inputs=None, blocks=None, block_m=BLOCK_M):
         self.floor = floor
@@ -446,7 +447,11 @@ class Balance:
                     w = w * has[b + db, a + da]                      # a corner block short of the floor counts for nothing ...
                     num = num + w[:, None] * val[b + db, a + da]
                     den = den + w
-                ref = np.where(den[:, None] > 1e-6, num / np.maximum(den, 1e-6)[:, None], med)   # ... all four short: the flight's
+                # ... and the valid blocks' level fades into the flight's median as their total weight falls from 1/2 to 0, so the
+                # reference has no step where the valid blocks' support ends (cells beside a valid block keep its full level)
+                s = np.clip(den / 0.5, 0.0, 1.0)
+                s = (s * s * (3.0 - 2.0 * s))[:, None].astype(np.float32)
+                ref = s * (num / np.maximum(den, 1e-6)[:, None]) + (1.0 - s) * med
                 out[rr, cc] = ref
         return out
 
