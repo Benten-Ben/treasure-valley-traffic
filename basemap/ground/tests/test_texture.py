@@ -278,6 +278,70 @@ class TestFlightBalance(unittest.TestCase):
             parts.add(fid[r:r + 25], gt[r:r + 25], lab[r:r + 25], np.ones((25, 100), bool))
         self.assertEqual(whole.medians(), parts.medians())
 
+    def banded(self, step=0.05):
+        """One flight, one type, on 4 x 1 blocks of 64 x 64 cells (2 m, so blocks of 128 m: the tests give FlightBalance that block_m),
+        the first block darker by `step` in L (a dark band along the flight's edge). (fid, gt, lab, xs, ds)."""
+        n = 64
+        rng = np.random.default_rng(5)
+        rows, cols = n, 4 * n
+        fid = np.full((rows, cols), 1, np.uint32)
+        gt = np.full((rows, cols), 5, np.uint8)
+        lab = np.empty((rows, cols, 3), np.float32)
+        lab[..., 0] = 0.80 + 0.004 * rng.standard_normal((rows, cols))
+        lab[:, :n, 0] -= step
+        lab[..., 1], lab[..., 2] = 0.01, 0.04
+        xs, ds = (np.arange(cols) + 0.5) * 2.0, (np.arange(rows) + 0.5) * 2.0
+        return fid, gt, lab, xs, ds
+
+    def local(self, floor=2000, **kw):
+        fid, gt, lab, xs, ds = self.banded(**kw)
+        acc = T.FlightBalance(block_m=128.0)
+        acc.add(fid, gt, lab, np.ones(fid.shape, bool), xs, ds)
+        bal = T.Balance.from_json(acc.to_json())
+        bal.floor = floor
+        return fid, gt, lab, xs, ds, bal, acc
+
+    def test_a_dark_band_inside_a_flight_is_balanced_by_its_block(self):
+        fid, gt, lab, xs, ds, bal, acc = self.local(floor=1000)
+        valley = np.broadcast_to(np.float32([0.80, 0.01, 0.04]), lab.shape)
+        flight_only = bal.medians(fid, gt, valley)                      # no coordinates: the flight's median alone
+        self.assertGreater(float(np.abs((lab - flight_only)[:, :64, 0]).mean()), 0.03)
+        med = bal.medians(fid, gt, valley, xs, ds)
+        delta = lab - med
+        self.assertLess(float(np.abs(delta[:, 8:36, 0]).mean()), 0.006)       # the band's own centre is level with the rest
+        self.assertLess(float(np.abs(delta[:, 100:250, 0]).mean()), 0.006)
+        self.assertEqual(len(acc.block_medians()), 4)
+
+    def test_the_reference_runs_smoothly_between_block_centres(self):
+        fid, gt, lab, xs, ds, bal, _ = self.local(floor=1000)
+        valley = np.broadcast_to(np.float32([0.80, 0.01, 0.04]), lab.shape)
+        ref = bal.medians(fid, gt, valley, xs, ds)[32, :, 0]
+        self.assertLess(float(np.abs(np.diff(ref)).max()), 0.05 / 64 * 1.2)   # no jump at a block edge: a ramp of one block
+        self.assertAlmostEqual(float(ref[32]), 0.75, delta=0.003)           # at the first block's centre
+        self.assertAlmostEqual(float(ref[96]), 0.80, delta=0.003)
+
+    def test_a_block_under_the_floor_takes_the_flights_median(self):
+        fid, gt, lab, xs, ds, bal, acc = self.local(floor=5000)           # blocks of 4,096 cells: all under
+        valley = np.broadcast_to(np.float32([0.80, 0.01, 0.04]), lab.shape)
+        flight = acc.medians()[(1, 5)][1]
+        self.assertTrue(np.allclose(bal.medians(fid, gt, valley, xs, ds), np.float32(flight), atol=1e-6))
+        bal.floor = 10 ** 6                                                 # the flight itself under: the valley's
+        self.assertTrue(np.array_equal(bal.medians(fid, gt, valley, xs, ds), valley))
+
+    def test_the_blocks_of_windows_added_one_by_one_are_the_whole_windows(self):
+        fid, gt, lab, xs, ds = self.banded()
+        whole = T.FlightBalance(block_m=128.0)
+        whole.add(fid, gt, lab, np.ones(fid.shape, bool), xs, ds)
+        parts = T.FlightBalance(block_m=128.0)
+        for c in range(0, 256, 40):
+            sl = slice(c, c + 40)
+            parts.add(fid[:, sl], gt[:, sl], lab[:, sl], np.ones(fid[:, sl].shape, bool), xs[sl], ds)
+        self.assertEqual(whole.block_medians(), parts.block_medians())
+
+    def test_the_json_carries_the_blocks(self):
+        _f, _g, _l, _x, _d, bal, acc = self.local()
+        self.assertEqual(sorted(bal.blocks[(1, 5)]), [(0, 0), (1, 0), (2, 0), (3, 0)])
+
 
 if __name__ == "__main__":
     unittest.main()

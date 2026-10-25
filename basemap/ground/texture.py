@@ -45,6 +45,9 @@ BALANCE_FLOOR = 2000                        # cells a flight must hold of a grou
                                             # farmyard) and would pull the type's level off, so the type keeps the palette's
                                             # valley-wide median in that flight
 BALANCE_BINS = 2048                         # the median is read from a histogram per flight and type (bin 0.0005 in L, a, b)
+BLOCK_M = 1024.0                            # the local medians' block, on the grid from its origin (about 1 km: 512 cells at 2 m)
+BLOCK_BINS = 512                            # a block's histogram (bin 0.002 in L, a, b: 0.2 dE), so a valley's blocks stay small
+BLOCK_STORE = 500                           # a block with fewer cells of a type in a flight is not written down (the floor never goes lower)
 BALANCE_RANGE = ((0.0, 1.0), (-0.5, 0.5), (-0.5, 0.5))
 NO_FLIGHT = 0xFFFFFFFF                      # the flight id where no flight polygon covers a cell
 SUN_LAT, SUN_LON = 43.6, -116.4             # where a flight's sun is computed when it has no place of its own: the valley
@@ -293,82 +296,158 @@ def photo_variation_by_type(photo_lab, type_lab, gt, inv_table, ok):
 
 
 class FlightBalance:
-    """The photo's median OKLab per ground type within each flight (#415). Two flights of different days differ in
-    level (light, haze, sensor) by more than the soil's own spread, so the photo less one valley-wide type median carries
-    the step between them into the paint. Measured against the median of the type within the flight that took the pixel,
-    a flight that is lighter or darker overall adds nothing, and what varies inside a flight stays.
+    """The photo's median OKLab per ground type within each flight, and within each flight and block (#415). Two flights
+    of different days differ in level (light, haze, sensor) by more than the soil's own spread, so the photo less one
+    valley-wide type median carries the step between them into the paint. Measured against the median of the type within
+    the flight that took the pixel, a flight that is lighter or darker overall adds nothing, and what varies inside a
+    flight stays. A flight is not one level all over (a dark band along its own edge, a sliver whose whole-flight median
+    does not describe the ground beside it), so the same medians are also kept per block of BLOCK_M on the grid.
 
     Fed windows with `add` (the photo's flat-light OKLab on the cells the variation can use, the flight id and the ground
-    type of each), it keeps a histogram per (flight, type), so a valley of 2 m cells is read a window at a time and the
-    median is the histogram's. `medians` gives {(flight, type): (n, (L, a, b))}; `to_json` and Balance.from_json carry it."""
-    SCHEMA = "ground.flight-balance/1"
+    type of each, and where the cells are), it keeps a histogram per (flight, type) and per (flight, type, block), so a
+    valley of 2 m cells is read a window at a time and the median is the histogram's. `medians` gives
+    {(flight, type): (n, (L, a, b))} and `block_medians` {(flight, type, bx, by): (n, (L, a, b))}; `to_json` and
+    Balance.from_json carry them."""
+    SCHEMA = "ground.flight-balance/2"
 
-    def __init__(self, inputs=None):
+    def __init__(self, inputs=None, block_m=BLOCK_M):
+        self.block_m = float(block_m)
         self.hist = {}                                  # (flight, gid) -> int64 (3, BALANCE_BINS)
+        self.block_hist = {}                            # (flight, gid, bx, by) -> int32 (3, BLOCK_BINS)
         self.inputs = dict(inputs or {})                # what it was measured from: sha256 of the COG, flights and DEM (None: none)
 
-    def add(self, fid, gt, lab, keep):
+    @staticmethod
+    def _bins(vals, c, bins):
+        lo, hi = BALANCE_RANGE[c]
+        return np.clip(((vals[:, c] - lo) / (hi - lo) * bins).astype(np.int64), 0, bins - 1)
+
+    def add(self, fid, gt, lab, keep, xs=None, ds=None):
         """Count the cells of `keep` (bool) by (flight id, type id): fid (uint32, NO_FLIGHT outside the flights), gt (type
-        ids), lab (rows, cols, 3)."""
+        ids), lab (rows, cols, 3). xs, ds (1-D, metres east and south of the grid's origin, one per column and row) say
+        where the cells are, for the per-block counts; without them only the flight's are kept."""
         sel = np.asarray(keep, bool) & (np.asarray(fid) != NO_FLIGHT) & np.all(np.isfinite(lab), axis=-1)
         if not sel.any():
             return
         f, g, v = np.asarray(fid)[sel].astype(np.int64), np.asarray(gt)[sel].astype(np.int64), np.asarray(lab)[sel]
         key = f * 65536 + g
+        if xs is not None and ds is not None:
+            rr, cc = np.nonzero(sel)
+            bx = np.floor(np.asarray(xs)[cc] / self.block_m).astype(np.int64)
+            by = np.floor(np.asarray(ds)[rr] / self.block_m).astype(np.int64)
+            bkey = (key * 4096 + (bx + 2048)) * 4096 + (by + 2048)
+            order = np.argsort(bkey, kind="stable")
+            sk, sv = bkey[order], v[order]
+            cuts = np.flatnonzero(np.diff(sk)) + 1
+            for k, vals in zip(sk[np.r_[0, cuts]], np.split(sv, cuts)):
+                k, byy = divmod(int(k), 4096)
+                k, bxx = divmod(k, 4096)
+                h = self.block_hist.setdefault((k // 65536, k % 65536, bxx - 2048, byy - 2048),
+                                               np.zeros((3, BLOCK_BINS), np.int32))
+                for c in range(3):
+                    h[c] += np.bincount(self._bins(vals, c, BLOCK_BINS), minlength=BLOCK_BINS).astype(np.int32)
         order = np.argsort(key, kind="stable")
         key, v = key[order], v[order]
         cuts = np.flatnonzero(np.diff(key)) + 1
         for k, vals in zip(key[np.r_[0, cuts]], np.split(v, cuts)):
             h = self.hist.setdefault((int(k // 65536), int(k % 65536)), np.zeros((3, BALANCE_BINS), np.int64))
-            for c, (lo, hi) in enumerate(BALANCE_RANGE):
-                b = np.clip(((vals[:, c] - lo) / (hi - lo) * BALANCE_BINS).astype(np.int64), 0, BALANCE_BINS - 1)
-                h[c] += np.bincount(b, minlength=BALANCE_BINS)
+            for c in range(3):
+                h[c] += np.bincount(self._bins(vals, c, BALANCE_BINS), minlength=BALANCE_BINS)
+
+    @staticmethod
+    def _median(h, bins):
+        n = int(h[0].sum())
+        med = []
+        for c, (lo, hi) in enumerate(BALANCE_RANGE):
+            i = int(np.searchsorted(np.cumsum(h[c]), (n + 1) / 2.0))
+            med.append(lo + (min(i, bins - 1) + 0.5) * (hi - lo) / bins)
+        return n, tuple(round(m, 5) for m in med)
 
     def medians(self):
-        out = {}
-        for key, h in self.hist.items():
-            n = int(h[0].sum())
-            med = []
-            for c, (lo, hi) in enumerate(BALANCE_RANGE):
-                i = int(np.searchsorted(np.cumsum(h[c]), (n + 1) / 2.0))
-                med.append(lo + (min(i, BALANCE_BINS - 1) + 0.5) * (hi - lo) / BALANCE_BINS)
-            out[key] = (n, tuple(round(m, 5) for m in med))
-        return out
+        return {key: self._median(h, BALANCE_BINS) for key, h in self.hist.items()}
+
+    def block_medians(self):
+        return {key: self._median(h, BLOCK_BINS) for key, h in self.block_hist.items()}
 
     def to_json(self):
-        return {"schema": self.SCHEMA, "floor": BALANCE_FLOOR, "bins": BALANCE_BINS, "inputs": self.inputs,
-                "cells": {f"{f}:{g}": {"n": n, "med": list(m)} for (f, g), (n, m) in sorted(self.medians().items())}}
+        """Blocks with fewer than BLOCK_STORE cells are left out (under any floor in use they fall back to the flight)."""
+        blocks = {f"{f}:{g}:{bx}:{by}": {"n": n, "med": list(m)}
+                  for (f, g, bx, by), (n, m) in sorted(self.block_medians().items()) if n >= BLOCK_STORE}
+        return {"schema": self.SCHEMA, "floor": BALANCE_FLOOR, "bins": BALANCE_BINS, "block_m": self.block_m,
+                "block_bins": BLOCK_BINS, "inputs": self.inputs,
+                "cells": {f"{f}:{g}": {"n": n, "med": list(m)} for (f, g), (n, m) in sorted(self.medians().items())},
+                "blocks": blocks}
 
 
 class Balance:
-    """FlightBalance's medians as a lookup: for any window, the median each cell is measured against."""
+    """FlightBalance's medians as a lookup: for any window, the median each cell is measured against. Within a flight and
+    ground type the reference is carried between the centres of the blocks of BLOCK_M, bilinearly, so the blocks themselves
+    never show. A block counts only where it holds `floor` cells of the type in the flight: a cell between a block that
+    does and one that does not (past the flight's edge, a sliver) takes the one that does, not a mean with the flight's
+    median, which would pull an edge band half way to the level it differs from; where none of the four blocks around a
+    cell counts it takes the flight's median, and where the flight itself is under `floor`, the valley's."""
 
-    def __init__(self, cells, floor=BALANCE_FLOOR, inputs=None):
+    def __init__(self, cells, floor=BALANCE_FLOOR, inputs=None, blocks=None, block_m=BLOCK_M):
         self.floor = floor
         self.inputs = dict(inputs or {})
+        self.block_m = float(block_m)
         self.cells = {k: (n, np.asarray(m, np.float32)) for k, (n, m) in cells.items()}
+        self.blocks = {}                                    # (flight, gid) -> {(bx, by): (n, med)}
+        for (f, g, bx, by), (n, m) in (blocks or {}).items():
+            self.blocks.setdefault((f, g), {})[(bx, by)] = (n, np.asarray(m, np.float32))
 
     @classmethod
     def from_json(cls, doc):
         if not isinstance(doc, dict) or doc.get("schema") != FlightBalance.SCHEMA:
             raise ValueError(f"not a flight balance (schema {FlightBalance.SCHEMA!r})")
-        cells = {}
+        cells, blocks = {}, {}
         for key, v in doc["cells"].items():
             f, _, g = key.partition(":")
             cells[(int(f), int(g))] = (int(v["n"]), v["med"])
-        return cls(cells, inputs=doc.get("inputs"))
+        for key, v in doc.get("blocks", {}).items():
+            f, g, bx, by = (int(p) for p in key.split(":"))
+            blocks[(f, g, bx, by)] = (int(v["n"]), v["med"])
+        return cls(cells, inputs=doc.get("inputs"), blocks=blocks, block_m=doc.get("block_m", BLOCK_M))
 
-    def medians(self, fid, gt, default):
-        """default (rows, cols, 3), the valley-wide median of each cell's type, with the flight's own median where its
-        flight holds at least `floor` cells of the type."""
+    def medians(self, fid, gt, default, xs=None, ds=None):
+        """default (rows, cols, 3), the valley-wide median of each cell's type, with the reference of the cell's flight
+        where its flight holds at least `floor` cells of the type. xs, ds: where the cells are (1-D, metres east and south
+        of the grid's origin); without them the flight's median alone."""
         out = np.array(default, np.float32)
         f, g = np.asarray(fid).astype(np.int64), np.asarray(gt).astype(np.int64)
+        B = self.block_m
+        if xs is not None and ds is not None:
+            u = np.asarray(xs, np.float64) / B - 0.5            # block centres sit at integers
+            v = np.asarray(ds, np.float64) / B - 0.5
+            iu, iv = np.floor(u).astype(np.int64), np.floor(v).astype(np.int64)
+            tu, tv = (u - iu).astype(np.float32), (v - iv).astype(np.float32)
         for fl in np.unique(f[f != NO_FLIGHT]):
             in_f = f == fl
             for ty in np.unique(g[in_f]):
                 n, med = self.cells.get((int(fl), int(ty)), (0, None))
-                if n >= self.floor:
-                    out[in_f & (g == ty)] = med
+                if n < self.floor:
+                    continue
+                sel = in_f & (g == ty)
+                blocks = self.blocks.get((int(fl), int(ty)))
+                if not blocks or xs is None or ds is None:
+                    out[sel] = med
+                    continue
+                rr, cc = np.nonzero(sel)
+                u0, v0 = iu[cc], iv[rr]
+                bx0, bx1, by0, by1 = int(u0.min()), int(u0.max()) + 1, int(v0.min()), int(v0.max()) + 1
+                val = np.zeros((by1 - by0 + 1, bx1 - bx0 + 1, 3), np.float32)
+                has = np.zeros(val.shape[:2], np.float32)
+                for (bx, by), (bn, bm) in blocks.items():
+                    if bn >= self.floor and bx0 <= bx <= bx1 and by0 <= by <= by1:
+                        val[by - by0, bx - bx0], has[by - by0, bx - bx0] = bm, 1.0
+                a, b = (u0 - bx0), (v0 - by0)
+                wu, wv = tu[cc], tv[rr]
+                num, den = 0.0, 0.0
+                for da, db, w in ((0, 0, (1 - wu) * (1 - wv)), (1, 0, wu * (1 - wv)), (0, 1, (1 - wu) * wv), (1, 1, wu * wv)):
+                    w = w * has[b + db, a + da]                      # a corner block short of the floor counts for nothing ...
+                    num = num + w[:, None] * val[b + db, a + da]
+                    den = den + w
+                ref = np.where(den[:, None] > 1e-6, num / np.maximum(den, 1e-6)[:, None], med)   # ... all four short: the flight's
+                out[rr, cc] = ref
         return out
 
 

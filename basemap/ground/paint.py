@@ -60,7 +60,7 @@ from basemap.ground import texture as TX
 
 gdal.UseExceptions()
 
-PAINTER_VERSION = "g1b-2"
+PAINTER_VERSION = "g1b-3"
 FEATHER_M = 20.0          # soil types' soft edges
 WATER_FILL_M = 50.0       # SSURGO Water units take the nearest soil's colour within this
 HALO_M = 64.0             # every window is painted this much bigger and cut back (>= WATER_FILL_M + FEATHER_M / 2)
@@ -647,7 +647,8 @@ class Painter:
         lab, _ndvi, _cov, ok = photo
         med = self.palette.lab[gt]
         if self.photo.balance is not None:                  # #415: against the type's median within the cell's own flight
-            med = self.photo.balance.medians(self.photo.flight_ids(P), gt, med)
+            xs, ys = centres(P)
+            med = self.photo.balance.medians(self.photo.flight_ids(P), gt, med, xs, -ys)
         shadow = TX.shadow_cells(lab, med, self.roofs_near(P))
         keep = ok & ~shadow & ~outside_grid(P) & ~(surf | R.grow(surf, BAND_M, P.res))
         delta, w = TX.photo_variation_by_type(lab, med, gt, self.palette.inv_cov, keep)
@@ -667,7 +668,8 @@ class Painter:
         shadow = TX.shadow_cells(lab, self.palette.lab[gt], self.roofs_near(P))
         keep = ok & ~shadow & ~outside_grid(P) & ~(surf | R.grow(surf, BAND_M, P.res)) & (crop_w <= 0)
         inner = win.inner(P)
-        acc.add(self.photo.flight_ids(P)[inner], gt[inner], lab[inner], keep[inner])
+        xs, ys = centres(win)
+        acc.add(self.photo.flight_ids(P)[inner], gt[inner], lab[inner], keep[inner], xs, -ys)
 
     def add_texture(self, win, v, gt_win, w_photo):
         """v (OKLab on win) with the procedural noise: each cell's type energies, by the absolute coordinates, in the
@@ -787,8 +789,9 @@ def photo_report(painter):
                         "light": "slope and aspect from the DEM at each flight's sun" if ph.dem else
                         "not normalised: no DEM given",
                         "sun": "each flight's own" if ph.flights else "the reference day's (no flights given)",
-                        "balance": (f"each ground type's median within its own flight (floor {ph.balance.floor:,} cells, "
-                                    f"{len(ph.balance.cells):,} flight-type medians)") if ph.balance is not None else
+                        "balance": (f"each ground type's median within its own flight and block of {ph.balance.block_m:,.0f} m, smoothed "
+                                    f"between block centres (floor {ph.balance.floor:,} cells, {len(ph.balance.cells):,} "
+                                    f"flight-type and {sum(map(len, ph.balance.blocks.values())):,} block medians)") if ph.balance is not None else
                         "none: the valley-wide median of each type"}
     return out
 
