@@ -19,10 +19,12 @@ This folder holds the contract every piece of the ground shares, and the ground 
 | The contract on the command line | [`ground.py`](ground.py) | anywhere |
 | The land-cover classes in the ten boxes: the rules, and the step that builds them | [`classrules.py`](classrules.py), [`classes.py`](classes.py) | the worker image |
 | The painter: the soil base, crops and the box classes on any window | [`paint.py`](paint.py), [`colour.py`](colour.py) | the worker image |
+| Texture and the photo's variation (G1b): noise, the sun and the light, Mahalanobis, shadows | [`texture.py`](texture.py) (NumPy only) | anywhere NumPy is |
 | The tile writer and its PMTiles writer | [`tilewrite.py`](tilewrite.py), [`pmtw.py`](pmtw.py) (standard library) | the worker image |
 
 Built Oct 11 (sprint package S5a: the contract, then mask v0) and Oct 15 (G1a: the box classes, the painter and the
-tiles). Still to come: texture and photo variation, and the valley-wide runs (G1b); the app's ground source on the
+tiles) and Oct 24 (G1b's code: texture and the photo's variation, below). Still to come: the valley-wide runs and the
+seam sheets (G1b, [below](#g1b-texture-and-the-photos-variation)); the app's ground source on the
 first use of Valley (with S3a). The base bake, which reads the same exports, is in
 [`../landscape/`](../landscape/README.md) (S5b).
 Package names and C numbers refer to the landscape sprint plan (v3), which is kept with the private files.
@@ -558,7 +560,7 @@ detail file, 10-40 m for the low zooms), from what `inputs.resolve()` returns. B
    cover's 10 m cells, and CSB's edges (stepped on CDL's 30 m grid, 5-15 m off the photo), would otherwise show as
    blocks. Rows, a light and dark stripe along the field's bearing 8 m apart, give the direction (a texture: the real
    rows are 0.76 m), on levels fine enough to draw them. Never on mapped surfaces. Cropland clusters outside every
-   field (the crop cover's confidence 3) wait for G1b, which confirms them in the photo. Without farm's export the
+   field (the crop cover's confidence 3) are painted only where the photo's NDVI confirms them (G1b, below). Without farm's export the
    ground stays flat ([above](#what-the-ground-reads)).
 3. **The box classes**, each cell's `floor` as tokens over the soil base (plan §3.4's ground band): short dry grass
    and roofs are the soil itself; pale surfaced ground the soil under 35% cream (the materials' gravel); dark surfaced
@@ -569,10 +571,52 @@ detail file, 10-40 m for the low zooms), from what `inputs.resolve()` returns. B
 4. **The 3 m band (C8).** Surfaced classes on mapped surfaces (mask v0's roads, paving and roofs, and water's mask or
    mask v0's standing water) and within 3 m of them are painted from the soil base, so the photo's pavement doesn't
    show beside a vector road; G1b's photo variation keeps out of the same band.
-5. Outside the grid, the flat Valley colour.
+5. **Texture and the photo's variation** (G1b, [below](#g1b-texture-and-the-photos-variation)).
+6. Outside the grid, the flat Valley colour.
 
-Each window is painted 64 m bigger and cut back, so windows meet without a seam (`test_paint.py`). Texture and the
-photo's variation are G1b's: today the ground is flat colours, soft edges, rows and classes.
+Each window is painted 64 m bigger and cut back, so windows meet without a seam (`test_paint.py`).
+
+### G1b: texture and the photo's variation
+
+[`texture.py`](texture.py) holds the rules (NumPy only, tested anywhere: `test_texture.py`); `paint.py` applies them.
+`PAINTER_VERSION` is `g1b-1`. The inputs are optional and named on the command line (`tilewrite.py paint|assemble
+--naip-2m DIR [--dem FILE]`, the same values for both, since they go into the run's digest as the raw inputs
+`naip-2m`, named by the COG sidecar's sha256, and `3dep`, by the DEM's). Without `--naip-2m` the ground is G1a's plus the
+noise.
+
+- **Procedural noise** from each ground type's measured texture energy (soils' palette `oct_l` and `oct_c`, five
+  octaves 1.2-19.2 m, for L and chroma). Value noise on a lattice (2 x the octave's metres) hashed from the absolute
+  coordinates, with each octave's variance set to the type's energy (unit variance by `NOISE_NORM`, measured in
+  `test_texture.py`), so every window and level samples one field and windows meet without a seam. An octave whose lattice is
+  under two cells is skipped: 2 m cells draw the 2.4 m octave's lattice no finer than 4.8 m, z15's 1.73 m pixels the same,
+  and a level of 40 m or coarser gets none. L moves at most 0.06 and chroma 0.025. A type with no measured energy takes
+  the median of the measured types. Noise is off on mapped surfaces and fills in only the share of a cell the photo's
+  variation does not carry.
+- **The photo's variation** from the 2 m COG (`paint.Photo`): the colour on flat-ground light, less the type's median
+  (the unfeathered soil colour), kept where it is within Mahalanobis 2.5 of the type in its own `lab_cov` spread and
+  gone by 3.0 (a straight ramp between: beyond it the pixel is not this ground, and the base shows). It is added to the
+  soil base, so the soil-coloured classes and crops that blend from the base carry it. Off in crop cells, on mapped
+  surfaces and their 3 m band, in cast shadow, on slopes steeper than 30 degrees (`MAX_SLOPE_DEG`; the plan's cut-first
+  fallback is 15), where the COG's mask has no photo, and for types without a spread (flat colours).
+- **Illumination.** With `--dem`, each pixel's linear colour is multiplied by `sin(sun elevation) / cos(incidence)`,
+  from the slope and aspect of the DEM at 2 m and the sun of the flight that took the pixel (the middle of the flight
+  polygon's local start and end, read as MDT; `flights.fgb` beside the COG), kept between 1/2 and 2 and where the
+  surface faces the sun. Without flights every pixel takes the reference day's sun (June 18, 13:00 local); without a DEM
+  the colour is used as it is, and `run.json` says so (`paint.texture`).
+- **Cast shadows** are dark (L at least 0.10 under the type's median), blue-shifted (b at least 0.01 under) and within
+  40 m of a mapped roof, grown by one cell. They are treated as covered: the variation is off, the base shows. Outside the
+  ten boxes the roofs are the only "something tall" the painter knows (no tree layer is an input), so a shadow beside a
+  tree in open country is not recognised, but only a cell inside Mahalanobis 3.0 of the type is ever kept.
+- **Crop clusters** (the crop cover's confidence 3, outside every field) are painted as crops where the photo covers the
+  cell and its NDVI is at least 0.30. That reading of "the photo confirms" is the builder's; the plan does not give the number.
+- **Seams.** Every field above is a function of absolute coordinates or of a window's own halo, so tiles of different
+  runs meet like windows do (`test_paint.py` checks the noise and the photo across a window edge). The photo's own
+  flight seams and the county line are in the COG already (soils' per-flight gains, one mosaic per place), and
+  are for the seam sheets to judge.
+
+**Tile size.** Measured on a synthetic tile (z15's 1.73 m pixel, WebP quality 80, L noise only): noise of sd 0.009
+in L is 5.4 KB, 0.018 is 12 KB and 0.029 is 20 KB. The photo's variation carries finer detail than the noise and adds
+to that. The real figure comes from the valley run, with `estimate --budget`; none has been made yet.
 
 ## The tiles
 
@@ -594,7 +638,7 @@ What G1a's writer makes (`spec.json` "tiles", `tiles.py`):
   `spec.json` (`tiles.detail.minzoom`).
 - **Size:** planned at about 0.6 GB valley-wide, about 40 KB a tile, and tens of MB for the detail file. G1a's flat
   paint is far smaller: the 558 valley tiles painted around the boxes and at the default view average 3.7 KB (2.1 MB),
-  the 612 detail tiles 12 KB (7.4 MB). G1b's texture and photo variation set the real size.
+  the 612 detail tiles 12 KB (7.4 MB). G1b's texture and photo variation set the real size (see its tile-size note above; no valley run yet).
 - **Versions:** `<digest>` is `tiles.digest(plan, painter)`, where the writer's `painter` is `PAINTER_VERSION` and the
   sha256 of the painter's and writer's code (`tiles.code_digest`: `tilewrite.py` and every module of this folder it
   reads, in turn). It covers the spec, the painter and its code, the version of every raw input the plan reads, and
@@ -652,11 +696,23 @@ harness's S1.
   against the budget's 14 and 600,000. G1b's texture and photo variation will add bytes to every tile: that leaves
   about 33 KB a tile of headroom on average. `tilewrite.py estimate --budget` exits 1 over the budget, so the same
   estimate is a check once G1b's tiles exist.
-- **Still to do**, tracked for the app wiring (S3a's follow-up, wave 2) and after G1b's texture: the page's total at
-  the default view (at most 6 MB) isn't measured with the ground in it yet, since the app doesn't load the ground
-  until it's wired (the ground source on first Valley use, hidden under Aerial; Clay flat). Then the first load
-  becomes a `perf.mjs` scenario with a budget that fails (the ground's 0.6 MB and 14 requests through
-  `tiles.first_load`, and the page's 6 MB), measured on textured tiles rather than G1a's flat ones.
+- **Still to do** (Oct 24). G1b's code and unit tests are in; what needs the real inputs and the heavy window is not:
+  - the valley-wide runs (at most two, under `heavy --deadline` with the cold-data drive) and the first-load estimate
+    on textured tiles (`tilewrite.py estimate --budget`: 0.6 MB, 14 requests, tiles near 40 KB);
+  - the seam sheets for the ten boxes and the county lines (private files), and the check of the per-flight colour
+    gains at the flight seams (kept for now, owner Oct 22 answer 12);
+  - the darkest soils (Boise Front north slopes) and box i's lidar-dark desert floor, which the classes may read as
+    surfaced ground: the Mahalanobis, slope and shadow cuts above are set from the plan, not yet judged on them;
+  - the slope cut (30 degrees now; 15 is the plan's fallback) and the NDVI cut for crop clusters (0.30), to be set
+    from the sheets;
+  - a DEM file in the grid's CRS for `--dem` (the 3DEP products the boxes use are the likely source; none is wired in
+    here), and a sun from each flight's own place rather than the valley's middle;
+  - repainting after the water and mask exports land, into new run folders (the digest takes care of the names);
+  - the app wiring (S3a's follow-up, wave 2): the page's total at the default view (at most 6 MB) isn't measured with
+    the ground in it yet, since the app doesn't load the ground until it's wired (the ground source on first Valley use,
+    hidden under Aerial; Clay flat). Then the first load becomes a `perf.mjs` scenario with a budget that fails (the
+    ground's 0.6 MB and 14 requests through `tiles.first_load`, and the page's 6 MB), measured on textured tiles rather
+    than G1a's flat ones.
 
 ## Commands and tests
 
@@ -668,12 +724,13 @@ python3 basemap/ground/ground.py flat --tiles DIR --archive $TVT_ARCHIVE
 python basemap/ground/mask.py build --roofs DIR/buildings.pmtiles   # mask v0 (worker image), into $TVT_ARCHIVE
 python basemap/ground/classes.py build --recipe R.json              # the box classes (worker image, heavy)
 python basemap/ground/tilewrite.py paint --out DIR --boxes --detail --view 8,9,10   # G1a's tiles, as blocks
-python basemap/ground/tilewrite.py paint --out DIR --valley --pyramid --detail    # every block (G1b; resumable)
+python basemap/ground/tilewrite.py paint --out DIR --valley --pyramid --detail \
+  --naip-2m COGDIR [--dem DEM.tif]                                  # every block (G1b; resumable); assemble takes the same
 python basemap/ground/tilewrite.py assemble --out DIR [--partial | --tiles TILES]  # the PMTiles files (and switch in)
 python basemap/ground/tilewrite.py readback --pmtiles F --zoom 15 --out DIR       # tiles around the boxes, for sheets
 node app/scripts/ground-firstload.mjs --pmtiles F --out view.json   # the default view's requests (laptop)
 python basemap/ground/tilewrite.py estimate --pmtiles F --view view.json [--budget]   # ... from a full file's directory
-python3 -m unittest discover -s basemap/ground -t .                 # the worker tests skip here
+python3 -m unittest discover -s basemap/ground -t .                 # the worker tests skip here (test_texture.py needs only NumPy)
 docker run --rm --memory 1g --cpus 1 --network none -v "$PWD":/repo -w /repo tvt-worker \
   python -m unittest discover -s basemap/ground -t .                # all of them; a skip here is a failure
 ```
@@ -710,3 +767,12 @@ soil types in their metadata), a whole pair refused until every tile of the spec
 run per digest (a resume or an assemble after the inputs changed is refused, as are blocks of unknown origin), and
 the first-load estimate; `test_tiles.py` the code digest and the builds the live tiles name; `test_pmtw.py`
 (standard library) the PMTiles writer against the bake's reader, deduplication and leaf directories.
+
+G1b's: `test_texture.py` (NumPy only) checks the noise (unit variance, a function of the absolute coordinates, octaves
+skipped on coarse levels), the sun over Boise, slope and aspect of planes, the illumination gain, the Mahalanobis
+distance and its ramp, cast shadows and the NDVI band. `TestTexturePhoto` in `test_paint.py` paints the synthetic world
+with a synthetic COG, DEM and no flights (the reference sun): the palette's spread and energies, noise energy and
+seamless windows, the photo kept inside 2.5 sd and gone outside it or in the mask's hole, a coarse level, the band
+beside a road, a shadow beside a roof, a north slope put back on flat light, a crop cluster confirmed or not by NDVI,
+and a COG with the wrong shape refused; `test_tilewrite.py` checks the photo inputs' versions and that the digest
+names them.

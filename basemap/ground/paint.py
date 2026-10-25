@@ -29,26 +29,37 @@ What it paints, bottom to top (plan G1a, C7, C8; the soils, farm and osm-landsca
    photo's pavement doesn't show beside the vector road (C8).
 4. Outside the grid, the flat Valley colour.
 
-Texture (procedural noise from the octave energies) and the photo's variation are G1b's. Windows are painted with a
-HALO_M halo and cut back, so neighbouring windows meet without a seam (test_paint.py checks it).
+5. **Texture and the photo's variation (G1b; texture.py).** With the NAIP 2 m COG (`photo`), the soil base takes the
+   photo's own variation: its colour put on flat-ground light (slope and aspect from the DEM at each flight's sun),
+   less the ground type's median, kept inside Mahalanobis 2.5 of the type and gone by 3.0, and off in crop cells, on
+   mapped surfaces and their BAND_M band, in cast shadow (dark, blue-shifted, near a roof), on steep slopes and where
+   the photo doesn't reach. Everywhere else, and wherever the photo's variation is off, the type's measured texture
+   energy drives procedural noise on a hashed lattice of the absolute coordinates (so windows and levels share one
+   field). Crop clusters outside the fields (confidence 3) are painted where the photo's NDVI confirms them. Without
+   the COG the ground is G1a's plus the noise; with `texture=False` it is exactly G1a's.
+
+Windows are painted with a HALO_M halo and cut back, so neighbouring windows meet without a seam (test_paint.py checks
+it).
 """
 
 import json
 import math
 import os
+import warnings
 
 import numpy as np
-from osgeo import gdal
+from osgeo import gdal, ogr
 from scipy import ndimage as ndi
 
 from basemap.ground import classrules as CR
 from basemap.ground import colour as K
 from basemap.ground import grid, mask as MASK
 from basemap.ground import rasterize as R
+from basemap.ground import texture as TX
 
 gdal.UseExceptions()
 
-PAINTER_VERSION = "g1a-3"
+PAINTER_VERSION = "g1b-1"
 FEATHER_M = 20.0          # soil types' soft edges
 WATER_FILL_M = 50.0       # SSURGO Water units take the nearest soil's colour within this
 HALO_M = 64.0             # every window is painted this much bigger and cut back (>= WATER_FILL_M + FEATHER_M / 2)
@@ -105,6 +116,9 @@ class Palette:
         n = max([0] + [int(t["gid"]) for t in types]) + 1
         self.lab = np.zeros((n, 3), np.float32)
         self.how = np.zeros(n, np.uint8)
+        self.inv_cov = np.full((n, 3, 3), np.nan, np.float32)    # the type's spread, inverted (NaN: none measured)
+        self.oct_l = np.zeros((n, 5), np.float32)                # texture energy of L and chroma, five octaves
+        self.oct_c = np.zeros((n, 5), np.float32)
         self.counts = {"measured": 0, "borrowed": 0, "flat": 0, "water": 0}
         self.flat = []                   # the types painted a flat colour: [{"gid", "id", "series"}]
         pal = {int(t["gid"]): t for t in (palette or {}).get("types", [])}
@@ -112,6 +126,8 @@ class Palette:
                     if t.get("status") == "measured" and t.get("lab_med") and not t.get("misc")]
         self.valley = (np.median(np.stack(measured), axis=0).astype(np.float32) if measured
                        else np.array((FLAT_DEFAULT_L, *FLAT_AB), np.float32))
+        self.valley_oct_l, self.valley_oct_c = (_median_octaves(pal, k) for k in ("oct_l", "oct_c"))
+        self.oct_l[:], self.oct_c[:] = self.valley_oct_l, self.valley_oct_c
         for t in types:
             gid = int(t["gid"])
             p = pal.get(gid, {})
@@ -122,6 +138,13 @@ class Palette:
             elif p.get("lab_med") and p.get("status") in ("measured", "series", "texture", "albedo"):
                 self.lab[gid] = np.asarray(p["lab_med"], np.float32)
                 self.how[gid] = self.MEASURED if p["status"] == "measured" else self.BORROWED
+                inv = TX.inverse_covariance(TX.cov_matrices([p.get("lab_cov")])[0])
+                if inv is not None:
+                    self.inv_cov[gid] = inv
+                for arr, k in ((self.oct_l, "oct_l"), (self.oct_c, "oct_c")):
+                    v = _octaves_of(p.get(k))
+                    if v is not None:
+                        arr[gid] = v
                 self.counts["measured" if p["status"] == "measured" else "borrowed"] += 1
             else:
                 self.lab[gid], self.how[gid] = flat_lab(t.get("id") or p.get("id"), misc), self.FLAT
@@ -142,6 +165,21 @@ class Palette:
 
     def flat_types(self):
         return int(self.counts["flat"])
+
+
+def _octaves_of(v):
+    """Five finite, non-negative energies from a palette's octave list (None entries become 0), or None."""
+    if not v or len(v) != 5:
+        return None
+    out = np.array([0.0 if x is None else float(x) for x in v], np.float32)
+    return out if np.all(np.isfinite(out)) else None
+
+
+def _median_octaves(pal, key):
+    """The median of the measured types' octave energies: what a type without its own measure takes."""
+    rows = [_octaves_of(t.get(key)) for t in pal.values() if t.get("status") == "measured" and not t.get("misc")]
+    rows = [r for r in rows if r is not None]
+    return np.median(np.stack(rows), axis=0).astype(np.float32) if rows else np.zeros(5, np.float32)
 
 
 def _odd(n):
@@ -197,13 +235,146 @@ def outside_grid(win):
     return oy[:, None] | ox[None, :]
 
 
+class Photo:
+    """The NAIP 2 m COG (soils' naip2025_2m.tif: bands 1-3 red, green, blue on the reference flight day's scale, 4 NDVI
+    coded 1..255, an internal mask), its flight polygons and, optionally, a DEM, read onto any window of the grid:
+
+        photo.window(P) -> (lab, ndvi, covered, ok)
+
+    lab: the photo's OKLab on flat-ground light (rows, cols, 3); ndvi: float, NaN where unknown; covered: bool, the
+    photo is there; ok: bool, the photo's colour is usable (covered, and the light could be normalised: not steeper
+    than TX.MAX_SLOPE_DEG, not turned from the sun). Everything is read and normalised at the COG's 2 m and then
+    repeated onto finer levels or averaged onto coarser ones. Without a DEM the colour is used as it is (labelled in
+    the report); without flights every pixel takes the reference day's sun."""
+    REFERENCE_SUN_LOCAL = "06/18/2025 13:00"        # the reference flight day (soils' colour gains), when no flights
+
+    def __init__(self, cog, flights=None, dem=None):
+        self.cog, self.flights, self.dem = cog, flights, dem
+        self._ds = None
+        self._sun = None
+
+    def _open(self):
+        if self._ds is None:
+            self._ds = gdal.Open(self.cog)
+            if self._ds.RasterCount < 4:
+                raise PaintError(f"{self.cog} isn't the 2 m NAIP COG: it has {self._ds.RasterCount} bands, not 4")
+            gt = self._ds.GetGeoTransform()
+            if abs(gt[1] - 2.0) > 1e-6 or abs(gt[5] + 2.0) > 1e-6:
+                raise PaintError(f"{self.cog} isn't on the ground's 2 m grid (its cells are {gt[1]:g} m)")
+            ox, oy = (gt[0] - grid.ORIGIN_X) / 2.0, (grid.ORIGIN_Y - gt[3]) / 2.0
+            if abs(ox - round(ox)) > 1e-6 or abs(oy - round(oy)) > 1e-6:
+                raise PaintError(f"{self.cog} isn't aligned to the ground's 2 m grid")
+        return self._ds
+
+    def sun_table(self):
+        """{src_fid: (azimuth, elevation)} from the flight polygons (the middle of each flight's local start and end,
+        else its day at local noon), and the default for a pixel outside them."""
+        if self._sun is None:
+            default = TX.sun_position(TX.parse_local(self.REFERENCE_SUN_LOCAL))
+            table = {}
+            if self.flights:
+                ds = ogr.Open(self.flights)
+                lyr = ds.GetLayer(0)
+                defn = lyr.GetLayerDefn()
+                names = {defn.GetFieldDefn(i).GetName() for i in range(defn.GetFieldCount())}
+                for f in lyr:
+                    t0, t1 = (TX.parse_local(f.GetField(k)) if k in names else None for k in ("sdate", "edate"))
+                    if t0 and t1:
+                        when = t0 + (t1 - t0) / 2
+                    else:
+                        when = TX.parse_local(f.GetField("idate")) if "idate" in names else None
+                    if when is not None:
+                        table[int(f.GetField("src_fid"))] = TX.sun_position(when)
+            self._sun = (table, default)
+        return self._sun
+
+    def _cog(self, W):
+        """(rgb uint8 (h, w, 3), ndvi byte (h, w), covered bool) on the 2 m window W; zero outside the COG."""
+        ds = self._open()
+        gt = ds.GetGeoTransform()
+        c0 = int(round((W.west - gt[0]) / 2.0))
+        r0 = int(round((gt[3] - W.north) / 2.0))
+        rgb = np.zeros((W.height, W.width, 3), np.uint8)
+        nd = np.zeros(W.shape, np.uint8)
+        cov = np.zeros(W.shape, bool)
+        xo0, yo0 = max(c0, 0), max(r0, 0)
+        xo1, yo1 = min(c0 + W.width, ds.RasterXSize), min(r0 + W.height, ds.RasterYSize)
+        if xo1 > xo0 and yo1 > yo0:
+            a = ds.ReadAsArray(xo0, yo0, xo1 - xo0, yo1 - yo0).reshape(ds.RasterCount, yo1 - yo0, xo1 - xo0)
+            m = ds.GetRasterBand(1).GetMaskBand().ReadAsArray(xo0, yo0, xo1 - xo0, yo1 - yo0) > 0
+            sl = (slice(yo0 - r0, yo1 - r0), slice(xo0 - c0, xo1 - c0))
+            rgb[sl] = np.moveaxis(a[:3], 0, -1)
+            nd[sl] = a[3]
+            cov[sl] = m
+        return rgb, nd, cov
+
+    def _light(self, W):
+        """(gain (h, w), ok (h, w)) on the 2 m window W: the factor that puts the pixel on flat-ground light, and where
+        that could be done."""
+        sun, default = self.sun_table()
+        az = np.full(W.shape, default[0], np.float32)
+        el = np.full(W.shape, default[1], np.float32)
+        if self.flights and sun:
+            fid = R.rasterize(W, self.flights, attribute="src_fid", dtype="uint32")
+            for k, (a, e) in sun.items():
+                hit = fid == k
+                az[hit], el[hit] = a, e
+        if not self.dem:
+            return np.ones(W.shape, np.float32), np.ones(W.shape, bool)
+        src = gdal.Open(self.dem)
+        z = gdal.Warp("", src, format="MEM", outputBounds=W.bounds, width=W.width, height=W.height,
+                      srcSRS=R.warp_srs(src.GetProjection()), dstSRS=R.warp_srs(W.crs), resampleAlg="bilinear",
+                      outputType=gdal.GDT_Float32, dstNodata=float("nan"))
+        elev = z.GetRasterBand(1).ReadAsArray().astype(np.float64)
+        del z
+        slope, aspect = TX.slope_aspect(elev, W.res)
+        gain, ok = TX.illumination_gain(slope, aspect, az, el)
+        ok &= np.isfinite(slope) & (np.degrees(slope) <= TX.MAX_SLOPE_DEG)
+        return gain, ok
+
+    def window(self, P):
+        W = P.at(2.0)
+        rgb, nd, cov = self._cog(W)
+        gain, ok = self._light(W)
+        lin = K.srgb_to_linear(rgb / 255.0) * gain[..., None]
+        lab = K.rgb_to_oklab(K.linear_to_srgb(lin) * 255.0).astype(np.float32)
+        ndvi, known = TX.decode_ndvi(nd)
+        ok = ok & cov
+        return (_level(lab, W, P), _level(ndvi, W, P, nan=True), _level(cov, W, P), _level(ok, W, P))
+
+
+def _level(a, W, P, nan=False):
+    """An array on the 2 m window W moved onto P's cells: repeated onto a finer level, averaged (booleans: at least
+    half; NaN-aware when nan) onto a coarser one."""
+    if P.res == W.res:
+        return a
+    if P.res < W.res:
+        k = int(round(W.res / P.res))
+        up = np.repeat(np.repeat(a, k, 0), k, 1)
+        r0 = int(round((W.north - P.north) / P.res))
+        c0 = int(round((P.west - W.west) / P.res))
+        return up[r0:r0 + P.height, c0:c0 + P.width]
+    k = int(round(P.res / W.res))
+    h, w = P.height, P.width
+    b = a[:h * k, :w * k].reshape((h, k, w, k) + a.shape[2:])
+    if a.dtype == bool:
+        return b.mean(axis=(1, 3)) >= 0.5
+    if nan:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)         # a block of NaN is NaN
+            return np.nanmean(b, axis=(1, 3)).astype(np.float32)
+    return b.mean(axis=(1, 3)).astype(np.float32)
+
+
 class Painter:
     """Paints windows of the grid from resolved inputs. soils: soils' `ground` layer; palette: a Palette; crop_cover:
     the GeoTIFF's path (or None); fields: farm's `fields` layer (or None); mask: mask v0's Manifest; water: water's
     `mask` layer (or None: mask v0's water, intermittent = 0); classes: {box id: GeoTIFF path}."""
 
-    def __init__(self, soils, palette, mask, crop_cover=None, fields=None, water=None, classes=None):
+    def __init__(self, soils, palette, mask, crop_cover=None, fields=None, water=None, classes=None, photo=None,
+                 texture=True):
         self.soils, self.palette, self.mask = soils, palette, mask
+        self.photo, self.texture = photo, texture
         self.crop_cover, self.fields, self.water = crop_cover, fields, water
         self.classes = dict(classes or {})
         self.green = {g: _lab(h) for g, h in CROP_GREEN.items()}
@@ -217,8 +388,8 @@ class Painter:
         self._cc = None
 
     @classmethod
-    def from_plan(cls, plan):
-        """A Painter from inputs.resolve()'s painted plan."""
+    def from_plan(cls, plan, photo=None, texture=True):
+        """A Painter from inputs.resolve()'s painted plan. photo: a Photo (G1b's 2 m COG, flights and DEM), or None."""
         if plan.status != "painted":
             raise PaintError(plan.reason)
         soils = plan.choice("soils/ground").layer
@@ -237,7 +408,7 @@ class Painter:
         mask_m = _ManifestOf(mask_layers)
         classes = {lay.name: lay.path for lay in plan.choice("ground_classes").layers}
         return cls(soils, palette, mask_m, crop_cover=cc.path if cc else None, fields=fields, water=water,
-                   classes=classes)
+                   classes=classes, photo=photo, texture=texture)
 
     # --- the layers ------------------------------------------------------------------------------------------------
 
@@ -253,6 +424,8 @@ class Painter:
                 d, (iy, ix) = ndi.distance_transform_edt(fill, sampling=P.res, return_indices=True)
                 near = fill & (d <= WATER_FILL_M)
                 lab[near] = lab[iy[near], ix[near]]
+                gt = gt.copy()
+                gt[near] = gt[iy[near], ix[near]]               # the type that gave the colour (its spread, texture)
         return box_blur(lab, FEATHER_M, P.res), gt
 
     def surfaces(self, P):
@@ -293,7 +466,7 @@ class Painter:
             out.append(v.astype(np.uint8))
         return tuple(out)
 
-    def crops(self, P, base, surf):
+    def crops(self, P, base, surf, confirmed=None):
         """(crop colour OKLab, weight 0..1) on P: crop fields to their own edges (the field's 2025 group) and the crop
         cover's edge band where the CDL agrees; the July state from the crop cover's 10 m cells (where a field reaches
         past them, the nearest within STATE_REACH_M); rows along the field's bearing."""
@@ -310,6 +483,8 @@ class Painter:
             bearing = np.full(P.shape, np.nan, np.float32)
             crop = (conf >= 1) & (conf <= 2) & (group > 0)
             grp = group
+        if confirmed is not None:                                   # G1b: clusters outside the fields, where the photo agrees
+            crop = crop | ((conf == 3) & (group > 0) & confirmed)
         crop &= ~surf
         st = state.copy()
         need = crop & (st == 0)                                     # a field's edge the 10 m cells don't reach
@@ -411,16 +586,51 @@ class Painter:
 
     # --- a window --------------------------------------------------------------------------------------------------
 
+    def roofs_near(self, P):
+        """Cells within TX.SHADOW_REACH_M of a mapped roof: where a dark, blue-shifted photo cell is a cast shadow."""
+        roofs = MASK.exact(P, self.mask, "roofs")
+        if not roofs.any():
+            return np.zeros(P.shape, bool)
+        return ndi.distance_transform_edt(~roofs, sampling=P.res) <= TX.SHADOW_REACH_M
+
+    def variation(self, P, gt, surf, crop_w, photo):
+        """(delta OKLab, weight) of the photo's variation on P, from photo.window(P) (see texture.py): the photo less the
+        ground type's median, kept inside Mahalanobis 2.5 of the type. Off in cast shadow, on mapped surfaces and their
+        BAND_M band, where the crop's own colour shows, and wherever the photo or its light isn't usable."""
+        lab, _ndvi, _cov, ok = photo
+        med = self.palette.lab[gt]
+        shadow = TX.shadow_cells(lab, med, self.roofs_near(P))
+        keep = ok & ~shadow & ~outside_grid(P) & ~(surf | R.grow(surf, BAND_M, P.res))
+        delta, w = TX.photo_variation(lab, med, self.palette.inv_cov[gt], keep)
+        return delta, w * (1.0 - crop_w)
+
+    def add_texture(self, win, v, gt_win, w_photo):
+        """v (OKLab on win) with the procedural noise: each cell's type energies, by the absolute coordinates, in the
+        share of the cell the photo's variation doesn't already carry."""
+        xs, ys = centres(win)
+        dl, dc = TX.noise_fields(xs, ys, self.palette.oct_l[gt_win], self.palette.oct_c[gt_win], win.res)
+        return TX.add_texture(v, dl, dc, weight=(1.0 - w_photo))
+
     def paint_lab(self, win):
         """The ground on win: OKLab (rows, cols, 3) float32."""
         P = win.pad_m(HALO_M)
-        base, _gt = self.soil_base(P)
+        base, gt = self.soil_base(P)
         surf = self.surfaces(P)
-        crop_paint, crop_w = self.crops(P, base, surf)
+        photo = self.photo.window(P) if self.photo is not None else None
+        confirmed = TX.confirm_cluster(photo[1], photo[2]) if photo is not None else None
+        crop_paint, crop_w = self.crops(P, base, surf, confirmed)
+        if photo is not None and self.texture:
+            delta, w_photo = self.variation(P, gt, surf, crop_w, photo)
+            base = base + w_photo[..., None] * delta
+        else:
+            w_photo = np.zeros(P.shape, np.float32)
         v = base + crop_w[..., None] * (crop_paint - base)
         if self.classes:
             v = self.boxes_over(v, P, base, crop_paint, crop_w)
-        v = v[win.inner(P)]
+        inner = win.inner(P)
+        v = v[inner]
+        if self.texture:
+            v = self.add_texture(win, v, gt[inner], np.minimum(1.0, w_photo[inner] + surf[inner]))
         v[outside_grid(win)] = self.flat_valley
         return v
 
@@ -450,7 +660,8 @@ class _ManifestOf:
 
 def versions(**given):
     """The raw-input versions the painter names for inputs.resolve(..., versions=), e.g. {"naip-2m": <sha256>}. G1a's
-    painter reads exports only, so none; G1b's photo variation adds naip-2m. Kept as the one place that names them."""
+    painter reads exports only, so none; with G1b's photo variation, naip-2m (the COG sidecar's sha256) and, when a DEM
+    normalises the light, 3dep (the DEM's sha256). Kept as the one place that names them."""
     return {k: v for k, v in given.items() if v}
 
 
@@ -462,10 +673,32 @@ def report(painter, plan):
             "flat_types_note": "types without a measured or borrowed colour are a flat colour by texture, labelled",
             "crop_cover": bool(painter.crop_cover), "fields": painter.fields is not None,
             "water": "water/mask" if painter.water is not None else "mask v0's water (intermittent = 0)",
-            "boxes": sorted(painter.classes), "fallbacks": [f"{c.use.ref}: {c.use.fallback}" for c in plan.choices
+            "boxes": sorted(painter.classes),
+            "texture": photo_report(painter),
+            "fallbacks": [f"{c.use.ref}: {c.use.fallback}" for c in plan.choices
                                                            if c.fallback],
             "rules": {"feather_m": FEATHER_M, "water_fill_m": WATER_FILL_M, "box_feather_m": BOX_FEATHER_M,
-                      "band_m": BAND_M, "crop_edge_m": CROP_EDGE_M, "row_period_m": ROW_PERIOD_M}}
+                      "band_m": BAND_M, "crop_edge_m": CROP_EDGE_M, "row_period_m": ROW_PERIOD_M,
+                      "mahalanobis": [TX.MAHALANOBIS_FULL, TX.MAHALANOBIS_ZERO], "max_slope_deg": TX.MAX_SLOPE_DEG,
+                      "gain_max": TX.GAIN_MAX, "shadow": [TX.SHADOW_DL, TX.SHADOW_DB, TX.SHADOW_REACH_M],
+                      "cluster_ndvi": TX.CLUSTER_NDVI}}
+
+
+def photo_report(painter):
+    """What G1b's texture and photo variation used, for the run's record: the noise, and the photo with how its light
+    was normalised."""
+    ph = painter.photo
+    if not painter.texture:
+        return {"noise": False, "photo": None}
+    out = {"noise": True, "octaves_m": list(TX.OCTAVES_M),
+           "types_with_spread": int(np.isfinite(painter.palette.inv_cov[:, 0, 0]).sum()),
+           "photo": None}
+    if ph is not None:
+        out["photo"] = {"cog": os.path.basename(ph.cog), "flights": bool(ph.flights),
+                        "light": "slope and aspect from the DEM at each flight's sun" if ph.dem else
+                        "not normalised: no DEM given",
+                        "sun": "each flight's own" if ph.flights else "the reference day's (no flights given)"}
+    return out
 
 
 def notes(rep):

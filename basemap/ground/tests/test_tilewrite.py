@@ -246,6 +246,37 @@ class TestTiles(unittest.TestCase):
         kids = {(4 * bx + i, 4 * by + j) for bx, by in d for i in range(4) for j in range(4)}
         self.assertTrue(set(T.detail_tiles(17)) <= kids)
 
+    def test_the_photo_inputs_name_their_versions(self):
+        self.assertEqual(TW.photo_of(None, None), (None, {}))
+        with self.assertRaises(TW.TileError):
+            TW.photo_of(None, "dem.tif")                                # a DEM alone has nothing to normalise
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        with self.assertRaises(TW.TileError):
+            TW.photo_of(d)                                              # no COG there
+        for name in ("naip2025_2m.tif", "naip2025_2m.json"):
+            with open(os.path.join(d, name), "w") as f:
+                f.write("{}" if name.endswith("json") else "x")
+        with self.assertRaises(TW.TileError):
+            TW.photo_of(d)                                              # a sidecar without its sha256
+        with open(os.path.join(d, "naip2025_2m.json"), "w") as f:
+            json.dump({"sha256": "ab" * 32}, f)
+        dem = os.path.join(d, "dem.tif")
+        with open(dem, "wb") as f:
+            f.write(b"elevations")
+        photo, versions = TW.photo_of(d, dem)
+        self.assertEqual(versions["naip-2m"], "ab" * 32)
+        self.assertEqual(versions["3dep"], TW.sha256_of(dem))
+        self.assertIsNone(photo.flights)
+        self.assertEqual(TW.photo_of(d)[1], {"naip-2m": "ab" * 32})
+        with self.assertRaises(TW.TileError):
+            TW.photo_of(d, os.path.join(d, "nope.tif"))
+
+    def test_the_digest_names_the_photo(self):
+        a = T.digest(stub_plan({"naip-2m": "aa"}), painter="p")
+        self.assertNotEqual(a, T.digest(stub_plan({"naip-2m": "bb"}), painter="p"))
+        self.assertNotEqual(a, T.digest(stub_plan(), painter="p"))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -30,6 +30,7 @@ flat Valley colour (the painter's).
 
 import argparse
 import gzip
+import hashlib
 import io
 import json
 import math
@@ -375,9 +376,43 @@ def detail_blocks():
 
 # ---- assembling -----------------------------------------------------------------------------------------------------
 
-def plan_of(archive):
-    """The ground's plan from the archive's exports (inputs.resolve), refused unless it can be painted."""
-    plan = inputs.resolve(inputs.exports(archive), versions=paint.versions())
+def sha256_of(path, chunk=1 << 22):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        while block := f.read(chunk):
+            h.update(block)
+    return h.hexdigest()
+
+
+def photo_of(naip_dir=None, dem=None):
+    """(paint.Photo or None, the raw-input versions it adds) from soils' COG folder (naip2025_2m.tif, its sidecar
+    naip2025_2m.json and flights.fgb) and optionally a DEM: naip-2m is named by the sidecar's sha256 (the COG's, written
+    when it was assembled), 3dep by the DEM's own. Without a folder there is no photo, and the ground is G1a's plus the
+    procedural noise."""
+    if not naip_dir:
+        if dem:
+            raise TileError("--dem needs --naip-2m: the DEM only normalises the photo's light")
+        return None, {}
+    cog = os.path.join(naip_dir, "naip2025_2m.tif")
+    side = os.path.join(naip_dir, "naip2025_2m.json")
+    for path in (cog, side):
+        if not os.path.isfile(path):
+            raise TileError(f"{naip_dir} has no {os.path.basename(path)} (soils' photo build: plugins/soils/build/photo_stats.py)")
+    with open(side, encoding="utf-8") as f:
+        sha = (json.load(f) or {}).get("sha256")
+    if not sha:
+        raise TileError(f"{side} names no sha256 for the COG")
+    flights = os.path.join(naip_dir, "flights.fgb")
+    if dem and not os.path.isfile(dem):
+        raise TileError(f"--dem: {dem} isn't there")
+    versions = paint.versions(**{"naip-2m": sha, "3dep": sha256_of(dem) if dem else None})
+    return paint.Photo(cog, flights if os.path.isfile(flights) else None, dem), versions
+
+
+def plan_of(archive, versions=None):
+    """The ground's plan from the archive's exports (inputs.resolve), refused unless it can be painted. versions: the
+    raw inputs the painter adds (photo_of)."""
+    plan = inputs.resolve(inputs.exports(archive), versions=paint.versions(**(versions or {})))
     if plan.status != "painted":
         raise TileError(plan.reason)
     return plan
@@ -581,11 +616,17 @@ def main(argv=None):
     p.add_argument("--limit", type=int, help="stop after painting this many blocks (a chunk at a time; blocks done "
                                              "before are kept and don't count)")
     p.add_argument("--pyramid", action="store_true", help="z12-z8 from the kept z13 tiles, after --valley")
+    p.add_argument("--naip-2m", help="soils' 2 m COG folder (naip2025_2m.tif, .json, flights.fgb): G1b's photo variation; "
+                                     "the same value for paint and assemble")
+    p.add_argument("--dem", help="a DEM GeoTIFF that normalises the photo's light by slope and aspect (with --naip-2m)")
     p = sub.add_parser("assemble", help="the PMTiles files from DIR/blocks/")
     p.add_argument("--out", required=True)
     p.add_argument("--archive", help="default $TVT_ARCHIVE")
     p.add_argument("--partial", action="store_true", help="name the files -partial (no manifest entry)")
     p.add_argument("--tiles", help="a tiles folder: write the files there and switch the manifest's ground entry")
+    p.add_argument("--naip-2m", help="soils' 2 m COG folder (naip2025_2m.tif, .json, flights.fgb): G1b's photo variation; "
+                                     "the same value for paint and assemble")
+    p.add_argument("--dem", help="a DEM GeoTIFF that normalises the photo's light by slope and aspect (with --naip-2m)")
     p = sub.add_parser("readback", help="a file's tiles around the boxes as GeoTIFFs, for the review sheets")
     p.add_argument("--pmtiles", required=True)
     p.add_argument("--zoom", type=int, required=True)
@@ -625,7 +666,8 @@ def main(argv=None):
         return 0
     archive = args.archive or os.environ.get("TVT_ARCHIVE")
     try:
-        plan = plan_of(archive)
+        photo, extra = photo_of(args.naip_2m, args.dem)
+        plan = plan_of(archive, extra)
     except (TileError, inputs.InputError, M.ManifestError) as err:
         print(f"refused: {err}", file=sys.stderr)
         return 2
@@ -650,7 +692,7 @@ def main(argv=None):
         print(json.dumps({"valley": v, "detail": d, "digest": digest}))
         return 0
     try:
-        painter = paint.Painter.from_plan(plan)
+        painter = paint.Painter.from_plan(plan, photo=photo)
         blocks = Blocks(args.out)
         blocks.begin(run_stamp(plan, painter))
     except (TileError, paint.PaintError) as err:
