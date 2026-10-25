@@ -422,6 +422,21 @@ class TestTexturePhoto(unittest.TestCase):
             os.remove(side)
         self.assertIsNone(paint.Photo(cog, flights).balance)
 
+    def test_a_balance_measured_from_other_inputs_is_refused(self):
+        cog, flights = self.two_flight_world()
+        acc = paint.build_balance(self.painter(photo=paint.Photo(cog, flights)), size_cells=256, bounds=(X0, Y0, X1, Y1))
+        self.assertIn("flights", acc.inputs)
+        doc = acc.to_json()
+        doc["inputs"]["flights"] = "0" * 64                     # flights.fgb rebuilt since
+        side = os.path.join(self.dir, paint.BALANCE_FILE)
+        with open(side, "w") as f:
+            json.dump(doc, f)
+        try:
+            with self.assertRaises(paint.PaintError):
+                paint.Photo(cog, flights)
+        finally:
+            os.remove(side)
+
     def test_a_crop_cluster_is_painted_where_the_photo_confirms_it(self):
         d = self.dir
         cover = os.path.join(d, "cluster.tif")

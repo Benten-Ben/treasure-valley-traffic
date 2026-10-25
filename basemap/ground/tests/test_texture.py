@@ -188,11 +188,6 @@ class TestVariation(unittest.TestCase):
         ok = T.confirm_cluster(np.array([[0.5, 0.2, np.nan, 0.5]], np.float32), np.array([[True, True, True, False]]))
         self.assertTrue(np.array_equal(ok, [[True, False, False, False]]))
 
-
-if __name__ == "__main__":
-    unittest.main()
-
-
 @unittest.skipIf(np is None, "needs NumPy")
 class TestFlightBalance(unittest.TestCase):
     """#415: the photo is measured against each type's median within its own flight."""
@@ -282,3 +277,7 @@ class TestFlightBalance(unittest.TestCase):
         for r in range(0, 100, 25):
             parts.add(fid[r:r + 25], gt[r:r + 25], lab[r:r + 25], np.ones((25, 100), bool))
         self.assertEqual(whole.medians(), parts.medians())
+
+
+if __name__ == "__main__":
+    unittest.main()

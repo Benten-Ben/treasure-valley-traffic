@@ -303,8 +303,9 @@ class FlightBalance:
     median is the histogram's. `medians` gives {(flight, type): (n, (L, a, b))}; `to_json` and Balance.from_json carry it."""
     SCHEMA = "ground.flight-balance/1"
 
-    def __init__(self):
+    def __init__(self, inputs=None):
         self.hist = {}                                  # (flight, gid) -> int64 (3, BALANCE_BINS)
+        self.inputs = dict(inputs or {})                # what it was measured from: sha256 of the COG, flights and DEM (None: none)
 
     def add(self, fid, gt, lab, keep):
         """Count the cells of `keep` (bool) by (flight id, type id): fid (uint32, NO_FLIGHT outside the flights), gt (type
@@ -335,15 +336,16 @@ class FlightBalance:
         return out
 
     def to_json(self):
-        return {"schema": self.SCHEMA, "floor": BALANCE_FLOOR, "bins": BALANCE_BINS,
+        return {"schema": self.SCHEMA, "floor": BALANCE_FLOOR, "bins": BALANCE_BINS, "inputs": self.inputs,
                 "cells": {f"{f}:{g}": {"n": n, "med": list(m)} for (f, g), (n, m) in sorted(self.medians().items())}}
 
 
 class Balance:
     """FlightBalance's medians as a lookup: for any window, the median each cell is measured against."""
 
-    def __init__(self, cells, floor=BALANCE_FLOOR):
+    def __init__(self, cells, floor=BALANCE_FLOOR, inputs=None):
         self.floor = floor
+        self.inputs = dict(inputs or {})
         self.cells = {k: (n, np.asarray(m, np.float32)) for k, (n, m) in cells.items()}
 
     @classmethod
@@ -354,7 +356,7 @@ class Balance:
         for key, v in doc["cells"].items():
             f, _, g = key.partition(":")
             cells[(int(f), int(g))] = (int(v["n"]), v["med"])
-        return cls(cells)
+        return cls(cells, inputs=doc.get("inputs"))
 
     def medians(self, fid, gt, default):
         """default (rows, cols, 3), the valley-wide median of each cell's type, with the flight's own median where its

@@ -636,8 +636,11 @@ noise.
   floor is applied when the medians are read, so it can change without measuring again. The medians are
   `paint.build_balance(painter)`: histograms per flight and type over the cells the variation keeps (not shadow, not mapped
   surface or its band, not crop), a window at a time, optionally every few windows (`stride`); they are written as
-  `flight_balance.json` beside the COG, and a `Photo` opened there takes it up (the report says so). Without the file the
-  paint is as before.
+  `flight_balance.json` beside the COG, and a `Photo` opened there takes it up (the report says so). The file records
+  the sha256 of the COG, the flights and the DEM it was measured from, and a `Photo` whose inputs differ refuses it. Build
+  it with `stride=1` for the valley (a stride of 3 missed 147 flights); there is no command yet: open a `Painter` on the
+  photo (with `--dem`'s file if the paint uses one), call `paint.build_balance`, and write `acc.to_json()` as
+  `flight_balance.json`. Without the file the paint is as before.
 
 **Tile size.** Measured on a synthetic tile (z15's 1.73 m pixel, WebP quality 80, L noise only): noise of sd 0.009
 in L is 5.4 KB, 0.018 is 12 KB and 0.029 is 20 KB. The photo's variation carries finer detail than the noise and adds

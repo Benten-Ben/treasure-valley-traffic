@@ -259,6 +259,10 @@ class Photo:
                     raw = f.read()
                 self.balance_sha = hashlib.sha256(raw).hexdigest()
                 balance = TX.Balance.from_json(json.loads(raw))
+                for name, was in balance.inputs.items():        # measured from other inputs than these: refuse, don't apply
+                    if was != self.input_shas().get(name):
+                        raise PaintError(f"{side} was measured from other inputs (its {name} differs from this photo's): "
+                                         f"build the flight balance again")
         self.balance = balance                          # TX.Balance, or None: every flight is measured against the valley's
         self._ds = None
         self._sun = None
@@ -344,6 +348,26 @@ class Photo:
         self.dem_cells, self.dem_finite = self.dem_cells + fin.size, self.dem_finite + int(fin.sum())
         ok &= fin & (np.degrees(slope) <= TX.MAX_SLOPE_DEG)
         return gain, ok
+
+    def input_shas(self):
+        """sha256 of what the flight balance is measured from: the COG (its sidecar's), the flights and the DEM (None where
+        there is none). Read once."""
+        if getattr(self, "_shas", None) is None:
+            def sha(path):
+                if not path or not os.path.isfile(path):
+                    return None
+                h = hashlib.sha256()
+                with open(path, "rb") as f:
+                    while block := f.read(1 << 22):
+                        h.update(block)
+                return h.hexdigest()
+            try:
+                with open(os.path.splitext(self.cog)[0] + ".json", encoding="utf-8") as f:
+                    cog = (json.load(f) or {}).get("sha256")
+            except (OSError, ValueError):
+                cog = None
+            self._shas = {"naip-2m": cog, "flights": sha(self.flights), "dem": sha(self.dem)}
+        return self._shas
 
     def flight_ids(self, P):
         """The flight (src_fid) that took each cell of P, TX.NO_FLIGHT where no polygon covers it."""
@@ -637,8 +661,9 @@ class Painter:
         base, gt = self.soil_base(P)
         surf = self.surfaces(P)
         photo = self.photo.window(P)
-        _paint, crop_w = self.crops(P, base, surf, None)
-        lab, _ndvi, _cov, ok = photo
+        lab, ndvi, covered, ok = photo
+        confirmed = TX.confirm_cluster(ndvi, covered) if self.texture else None       # as paint_lab: a confirmed cluster is crop
+        _paint, crop_w = self.crops(P, base, surf, confirmed)
         shadow = TX.shadow_cells(lab, self.palette.lab[gt], self.roofs_near(P))
         keep = ok & ~shadow & ~outside_grid(P) & ~(surf | R.grow(surf, BAND_M, P.res)) & (crop_w <= 0)
         inner = win.inner(P)
@@ -706,11 +731,11 @@ def build_balance(painter, bounds=None, size_cells=1024, stride=1, log=None):
     use, a window of size_cells at 2 m at a time over bounds (default: the whole grid). Write it with
     `json.dump(acc.to_json(), ...)` as BALANCE_FILE beside the COG; a Photo opened there takes it up. Measure it on a
     painter whose photo has no balance of its own (the cell test is the palette's median either way). stride: take
-    every stride-th window along both axes (3 reads a ninth of the grid): a flight's median needs thousands of cells of
-    a type, not all of them, so the valley can be sampled by windows."""
+    every stride-th window along both axes. Leave it at 1 for the valley: stride 3 missed 147 of its flights outright
+    (they keep the valley median), so a sampled build is for a test or a small place only."""
     if painter.photo is None:
         raise PaintError("the flight balance is measured from the photo: this painter has none")
-    acc = TX.FlightBalance()
+    acc = TX.FlightBalance(inputs=painter.photo.input_shas())
     area = grid.full(2.0) if bounds is None else grid.window(bounds, 2.0).clip()
     for core, _padded in grid.windows(2.0, size_cells, bounds=bounds):
         if area is None or ((core.col - area.col) // size_cells % stride) or ((core.row - area.row) // size_cells % stride):
