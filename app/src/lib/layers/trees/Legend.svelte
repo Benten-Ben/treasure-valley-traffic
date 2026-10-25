@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { LegendProps } from '../types.js';
 	import type { TreesModule } from './index.svelte.js';
+	import { LOOKS, LOOK_ABOUT, LOOK_NAME, SHRUB_CREDIT, SHRUB_EDGE, SHRUB_COLORS, SHRUB_LIMIT, SHRUBS_ZOOM, shrubsBuiltText } from './shrubs.js';
 	import {
 		areaName,
 		builtText,
@@ -38,6 +39,9 @@
 	/** Catalogued shows once the catalogue answered (the API's flag) or a catalogued tree is in view. */
 	const legend = $derived(legendFor(view.kinds, view.catalogue));
 	const kinds = $derived(legend.kinds);
+	const shrubs = $derived(view.shrubs);
+	const shrubAreas = $derived(trees.shrubAreas);
+	const shrubCount = (look: 'bush' | 'sage') => (look === 'bush' ? shrubs.bush : shrubs.sage);
 </script>
 
 <p class="legend-title">Trees</p>
@@ -106,7 +110,32 @@
 		{/each}
 	</div>
 {/if}
+<p class="legend-title shrubs-title">Shrubs</p>
+<ul class="keys" aria-label="Shrubs">
+	{#each LOOKS as look (look)}
+		<li data-look={look}>
+			<svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true">
+				{#if look === 'bush'}
+					<path d="M2 16 C2 8 6 5 10 5 C14 5 18 8 18 16Z" fill={SHRUB_COLORS[look]} stroke={SHRUB_EDGE} stroke-width="1" />
+				{:else}
+					<path d="M1 16 C2 11 5 9 8 10 C9 7 13 7 14 10 C17 10 19 12 19 16Z" fill={SHRUB_COLORS[look]} stroke={SHRUB_EDGE} stroke-width="1" />
+				{/if}
+			</svg>
+			<span><b>{LOOK_NAME[look]}</b>: {LOOK_ABOUT[look]}{#if shrubs.drawn}{' '}<span class="num">({fmtCount(shrubCount(look))})</span>{/if}</span>
+		</li>
+	{/each}
+</ul>
+{#if shrubs.phone}
+	<p class="hint">Shrubs are off on phones.</p>
+{:else}
+	<p class="hint">Shrubs stand in 3D from z{SHRUBS_ZOOM}, the nearest {fmtCount(SHRUB_LIMIT)} to the middle of the map.</p>
+{/if}
+{#if shrubs.truncated}
+	<p class="note" data-shrubs-truncated="true">Showing the {fmtCount(SHRUB_LIMIT)} shrubs nearest the middle of the map.</p>
+{/if}
+<p class="where">{shrubsBuiltText(shrubAreas, areaName)}</p>
 <p class="credit">{legend.credit}</p>
+<p class="credit">Shrubs: {SHRUB_CREDIT}.</p>
 
 <style>
 	li {
@@ -135,6 +164,9 @@
 		margin: 6px 0 0;
 		font-size: 12px;
 		color: var(--ink);
+	}
+	.shrubs-title {
+		margin-top: 10px;
 	}
 	.where.empty {
 		font-weight: 600;

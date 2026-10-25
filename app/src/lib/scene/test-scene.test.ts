@@ -12,11 +12,12 @@ describe('the scene budget case matches production trees', () => {
 		const src = read('../layers/trees/index.svelte.ts');
 		expect(src.match(/scene\.set\(TREES_3D, [^)]*, TREES_SCENE\)/g)?.length).toBe(2);
 	});
-	it('sets no scene cap, so the phone budget case expects no trees dropped by the scene', () => {
-		expect('cap' in TREES_SCENE || 'capPhone' in TREES_SCENE).toBe(false);
+	it('caps the scene at 4,000 trees, 1,000 on a phone, so the phone budget case expects 3,000 dropped by the scene', () => {
+		expect(TREES_SCENE.cap).toBe(4000);
+		expect(TREES_SCENE.capPhone).toBe(1000);
 		const spec = read('../../../tests/e2e/scene-budget.spec.ts');
+		expect(spec).toMatch(/droppedByGroup\['scene-test-trees'\] \?\? 0\)\.toBe\(3000\)/);
 		expect(spec).toMatch(/droppedByGroup\['scene-test-trees'\] \?\? 0\)\.toBe\(0\)/);
-		expect(spec).not.toMatch(/capped at 1,000/);
 	});
 	it('is not scenery', () => {
 		expect('scenery' in TREES_SCENE).toBe(false);

@@ -3,6 +3,7 @@ import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { contrast, deltaE } from '#lib/map/color.js';
+import { TREES_SCENE } from './scene-options.js';
 import { allMeshes } from '#lib/scene/meshes.js';
 import { PRIORITY } from '../types.js';
 import { TREE } from './icons.js';
@@ -20,6 +21,15 @@ import {
 	discCollection,
 	discOpacity,
 	discRadius,
+	CURVE_NAME,
+	DISC_EDGE_PX,
+	DISC_RING,
+	RING_PX,
+	SCENE_CAP,
+	SCENE_CAP_PHONE,
+	treeFlavorPaints,
+	typeText,
+	widthText,
 	DISCS,
 	eventDetail,
 	eventName,
@@ -51,6 +61,7 @@ import {
 	wantedBox,
 	type Box,
 	type TreeDetail,
+	type TreeType,
 	type TreeRow
 } from './trees.js';
 
@@ -160,6 +171,8 @@ describe('the trees’ colors keep to the color budget (docs/14 §14.3)', () => 
 	});
 });
 
+const discLayer = () => treeLayers().find((l) => l.layer.id === DISCS)!;
+
 describe('crown discs (farther out, or without the scene)', () => {
 	it('carry each tree’s radius and its color in its kind’s tone', () => {
 		const fc = discCollection([T({ id: 'a', kind: 'placed', r: 3.5 })]);
@@ -182,13 +195,15 @@ describe('crown discs (farther out, or without the scene)', () => {
 		expect(discOpacity(true)).toEqual(['interpolate', ['linear'], ['zoom'], 14.7, 1, 15, 0]);
 		// No feature value in it: MapLibre evaluates zoom-and-feature expressions only at whole zooms.
 		expect(JSON.stringify(discOpacity(true))).not.toContain('get');
-		const paint = treeLayers()[0].layer.paint as Record<string, unknown>;
+		const paint = discLayer().layer.paint as Record<string, unknown>;
 		expect(paint['circle-opacity']).toBe(1);
 		expect(paint['circle-stroke-opacity']).toBe(1);
 	});
 
-	it('are one circle layer in the scene slot: not draped, so the terrain keeps one draped run', () => {
-		const [l] = treeLayers();
+	it('are a circle layer in the scene slot, with their cream ring under them: not draped, so the terrain keeps one draped run', () => {
+		expect(treeLayers().map((x) => x.layer.id)).toEqual([DISC_RING, DISCS, CREDIT_LAYER]);
+		expect(treeLayers().every((x) => x.slot === 'scene')).toBe(true);
+		const l = discLayer();
 		expect(l.slot).toBe('scene');
 		expect(l.layer.id).toBe(DISCS);
 		expect(l.layer.type).toBe('circle');
@@ -283,7 +298,7 @@ describe('the words (the legend and the tree panel)', () => {
 		expect(howWeKnow(detail({ fit: { trunk_to_crown_m: 2.44 } })).join(' ')).toContain('2.4 m from the trunk point');
 		const placed = howWeKnow(detail({ kind: 'placed', fit: { width_vs_typical_sd: 1.2, crowded: true } })).join(' ');
 		expect(placed).toContain('estimated by placement');
-		expect(placed).toContain('1.2 standard deviations wider');
+		expect(placed).toContain('1.2 standard deviations wider than typical for its height.');
 		expect(placed).toContain('cluster');
 		// A matched crown is placed from the lidar like any other: never "from its species".
 		const cataloguedWords = howWeKnow(detail({ kind: 'catalogued', fit: { trunk_to_crown_m: 0.2 } })).join(' ');
@@ -387,5 +402,90 @@ describe('the icon', () => {
 		const paths = [...branch.matchAll(/<path d="([^"]+)"([^>]*)\/>/g)];
 		expect(TREE.tone).toBe(paths.find((p) => p[2].includes('opacity="0.2"'))?.[1]);
 		expect(TREE.line).toBe(paths.find((p) => !p[2].includes('opacity'))?.[1]);
+	});
+});
+
+describe('the cream ring on the discs (K9)', () => {
+	const ring = () => treeLayers().find((l) => l.layer.id === DISC_RING)!;
+
+	it('is a 1 px cream stroke just outside the dark edge, with nothing inside, under the discs', () => {
+		const paint = ring().layer.paint as Record<string, unknown>;
+		expect(paint['circle-stroke-color']).toBe('#fffbf4');
+		expect(paint['circle-stroke-width']).toBe(RING_PX);
+		expect(paint['circle-opacity']).toBe(0);
+		expect(treeLayers().findIndex((l) => l.layer.id === DISC_RING)).toBeLessThan(treeLayers().findIndex((l) => l.layer.id === DISCS));
+		// Its radius is the disc's plus the half of the edge and the half of the ring.
+		const expr = (paint['circle-radius'] as unknown[]);
+		const z15 = expr.indexOf(15);
+		expect(expr[z15 + 1]).toEqual(['+', DISC_EDGE_PX / 2 + RING_PX / 2, ['max', 1, ['*', ['get', 'r'], metresToPx(1, 15)]]]);
+	});
+
+	it('fades with the discs when the models take over', () => {
+		expect(ring().layer.paint).toMatchObject({ 'circle-stroke-opacity': discOpacity(false) });
+	});
+
+	it('is Valley’s: the Base look gives it its width, and Clay none', () => {
+		expect(treeFlavorPaints()).toEqual({ [DISC_RING]: { valley: { 'circle-stroke-width': 1 }, clay: { 'circle-stroke-width': 0 } } });
+	});
+
+	it('leaves the dark edge as it was', () => {
+		const paint = treeLayers().find((l) => l.layer.id === DISCS)!.layer.paint as Record<string, unknown>;
+		expect(paint['circle-stroke-width']).toEqual(['case', ['boolean', ['feature-state', 'hover'], false], 2, 0.75]);
+	});
+});
+
+describe('the scene caps the trees: 4,000, and 1,000 on a phone (S7)', () => {
+	it('passes both through the scene options', () => {
+		expect(SCENE_CAP).toBe(4000);
+		expect(SCENE_CAP_PHONE).toBe(1000);
+		expect(TREES_SCENE).toMatchObject({ cap: 4000, capPhone: 1000, priority: PRIORITY.tree });
+	});
+});
+
+describe('the tree card says why a tree has its type and which curve sized its crown', () => {
+	const placed = (type: TreeType, fit: Record<string, unknown>) => ({ kind: 'placed' as const, type, fit });
+	const profile = { top_m: 14, drop_1m: 0.2, drop_2m: 0.4, drop_3m: 0.55, rough: 0.1 };
+
+	it('explains a narrow tree by its crown falling 55% within 3 m of its top', () => {
+		expect(typeText(placed('narrow', { profile }))).toContain('its crown falls 55% within 3 m of its top');
+		expect(typeText(placed('narrow', { profile }))).toContain('45% to 95%');
+		expect(typeText(placed('narrow', {}))).toContain("It's a narrow tree");
+	});
+
+	it('explains a conifer by the spring image, or else as the weak call of the width curve', () => {
+		const spring = { evergreen: true, area_checked: true };
+		expect(typeText(placed('conifer', { spring }))).toContain('Sentinel-2');
+		const weak = typeText(placed('conifer', { width_curve: 'conifer' }))!;
+		expect(weak).toContain('width curve');
+		expect(weak).toContain('weak');
+		expect(weak).not.toContain('Sentinel-2');
+	});
+
+	it('explains a broadleaf tree by what did not mark it narrow or conifer', () => {
+		expect(typeText(placed('broadleaf', { profile }))).toContain('falls 55% within 3 m of its top');
+		expect(typeText(placed('broadleaf', {}))).toContain("It's a broadleaf tree");
+	});
+
+	it('says nothing about a type for a catalogued tree', () => {
+		expect(typeText({ kind: 'catalogued', type: 'conifer', fit: {} })).toBeNull();
+	});
+
+	it('words the width against the curve that sized the crown, not the final type’s', () => {
+		const narrowSizedByBroadleaf = placed('narrow', { width_vs_typical_sd: -2.6, width_curve: 'broadleaf' });
+		const line = widthText(narrowSizedByBroadleaf)!;
+		expect(line).toContain('2.6 standard deviations narrower than typical for its height');
+		expect(line).toContain(`on the ${CURVE_NAME.broadleaf} width curve that sized it`);
+		expect(widthText(placed('broadleaf', { width_vs_typical_sd: 0.2, width_curve: 'conifer' }))).toBe(
+			'Its crown is a typical width for its height on the mountain conifer width curve that sized it.'
+		);
+		// A build that did not record the curve: no curve is named.
+		expect(widthText(placed('broadleaf', { width_vs_typical_sd: 1.2 }))).toBe('Its crown is 1.2 standard deviations wider than typical for its height.');
+		expect(widthText(placed('broadleaf', {}))).toBeNull();
+	});
+
+	it('puts both lines in howWeKnow for a placed tree', () => {
+		const text = howWeKnow({ ...placed('narrow', { profile, width_vs_typical_sd: -2.6, width_curve: 'broadleaf' }), lidar: null, log: [] }).join(' ');
+		expect(text).toContain('its crown falls 55% within 3 m of its top');
+		expect(text).toContain('width curve that sized it');
 	});
 });
