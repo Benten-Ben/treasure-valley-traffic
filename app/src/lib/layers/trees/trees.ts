@@ -109,10 +109,10 @@ export const CREDIT_LAYER = 'trees-credit';
 /**
  * The map's attribution while Trees is on (the conifer cue's Sentinel-2 images are Copernicus data, §19.3). The City
  * of Boise is named only once the catalogue answered (`TreesInView.catalogue`); the public table holds lidar-found
- * trees alone.
+ * trees alone. Once shrubs are drawn their credit (`shrubs`: their inputs and the Sentinel-2 line) joins it.
  */
-export function treeCredit(catalogue = false): string {
-	return `Trees: USGS 3DEP lidar${catalogue ? ', City of Boise' : ''}; contains modified Copernicus Sentinel data 2025`;
+export function treeCredit(catalogue = false, shrubs: string | null = null): string {
+	return `Trees: USGS 3DEP lidar${catalogue ? ', City of Boise' : ''}; contains modified Copernicus Sentinel data 2025${shrubs ? `. Shrubs: ${shrubs}` : ''}`;
 }
 /** The credit Copernicus asks for, on a tree the spring Sentinel-2 image typed. */
 export const SENTINEL2_CREDIT = 'Contains modified Copernicus Sentinel data 2025';
@@ -146,8 +146,19 @@ export const TREE_GREENS: Record<TreeType, readonly [string, string, string]> = 
 };
 /** The crown discs' edge. */
 export const DISC_EDGE = '#3f4f2e';
+/** The disc edge's stroke width, px (its outer side reaches half of it past the crown). */
+export const DISC_EDGE_PX = 0.75;
+/**
+ * Valley's cream ring outside the dark edge (K9): the edge alone is 2.16:1 on lawn, and the ring (1 px, cream) lifts
+ * it. A circle layer under the discs, its stroke starting where the edge ends; the Base flavor's paints
+ * (`treeFlavorPaints`) give it its width in Valley and none in Clay.
+ */
+export const DISC_RING = 'trees-discs-ring';
+export const RING_PX = 1;
 export const INK = '#2b2a33';
 export const CREAM = '#fffbf4';
+/** The ring's color. */
+export const RING_COLOR = CREAM;
 
 /** Models from z15 (§19.6), dithered in over the 0.3 zoom before it, as the 3D cameras do. */
 export const MODELS_ZOOM = 15;
@@ -167,6 +178,8 @@ export const LIMIT_DISCS = 8000;
  * and Streets on too; 4.1 ms with the hit capsules).
  */
 export const SCENE_CAP = 4000;
+/** The same on phones (the scene's `capPhone`, S7): the 1,000 nearest the view's centre. */
+export const SCENE_CAP_PHONE = 1000;
 
 const clamp = (x: number, a: number, b: number) => Math.min(b, Math.max(a, x));
 
@@ -274,11 +287,14 @@ export const metresToPx = (m: number, zoom: number, lat = DISC_LAT) => (m * 2 **
 /**
  * The disc's radius in px: its crown radius in metres at every zoom (an
  * exponential-2 interpolation between whole zooms is exact), and at least
- * 1 px so the far discs don't vanish.
+ * 1 px so the far discs don't vanish. `extraPx` grows the radius by a constant (the ring's: it sits outside the edge).
  */
-export function discRadius(): unknown[] {
+export function discRadius(extraPx = 0): unknown[] {
 	const stops: unknown[] = [];
-	for (let z = DISCS_ZOOM - 1; z <= 22; z++) stops.push(z, ['max', 1, ['*', ['get', 'r'], metresToPx(1, z)]]);
+	for (let z = DISCS_ZOOM - 1; z <= 22; z++) {
+		const px = ['max', 1, ['*', ['get', 'r'], metresToPx(1, z)]];
+		stops.push(z, extraPx ? ['+', extraPx, px] : px);
+	}
 	return ['interpolate', ['exponential', 2], ['zoom'], ...stops];
 }
 
@@ -305,6 +321,27 @@ export function treeLayers(): SlottedLayer[] {
 		{
 			slot: 'scene',
 			layer: {
+				id: DISC_RING,
+				type: 'circle',
+				source: SOURCE,
+				minzoom: DISCS_ZOOM,
+				layout: { visibility: 'none' },
+				paint: {
+					// Nothing inside: the ring is the stroke alone, centred RING_PX/2 outside the dark edge's outer side.
+					'circle-radius': discRadius(DISC_EDGE_PX / 2 + RING_PX / 2) as never,
+					'circle-color': RING_COLOR,
+					'circle-opacity': 0,
+					'circle-stroke-color': RING_COLOR,
+					'circle-stroke-width': RING_PX,
+					'circle-stroke-opacity': discOpacity(false) as never,
+					'circle-pitch-alignment': 'map',
+					'circle-pitch-scale': 'map'
+				}
+			}
+		},
+		{
+			slot: 'scene',
+			layer: {
 				id: DISCS,
 				type: 'circle',
 				source: SOURCE,
@@ -315,7 +352,7 @@ export function treeLayers(): SlottedLayer[] {
 					'circle-color': ['get', 'c'],
 					'circle-opacity': discOpacity(false) as never,
 					'circle-stroke-color': ['case', ['boolean', ['feature-state', 'hover'], false], INK, DISC_EDGE],
-					'circle-stroke-width': ['case', ['boolean', ['feature-state', 'hover'], false], 2, 0.75],
+					'circle-stroke-width': ['case', ['boolean', ['feature-state', 'hover'], false], 2, DISC_EDGE_PX],
 					'circle-stroke-opacity': discOpacity(false) as never,
 					'circle-pitch-alignment': 'map',
 					'circle-pitch-scale': 'map'
@@ -338,6 +375,14 @@ export function treeLayers(): SlottedLayer[] {
 }
 
 export const TREE_PRIORITY = PRIORITY.tree;
+
+/**
+ * The disc ring's Valley and Clay paints (`registerFlavorPaint`): the cream ring in Valley, none in Clay (the
+ * Clay surface is paler and the dark edge reads there without it).
+ */
+export function treeFlavorPaints(): Record<string, { valley: Record<string, unknown>; clay: Record<string, unknown> }> {
+	return { [DISC_RING]: { valley: { 'circle-stroke-width': RING_PX }, clay: { 'circle-stroke-width': 0 } } };
+}
 
 // --- fetching by view ------------------------------------------------------------------------------
 
@@ -457,6 +502,62 @@ export function typedBySpring(d: Pick<TreeDetail, 'kind' | 'type' | 'fit'>): boo
 	return c.evergreen === true && c.area_checked === true;
 }
 
+/**
+ * The width curves a placed crown can be sized by (the fit's `width_curve`; docs/19 §19.3), in words. They are the
+ * curves fitted on lone trees: one for broadleaf trees (small ones too), one for the mountains' conifers, one for the
+ * valley's conifers and columnar trees.
+ */
+export const CURVE_NAME: Record<TreeType, string> = { broadleaf: 'broadleaf', conifer: 'mountain conifer', narrow: 'narrow-tree' };
+
+const isType = (v: unknown): v is TreeType => v === 'broadleaf' || v === 'conifer' || v === 'narrow';
+
+/** The curve that sized the crown (the fit's `width_curve`), when the build recorded it. */
+export function sizingCurve(d: Pick<TreeDetail, 'fit'>): TreeType | null {
+	const c = d.fit?.width_curve;
+	return isType(c) ? c : null;
+}
+
+/** "55%": how far the crown falls within 3 m of its top, from the fit's profile (a share of the top's height). */
+function dropWithin3m(d: Pick<TreeDetail, 'fit'>): string | null {
+	const p = d.fit?.profile;
+	const v = typeof p === 'object' && p !== null ? num((p as { drop_3m?: unknown }).drop_3m) : null;
+	return v === null ? null : `${Math.round(v * 100)}%`;
+}
+
+/**
+ * Why a placed tree has its type, in plain words: the narrow rule (the crown falls 45-95% of its top's height within
+ * 3 m, from an even top that is its own), the spring image, or else the width curve that sized the crown. Null for a
+ * tree the type of which is not the build's call (a catalogued tree).
+ */
+export function typeText(d: Pick<TreeDetail, 'kind' | 'type' | 'fit'>): string | null {
+	if (d.kind !== 'placed') return null;
+	const drop = dropWithin3m(d);
+	if (d.type === 'narrow') {
+		return drop
+			? `It's a narrow tree because its crown falls ${drop} within 3 m of its top (a narrow crown falls 45% to 95%) from an even top.`
+			: "It's a narrow tree because of how its crown falls away from its top.";
+	}
+	if (typedBySpring(d))
+		return "It's a conifer because its crown is green over the snow in an early-April 2025 Sentinel-2 image, when broadleaf trees are still bare.";
+	if (d.type === 'conifer')
+		return "It's called a conifer because the conifer width curve fits its crown best. That call is weak: treat it as likely, not sure.";
+	return `It's a broadleaf tree: its crown shape${drop ? ` (it falls ${drop} within 3 m of its top)` : ''} doesn't mark it as narrow, and nothing marks it as a conifer.`;
+}
+
+/**
+ * The crown's width against typical, in words. `sd` is measured on the curve that sized the crown (not the final
+ * type's: a narrow tree may have been sized by the broadleaf curve), so the line names that curve.
+ */
+export function widthText(d: Pick<TreeDetail, 'fit'>): string | null {
+	const sd = num(d.fit?.width_vs_typical_sd);
+	if (sd === null) return null;
+	const curve = sizingCurve(d);
+	const on = curve ? ` on the ${CURVE_NAME[curve]} width curve that sized it` : '';
+	return Math.abs(sd) < 0.5
+		? `Its crown is a typical width for its height${on}.`
+		: `Its crown is ${Math.abs(sd).toFixed(1)} standard deviations ${sd > 0 ? 'wider' : 'narrower'} than typical for its height${on}.`;
+}
+
 /** How we know, in plain words (§19.3): the lidar, the trunk point's distance to the crown, or the placement's fit. */
 export function howWeKnow(d: Pick<TreeDetail, 'kind' | 'type' | 'fit' | 'lidar' | 'log'>): string[] {
 	const year = lidarYear(d);
@@ -471,12 +572,11 @@ export function howWeKnow(d: Pick<TreeDetail, 'kind' | 'type' | 'fit' | 'lidar' 
 	} else {
 		out.push(`Its height is measured by the ${year} lidar.`);
 		out.push("Its position and crown were estimated by placement: the crown that best explains the lidar's canopy there.");
-		const sd = num(f.width_vs_typical_sd);
-		if (sd !== null)
-			out.push(Math.abs(sd) < 0.5 ? 'Its crown is a typical width for its height.' : `Its crown is ${Math.abs(sd).toFixed(1)} standard deviations ${sd > 0 ? 'wider' : 'narrower'} than typical for its height.`);
+		const type = typeText(d);
+		if (type) out.push(type);
+		const width = widthText(d);
+		if (width) out.push(width);
 		if (f.crowded === true) out.push('It stands in a cluster, so its crown meets its neighbours high up.');
-		if (typedBySpring(d))
-			out.push("It's a conifer because its crown is green over the snow in an early-April 2025 Sentinel-2 image, when broadleaf trees are still bare.");
 	}
 	return out;
 }

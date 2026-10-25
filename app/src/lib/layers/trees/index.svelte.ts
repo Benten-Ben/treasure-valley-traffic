@@ -1,6 +1,7 @@
 import type { GeoJSONSource, MapGeoJSONFeature } from 'maplibre-gl';
 import { MapScope } from '#lib/app/cleanup.js';
 import type { AppCtx } from '#lib/app/context.js';
+import { registerFlavorPaint } from '#lib/map/flavors.js';
 import { addSlotted } from '#lib/map/order.js';
 import type { Scene, SceneInstance } from '#lib/scene/index.js';
 import { historyOf } from '#lib/state/history.svelte.js';
@@ -9,11 +10,28 @@ import { TREES_SCENE } from './scene-options.js';
 import { PRIORITY, type Interactive, type LayerModule, type LayerStatus, type Selection } from '../types.js';
 import Card from './Card.svelte';
 import def, { AREAS_URL } from './def.js';
+import {
+	registerShrubMeshes,
+	SHRUB_AREAS_URL,
+	SHRUB_CREDIT,
+	SHRUB_LIMIT,
+	SHRUBS_3D,
+	SHRUBS_SCENE,
+	SHRUBS_SCENE_ZOOM,
+	SHRUBS_ZOOM,
+	shrubInstance,
+	shrubsUrl,
+	shrubsWanted,
+	type ShrubArea,
+	type ShrubRow,
+	type ShrubsInView
+} from './shrubs.js';
 import Legend from './Legend.svelte';
 import {
 	CREDIT_LAYER,
 	discCollection,
 	discOpacity,
+	DISC_RING,
 	DISCS,
 	DISCS_ZOOM,
 	inBox,
@@ -33,6 +51,7 @@ import {
 	treeInstance,
 	treeLayers,
 	TREES_3D,
+	treeFlavorPaints,
 	treeSelection,
 	treesUrl,
 	wantedBox,
@@ -68,7 +87,25 @@ export interface TreesView {
 	problem: string | null;
 	/** The private catalogue answered with the last trees (legend entry and the City's credit). */
 	catalogue: boolean;
+	/** The shrubs: drawn from z17 in 3D, none on a phone. */
+	shrubs: ShrubsView;
 }
+
+export interface ShrubsView {
+	/** Shrubs fetched for the view (the nearest the centre), by look. */
+	bush: number;
+	sage: number;
+	/** More shrubs were within reach than the cap. */
+	truncated: boolean;
+	/** The view is at z17 or in, with the scene running, and shrubs are built here. */
+	drawn: boolean;
+	/** Shrubs are off on this device (a phone). */
+	phone: boolean;
+	/** Some built shrub area is in or near the view. */
+	here: boolean;
+}
+
+const isPhone = () => typeof matchMedia === 'function' && matchMedia('(max-width: 599px)').matches;
 
 const metresPerPx = (zoom: number, lat: number) => (40_075_016.686 * Math.cos((lat * Math.PI) / 180)) / (512 * 2 ** zoom);
 
@@ -95,7 +132,9 @@ export class TreesModule implements LayerModule {
 	error = $state<string | null>(null);
 	updatedAt = $state<number | null>(null);
 	areas = $state.raw<TreeArea[]>([]);
-	view = $state.raw<TreesView>({ mode: 'far', kinds: { catalogued: 0, placed: 0 }, shown: 0, truncated: false, capped: false, cap: SCENE_CAP, here: true, problem: null, catalogue: false });
+	/** Where shrubs are built (/api/trees/shrubs/areas; empty if that failed). */
+	shrubAreas = $state.raw<ShrubArea[]>([]);
+	view = $state.raw<TreesView>({ mode: 'far', kinds: { catalogued: 0, placed: 0 }, shown: 0, truncated: false, capped: false, cap: SCENE_CAP, here: true, problem: null, catalogue: false, shrubs: { bush: 0, sage: 0, truncated: false, drawn: false, phone: false, here: false } });
 	Legend = Legend;
 	Card = Card;
 	interactive: Interactive[] = [
@@ -132,6 +171,19 @@ export class TreesModule implements LayerModule {
 	/** Trees asked for close up (LIMIT_3D; the measurement raises it). */
 	#limit3d = LIMIT_3D;
 	#hovered: string | null = null;
+	/** The shrubs: rows, their scene instances, the request on its way and the last box asked for. */
+	#shrubRows: ShrubRow[] = [];
+	#shrubInst = new globalThis.Map<string, SceneInstance>();
+	#shrubList: SceneInstance[] = [];
+	#shrubUrl: string | null = null;
+	#shrubAbort: AbortController | null = null;
+	#shrubsOn = false;
+	/** Read live: the scene tests the same media query on every frame. */
+	get #phone() {
+		return isPhone();
+	}
+	/** Requests made to /api/trees/shrubs (tests and the console). */
+	shrubRequests = 0;
 	#details = new globalThis.Map<string, Promise<TreeDetail | null>>();
 	#debug: object | null = null;
 
@@ -153,6 +205,9 @@ export class TreesModule implements LayerModule {
 		const scope = (this.#scope = new MapScope(map));
 		scope.addSource(SOURCE, { type: 'geojson', data: EMPTY, promoteId: 'id', attribution: treeCredit(false) });
 		addSlotted(map, treeLayers(), def.order, (l, before) => scope.addLayer(l, before));
+		// The cream ring is Valley's: the Base look gives its stroke (none in Clay).
+		for (const [id, paint] of Object.entries(treeFlavorPaints())) scope.defer(registerFlavorPaint(map, id, paint));
+		scope.defer(registerShrubMeshes());
 		scope.on('moveend', () => this.#schedule());
 		scope.on('resize', () => this.#schedule());
 		scope.on('zoom', () => this.#onZoom());
@@ -160,20 +215,36 @@ export class TreesModule implements LayerModule {
 		scope.defer(() => {
 			clearTimeout(this.#timer);
 			this.#cancel();
+			this.#cancelShrubs();
 		});
 		scope.defer(() => this.#dropScene());
 		this.#installDebug();
 		scope.defer(() => this.#uninstallDebug());
+		void this.#loadShrubAreas();
 		this.status = 'ready';
 		this.updatedAt = Date.now();
 		this.setVisible(this.#visible);
+	}
+
+	/** Where shrubs are built, in the background: a failure leaves Trees as it was (no shrubs; the legend says none are built). */
+	async #loadShrubAreas(): Promise<void> {
+		try {
+			const res = await fetch(SHRUB_AREAS_URL);
+			if (!res.ok) return;
+			const areas = ((await res.json()) as { areas?: ShrubArea[] }).areas ?? [];
+			if (this.#destroyed) return;
+			this.shrubAreas = areas;
+			void this.#refreshShrubs();
+		} catch {
+			/* no shrubs */
+		}
 	}
 
 	setVisible(on: boolean): void {
 		this.#visible = on;
 		const map = this.#scope?.map;
 		if (!map) return;
-		for (const id of [DISCS, CREDIT_LAYER]) if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', on ? 'visible' : 'none');
+		for (const id of [DISC_RING, DISCS, CREDIT_LAYER]) if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', on ? 'visible' : 'none');
 		if (on) {
 			this.#onZoom();
 			void this.#refresh();
@@ -181,6 +252,8 @@ export class TreesModule implements LayerModule {
 			clearTimeout(this.#timer);
 			this.#cancel();
 			this.#showModels(false);
+			this.#cancelShrubs();
+			this.#showShrubs(false);
 			this.#setHover(null);
 		}
 	}
@@ -190,7 +263,10 @@ export class TreesModule implements LayerModule {
 	#schedule() {
 		if (!this.#visible) return;
 		clearTimeout(this.#timer);
-		this.#timer = setTimeout(() => void this.#refresh(), FETCH_DEBOUNCE_MS);
+		this.#timer = setTimeout(() => {
+			void this.#refresh();
+			void this.#refreshShrubs();
+		}, FETCH_DEBOUNCE_MS);
 	}
 
 	/** Call off the request on its way, if any: its answer is no longer wanted. */
@@ -264,7 +340,7 @@ export class TreesModule implements LayerModule {
 		const catalogue = data.catalogue === true;
 		const src = map?.getSource(SOURCE) as GeoJSONSource | undefined;
 		// The attribution is read again when the data lands (a metadata event follows setData).
-		if (src) src.attribution = treeCredit(catalogue);
+		if (src) src.attribution = treeCredit(catalogue, this.#shrubList.length ? SHRUB_CREDIT : null);
 		src?.setData(discCollection(data.trees));
 		this.#syncScene();
 		const kinds: Record<TreeKind, number> = { catalogued: 0, placed: 0 };
@@ -328,6 +404,7 @@ export class TreesModule implements LayerModule {
 			const fade = modelFade(zoom);
 			this.#applyFade(fade);
 			this.#showModels(fade > 0);
+			this.#showShrubs(zoom >= SHRUBS_ZOOM);
 		}
 		this.#setMode(zoom, this.view.here);
 	}
@@ -366,6 +443,10 @@ export class TreesModule implements LayerModule {
 		this.#scene = scene;
 		this.#sceneState = 'ready';
 		// The discs give way to the models at z15, fading out as they dither in.
+		if (map.getLayer(DISC_RING)) {
+			map.setLayerZoomRange(DISC_RING, DISCS_ZOOM, MODELS_ZOOM);
+			map.setPaintProperty(DISC_RING, 'circle-stroke-opacity', discOpacity(true) as never);
+		}
 		if (map.getLayer(DISCS)) {
 			map.setLayerZoomRange(DISCS, DISCS_ZOOM, MODELS_ZOOM);
 			map.setPaintProperty(DISCS, 'circle-opacity', discOpacity(true) as never);
@@ -373,11 +454,16 @@ export class TreesModule implements LayerModule {
 		}
 		scene.set(TREES_3D, this.#instances, TREES_SCENE);
 		scene.show(TREES_3D, false);
+		// A new scene group is visible: hide the shrubs until z17 asks for them.
+		scene.show(SHRUBS_3D, false);
+		this.#shrubsOn = false;
 		this.#modelsOn = false;
 		this.#syncScene();
+		this.#syncShrubs();
 		this.#onZoom();
 		// The view may need the 3D limit now.
 		void this.#refresh();
+		void this.#refreshShrubs();
 	}
 
 	#dropScene() {
@@ -385,7 +471,103 @@ export class TreesModule implements LayerModule {
 		this.#scene = null;
 		if (this.#sceneState === 'ready') this.#sceneState = 'none';
 		this.#modelsOn = false;
+		this.#shrubsOn = false;
 		scene?.remove(TREES_3D);
+		scene?.remove(SHRUBS_3D);
+	}
+
+	// --- the shrubs --------------------------------------------------------------------------------------
+
+	#cancelShrubs() {
+		this.#shrubAbort?.abort();
+		this.#shrubAbort = null;
+		// An aborted request has no answer: the same box must be asked for again.
+		this.#shrubUrl = null;
+	}
+
+	/**
+	 * Ask for the shrubs near the view's centre (from z16.5, so they are here by z17), unless the same box is already
+	 * here or on its way. Nothing is asked for on a phone, below z16.5, or where no shrub area is built; the shrubs
+	 * already held are let go then.
+	 */
+	async #refreshShrubs(): Promise<void> {
+		const map = this.#scope?.map;
+		if (!map || !this.#visible || this.#destroyed) return;
+		const zoom = map.getZoom();
+		const c = map.getCenter();
+		const { box, centre } = shrubsWanted([c.lng, c.lat]);
+		const here = this.shrubAreas.some((a) => intersects(a.bounds, box));
+		if (here !== this.view.shrubs.here || this.#phone !== this.view.shrubs.phone) this.view = { ...this.view, shrubs: { ...this.view.shrubs, here, phone: this.#phone } };
+		if (this.#phone || zoom < SHRUBS_SCENE_ZOOM || !here) {
+			this.#cancelShrubs();
+			this.#shrubUrl = null;
+			if (this.#shrubRows.length) this.#setShrubs({ shrubs: [], truncated: false });
+			return;
+		}
+		const url = shrubsUrl(box, centre, SHRUB_LIMIT);
+		if (url === this.#shrubUrl) return;
+		this.#cancelShrubs();
+		const ctl = (this.#shrubAbort = new AbortController());
+		this.#shrubUrl = url;
+		this.shrubRequests++;
+		const current = () => ctl === this.#shrubAbort && !ctl.signal.aborted && !this.#destroyed;
+		try {
+			const res = await fetch(url, { signal: ctl.signal });
+			if (!res.ok) throw new Error((await res.json().catch(() => null))?.message ?? `HTTP ${res.status}`);
+			const data = (await res.json()) as ShrubsInView;
+			if (!current()) return;
+			this.#shrubAbort = null;
+			this.#setShrubs(data);
+		} catch (e) {
+			if (!current()) return;
+			this.#shrubAbort = null;
+			// Asked for again at the next move.
+			this.#shrubUrl = null;
+			this.view = { ...this.view, problem: `Couldn't load the shrubs here: ${e instanceof Error ? e.message : e}` };
+		}
+	}
+
+	#setShrubs(data: ShrubsInView) {
+		this.#shrubRows = data.shrubs;
+		const keep = new Set(data.shrubs.map((s) => s.id));
+		for (const id of this.#shrubInst.keys()) if (!keep.has(id)) this.#shrubInst.delete(id);
+		this.#syncShrubs();
+		this.#showShrubs((this.#scope?.map.getZoom() ?? 0) >= SHRUBS_ZOOM);
+		const bush = data.shrubs.filter((s) => s.look === 'bush').length;
+		this.updatedAt = Date.now();
+		this.view = { ...this.view, shrubs: { ...this.view.shrubs, bush, sage: data.shrubs.length - bush, truncated: data.truncated } };
+	}
+
+	/** Hand the scene the shrubs fetched (the scene keeps the nearest 1,500 within 300 m, none on a phone). */
+	#syncShrubs() {
+		const scene = this.#scene;
+		if (!scene) return;
+		const list = this.#shrubList;
+		list.length = 0;
+		for (const s of this.#shrubRows) {
+			let inst = this.#shrubInst.get(s.id);
+			if (!inst) this.#shrubInst.set(s.id, (inst = shrubInstance(s)));
+			list.push(inst);
+		}
+		scene.set(SHRUBS_3D, list, SHRUBS_SCENE);
+		this.#setShrubCredit();
+	}
+
+	/** The shrubs join the map's credit while some are drawn. */
+	#setShrubCredit() {
+		const src = this.#scope?.map.getSource(SOURCE) as GeoJSONSource | undefined;
+		if (src) src.attribution = treeCredit(this.view.catalogue, this.#shrubList.length ? SHRUB_CREDIT : null);
+	}
+
+	/** Shrubs show from z17, with the scene running. */
+	#showShrubs(want: boolean) {
+		const scene = this.#scene;
+		const on = want && this.#visible && this.#sceneState === 'ready' && !this.#phone && this.#shrubList.length > 0;
+		const drawn = want && this.#visible && this.#sceneState === 'ready' && !this.#phone;
+		if (drawn !== this.view.shrubs.drawn) this.view = { ...this.view, shrubs: { ...this.view.shrubs, drawn } };
+		if (!scene || on === this.#shrubsOn) return;
+		this.#shrubsOn = on;
+		scene.show(SHRUBS_3D, on);
 	}
 
 	// --- hover, the panel, the legend's actions --------------------------------------------------------
@@ -490,6 +672,21 @@ export class TreesModule implements LayerModule {
 					const p = map.project([lng, lat]);
 					return { id: String(f.properties?.id), x: p.x, y: p.y, r: Number(f.properties?.r) };
 				});
+			},
+			/** The shrubs: fetched, in the scene, shown, requests and the last URL. */
+			shrubs: () => ({
+				fetched: self.#shrubRows.length,
+				inScene: self.#shrubList.length,
+				shown: self.#shrubsOn,
+				phone: self.#phone,
+				requests: self.shrubRequests,
+				url: self.#shrubUrl,
+				areas: self.shrubAreas
+			}),
+			/** The shrubs the scene drew in its last frame: id, screen centre and hit radius (px). */
+			shrubsPlaced: () => {
+				const ids = new Set(self.#shrubRows.map((s) => s.id));
+				return (self.#scene?.placed() ?? []).filter((p) => ids.has(p.id));
 			},
 			sceneStats: () => self.#scene?.stats() ?? null,
 			/** The models' cap and, optionally, the close-up limit asked of the API (the measurement). */

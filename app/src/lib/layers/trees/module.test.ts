@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppCtx } from '#lib/app/context.js';
 import { FETCH_DEBOUNCE_MS, TreesModule } from './index.svelte.js';
-import { CREDIT_LAYER, DISCS, SOURCE, type TreeRow } from './trees.js';
+import { SHRUB_CREDIT, SHRUBS_3D, SHRUBS_SCENE, type ShrubRow } from './shrubs.js';
+import { CREDIT_LAYER, DISC_RING, DISCS, SOURCE, type TreeRow } from './trees.js';
 
 /**
  * The Trees module against a fake map, fetch and timers: only the newest
@@ -81,6 +82,7 @@ function fakeApi() {
 	const ok = (body: unknown) => ({ ok: true, status: 200, json: async () => body }) as unknown as Response;
 	const fetch = vi.fn((url: string, init?: RequestInit) => {
 		if (url === '/api/trees/areas') return Promise.resolve(ok({ areas: [{ area: 'c', bounds: [-116.3, 43.5, -116.1, 43.7], trees: 2, built_at: null }] }));
+		if (url === '/api/trees/shrubs/areas') return Promise.resolve(ok({ areas: [] }));
 		return new Promise<Response>((resolve) => {
 			requests.push({ url, signal: init!.signal!, answer: (trees, catalogue = false) => resolve(ok({ trees, truncated: false, catalogue })) });
 		});
@@ -201,5 +203,166 @@ describe('the Trees module asks for the view’s trees (docs/19 §19.6)', () => 
 		trees.setVisible(false);
 		expect(map.layers.get(DISCS)?.layout?.visibility).toBe('none');
 		expect(map.layers.get(CREDIT_LAYER)?.layout?.visibility).toBe('none');
+	});
+
+	it('shows the cream ring with the discs, and Valley’s ring paint is registered with the Base look', () => {
+		expect(map.layers.get(DISC_RING)?.layout?.visibility).toBe('visible');
+		trees.setVisible(false);
+		expect(map.layers.get(DISC_RING)?.layout?.visibility).toBe('none');
+	});
+});
+
+/** A made-up shrub near a view's centre. */
+const shrub = (id: string, v: View, i = 0): ShrubRow => ({ id, look: i % 2 ? 'sage' : 'bush', lng: v.center[0] + i * 1e-6, lat: v.center[1], h: 1.2, w: 2 });
+
+/** A scene that records what it is given. */
+function fakeScene() {
+	const sets: { group: string; list: { id: string }[]; opts: unknown }[] = [];
+	const shown = new globalThis.Map<string, boolean>();
+	return {
+		ok: true,
+		sets,
+		shown,
+		set: (group: string, list: { id: string }[], opts: unknown) => void sets.push({ group, list: [...list], opts }),
+		show: (group: string, on: boolean) => void shown.set(group, on),
+		remove: (group: string) => void shown.delete(group),
+		placed: () => [],
+		stats: () => null
+	};
+}
+
+describe('the Trees module draws shrubs from z17 (docs/19 §19.8)', () => {
+	const Z17: View = { zoom: 17, center: [-116.21, 43.62] };
+	const Z16: View = { zoom: 16.2, center: [-116.21, 43.62] };
+	const Z15: View = { zoom: 15, center: [-116.21, 43.62] };
+	let shrubRequests: { url: string; signal: AbortSignal; answer: (rows: ShrubRow[], truncated?: boolean) => void }[];
+	let map: ReturnType<typeof fakeMap>;
+	let scene: ReturnType<typeof fakeScene>;
+	let trees: TreesModule;
+	const ok = (body: unknown) => ({ ok: true, status: 200, json: async () => body }) as unknown as Response;
+
+	async function start(phone = false) {
+		vi.useFakeTimers();
+		shrubRequests = [];
+		vi.stubGlobal('matchMedia', () => ({ matches: phone }));
+		vi.stubGlobal(
+			'fetch',
+			vi.fn((url: string, init?: RequestInit) => {
+				if (url === '/api/trees/areas') return Promise.resolve(ok({ areas: [{ area: 'c', bounds: [-116.3, 43.5, -116.1, 43.7], trees: 2, built_at: null }] }));
+				if (url === '/api/trees/shrubs/areas') return Promise.resolve(ok({ areas: [{ area: 'c', bounds: [-116.3, 43.5, -116.1, 43.7], shrubs: 9, built_at: null }] }));
+				if (url.startsWith('/api/trees/shrubs?'))
+					return new Promise<Response>((resolve) =>
+						shrubRequests.push({ url, signal: init!.signal!, answer: (rows, truncated = false) => resolve(ok({ shrubs: rows, truncated })) })
+					);
+				// Trees: an empty answer at once.
+				return Promise.resolve(ok({ trees: [], truncated: false, catalogue: false }));
+			})
+		);
+		map = fakeMap();
+		scene = fakeScene();
+		const ctx = { styleReady: Promise.resolve(map), picker: { onHover: () => () => {} }, scene: () => Promise.resolve(scene) } as unknown as AppCtx;
+		trees = new TreesModule();
+		await trees.mount(ctx);
+		trees.setVisible(true);
+		await settle();
+	}
+
+	afterEach(() => {
+		trees.destroy();
+		vi.unstubAllGlobals();
+		vi.useRealTimers();
+	});
+
+	const moveTo = async (v: View) => {
+		map.moveTo(v);
+		await vi.advanceTimersByTimeAsync(FETCH_DEBOUNCE_MS);
+	};
+
+	it('asks for none below z16.5, and draws none below z17', async () => {
+		await start();
+		await moveTo(Z15);
+		expect(shrubRequests).toHaveLength(0);
+		await moveTo(Z16);
+		expect(shrubRequests).toHaveLength(0);
+		expect(scene.shown.get(SHRUBS_3D)).toBe(false);
+		expect(trees.view.shrubs.drawn).toBe(false);
+	});
+
+	it('at z17 asks for the shrubs round the centre, hands the scene the 1,500 limit’s options, and credits them', async () => {
+		await start();
+		await moveTo(Z17);
+		expect(shrubRequests).toHaveLength(1);
+		expect(shrubRequests[0].url).toMatch(/^\/api\/trees\/shrubs\?bbox=[-\d.,]+&center=-116\.21,43\.62&limit=1500$/);
+		shrubRequests[0].answer([shrub('a', Z17, 0), shrub('b', Z17, 1)]);
+		await settle();
+		const set = scene.sets.filter((x) => x.group === SHRUBS_3D).at(-1)!;
+		expect(set.list.map((i) => i.id)).toEqual(['shrub:a', 'shrub:b']);
+		expect(set.opts).toBe(SHRUBS_SCENE);
+		expect(scene.shown.get(SHRUBS_3D)).toBe(true);
+		expect(trees.view.shrubs).toMatchObject({ bush: 1, sage: 1, drawn: true, here: true });
+		expect(map.attribution()).toContain(SHRUB_CREDIT);
+		expect(map.attribution()).toContain('contains modified Copernicus Sentinel data 2025');
+		// The same box is not asked for twice.
+		await moveTo(Z17);
+		expect(shrubRequests).toHaveLength(1);
+	});
+
+	it('hides them again when zoomed out below z17, and a late answer after leaving doesn’t land', async () => {
+		await start();
+		await moveTo(Z17);
+		shrubRequests[0].answer([shrub('a', Z17)]);
+		await settle();
+		expect(scene.shown.get(SHRUBS_3D)).toBe(true);
+		await moveTo({ ...Z17, zoom: 16.8 });
+		expect(scene.shown.get(SHRUBS_3D)).toBe(false);
+		await moveTo(Z15);
+		expect(trees.view.shrubs.bush + trees.view.shrubs.sage).toBe(0);
+		expect(scene.sets.filter((x) => x.group === SHRUBS_3D).at(-1)!.list).toEqual([]);
+	});
+
+	it('fetches at z16.7 but the scene group stays hidden, also after Trees is turned off', async () => {
+		await start();
+		await moveTo({ ...Z17, zoom: 16.7 });
+		expect(shrubRequests).toHaveLength(1);
+		shrubRequests[0].answer([shrub('a', Z17)]);
+		await settle();
+		expect(scene.shown.get(SHRUBS_3D)).toBe(false);
+		trees.setVisible(false);
+		expect(scene.shown.get(SHRUBS_3D)).toBe(false);
+	});
+
+	it('asks again for the same cell after an answer was aborted by hiding Trees', async () => {
+		await start();
+		await moveTo(Z17);
+		expect(shrubRequests).toHaveLength(1);
+		trees.setVisible(false);
+		trees.setVisible(true);
+		await settle();
+		await moveTo(Z17);
+		expect(shrubRequests).toHaveLength(2);
+	});
+
+	it('hands the scene all 1,500 the API gave (the scene keeps the nearest within 300 m)', async () => {
+		await start();
+		await moveTo(Z17);
+		shrubRequests[0].answer(Array.from({ length: 1500 }, (_, i) => shrub(`s${i}`, Z17, i)), true);
+		await settle();
+		expect(scene.sets.filter((x) => x.group === SHRUBS_3D).at(-1)!.list).toHaveLength(1500);
+		expect(trees.view.shrubs.truncated).toBe(true);
+	});
+
+	it('asks for nothing on a phone', async () => {
+		await start(true);
+		await moveTo(Z17);
+		expect(shrubRequests).toHaveLength(0);
+		expect(trees.view.shrubs.phone).toBe(true);
+		expect(scene.shown.get(SHRUBS_3D)).toBe(false);
+	});
+
+	it('asks for nothing where no shrubs are built', async () => {
+		await start();
+		await moveTo({ zoom: 17, center: [-115.5, 43.62] });
+		expect(shrubRequests).toHaveLength(0);
+		expect(trees.view.shrubs.here).toBe(false);
 	});
 });
