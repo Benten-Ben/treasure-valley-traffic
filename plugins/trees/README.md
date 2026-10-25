@@ -90,8 +90,9 @@ step-4 load close them.
 1. **Pick the window** as for any `ingest` restart ([deploy/README.md](../../deploy/README.md), "Updating"), in the day
    window above. In the VM's shell the archive is `/srv/tvt/archive` (`$TVT_ARCHIVE` is set only inside containers,
    where the archive is `/srv/archive`; the commands below use these paths, never the variable). List the trees builds
-   that exist now: they are the old format, and step 7 moves exactly these. Leave out `shrubs/`, which holds the shrub
-   builds (no inventory data in them): `ls /srv/tvt/archive/trees | grep -vx shrubs > <private files>/trees-builds-before-0003.txt`.
+   that exist now: they are the old format, and step 7 moves exactly these. Tree builds are under `trees/builds/` (the
+   folder of each build is named by its build id); the shrub builds sit in `trees/shrubs/`, outside that folder and not
+   listed here: `ls /srv/tvt/archive/trees/builds > <private files>/trees-builds-before-0003.txt`.
 2. **Back up the trees schema** (check the free space first, `df -h`), under `heavy` with the dump under `timeout` (the
    deadline cannot reach a command run inside the database's container):
    `/srv/tvt/work/bin/heavy --deadline HH:MM --runtime 20 --peak 1 "trees dump (0003)" sh -c 'docker exec tvt-db-1 timeout -k 60 $((HEAVY_DEADLINE_EPOCH - $(date +%s))) pg_dump -U tvt -Fc -n trees tvt' > <private files>/tvt-before-trees-0003-$(date +%F).dump`.
@@ -102,8 +103,10 @@ step-4 load close them.
    old `build.py` writes fields the new loader refuses. The push restarts nothing and applies no migration (that is
    step 4's rebuild of `ingest`). The rebuild needs neither the private plugin nor the inventory: the public files are
    byte for byte those of a build with anchors. One heavy job per area, a name no old build has (`<new build name>`; the
-   area's lidar products and the options its earlier build used: `build.py --help`):
-   `/srv/tvt/work/bin/heavy --deadline HH:MM --runtime MIN --peak 6 "trees <area> (0003)" docker run --rm --memory 6g --memory-swap 6g --cpus 2 --network none --user 1000:1000 -e PYTHONDONTWRITEBYTECODE=1 -v /srv/tvt/repo:/repo:ro -v /srv/tvt/archive:/srv/archive -v <the area's inputs>:/in:ro -w /repo tvt-worker python plugins/trees/build/build.py --area <area> --dsm /in/... --dtm /in/... --out /srv/archive/trees/<new build name>`.
+   area's lidar products and the options its earlier build used, the building mask included (`--mask`, mounted read-only;
+   the earlier builds passed `zero_mask_<area>.npy`, and `build.json`'s `params.mask` records the name of any build made
+   from now on; a build given neither `--mask` nor `--no-mask` is refused; `build.py --help`):
+   `/srv/tvt/work/bin/heavy --deadline HH:MM --runtime MIN --peak 6 "trees <area> (0003)" docker run --rm --memory 6g --memory-swap 6g --cpus 2 --network none --user 1000:1000 -e PYTHONDONTWRITEBYTECODE=1 -v /srv/tvt/repo:/repo:ro -v /srv/tvt/archive:/srv/archive -v <the area's inputs>:/in:ro -w /repo tvt-worker python plugins/trees/build/build.py --area <area> --dsm /in/... --dtm /in/... --mask /in/... --out /srv/archive/trees/builds/<new build name>`.
    Check that `trees.geojson` is in the folder before the deploy. Do it before the deploy so the public layer never
    shows gaps where the City's crowns were.
 4. **Deploy and load straight after.** Rebuild the services that carry this release:
@@ -112,7 +115,7 @@ step-4 load close them.
    columns, empty, so the pinned live app (`tvt-app:live`) keeps working. Check that the migration ran:
    `docker compose logs ingest | grep -F 'applied  trees/0003'` prints `applied  trees/0003_no_city_rows.sql` (two
    spaces, as `db/migrate.py` writes it). Then at once, for each build from step 3, in the day window (the deadline and runtime from `heavy`'s rules):
-   `cd /srv/tvt/repo/deploy && /srv/tvt/work/bin/heavy --deadline HH:MM --runtime 30 --peak 1 "trees load <area> (0003)" docker compose -f docker-compose.yml -f compose.private.yml -f compose.load.yml run --rm --no-deps -e DATABASE_URL ingest python3 -m ingest trees-load --build /srv/archive/trees/<new build name>`
+   `cd /srv/tvt/repo/deploy && /srv/tvt/work/bin/heavy --deadline HH:MM --runtime 30 --peak 1 "trees load <area> (0003)" docker compose -f docker-compose.yml -f compose.private.yml -f compose.load.yml run --rm --no-deps -e DATABASE_URL ingest python3 -m ingest trees-load --build /srv/archive/trees/builds/<new build name>`
    (`DATABASE_URL`, the load's role, comes from the shell). Until a build is loaded, that area's trees are the migration's
    leftovers: the old lidar-found rows, with gaps where the matched inventory trees were. Keep that window as short as
    the steps allow (load straight after the deploy).
@@ -124,7 +127,7 @@ step-4 load close them.
 5. **Private matching, after, separately** (it changes nothing public). Rebuild each area again under `heavy` as in
    step 3 with the same options plus `--anchors FILE --private-out <private files>/trees/<new build name>` (the private
    plugin writes the CSV; add `--private-root` only if the private files are not at `/srv/tvt/private`; mount them in
-   the container), and `--out` a scratch folder **named exactly `<new build name>`**, e.g.
+   the container; FILE is the inventory's trunk-point CSV, which lives only in the private files, never under the archive), and `--out` a scratch folder **named exactly `<new build name>`**, e.g.
    `/srv/tvt/work/trees-match/<new build name>`: the rows record the folder's name as their build id
    (`build_id = basename(--out)`), which must be the id of the build loaded in step 4. The public files are the same as
    step 3's, so `trees-load` is not run again; delete the scratch folder when the private load is done. Then the private
@@ -134,9 +137,9 @@ step-4 load close them.
    `ingest` and `app`, then in one transaction `delete from ops.schema_migration where name = 'trees/0003_no_city_rows.sql'`
    and `pg_restore -c -n trees` the dump from step 2 (it recreates `trees` as it was, shrubs included).
 7. **Old-format builds out of the archive** (after the loads are checked): the dump, not these folders, is the way back.
-   Move the folders listed in step 1 (not `shrubs/`, not step 3's builds) to the private files, creating the target
+   Move the folders listed in step 1 (not step 3's builds) to the private files, creating the target
    first (`mv` into a missing folder renames the first build to it), and check that nothing old-format is left under the
-   archive: `mkdir -p <private files>/trees-old-builds && while read b; do mv "/srv/tvt/archive/trees/$b" <private files>/trees-old-builds/; done < <private files>/trees-builds-before-0003.txt`,
+   archive: `mkdir -p <private files>/trees-old-builds && while read b; do mv "/srv/tvt/archive/trees/builds/$b" <private files>/trees-old-builds/; done < <private files>/trees-builds-before-0003.txt`,
    then `grep -rlE '"(catalogue|catalogue_id|dbh_in|trunk_to_crown_m)"|"kind": ?"(catalogued|estimated)"|boise-' /srv/tvt/archive/trees; echo "grep exit $?"`
    prints nothing before `grep exit 1` (`0` means files are listed, `2` an error such as a missing folder: neither is
    a pass). Scratch jobs also see an empty `trees/` in production's archive (`deploy/scratch/run.sh`).

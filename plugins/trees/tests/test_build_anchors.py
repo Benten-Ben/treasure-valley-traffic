@@ -98,6 +98,8 @@ class BuildWithAnchorsTest(unittest.TestCase):
     @classmethod
     def build_it(cls, argv):
         import build
+        if "--mask" not in argv and "--no-mask" not in argv:
+            argv = argv + ["--no-mask"]
         if "--private-out" in argv and "--private-root" not in argv:
             argv = argv + ["--private-root", os.path.join(cls.tmp.name, "private")]
         build.main(argv)

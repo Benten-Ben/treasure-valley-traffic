@@ -262,7 +262,7 @@ class SpringBuildTest(unittest.TestCase):
         spring, summer = seasons_dirs(tmp, **kw)
         out = os.path.join(tmp, "out")
         build.main(["--area", "t", "--dsm", os.path.join(tmp, "dsm.tif"), "--dtm", os.path.join(tmp, "dtm.tif"),
-                    "--lidar", "synthetic", "--spring", spring, "--summer", summer, "--out", out])
+                    "--lidar", "synthetic", "--spring", spring, "--summer", summer, "--no-mask", "--out", out])
         with open(os.path.join(out, "trees.geojson")) as f:
             trees = [ft["properties"] for ft in json.load(f)["features"]]
         with open(os.path.join(out, "build.json")) as f:
@@ -351,7 +351,7 @@ class SpringBuildTest(unittest.TestCase):
             spring, summer = seasons_dirs(tmp)
             with self.assertRaises(SystemExit) as cm:
                 build.main(["--area", "t", "--dsm", os.path.join(tmp, "dsm.tif"), "--dtm", os.path.join(tmp, "dtm.tif"),
-                            "--spring", spring, "--summer", summer, "--out", os.path.join(tmp, "out")])
+                            "--spring", spring, "--summer", summer, "--no-mask", "--out", os.path.join(tmp, "out")])
             self.assertIn("UTM 11N", str(cm.exception))
 
 
