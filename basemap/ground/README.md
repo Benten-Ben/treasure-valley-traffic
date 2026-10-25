@@ -624,7 +624,8 @@ noise.
 - **Seams.** Every field above is a function of absolute coordinates or of a window's own halo, so tiles of different
   runs meet like windows do (`test_paint.py` checks the noise and the photo across a window edge). The photo's own
   flight seams and the county line are in the COG already (soils' per-flight gains, one mosaic per place), and
-  are for the seam sheets to judge.
+  are for the seam sheets to judge. The gains do not remove every seam, and the variation carries what is left into
+  the paint (the July 24 step, about 8 dE in the COG and about 6 dE painted; #415).
 
 **Tile size.** Measured on a synthetic tile (z15's 1.73 m pixel, WebP quality 80, L noise only): noise of sd 0.009
 in L is 5.4 KB, 0.018 is 12 KB and 0.029 is 20 KB. The photo's variation carries finer detail than the noise and adds
@@ -743,8 +744,8 @@ farm `20261011T130710Z`, water `20261024T070659Z`, mask v0 `20261011T144701Z`, t
     20 m ramp already softens), and no mapped surface, crop, water or class edge is there. The step is the **flight
     seam between the May 25 and July 24 passes** in the 2 m photo itself (raw COG L 0.665 to 0.75, about 8 dE across
     about 25 m, with no step in the sun-normalising gain), carried through the photo's variation (weight 1 on both sides,
-    inside Mahalanobis 2.5 of the type): about 6 dE across it in the painted z15 tile. Feathering the soil base cannot
-    remove it; the fix belongs to the photo variation or the COG's per-flight balancing (see the board).
+    inside Mahalanobis 2.5 of the type): about 6 dE across it in the painted z15 tile. (Inputs: run g1b-valley-1, the window of 2 km at 2 m around that point, flights 1733 and 2195; the scripts were one-off and are not kept, and #415 re-measures it.) Feathering the soil base cannot
+    remove it; the fix belongs to the photo variation or the COG's per-flight balancing (#415).
   - *Darkest soils.* The darkest measured types (Schiller, Chardoton, Banbury, Catchell, Dolman, Montezuma) are desert
     soils in the south of the map box, and read as flat dark brown-grey with little photo variation. The Boise Front's
     north slopes are not dark in the paint: the illumination normalisation lifts them to the tone of the sunlit slopes
@@ -782,7 +783,7 @@ farm `20261011T130710Z`, water `20261024T070659Z`, mask v0 `20261011T144701Z`, t
     uses; the "one sun" is only the fallback for pixels outside a flight polygon. Sheet: `g1b-judge-sun`.
 - **The digest after this change.** The run's digest `10a0dfbcd0df` was taken before `tilewrite.py` changed in this PR. `tilewrite.py` is part of the code digest, so main's code digest differs from it once this merges, and a repaint then gets a new run folder rather than resuming this one.
 - **Not done here:** the app wiring and the page budget (below); a repaint after the soil, water and farm exports are
-  made on production (the digest names that run anew); a fix for box i's dark floor and for the soil-polygon step.
+  made on production (the digest names that run anew); a fix for box i's dark floor and for the July 24 flight-seam step (the photo's variation, #415).
 
 - **Still to do** (Oct 25).
   - the app wiring (S3a's follow-up, wave 2): the page's total at the default view (at most 6 MB) isn't measured with
@@ -791,7 +792,7 @@ farm `20261011T130710Z`, water `20261024T070659Z`, mask v0 `20261011T144701Z`, t
     ground's 0.6 MB and 14 requests through `tiles.first_load`, and the page's 6 MB), measured on textured tiles;
   - boxes h, i and j have no photo (the COG stops at the county mosaics): decide whether they stay without photo
     variation, or whether the Owyhee imagery is added;
-  - the step seen in the July 24 frame: a flight seam in the photo's variation, not the soil base (#413, above);
+  - the step seen in the July 24 frame: a flight seam in the photo's variation, not the soil base (#413's diagnosis, above; the fix is #415);
   - box i's dark desert floor read as surfaced ground by the classes (`classrules.py`);
   - the owner's calls on the four judgement values, with the sheets (#35);
   - a sun from each flight's own place rather than the valley's middle (the DEM itself is done: `dem.py`, above);
