@@ -405,8 +405,11 @@ def photo_of(naip_dir=None, dem=None):
     flights = os.path.join(naip_dir, "flights.fgb")
     if dem and not os.path.isfile(dem):
         raise TileError(f"--dem: {dem} isn't there")
+    photo = paint.Photo(cog, flights if os.path.isfile(flights) else None, dem)
+    if photo.balance_sha:                          # the flight balance (#415) changes the paint: it is part of the photo's name
+        sha = f"{sha}+flight-balance.{photo.balance_sha[:12]}"
     versions = paint.versions(**{"naip-2m": sha, "3dep": sha256_of(dem) if dem else None})
-    return paint.Photo(cog, flights if os.path.isfile(flights) else None, dem), versions
+    return photo, versions
 
 
 def plan_of(archive, versions=None):

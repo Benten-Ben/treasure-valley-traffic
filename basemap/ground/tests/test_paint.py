@@ -14,6 +14,7 @@ try:
     from basemap.ground import classrules as CR
     from basemap.ground import colour as K
     from basemap.ground import paint
+    from basemap.ground import texture as TX
     from basemap.ground.tests.test_rasterize import square, write_layer
 except ImportError:                                  # outside the worker image
     np = None
@@ -370,6 +371,71 @@ class TestTexturePhoto(unittest.TestCase):
         self.assertAlmostEqual(float(with_dem[100, 100, 0]), MED[0], delta=0.012)
         self.assertLess(float(without[100, 100, 0]), MED[0] - 0.015)              # unnormalised: shaded, partly kept
         self.assertGreater(float(abs(without[100, 100, 0] - with_dem[100, 100, 0])), 0.015)
+
+    def two_flight_world(self, offset=0.04):
+        """A COG over type 1's ground from two flights (the second lighter by `offset` in L, the seam at 545400) with a
+        patch of 0.03 more L inside the first, and the flight polygons that say so."""
+        d = self.dir
+        cog = write_cog(os.path.join(d, "flights-cog.tif"), (X0, Y0, X1, Y1), [
+            (X0, 545260.0, (0.80, 0.01, 0.04), 128), (545260.0, 545280.0, (0.83, 0.01, 0.04), 128),
+            (545280.0, 545400.0, (0.80, 0.01, 0.04), 128), (545400.0, X1, (0.80 + offset, 0.01, 0.04), 128)])
+        flights = write_layer(os.path.join(d, "flights-g1b.fgb"), 32611, [
+            (rect(X0 - 10, Y0 - 10, 545400.0, Y1 + 10), {"src_fid": 1}),
+            (rect(545400.0, Y0 - 10, X1 + 10, Y1 + 10), {"src_fid": 2})], fields=(("src_fid", "int"),))
+        return cog, flights
+
+    def test_a_flight_seam_is_balanced_away_and_a_patch_inside_a_flight_stays(self):
+        cog, flights = self.two_flight_world()
+        win = self.win(X0, Y0, X1, Y1)
+        col = lambda x: int((x - X0) / 2)                                           # noqa: E731
+        mid = win.height // 2
+        before = self.painter(photo=paint.Photo(cog, flights)).paint_lab(win)
+        step = float(before[mid, col(545420), 0] - before[mid, col(545380), 0])
+        self.assertAlmostEqual(step, 0.04, delta=0.004)                             # the seam, carried into the paint
+        measure = self.painter(photo=paint.Photo(cog, flights))
+        acc = paint.build_balance(measure, size_cells=256, bounds=(X0, Y0, X1, Y1))
+        self.assertEqual(sorted(acc.medians()), [(1, 1), (2, 1)])
+        photo = paint.Photo(cog, flights, balance=TX.Balance.from_json(acc.to_json()))
+        after = self.painter(photo=photo).paint_lab(win)
+        self.assertAlmostEqual(float(after[mid, col(545420), 0] - after[mid, col(545380), 0]), 0.0, delta=0.004)
+        self.assertAlmostEqual(float(after[mid, col(545420), 0]), MED[0], delta=0.004)
+        self.assertAlmostEqual(float(after[mid, col(545270), 0]), 0.83, delta=0.004)   # the patch in flight 1 stays
+        self.assertIn("within its own flight", paint.photo_report(self.painter(photo=photo))["photo"]["balance"])
+
+    def test_a_flight_short_of_the_floor_keeps_the_valley_median(self):
+        cog, flights = self.two_flight_world()
+        acc = paint.build_balance(self.painter(photo=paint.Photo(cog, flights)), size_cells=256, bounds=(X0, Y0, X1, Y1))
+        photo = paint.Photo(cog, flights, balance=TX.Balance(TX.Balance.from_json(acc.to_json()).cells, floor=10 ** 9))
+        win = self.win(X0, Y0, X1, Y1)
+        lab = self.painter(photo=photo).paint_lab(win)
+        self.assertAlmostEqual(float(lab[win.height // 2, int((545420 - X0) / 2), 0]), 0.84, delta=0.004)
+
+    def test_a_balance_file_beside_the_cog_is_taken_up(self):
+        cog, flights = self.two_flight_world()
+        acc = paint.build_balance(self.painter(photo=paint.Photo(cog, flights)), size_cells=256, bounds=(X0, Y0, X1, Y1))
+        side = os.path.join(self.dir, paint.BALANCE_FILE)
+        with open(side, "w") as f:
+            json.dump(acc.to_json(), f)
+        try:
+            self.assertIsNotNone(paint.Photo(cog, flights).balance)
+        finally:
+            os.remove(side)
+        self.assertIsNone(paint.Photo(cog, flights).balance)
+
+    def test_a_balance_measured_from_other_inputs_is_refused(self):
+        cog, flights = self.two_flight_world()
+        acc = paint.build_balance(self.painter(photo=paint.Photo(cog, flights)), size_cells=256, bounds=(X0, Y0, X1, Y1))
+        self.assertIn("flights", acc.inputs)
+        doc = acc.to_json()
+        doc["inputs"]["flights"] = "0" * 64                     # flights.fgb rebuilt since
+        side = os.path.join(self.dir, paint.BALANCE_FILE)
+        with open(side, "w") as f:
+            json.dump(doc, f)
+        try:
+            with self.assertRaises(paint.PaintError):
+                paint.Photo(cog, flights)
+        finally:
+            os.remove(side)
 
     def test_a_crop_cluster_is_painted_where_the_photo_confirms_it(self):
         d = self.dir
