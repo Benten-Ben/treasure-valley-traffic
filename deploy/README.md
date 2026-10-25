@@ -366,6 +366,8 @@ finished videos older than about a week. **`cold-videos`**
 [`tests/test_cold_videos.py`](tests/test_cold_videos.py)) moves them there,
 daily, from a systemd timer ([`systemd/`](systemd)). The VM's disk then
 holds about a week of videos (about 15 GB) instead of every day since Oct 5.
+Since Oct 24 the VM keeps 3 days instead (owner; `COLD_VIDEO_KEEP_DAYS=3` in
+`heavy.conf`), about 7 GB, to leave room for heavy jobs.
 
 **What moves.** Each finished camera day more than 7 days old (a setting): the
 video, `video/<id>/<year>/<id>-<day>.mp4`, and its frame CSV beside it, to the
