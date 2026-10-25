@@ -25,7 +25,7 @@ Every tree we can find in the lidar ([docs/19](../../docs/19-trees.md)), and the
   a fixed set of fields and refuses a build that carries any other (`ingest/load.py`).
 - Tables: `trees.build`, `trees.tree`, `trees.tree_log` (migrations/0001_trees.sql; 0003 removed the inventory's rows
   and emptied its fields: `trees.tree.catalogue` and `catalogue_id` stay as columns, NULL, behind a check that refuses
-  any value, until a later migration drops them).
+  any value; migration 0004 drops them).
 - Sources (`plugin.json`, each a manual source with a module stating its licence and credit, in `ingest/sources/`):
   the USGS 3DEP lidar (public domain), Sentinel-2 (Copernicus: "Contains modified Copernicus Sentinel data 2025"), USDA
   NAIP (public domain; the shrubs' near-infrared) and OpenStreetMap's hedges (ODbL; the shrubs' hedge check, docs/19

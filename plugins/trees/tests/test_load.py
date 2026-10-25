@@ -228,3 +228,36 @@ class MigrationCleanUpTest(unittest.TestCase):
                                  f" values ('c-5-5', 'c', 'catalogued', 'broadleaf', {self.OLD_POINT}, 9, 3, 'c-old')")
             finally:
                 conn.rollback()
+
+
+@unittest.skipUnless(DB_URL, "set TVT_TEST_DATABASE_URL to a PostGIS database")
+class DropCityColumnsTest(unittest.TestCase):
+    """0004 on a schema as 0001 and 0003 leave it: the two City columns and their check go, placed rows still load,
+    and a query that still names a City column fails, so no app image can select it unnoticed."""
+
+    OLD_POINT = "ST_SetSRID(ST_MakePoint(-116.2, 43.6), 4326)"
+
+    def test_it_drops_the_city_columns_and_their_check(self):
+        import psycopg
+        with psycopg.connect(DB_URL) as conn:
+            try:
+                conn.execute("drop schema if exists trees cascade")
+                run_migration(conn, "0001")
+                run_migration(conn, "0003")
+                conn.execute("insert into trees.build (build_id, area, started_at, params, counts) values ('c-old', 'c', now(), '{}', '{}')")
+                conn.execute(f"insert into trees.tree (tree_id, area, kind, type, geom, height_m, crown_radius_m, build_id)"
+                             f" values ('c-1-1', 'c', 'placed', 'broadleaf', {self.OLD_POINT}, 9, 3, 'c-old')")
+                run_migration(conn, "0004")
+                cols = {r[0] for r in conn.execute(
+                    "select column_name from information_schema.columns where table_schema = 'trees' and table_name = 'tree'")}
+                self.assertFalse({"catalogue", "catalogue_id"} & cols)
+                self.assertEqual(conn.execute(
+                    "select count(*) from pg_constraint where conname = 'tree_no_city_fields_check'").fetchone()[0], 0)
+                self.assertEqual(conn.execute("select tree_id from trees.tree").fetchall(), [("c-1-1",)])
+                conn.execute(f"insert into trees.tree (tree_id, area, kind, type, geom, height_m, crown_radius_m, build_id)"
+                             f" values ('c-2-2', 'c', 'placed', 'broadleaf', {self.OLD_POINT}, 9, 3, 'c-old')")
+                self.assertEqual(conn.execute("select count(*) from trees.tree").fetchone()[0], 2)
+                with self.assertRaises(psycopg.errors.UndefinedColumn), conn.transaction():
+                    conn.execute("select catalogue from trees.tree")
+            finally:
+                conn.rollback()
