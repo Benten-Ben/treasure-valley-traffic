@@ -382,10 +382,11 @@ class Balance:
     """FlightBalance's medians as a lookup: for any window, the median each cell is measured against. Within a flight and
     ground type the reference is carried between the centres of the blocks of BLOCK_M, bilinearly, so the blocks themselves
     never show. A block counts only where it holds `floor` cells of the type in the flight: a cell between a block that
-    does and one that does not (past the flight's edge, a sliver) takes the one that does, not a mean with the flight's
-    median, which would pull an edge band half way to the level it differs from; where none of the four blocks around a
-    cell counts it takes the flight's median, and the blocks' level fades into the flight's median as their total weight
-    falls from 1/2 to 0, so no step appears where their support ends; where the flight itself is under `floor`, the valley's."""
+    does and one that does not (past the flight's edge, a sliver) takes the level of the one that does, not a mean with the
+    flight's median, which would pull an edge band half way to the level it differs from; that level keeps full weight
+    while the counting blocks' total bilinear weight is 1/2 or more, and fades into the flight's median (smoothstep) as it
+    falls from 1/2 to 0, so no step appears where their support ends; where none of the four blocks around a cell counts
+    it takes the flight's median; where the flight itself is under `floor`, the valley's."""
 
     def __init__(self, cells, floor=BALANCE_FLOOR, inputs=None, blocks=None, block_m=BLOCK_M):
         self.floor = floor

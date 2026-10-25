@@ -650,8 +650,11 @@ noise.
   show. A block counts only where it holds the floor (2,000 cells) of that type in that flight. A corner block that does
   not (past the flight's edge, a sliver's far side) counts for nothing and the others are renormalised, instead of
   averaging in the flight's median: that would pull a cell on an edge band half way back to the level it differs from.
-  Where none of the four blocks around a cell counts, the reference is the flight's median, and where the flight is under
-  the floor, the valley's, as before. Histograms for blocks are 512 bins (0.002 in L, a and b, 0.2 dE).
+  The counting blocks' level keeps full weight while their total bilinear weight at the cell is 1/2 or more (a cell
+  beside a counting block), and fades into the flight's median by smoothstep as that weight falls from 1/2 to 0, so the
+  reference has no step where their support ends (a lone counting block of weight 0.4 gives a level part-way to the
+  flight's median, not the block's own). Where none of the four blocks around a cell counts, the reference is the
+  flight's median, and where the flight is under the floor, the valley's, as before. Histograms for blocks are 512 bins (0.002 in L, a and b, 0.2 dE).
 
 **Tile size.** Measured on a synthetic tile (z15's 1.73 m pixel, WebP quality 80, L noise only): noise of sd 0.009
 in L is 5.4 KB, 0.018 is 12 KB and 0.029 is 20 KB. The photo's variation carries finer detail than the noise and adds
