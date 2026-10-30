@@ -36,6 +36,7 @@ import csv
 import fcntl
 import json
 import os
+import re
 import shutil
 import struct
 import subprocess
@@ -444,6 +445,8 @@ def write_index(root, cams, name, title):
                 rel = f"{cam}/{year}/{fname}"
                 csv_rel = rel[:-4] + ".csv"
                 cold = os.path.islink(os.path.join(base, rel))
+                sent = re.fullmatch(OFFSITE_LINK + r"(\d+):[0-9a-f]{64}", os.readlink(os.path.join(base, rel))) \
+                    if cold else None
                 offsite = cold and os.readlink(os.path.join(base, rel)).startswith(OFFSITE_LINK)
                 try:
                     size = os.path.getsize(os.path.join(base, rel))
@@ -460,8 +463,8 @@ def write_index(root, cams, name, title):
                     entry = {"day": fname[len(str(cam)) + 1:-4], "video": rel, "csv": csv_rel, "bytes": size, **summary}
                 elif cold:
                     entry = {"day": fname[len(str(cam)) + 1:-4], "video": rel, "csv": csv_rel}
-                    if offsite:                              # the link records the bytes sent
-                        entry["bytes"] = int(os.readlink(os.path.join(base, rel)).split(":")[1])
+                    if sent:                                 # the link records the bytes sent
+                        entry["bytes"] = int(sent[1])
                 else:
                     continue                                 # gone since it was listed
                 entry.pop("cold", None)

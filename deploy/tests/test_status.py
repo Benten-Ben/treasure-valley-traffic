@@ -197,11 +197,18 @@ class TheVm(Base):
         self.assertEqual(code, 0, out)
         self.assertIn("  cold-vid: last run 6 h ago, done: sent 830 files (2.1 GB)\n", out)
         with open(state, "w") as f:
-            json.dump(dict(run, relinked=9000, old_left=40, old_bad=2), f)
+            json.dump(dict(run, relinked=9000, old_left=40, old_bad=2, old_unknown=1), f)
         code, out = self.run_status()
         self.assertEqual(code, 1, out)
         self.assertIn("! cold-vid: last run 6 h ago, done: sent 830 files (2.1 GB); 9000 old cold-drive links now "
-                      "off-site; 40 files still link to the cold drive (2 don't match their off-site copies)\n", out)
+                      "off-site; 40 files still link to the cold drive (2 don't match their off-site copies, "
+                      "1 have no logged sha256)\n", out)
+        with open(state, "w") as f:
+            json.dump(dict(run, code=1, result="failed", offsite_links=5000, offsite_missing=3), f)
+        code, out = self.run_status()
+        self.assertEqual(code, 1, out)
+        self.assertIn("! cold-vid: last run 6 h ago, failed: sent 830 files (2.1 GB); 3 of 5000 off-site copies "
+                      "missing\n", out)
         with open(state, "w") as f:
             json.dump(dict(run, result="off-site storage unreachable", code=69, moved=0, bytes=0,
                            why="the off-site storage can't be reached (ping: exit 255: no route)"), f)

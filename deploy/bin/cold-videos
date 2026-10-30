@@ -9,49 +9,51 @@ Each finished camera day older than --keep-days (cameras/video/<id>/<year>/<id>-
 it, plugins/cameras/ingest/camera_video.py's layout) is sent to off-site storage (Backblaze B2, encrypted) and
 read back from there. Only when the sha256 of what came back is the original's is the original replaced, in one
 rename, by an off-site link: a symlink whose target, offsite:<bytes>:<sha256>, leads nowhere and records what was
-sent. No second copy is kept on the server. Readers keep the same path: the roll-up counts a linked day as done,
-and the library's index marks it "offsite", which the library shows as kept off-site.
+sent. No second local copy is kept. Readers keep the same path: the roll-up counts a linked day as done, and the
+library's index marks it "offsite", which the library shows as kept off-site.
 
-Off-site storage is reached through one command, OFFSITE_SSH in heavy.conf (on the VM, an ssh to the home server,
-whose forced command holds the storage's keys: the VM holds none), with a verb after it:
+Off-site storage is reached through one command, OFFSITE_SSH in heavy.conf (on the VM, an ssh to one locked-down
+command outside the VM, which holds the storage's keys: the VM holds none), with a verb after it:
   ping                          "ok" once the storage answers
   list                          "<bytes>\t<rel>" for each camera file it holds
-  put <rel> <bytes> <mtime_ns>  the file on stdin; answers "ok <sha256 of what arrived>"
-  verify                        <rel> lines on stdin; answers "<sha256>  <rel>" for each one it holds, read back
-                                from the storage (one it doesn't hold is left out)
+  put <rel> <bytes> <mtime_ns>  the file on stdin; answers "ok <sha256 of what arrived>". A file already there
+                                with other bytes is refused, not replaced
+  verify                        <rel> lines on stdin; answers "<sha256>  <rel>" for each one read back in full
+                                from the storage (one it doesn't hold, or couldn't read, is left out)
   get <rel>                     the file's bytes on stdout
 <rel> is relative to the camera archive: video/<id>/<year>/<name>, the layout the cold drive had.
 
-Days moved to the cold drive before Oct 30 are links to their copies there, which lead nowhere now. Each run also
-checks those: when the storage holds a file with the size this tool logged when it moved it to the drive, the file
-is read back from the storage, and if its sha256 is the logged one, its link becomes an off-site link. One that
-doesn't match, or that the storage doesn't hold yet, keeps its old link and is counted.
+Each run then lists what the storage holds and checks every off-site link against it (the file there, with the
+bytes in the link), so a copy that goes missing later shows in status. It also checks the links the cold drive
+left (days moved there before Oct 30, which lead nowhere now): when the storage holds a file with the size this
+tool logged when it moved it to the drive, the file is read back, and if its sha256 is the logged one, its link
+becomes an off-site link. One that doesn't match, or that the storage doesn't hold yet, keeps its old link and is
+counted; one that didn't match is read back again only once its size there changes, or a week later.
 
   --keep-days N   finished days kept on the VM's disk (default 7, or COLD_VIDEO_KEEP_DAYS): a day goes once it's
                   more than N days old. At least 2, so today's and yesterday's files are never touched.
   --wait MIN      wait at most MIN minutes for the roll-up to finish (default 0: refuse at once)
   --max-mb-s MB   read the VM's disk at most this fast (default 50)
-  --limit N       send at most N files, and turn at most N old links (a careful first run)
+  --limit N       send at most N files and leave the old links alone (a careful first run)
   --dry-run       say what would be sent and what stays; change nothing
   --archive DIR   the camera archive (default /srv/tvt/archive/cameras)
   --bring-back REL ...
                   fetch these off-site files back onto the VM's disk (REL as above, or a path in the archive),
-                  each checked against the bytes and sha256 in its link before it replaces the link. A day older
-                  than --keep-days goes off-site again on the next run.
+                  with the other file of each camera-day, each checked against the bytes and sha256 in its link
+                  before it replaces the link. A day older than --keep-days goes off-site again on the next run.
 
 When it sends:
 - once tonight's camera roll-up has finished: at night both capture status files say rolling_up false after
   00:05, in the day neither says it's rolling up. It holds the roll-up's own lock (cameras/rollup.lock) while it
   works, so no roll-up starts meanwhile;
 - not from 23:55 until tonight's roll-up has finished, nor within 15 minutes of a planned VM restart
-  (MAINTENANCE): a run under way stops between files;
+  (MAINTENANCE): a run under way stops between files, and no step it starts may run past the next 23:55;
 - never a day whose JPEGs are still in the buffer (cameras/jpeg/<id>/<day>), whose encode is going (a .part
   beside it), a file written in the last 10 minutes, or a CSV without its video.
 
-Files are sent one at a time and read back BATCH at a time. Idempotent and resumable: a sent file is a link, and is
-skipped. One sent but not yet read back and linked when a run stopped is sent again by the next. A day encoded
-again since it went (`ingest rollup --force` puts a file where its link was) goes again, and the storage keeps the
-new one, which is what readers saw.
+A day's video goes before its CSV, so a day half sent shows as off-site. Idempotent and resumable: a sent file is
+a link, and is skipped. One sent but not yet read back and linked when a run stopped is sent again by the next
+(the storage keeps the copy it has when the bytes are the same).
 
 Settings, in /srv/tvt/work/heavy.conf (KEY=value; the VM's own, kept out of the repo): OFFSITE_SSH, the command
 (split as a shell would), and optionally COLD_VIDEO_KEEP_DAYS.
@@ -60,9 +62,9 @@ Log: each file sent or relinked (path, bytes, sha256) and each run's start and e
 systemd) and appended to cameras/cold-videos.log; the last run's outcome in cameras/cold-videos.json, which
 bin/status reads. The log is also where the old links' sha256s are read from: keep it.
 
-Exit: 0 done (or nothing to send); 1 a file failed its check (its original is kept); 2 usage or settings; 69 the
-off-site storage can't be reached; 75 not now (the roll-up is going or hasn't finished, a restart is planned,
-another run is going, or 23:55 came); 130 interrupted.
+Exit: 0 done (or nothing to send); 1 a file failed its check (its original is kept), or the storage's list
+failed; 2 usage or settings; 69 the off-site storage can't be reached; 75 not now (the roll-up is going or hasn't
+finished, a restart is planned, another run is going, or 23:55 came); 130 interrupted.
 
 Runs daily from deploy/systemd/tvt-cold-videos.timer, as the archive's owner. Source: deploy/bin/cold-videos in
 the repo; installed in /srv/tvt/work/bin beside heavy, whose rules and settings it reads, so the two always agree.
@@ -81,6 +83,7 @@ import signal
 import stat
 import subprocess
 import sys
+import threading
 import time
 from collections import Counter
 
@@ -107,10 +110,12 @@ STOP_AT = dt.time(23, 55)       # tonight's roll-up starts at 00:05
 RESTART_MARGIN = dt.timedelta(minutes=15)
 RECENT_S = 600                  # a file written this recently is left alone
 WAIT_POLL_S = 60
-BATCH = 50                      # files sent before they're read back together
-OLD_BATCH = 500                 # old cold-drive links read back together
-ANSWER_S = 120                  # how long the storage gets to answer a ping, or a put after its last byte
-READ_BACK_S = 3600              # ... a list, or a batch's read-back
+ANSWER_S = 120                  # how long the storage gets to answer, besides moving the bytes
+MIN_RATE = 0.5e6                # bytes a second below which a transfer counts as stalled
+OLD_BATCH = 500                 # old cold-drive links read back together, at most,
+OLD_BATCH_BYTES = 2**30         # and at most this many bytes
+RECHECK = dt.timedelta(days=7)  # an old link whose copy didn't match is read back again after this
+SHOW = 20                       # problems of one kind logged one by one, at most
 BACK_SPARE_GB = 1               # left free on the VM's disk above heavy's floor when a file comes back
 NAME = re.compile(r"^(?P<cam>.+)-(?P<day>\d{4}-\d\d-\d\d)\.(?P<ext>mp4|csv)$")
 REL = re.compile(r"video/(?P<cam>[^/]+)/(?P<year>\d{4})/(?P=cam)-(?P=year)-\d\d-\d\d\.(?:mp4|csv)")
@@ -165,7 +170,30 @@ def last_line(data):
     return lines[-1][:300] if lines else "no message"
 
 
+def moving(nbytes, transfers=1):
+    """Seconds a step that moves nbytes (transfers times over) may take before it counts as stalled."""
+    return ANSWER_S + transfers * nbytes / MIN_RATE
+
+
 # --- off-site storage -------------------------------------------------------------
+
+class Watchdog:
+    """Kills proc once timeout seconds have passed (a stalled transfer), and says so."""
+
+    def __init__(self, proc, timeout):
+        self.fired = threading.Event()
+
+        def kill():
+            self.fired.set()
+            proc.kill()
+
+        self.timer = threading.Timer(timeout, kill)
+        self.timer.daemon = True
+        self.timer.start()
+
+    def cancel(self):
+        self.timer.cancel()
+
 
 class Offsite:
     """Off-site storage: the command in OFFSITE_SSH, with a verb after it (see the top)."""
@@ -178,7 +206,7 @@ class Offsite:
             r = subprocess.run(self.command + [verb, *args], input=data, stdout=subprocess.PIPE,
                                stderr=subprocess.PIPE, timeout=timeout)
         except subprocess.TimeoutExpired:
-            raise OffsiteError(f"{verb}: no answer in {timeout} s")
+            raise OffsiteError(f"{verb}: no answer in {timeout:.0f} s")
         except OSError as err:
             raise OffsiteError(f"{verb}: {err}")
         if r.returncode:
@@ -188,19 +216,20 @@ class Offsite:
     def ping(self):
         self.call("ping")
 
-    def listing(self):
+    def listing(self, timeout):
         """{rel: bytes} for each camera file the storage holds."""
         held = {}
-        for line in self.call("list", timeout=READ_BACK_S).splitlines():
+        for line in self.call("list", timeout=timeout).splitlines():
             size, _, rel = line.partition("\t")
             if size.isdigit() and REL.fullmatch(rel):
                 held[rel] = int(size)
         return held
 
-    def verify(self, rels):
-        """{rel: sha256 of its copy, read back from the storage} for those of rels it holds."""
+    def verify(self, rels, timeout):
+        """{rel: sha256 of its copy, read back in full from the storage} for those of rels it could
+        read back. One left out is not proven."""
         want = set(rels)
-        out = self.call("verify", data="".join(rel + "\n" for rel in rels).encode(), timeout=READ_BACK_S)
+        out = self.call("verify", data="".join(rel + "\n" for rel in rels).encode(), timeout=timeout)
         back = {}
         for line in out.splitlines():
             digest, _, rel = line.partition("  ")
@@ -208,7 +237,7 @@ class Offsite:
                 back[rel] = digest
         return back
 
-    def put(self, path, rel, st, pace):
+    def put(self, path, rel, st, pace, timeout):
         """Sends the file at path as rel. Returns its sha256, computed as it was read. Raises
         CheckFailed when what arrived isn't what was sent, OffsiteError when it wasn't taken."""
         h = hashlib.sha256()
@@ -217,6 +246,7 @@ class Offsite:
                                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         except OSError as err:
             raise OffsiteError(f"put: {err}")
+        dog = Watchdog(proc, timeout)
         try:
             try:
                 with open(path, "rb", buffering=0) as f:
@@ -226,15 +256,15 @@ class Offsite:
                         pace(len(chunk))
             except BrokenPipeError:
                 pass                                     # it stopped reading: its answer says why
-            out, err = proc.communicate(timeout=ANSWER_S)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait()
-            raise OffsiteError(f"put: no answer in {ANSWER_S} s after the last byte")
+            out, err = proc.communicate()
         except BaseException:
             proc.kill()
             proc.wait()
             raise
+        finally:
+            dog.cancel()
+        if dog.fired.is_set():
+            raise OffsiteError(f"put: given up after {timeout:.0f} s")
         if proc.returncode:
             raise OffsiteError(f"put: exit {proc.returncode}: {last_line(err)}")
         words = out.decode(errors="replace").split()
@@ -244,13 +274,14 @@ class Offsite:
             raise CheckFailed("what arrived off-site isn't what was sent (its sha256 differs)")
         return h.hexdigest()
 
-    def get(self, rel, f, pace):
+    def get(self, rel, f, pace, timeout):
         """Writes rel's bytes from the storage to f. Returns (bytes, sha256)."""
         h, n = hashlib.sha256(), 0
         try:
             proc = subprocess.Popen(self.command + ["get", rel], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         except OSError as err:
             raise OffsiteError(f"get: {err}")
+        dog = Watchdog(proc, timeout)
         try:
             while chunk := proc.stdout.read(CHUNK):
                 h.update(chunk)
@@ -258,11 +289,17 @@ class Offsite:
                 n += len(chunk)
                 pace(len(chunk))
             err = proc.stderr.read()
-            proc.wait(timeout=ANSWER_S)
+            proc.wait()
         except BaseException:
             proc.kill()
             proc.wait()
             raise
+        finally:
+            dog.cancel()
+            proc.stdout.close()
+            proc.stderr.close()
+        if dog.fired.is_set():
+            raise OffsiteError(f"get: given up after {timeout:.0f} s")
         if proc.returncode:
             raise OffsiteError(f"get: exit {proc.returncode}: {last_line(err)}")
         return n, h.hexdigest()
@@ -330,14 +367,30 @@ def gate(t, statuses):
     return restart_problem(t)
 
 
-def stop_between_files():
-    """Raises Stop once 23:55 has come or a planned restart is near."""
+def deadline_after(t):
+    """The next 23:55 (Boise) after t: no step of a run that started at t may go past it."""
+    stop = dt.datetime.combine(t.date(), STOP_AT, t.tzinfo)
+    return stop if t < stop else stop + dt.timedelta(days=1)
+
+
+def stop_between_files(deadline):
+    """Raises Stop once the run's 23:55 has come or a planned restart is near."""
     t = heavy.now()
-    if t.time() >= STOP_AT:
+    if t >= deadline:
         raise Stop(f"stopped at {heavy.hm(t)} Boise: tonight's roll-up comes next", EX_LATER)
     why = restart_problem(t)
     if why:
         raise Stop(f"stopped: {why}", EX_LATER)
+
+
+def within(deadline, seconds):
+    """seconds, cut to what's left before the run's 23:55. Raises Stop when nothing is left."""
+    if deadline is None:
+        return seconds
+    left = (deadline - heavy.now()).total_seconds()
+    if left <= 0:
+        raise Stop(f"stopped at {heavy.hm(heavy.now())} Boise: tonight's roll-up comes next", EX_LATER)
+    return min(seconds, left)
 
 
 def take_lock(path):
@@ -376,7 +429,7 @@ def wait_to_start(cameras, wait_min, say):
 
 def plan(cameras, cutoff, now_s=None):
     """(files to send, Counter of reasons files stay). Files are (path relative to the archive,
-    bytes): video/<id>/<year>/<id>-<day>.ext, each camera-day's CSV before its video, oldest day
+    bytes): video/<id>/<year>/<id>-<day>.ext, each camera-day's video before its CSV, oldest day
     first. Only regular files: a sent one is a symlink."""
     now_s = heavy.now().timestamp() if now_s is None else now_s
     base = os.path.join(cameras, "video")
@@ -420,14 +473,13 @@ def plan(cameras, cutoff, now_s=None):
                 elif now_s - st.st_mtime < RECENT_S:
                     kept["written in the last 10 minutes"] += 1
                 else:
-                    todo.append((day, cam, m["ext"] == "mp4", f"video/{cam}/{year}/{name}", st.st_size))
+                    todo.append((day, cam, m["ext"] == "csv", f"video/{cam}/{year}/{name}", st.st_size))
     todo.sort()
     return [(rel, size) for _, _, _, rel, size in todo], kept
 
 
-def old_links(cameras):
-    """The links the cold drive left: {rel: target} for each camera file in the archive that's a
-    symlink but not an off-site link."""
+def links(cameras):
+    """{rel: target} for each camera file in the archive that's a symlink."""
     out = {}
     for folder, dirs, names in os.walk(os.path.join(cameras, "video")):
         dirs.sort()
@@ -435,9 +487,7 @@ def old_links(cameras):
             path = os.path.join(folder, name)
             rel = os.path.relpath(path, cameras)
             if REL.fullmatch(rel) and os.path.islink(path):
-                target = os.readlink(path)
-                if not target.startswith(OFFSITE):
-                    out[rel] = target
+                out[rel] = os.readlink(path)
     return out
 
 
@@ -453,6 +503,11 @@ def logged(cameras):
     except FileNotFoundError:
         pass
     return out
+
+
+def sibling(rel):
+    """The other file of rel's camera-day: its CSV for a video, its video for a CSV."""
+    return rel[:-4] + (".csv" if rel.endswith(".mp4") else ".mp4")
 
 
 # --- sending one file -------------------------------------------------------------
@@ -507,28 +562,24 @@ def put_link(path, target):
     fsync_dir(os.path.dirname(path))
 
 
-def send(rel, cameras, offsite, pace):
-    """Sends one file. Returns the lstat it was sent with and its sha256, or None when it's no
-    longer a regular file."""
+def send(rel, cameras, offsite, pace, deadline):
+    """Sends one file, reads it back, and once its copy off-site is the original, replaces it with
+    its off-site link. Returns (lstat, sha256), or None when it's no longer a regular file."""
     src = os.path.join(cameras, rel)
     st = os.lstat(src)
     if not stat.S_ISREG(st.st_mode):
         return None
-    return st, offsite.put(src, rel, st, pace)
-
-
-def link_sent(rel, cameras, st, sha, back):
-    """Replaces a sent file with its off-site link, once back (the sha256 of its copy read back
-    from the storage, or None when the storage holds none) is the original's."""
+    sha = offsite.put(src, rel, st, pace, within(deadline, moving(st.st_size, 2)))
+    back = offsite.verify([rel], within(deadline, moving(st.st_size))).get(rel)
     if back is None:
-        raise CheckFailed("the off-site storage doesn't hold it after it was sent")
+        raise CheckFailed("it couldn't be read back from the off-site storage after it was sent")
     if back != sha:
         raise CheckFailed("the copy read back from the off-site storage doesn't match the original's sha256")
-    src = os.path.join(cameras, rel)
     now = os.lstat(src)
     if (now.st_ino, now.st_size, now.st_mtime_ns) != (st.st_ino, st.st_size, st.st_mtime_ns):
         raise CheckFailed("the original changed while it was sent; it stays, and the next run sends it again")
     put_link(src, offsite_target(st.st_size, sha))
+    return st, sha
 
 
 # --- a run --------------------------------------------------------------------
@@ -539,9 +590,11 @@ class Run:
         self.dry_run = dry_run
         self.started = dt.datetime.now(dt.timezone.utc)
         self.moved = self.bytes = self.failed = self.left = 0
-        self.relinked = self.old_left = self.old_bad = 0
+        self.relinked = self.old_left = self.old_bad = self.old_unknown = 0
+        self.offsite_links = self.offsite_missing = None
         self.kept = Counter()
-        self.cutoff = None
+        self.cutoff = self.deadline = None
+        self.bad_seen = {}                       # old links whose copy didn't match: {rel: [bytes, day checked]}
 
     def say(self, message):
         line = f"{stamp()} {message}"
@@ -553,31 +606,37 @@ class Run:
             except OSError as err:
                 print(f"{stamp()} (the log can't be written: {err})", file=sys.stderr, flush=True)
 
+    def previous(self):
+        try:
+            with open(os.path.join(self.cameras, STATE)) as f:
+                return json.load(f)
+        except (OSError, ValueError):
+            return {}
+
     def finish(self, code, why="", record=True):
         """Logs the end and records it in the state file (unless record is false). Returns code."""
         result = RESULTS.get(code, "failed")
         moved = f"sent {self.moved} files ({gb(self.bytes):.2f} GB) off-site"
         tail = (f"; {self.left} still to send" if self.left else "") + \
                (f"; {self.failed} failed their check" if self.failed else "") + \
+               (f"; {self.offsite_missing} off-site links whose copy isn't there" if self.offsite_missing else "") + \
                (f"; {self.relinked} old cold-drive links now off-site links" if self.relinked else "") + \
                (f"; {self.old_left} files still link to the cold drive" if self.old_left else "") + \
-               (f" ({self.old_bad} of them don't match off-site)" if self.old_bad else "")
+               (f" ({self.old_bad} don't match off-site, {self.old_unknown} with no logged sha256)"
+                if self.old_bad or self.old_unknown else "")
         self.say(f"{'dry run ' if self.dry_run else ''}{result}: {why + '; ' if why else ''}{moved}{tail}")
         if self.dry_run or not record:
             return code
-        previous = {}
-        try:
-            with open(os.path.join(self.cameras, STATE)) as f:
-                previous = json.load(f)
-        except (OSError, ValueError):
-            pass
+        previous = self.previous()
         finished = stamp()
         state = {
             "version": 2, "started": stamp(self.started), "finished": finished, "code": code,
             "result": result, "why": why, "moved": self.moved, "bytes": self.bytes, "failed": self.failed,
             "left": self.left, "kept": dict(self.kept),
             "cutoff": self.cutoff.isoformat() if self.cutoff else None,
+            "offsite_links": self.offsite_links, "offsite_missing": self.offsite_missing,
             "relinked": self.relinked, "old_left": self.old_left, "old_bad": self.old_bad,
+            "old_unknown": self.old_unknown, "bad_seen": self.bad_seen or previous.get("bad_seen", {}),
             "last_done": finished if code == 0 else previous.get("last_done"),
         }
         path = os.path.join(self.cameras, STATE)
@@ -596,7 +655,7 @@ def parse(argv):
     p.add_argument("--keep-days", type=int, help=f"finished days kept on the VM's disk (default {KEEP_DAYS})")
     p.add_argument("--wait", type=float, default=0, metavar="MIN", help="wait at most MIN minutes for the roll-up")
     p.add_argument("--max-mb-s", type=float, default=MAX_MB_S, metavar="MB", help="read at most this fast")
-    p.add_argument("--limit", type=int, metavar="N", help="send at most N files and turn at most N old links")
+    p.add_argument("--limit", type=int, metavar="N", help="send at most N files and leave the old links alone")
     p.add_argument("--dry-run", action="store_true", help="say what would be sent; change nothing")
     p.add_argument("--archive", help="the camera archive (default: beside heavy's status files)")
     p.add_argument("--bring-back", nargs="+", metavar="REL", help="fetch these off-site files back")
@@ -604,42 +663,17 @@ def parse(argv):
 
 
 def send_new(files, cameras, offsite, pace, run_):
-    """Sends files one at a time, and reads them back BATCH at a time before they become links."""
-    batch = []                                   # (rel, lstat, sha256): sent, not yet read back
+    """Sends files one at a time, each read back before it becomes a link."""
     gone = 0                                     # files no longer regular files when their turn came
-
-    def read_back():
-        rels = [rel for rel, _, _ in batch]
-        try:
-            back = offsite.verify(rels)
-        except OffsiteError as err:
-            for rel in rels:
-                run_.failed += 1
-                run_.say(f"FAILED {rel}: it couldn't be read back ({err}) (the original stays)")
-            batch.clear()
-            reachable(offsite)                   # gone away: stop rather than fail every file
-            return
-        for rel, st, sha in batch:
-            try:
-                link_sent(rel, cameras, st, sha, back.get(rel))
-            except (CheckFailed, OSError) as err:
-                run_.failed += 1
-                run_.say(f"FAILED {rel}: {err} (the original stays)")
-                continue
-            run_.moved += 1
-            run_.bytes += st.st_size
-            run_.say(f"sent {rel} ({st.st_size} bytes, sha256 {sha})")
-        batch.clear()
-
     for rel, _ in files:
         run_.left = len(files) - run_.moved - gone       # if it stops here
-        stop_between_files()
+        stop_between_files(run_.deadline)
         try:
-            done = send(rel, cameras, offsite, pace)
+            done = send(rel, cameras, offsite, pace, run_.deadline)
         except OffsiteError as err:
             run_.failed += 1
             run_.say(f"FAILED {rel}: {err} (the original stays)")
-            reachable(offsite)
+            reachable(offsite)                   # gone away: stop rather than fail every file
             continue
         except (CheckFailed, OSError) as err:
             run_.failed += 1
@@ -648,60 +682,93 @@ def send_new(files, cameras, offsite, pace, run_):
         if done is None:
             gone += 1
             continue
-        batch.append((rel, *done))
-        if len(batch) >= BATCH:
-            read_back()
-    if batch:
-        read_back()
+        st, sha = done
+        run_.moved += 1
+        run_.bytes += st.st_size
+        run_.say(f"sent {rel} ({st.st_size} bytes, sha256 {sha})")
     run_.left = len(files) - run_.moved - gone
 
 
-def relink_old(cameras, offsite, limit, run_):
+def audit(offsite_links, held, run_):
+    """Counts the off-site links whose copy the storage doesn't hold with the bytes in the link."""
+    missing = []
+    for rel, target in sorted(offsite_links.items()):
+        m = OFFSITE_TARGET.fullmatch(target)
+        if not m or held.get(rel) != int(m["bytes"]):
+            missing.append(rel)
+    run_.offsite_links, run_.offsite_missing = len(offsite_links), len(missing)
+    for rel in missing[:SHOW]:
+        run_.say(f"MISSING off-site: {rel}: its link says {offsite_links[rel]}, the storage holds "
+                 + (f"{held[rel]} bytes" if rel in held else "nothing"))
+    if len(missing) > SHOW:
+        run_.say(f"MISSING off-site: {len(missing) - SHOW} more")
+
+
+def relink_old(olds, held, offsite, run_, bad_before):
     """Turns the cold drive's old links into off-site links, each once its copy read back from the
     storage has the sha256 this tool logged when it moved the file to the drive."""
-    olds = old_links(cameras)
+    run_.old_left = len(olds)
     if not olds:
         return
-    record = logged(cameras)
-    held = offsite.listing()
-    ready, waiting, unknown = [], 0, 0
+    record = logged(run_.cameras)
+    today = heavy.now().date()
+    ready, waiting = [], 0
     for rel in sorted(olds):
         if rel not in record:
-            unknown += 1
+            run_.old_unknown += 1
         elif held.get(rel) != record[rel][0]:
             waiting += 1
+        elif rel in bad_before and bad_before[rel][0] == held[rel] and \
+                today - dt.date.fromisoformat(bad_before[rel][1]) < RECHECK:
+            run_.old_bad += 1                    # didn't match lately, and nothing there changed
+            run_.bad_seen[rel] = bad_before[rel]
         else:
             ready.append(rel)
-    run_.old_left = len(olds)
     run_.say(f"{len(olds)} files still link to the cold drive: {len(ready)} held off-site, to read back now; "
-             f"{waiting} not off-site yet" + (f"; {unknown} with no sha256 in {LOG}" if unknown else ""))
+             f"{waiting} not off-site yet" + (f"; {run_.old_bad} that didn't match lately" if run_.old_bad else "")
+             + (f"; {run_.old_unknown} with no sha256 in {LOG}" if run_.old_unknown else ""))
     if run_.dry_run:
         return
-    if limit is not None:
-        ready = ready[:limit]
-    for i in range(0, len(ready), OLD_BATCH):
-        stop_between_files()
-        rels = ready[i:i + OLD_BATCH]
+    batches, batch, size = [], [], 0
+    for rel in ready:
+        if batch and (len(batch) >= OLD_BATCH or size + held[rel] > OLD_BATCH_BYTES):
+            batches.append((batch, size))
+            batch, size = [], 0
+        batch.append(rel)
+        size += held[rel]
+    if batch:
+        batches.append((batch, size))
+    unread = 0
+    for rels, size in batches:
+        stop_between_files(run_.deadline)
         try:
-            back = offsite.verify(rels)
+            back = offsite.verify(rels, within(run_.deadline, moving(size)))
         except OffsiteError as err:
             run_.say(f"old links: {len(rels)} couldn't be read back ({err}); they keep their old links")
             reachable(offsite)
             continue
         for rel in rels:
-            size, sha = record[rel]
-            path = os.path.join(cameras, rel)
-            if back.get(rel) != sha:
-                run_.old_bad += 1
-                run_.say(f"old link {rel}: its copy off-site doesn't match the sha256 logged when it moved to the "
-                         f"cold drive ({sha}); it keeps its old link")
+            size_, sha = record[rel]
+            got = back.get(rel)
+            if got is None:
+                unread += 1                      # not read back this time: tried again next run
                 continue
+            if got != sha:
+                run_.old_bad += 1
+                run_.bad_seen[rel] = [held[rel], today.isoformat()]
+                if run_.old_bad <= SHOW:
+                    run_.say(f"old link {rel}: its copy off-site doesn't match the sha256 logged when it moved to "
+                             f"the cold drive ({sha}); it keeps its old link")
+                continue
+            path = os.path.join(run_.cameras, rel)
             if not os.path.islink(path) or os.readlink(path) != olds[rel]:
                 continue                         # changed meanwhile (a day encoded again)
-            put_link(path, offsite_target(size, sha))
+            put_link(path, offsite_target(size_, sha))
             run_.relinked += 1
             run_.old_left -= 1
-            run_.say(f"relinked {rel} ({size} bytes, sha256 {sha}): its copy off-site, read back")
+            run_.say(f"relinked {rel} ({size_} bytes, sha256 {sha}): its copy off-site, read back")
+    if unread:
+        run_.say(f"old links: {unread} couldn't be read back this time; the next run tries them again")
 
 
 def run(args, run_):
@@ -715,6 +782,7 @@ def run(args, run_):
     if not os.path.isdir(os.path.join(cameras, "video")):
         raise Stop(f"no camera videos in {cameras} (video/ is missing)", EX_USAGE)
     reachable(offsite)
+    bad_before = run_.previous().get("bad_seen") or {}
 
     held = []
     try:
@@ -728,6 +796,7 @@ def run(args, run_):
                 raise Stop("another cold-videos run is going", EX_LATER, record=False)
             held.append(fd)
             held.append(wait_to_start(cameras, args.wait, run_.say))
+            run_.deadline = deadline_after(heavy.now())
 
         today = heavy.now().date()
         run_.cutoff = today - dt.timedelta(days=keep + 1)
@@ -743,20 +812,32 @@ def run(args, run_):
             for rel, size in files:
                 run_.say(f"would send {rel} ({size} bytes)")
             run_.left = len(files)
-            relink_old(cameras, offsite, args.limit, run_)
-            return 0
+        else:
+            send_new(files, cameras, offsite, Pace(args.max_mb_s), run_)
 
-        send_new(files, cameras, offsite, Pace(args.max_mb_s), run_)
-        relink_old(cameras, offsite, args.limit, run_)
-        return EX_FAILED if run_.failed else 0
+        try:
+            stored = offsite.listing(within(run_.deadline, moving(0) * 10))
+        except OffsiteError as err:
+            reachable(offsite)
+            raise Stop(f"the off-site storage's list failed ({err}), so nothing was checked against it", EX_FAILED)
+        found = links(cameras)
+        audit({rel: t for rel, t in found.items() if t.startswith(OFFSITE)}, stored, run_)
+        olds = {rel: t for rel, t in found.items() if not t.startswith(OFFSITE)}
+        if args.limit is not None:
+            run_.old_left = len(olds)
+            run_.say(f"old links: left alone (--limit); {len(olds)} still link to the cold drive")
+        else:
+            relink_old(olds, stored, offsite, run_, bad_before)
+        return EX_FAILED if run_.failed or run_.offsite_missing else 0
     finally:
         for fd in reversed(held):
             os.close(fd)
 
 
 def bring_back(rels, run_, max_mb_s):
-    """Fetches off-site files back onto the VM's disk, each checked against the bytes and sha256 in
-    its link before it replaces the link. Returns the exit code."""
+    """Fetches off-site files back onto the VM's disk, with the other file of each camera-day, each
+    checked against the bytes and sha256 in its link before it replaces the link. Returns the exit
+    code."""
     cameras = run_.cameras
     offsite = offsite_settings()
     reachable(offsite)
@@ -764,15 +845,21 @@ def bring_back(rels, run_, max_mb_s):
     if fd is None:
         raise Stop("a cold-videos run is going", EX_LATER)
     pace = Pace(max_mb_s)
+    wanted = []
+    for given in rels:
+        rel = os.path.relpath(os.path.abspath(given), cameras) if os.path.isabs(given) else given
+        for r in (rel, sibling(rel)):
+            target = os.readlink(os.path.join(cameras, r)) if REL.fullmatch(r) and \
+                os.path.islink(os.path.join(cameras, r)) else ""
+            if r not in (w for w, _ in wanted) and (r == rel or OFFSITE_TARGET.fullmatch(target)):
+                wanted.append((r, target))
     try:
-        for given in rels:
-            rel = os.path.relpath(os.path.abspath(given), cameras) if os.path.isabs(given) else given
+        for rel, target in wanted:
             path = os.path.join(cameras, rel)
-            target = os.readlink(path) if REL.fullmatch(rel) and os.path.islink(path) else ""
             m = OFFSITE_TARGET.fullmatch(target)
             if not m:
                 run_.failed += 1
-                run_.say(f"FAILED {given}: not an off-site link in {cameras}" +
+                run_.say(f"FAILED {rel}: not an off-site link in {cameras}" +
                          (" (a cold-drive link: it becomes an off-site link once its copy is proven)"
                           if target else ""))
                 continue
@@ -783,7 +870,7 @@ def bring_back(rels, run_, max_mb_s):
             tmp = hidden(path, BACK)
             try:
                 with open(tmp, "wb") as f:
-                    n, got = offsite.get(rel, f, pace)
+                    n, got = offsite.get(rel, f, pace, moving(size))
                     f.flush()
                     os.fsync(f.fileno())
                 if (n, got) != (size, sha):

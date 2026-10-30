@@ -3,12 +3,15 @@ the same verbs (ping, list, put, verify, get), over a folder.
 
     python3 offsite_double.py <folder> <verb> [args...]
 
-Files are kept at <folder>/store/<rel>. <folder>/faults.json, when it's there, makes it misbehave:
+Files are kept at <folder>/store/<rel>. As the real one does, put leaves a file already there with the same
+size as it is and refuses one with another size; verify leaves out what it doesn't hold or can't read; and get
+answers nothing (exit 0) for a file it doesn't hold. <folder>/faults.json, when it's there, makes it misbehave:
   {"down": true}                        every verb fails (exit 255, as ssh does when it can't connect)
-  {"verify_down": true}                 verify fails
+  {"verify_down": true}                 verify fails outright (exit 1, nothing read back)
   {"put_answers": "<sha256>"}           put answers this sha256 instead of what arrived
   {"lose": ["<rel>", ...]}              put answers ok but keeps nothing; list and verify don't see these
   {"corrupt": ["<rel>", ...]}           verify and get return other bytes for these (the stored file is fine)
+  {"unreadable": ["<rel>", ...]}        listed, but verify leaves these out and get fails (exit 1)
 Each call is appended to <folder>/calls.log as "<verb> <args>".
 """
 import hashlib
@@ -33,6 +36,7 @@ def main(folder, verb, *args):
         print("ssh: connect to host: Connection refused", file=sys.stderr)
         return 255
     lose, corrupt = set(faults.get("lose", [])), set(faults.get("corrupt", []))
+    unreadable = set(faults.get("unreadable", []))
 
     def read(rel):
         with open(os.path.join(store, rel), "rb") as f:
@@ -61,8 +65,12 @@ def main(folder, verb, *args):
         if len(data) != size:
             print(f"the stream had {len(data)} bytes, not {size}", file=sys.stderr)
             return 1
-        if rel not in lose:
-            path = os.path.join(store, rel)
+        path = os.path.join(store, rel)
+        if os.path.exists(path) and os.path.getsize(path) != size:
+            print(f"it already holds {os.path.getsize(path)} bytes there, not {size}; it isn't replaced",
+                  file=sys.stderr)
+            return 1
+        if rel not in lose and not os.path.exists(path):
             os.makedirs(os.path.dirname(path), exist_ok=True)
             with open(path + ".tmp", "wb") as f:
                 f.write(data)
@@ -71,13 +79,16 @@ def main(folder, verb, *args):
         print("ok", faults.get("put_answers") or hashlib.sha256(data).hexdigest())
     elif verb == "verify" and not args:
         if faults.get("verify_down"):
-            print("rclone hashsum failed", file=sys.stderr)
+            print("read-back failed", file=sys.stderr)
             return 1
-        there = set(held())
+        there = set(held()) - unreadable
         for rel in sys.stdin.read().split():
             if rel in there:
                 print(f"{hashlib.sha256(read(rel)).hexdigest()}  {rel}")
     elif verb == "get" and len(args) == 1:
+        if args[0] in unreadable:
+            print("read failed", file=sys.stderr)
+            return 1
         if args[0] in set(held()):
             sys.stdout.buffer.write(read(args[0]))
     else:

@@ -383,15 +383,18 @@ locked-down command outside the VM, which holds the keys. That command takes
 five requests and nothing else: `ping`, `list`, `put` (a file
 on its input: it buffers the file in memory, uploads it, and answers the
 sha256 of what arrived), `verify` (downloads each named file back from B2,
-through the decryption, and answers its sha256) and `get` (a file's bytes).
-It has no delete. Each file is sent once, paced (50 MB/s from the VM's disk
-by default, at idle I/O priority), its sha256 computed as it's read; what
-arrived must have that sha256. Every 50 files, the batch is read back from
-B2, and each file whose copy read back has the original's sha256, and
-which hasn't changed since it was sent, is replaced, in one rename, by an
-**off-site link**: a symlink to `offsite:<bytes>:<sha256>`, which leads
-nowhere and records what was sent. Readers see the file or the link, never
-neither. Every file sent (path, bytes, sha256) is logged to the journal and
+through the decryption, and answers the sha256 of each one read in full) and
+`get` (a file's bytes). It has no delete, and it never replaces a file B2
+already holds with other bytes. Each file is sent once, paced (50 MB/s from
+the VM's disk by default, at idle I/O priority), its sha256 computed as it's
+read; what arrived must have that sha256. Then it is read back from B2, and
+only when the copy read back has the original's sha256, and the original
+hasn't changed since it was sent, is the original replaced, in one rename,
+by an **off-site link**: a symlink to `offsite:<bytes>:<sha256>`, which
+leads nowhere and records what was sent. Readers see the file or the link,
+never neither. A day's video goes before its CSV, so a day half sent shows
+as off-site. Each step has a time limit that grows with the file's size, so
+a stalled transfer fails rather than hangs. Every file sent (path, bytes, sha256) is logged to the journal and
 to `cameras/cold-videos.log` in the archive, and each run's outcome to
 `cameras/cold-videos.json`, which `status` reads.
 
@@ -402,15 +405,23 @@ saying `rolling_up` false after 00:05 (in the day, neither rolling up). It
 holds the roll-up's own lock (`cameras/rollup.lock`) while it works, so no
 roll-up, nightly or by hand, starts meanwhile. It doesn't start from 23:55
 until tonight's roll-up has finished, nor within 15 minutes of a restart
-planned in `MAINTENANCE`; a run under way stops between files. It starts
-only when the storage answers a `ping`, and stops if the storage stops
-answering.
+planned in `MAINTENANCE`; a run under way stops between files, and no step
+it starts may run past the next 23:55. It starts only when the storage
+answers a `ping`, and stops if the storage stops answering.
+
+**Checked every run.** Each run lists what B2 holds and checks every off-site
+link against it: the file there, with the bytes in the link. One that has
+gone missing is logged (`MISSING off-site`), fails the run (exit 1), and
+`status` flags it.
 
 **Idempotent and resumable.** A sent file is a link, and is skipped. One
 sent but not read back and linked when a run stopped (23:55, SIGTERM, the
-storage gone) stays on the VM's disk and is sent again by the next run. If a
-day is encoded again (`ingest rollup --force` puts a file where its link
-was), the next run sends it again, and B2 keeps the new one.
+storage gone) stays on the VM's disk and is sent again by the next run; B2
+keeps the copy it has when the bytes are the same size, and the read-back
+decides. A day encoded again after it went (`ingest rollup --force` puts a
+file where its link was; in practice it can't, as its JPEGs are gone) is
+refused, since B2 never replaces what it holds: it fails every run, its file
+stays on the VM's disk, and the owner decides.
 
 **The cold drive's old links.** Days moved to the drive from Oct 15 to Oct 30
 are links to it, which lead nowhere since it failed. The drive's contents
@@ -419,8 +430,11 @@ Each run checks those links too: for a file B2 holds with the size logged
 when it moved to the drive, it reads the file back from B2, and when its
 sha256 is the one in `cold-videos.log` for that move, the link becomes an
 off-site link. A file B2 doesn't hold yet, or whose copy doesn't match,
-keeps its old link and is counted (`status` flags them). Keep
-`cold-videos.log`: it is where those sha256s are read from. A day that never
+keeps its old link and is counted (`status` flags them). One whose copy
+didn't match is read back again only when its size in B2 changes, or a week
+later; one that couldn't be read is tried again by the next run. Keep
+`cold-videos.log`: it is where those sha256s are read from (a copy is kept
+with the private files). A day that never
 matches is lost; once the owner agrees, deleting its link (as uid 1000)
 takes it out of the library at the next roll-up.
 
@@ -446,13 +460,16 @@ gone). The cold drive's mount in the VM, and `heavy`'s `COLD_*` settings and
 development runs, which are a separate question.
 
 **Bringing a day back.** As uid 1000, `cold-videos --bring-back <rel or path>
-...` fetches each file from B2, checks its bytes and sha256 against its
-link, and renames it over the link. A day older than the days kept goes
-off-site again on the next run (cheaply: it is sent and read back again).
+...` fetches each file, and the other file of its camera-day, from B2,
+checks its bytes and sha256 against its link, and renames it over the link.
+A day older than the days kept goes off-site again on the next night's run
+(cheaply: B2 keeps its copy, and it is read back again), so look at it the
+same day.
 
-**The only copy.** A day sent off-site has one copy, in B2, and the VM has
-no way to delete it. Nothing else may mirror (`rclone sync`) into that folder
-in B2: a mirror from a source without these files would delete them there.
+**The only copy.** A day sent off-site has one copy, in B2, and the VM can't
+delete or replace it. Nothing else may mirror into that folder in B2: a
+mirror from a source without these files would delete them there. The
+check every run (above) is what would show it.
 
 **Settings.** On the VM, kept out of the repo:
 
@@ -465,25 +482,32 @@ in B2: a mirror from a source without these files would delete them there.
 
 **Setting it up** (once, after the merge; the lead, outside 00:00–04:00):
 
-1. Make the key (as uid 1000, no passphrase) in `/srv/tvt/work/offsite/`, and
-   record the other end's host key there. The owner installs the command and
-   the key's forced-command line there (private notes).
-2. Add `OFFSITE_SSH=ssh -F /dev/null -i <key> -o IdentitiesOnly=yes -o
-   BatchMode=yes -o UserKnownHostsFile=<known_hosts> -o ServerAliveInterval=30
-   <user>@<host>` to `heavy.conf`, and check it as uid 1000: `<that command>
-   ping` answers `ok`.
-3. Install the tool beside `heavy`, by rename, and `status` the same way:
-   `install -m 755 deploy/bin/cold-videos /srv/tvt/work/bin/.cold-videos.new && mv -f /srv/tvt/work/bin/.cold-videos.new /srv/tvt/work/bin/cold-videos`.
-4. Rebuild the capture image (the index code) under `heavy`, as image builds
+1. Stop the timer while you work: `sudo systemctl stop tvt-cold-videos.timer`.
+2. Make the key (as uid 1000, no passphrase) in `/srv/tvt/work/offsite/`, and
+   record the other end's host key there, checked against its fingerprint.
+   The owner installs the command and the key's forced-command line there
+   (private notes).
+3. Add `OFFSITE_SSH=ssh -F /dev/null -i <key> -o IdentitiesOnly=yes -o
+   BatchMode=yes -o UserKnownHostsFile=<known_hosts> -o ConnectTimeout=20
+   -o ServerAliveInterval=30 <user>@<host>` to `heavy.conf`, and check it as
+   uid 1000: `<that command> ping` answers `ok`.
+4. Install the tools beside `heavy`, each by rename:
+   `for t in cold-videos status; do install -m 755 deploy/bin/$t /srv/tvt/work/bin/.$t.new && mv -f /srv/tvt/work/bin/.$t.new /srv/tvt/work/bin/$t; done`.
+   Then the unit (it now waits for the network): `sudo install -m 644
+   deploy/systemd/tvt-cold-videos.service deploy/systemd/tvt-cold-videos.timer
+   /etc/systemd/system/ && sudo systemctl daemon-reload`.
+5. Rebuild the capture image (the index code) under `heavy`, as image builds
    are, once neither capture service is rolling up: from `deploy/`,
    `docker compose build cameras regional`; take `compose.cold.yml` out of
    `COMPOSE_FILE` in `deploy/.env` (and `COLD_MOUNT` with it); then
    `docker compose up -d cameras regional web`.
-5. A dry run, then one camera-day, as uid 1000: `sudo -u '#1000'
+6. A dry run, then one camera-day, as uid 1000: `sudo -u '#1000'
    /srv/tvt/work/bin/cold-videos --dry-run`, then `--limit 2`; open that day
-   in the library ("Kept off-site"), bring it back with `--bring-back` and
-   compare its sha256 with the log's. The timer (already installed) then
-   runs the rest at 02:00.
+   in the library ("Kept off-site"), bring it back with `--bring-back`, and
+   compare its sha256 with the log's.
+7. Start the timer again: `sudo systemctl start tvt-cold-videos.timer`. It
+   sends the rest at 02:00, or start a run now with `sudo systemctl start
+   tvt-cold-videos`.
 
 ```bash
 sudo -u '#1000' /srv/tvt/work/bin/cold-videos --dry-run    # what would go; changes nothing
@@ -493,7 +517,8 @@ tail /srv/tvt/archive/cameras/cold-videos.log               # what went
 ```
 
 Exit codes: 0 done (or nothing to send); 1 a file failed its check (its
-original stays; the next run tries again); 2 usage or settings; 69 the
+original stays; the next run tries again), an off-site copy has gone
+missing, or B2's list failed; 2 usage or settings; 69 the
 storage can't be reached; 75 not now (the roll-up still going after the
 wait, a restart planned, another run going, 23:55 reached), which systemd
 counts as success: the next day's run catches up, and `status` flags two

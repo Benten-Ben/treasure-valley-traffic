@@ -203,10 +203,11 @@ class SendTest(Base):
         self.assertEqual(log.count(" sent video/"), 12)
         rel = self.rel(752, self.day(10))
         self.assertIn(f"sent {rel} (1000 bytes, sha256 {before[rel]})", log)
-        # Each day's CSV goes before its video, oldest day first.
+        # Each day's video goes before its CSV, oldest day first.
         order = [line.split()[2] for line in log.splitlines() if " sent video/" in line]
-        self.assertEqual(order[:4], [self.rel(656, self.day(10), "csv"), self.rel(656, self.day(10)),
-                                     self.rel(752, self.day(10), "csv"), self.rel(752, self.day(10))])
+        self.assertEqual(order[:4], [self.rel(656, self.day(10)), self.rel(656, self.day(10), "csv"),
+                                     self.rel(752, self.day(10)), self.rel(752, self.day(10), "csv")])
+        self.assertEqual((state["offsite_links"], state["offsite_missing"]), (12, 0))
         self.assertNoHiddenFiles()
 
     def test_a_second_run_sends_nothing(self):
@@ -219,12 +220,12 @@ class SendTest(Base):
         self.assertEqual(self.snapshot(), before)
         self.assertEqual(len(self.calls("put")), puts)
 
-    def test_files_are_read_back_in_batches(self):
+    def test_each_file_is_read_back_as_soon_as_it_is_sent(self):
         self.archive(cams=(656, 752, 801), days=(8, 9))         # 12 files
-        self.cv.BATCH = 5
         code, out = self.run_cv()
         self.assertEqual(code, 0, out)
-        self.assertEqual((len(self.calls("put")), len(self.calls("verify"))), (12, 3))   # 5 + 5 + 2
+        verbs = [c.split()[0] for c in self.calls()]
+        self.assertEqual(verbs, ["ping"] + ["put", "verify"] * 12 + ["list"])
 
     def test_keep_days_and_the_files_that_always_stay(self):
         self.archive(cams=(656,), days=range(0, 6))
@@ -259,8 +260,8 @@ class SendTest(Base):
         self.archive(cams=(656, 752), days=(8, 9))
         code, out = self.run_cv("--limit", "2")
         self.assertEqual(code, 0, out)
-        self.assertSent(self.rel(656, self.day(9), "csv"))
         self.assertSent(self.rel(656, self.day(9)))
+        self.assertSent(self.rel(656, self.day(9), "csv"))
         for rel in (self.rel(752, self.day(9)), self.rel(656, self.day(8)), self.rel(752, self.day(8))):
             self.assertStays(rel)
         self.assertEqual(self.state()["moved"], 2)
@@ -328,7 +329,7 @@ class CheckTest(Base):
         self.faults(lose=[self.rel(656, self.day(10), "csv")])
         code, out = self.run_cv()
         self.assertEqual(code, 1, out)
-        self.assertIn("the off-site storage doesn't hold it after it was sent", out)
+        self.assertIn("it couldn't be read back from the off-site storage after it was sent", out)
         self.assertStays(self.rel(656, self.day(10), "csv"))
         self.assertSent(self.rel(656, self.day(10)))
 
@@ -336,15 +337,16 @@ class CheckTest(Base):
         self.faults(verify_down=True)
         code, out = self.run_cv()
         self.assertEqual(code, 1, out)
-        self.assertIn("couldn't be read back", out)
+        self.assertIn(f"FAILED {self.rel(656, self.day(10))}: verify: exit 1: read-back failed (the original stays)",
+                      out)
         self.assertAllStay()
 
     def test_an_original_that_changes_while_sent_stays(self):
         video = os.path.join(self.cameras, self.rel(656, self.day(9)))
         real = self.cv.Offsite.put
 
-        def put_then_change(offsite, path, rel, st, pace):
-            digest = real(offsite, path, rel, st, pace)
+        def put_then_change(offsite, path, rel, st, *args):
+            digest = real(offsite, path, rel, st, *args)
             if path == video:
                 with open(path + ".new", "wb") as f:
                     f.write(b"encoded again")
@@ -359,19 +361,25 @@ class CheckTest(Base):
         with open(video, "rb") as f:
             self.assertEqual(f.read(), b"encoded again")
         os.utime(video, (self.t.timestamp() - 3600,) * 2)
-        self.assertEqual(self.run_cv()[0], 0)                               # next time: the new one goes
-        self.assertSent(self.rel(656, self.day(9)), hashlib.sha256(b"encoded again").hexdigest())
+        code, out = self.run_cv()                                           # next time: the storage holds the
+        self.assertEqual(code, 1, out)                                      # old one, and doesn't replace it
+        self.assertIn("isn't replaced (the original stays)", out)
+        self.assertStays(self.rel(656, self.day(9)))
 
-    def test_a_day_encoded_again_goes_again(self):
+    def test_a_day_encoded_again_doesnt_replace_its_copy_off_site(self):
         self.assertEqual(self.run_cv()[0], 0)
         rel = self.rel(656, self.day(9))
         path = os.path.join(self.cameras, rel)
+        first = os.readlink(path)
         os.remove(path)                                                     # ingest rollup --force
         with open(path, "wb") as f:
             f.write(b"a better encode")
         os.utime(path, (self.t.timestamp() - 3600,) * 2)
-        self.assertEqual(self.run_cv()[0], 0)
-        self.assertSent(rel, hashlib.sha256(b"a better encode").hexdigest())
+        code, out = self.run_cv()
+        self.assertEqual(code, 1, out)                                      # loud, never silent
+        self.assertIn("isn't replaced", out)
+        self.assertStays(rel)
+        self.assertEqual(sha(os.path.join(self.store, rel)), first.split(":")[2])
 
     def test_stopped_by_sigterm_leaves_the_original(self):
         self.camera_day(801, self.day(9), size=6 * 2**20)
@@ -427,8 +435,10 @@ class RefuseTest(Base):
         with mock.patch.object(self.cv, "send", send_then_go_away):
             code, out = self.run_cv()
         self.assertEqual(code, 69, out)
-        self.assertNothingSent()                                 # the one sent was never read back
-        self.assertEqual((self.state()["moved"], self.state()["left"]), (0, 4))
+        self.assertSent(self.rel(656, self.d9))                  # the first, read back before it went away
+        for rel in (self.rel(656, self.d9, "csv"), self.rel(656, self.d8), self.rel(656, self.d8, "csv")):
+            self.assertStays(rel)
+        self.assertEqual((self.state()["moved"], self.state()["left"]), (1, 3))
 
     def test_the_roll_up_comes_first(self):
         self.statuses(rolling=(False, True))
@@ -491,6 +501,21 @@ class RefuseTest(Base):
         self.assertIn("stopped at 23:56 Boise", out)
         self.assertEqual((self.state()["moved"], self.state()["left"]), (0, 2))   # days up to Oct 7 here
         self.assertNothingSent()                               # sent, not read back: they go again
+
+    def test_a_step_that_runs_past_midnight_still_stops(self):
+        self.set_clock("2026-10-15 23:50")
+        self.statuses()
+        real = self.cv.send
+
+        def slow_send(*args):
+            self.h.OFFSET += 11 * 60                           # past 23:55, and past midnight
+            return real(*args)
+
+        with mock.patch.object(self.cv, "send", slow_send):
+            code, out = self.run_cv()
+        self.assertEqual(code, 75, out)
+        self.assertIn("stopped at 00:01 Boise", out)
+        self.assertNothingSent()
 
     def test_not_before_a_planned_restart(self):
         with open(os.path.join(self.work, "MAINTENANCE"), "w") as f:
@@ -569,10 +594,30 @@ class OldLinksTest(Base):
         with open(os.path.join(self.store, missing), "wb") as f:           # arrives, but not the logged size
             f.write(b"x" * 7)
         self.faults()
+        verifies = len(self.calls("verify"))
+        code, out = self.run_cv()
+        self.assertEqual(code, 0, out)
+        self.assertIn("1 that didn't match lately", out)                    # not read back again so soon
+        self.assertEqual(len(self.calls("verify")), verifies)
+        self.assertOldLink(bad)
+        self.assertOldLink(missing)
+        self.assertEqual((self.state()["relinked"], self.state()["old_left"], self.state()["old_bad"]), (0, 2, 1))
+        self.set_clock("2026-10-24 02:30")                                  # a week later: checked again
+        self.statuses()
         self.assertEqual(self.run_cv()[0], 0)
         self.assertSent(bad, self.moved[bad][1])
         self.assertOldLink(missing)
-        self.assertEqual((self.state()["relinked"], self.state()["old_left"]), (1, 1))
+        self.assertEqual((self.state()["relinked"], self.state()["old_left"], self.state()["old_bad"]), (1, 1, 0))
+
+    def test_one_copy_that_cant_be_read_doesnt_hold_back_the_rest(self):
+        self.faults(unreadable=[self.old[4]])
+        code, out = self.run_cv()
+        self.assertEqual(code, 0, out)
+        self.assertOldLink(self.old[4])
+        for rel in self.old[:4] + self.old[5:]:
+            self.assertSent(rel, self.moved[rel][1])
+        self.assertIn("old links: 1 couldn't be read back this time", out)
+        self.assertEqual((self.state()["relinked"], self.state()["old_left"], self.state()["old_bad"]), (7, 1, 0))
 
     def test_a_link_with_no_logged_sha256_keeps_its_old_link(self):
         with open(os.path.join(self.cameras, "cold-videos.log"), "w") as f:
@@ -599,8 +644,29 @@ class OldLinksTest(Base):
         self.assertIn("8 files still link to the cold drive: 8 held off-site, to read back now", out)
         self.assertEqual(self.snapshot(), before)
         self.assertFalse(self.calls("verify"))
-        self.assertEqual(self.run_cv("--limit", "3")[0], 0)
-        self.assertEqual((self.state()["relinked"], self.state()["old_left"]), (3, 5))
+        self.assertEqual(self.run_cv("--limit", "3")[0], 0)                # a careful first run: none
+        self.assertEqual((self.state()["relinked"], self.state()["old_left"]), (0, 8))
+        self.cv.OLD_BATCH = 3
+        self.assertEqual(self.run_cv()[0], 0)
+        self.assertEqual((self.state()["relinked"], self.state()["old_left"]), (8, 0))
+        self.assertEqual(len(self.calls("verify")), 3)                     # 3 + 3 + 2
+
+
+class AuditTest(Base):
+    def test_an_off_site_copy_that_goes_missing_is_flagged(self):
+        self.archive(cams=(656,), days=(8, 9))
+        self.assertEqual(self.run_cv()[0], 0)
+        gone, shrunk = self.rel(656, self.day(9)), self.rel(656, self.day(8), "csv")
+        os.remove(os.path.join(self.store, gone))
+        with open(os.path.join(self.store, shrunk), "wb") as f:
+            f.write(b"short")
+        code, out = self.run_cv()
+        self.assertEqual(code, 1, out)
+        self.assertIn(f"MISSING off-site: {gone}: its link says offsite:1000:", out)
+        self.assertIn(f"MISSING off-site: {shrunk}: its link says offsite:100:", out)
+        self.assertIn("the storage holds 5 bytes", out)
+        state = self.state()
+        self.assertEqual((state["offsite_links"], state["offsite_missing"], state["result"]), (4, 2, "failed"))
 
 
 class BringBackTest(Base):
@@ -626,6 +692,12 @@ class BringBackTest(Base):
             os.utime(path, (self.t.timestamp() - 3600,) * 2)
         self.assertEqual(self.run_cv()[0], 0)                               # older than kept: it goes again
         self.assertSent(self.video, self.digest)
+
+    def test_a_camera_day_comes_back_whole(self):
+        code, out = self.run_cv("--bring-back", self.video)
+        self.assertEqual(code, 0, out)
+        self.assertStays(self.video)
+        self.assertStays(self.rel(656, self.day(9), "csv"))
 
     def test_bytes_that_come_back_wrong_leave_the_link(self):
         self.faults(corrupt=[self.video])
@@ -676,12 +748,19 @@ class ReadersTest(Base):
             days = json.load(f)["cameras"][0]["days"]
         self.assertEqual([(d["day"], d["bytes"], d.get("offsite"), d.get("cold")) for d in days],
                          [(self.day(9).isoformat(), 1000, True, None), (self.day(8).isoformat(), 1000, True, None)])
-        self.assertEqual(camera_video.pending(root, self.t.date()), [])
+        for back in (8, 9):                                                 # a JPEG folder left behind
+            os.makedirs(os.path.join(self.cameras, "jpeg", "656", self.day(back).isoformat()))
+        self.assertEqual(camera_video.pending(root, self.t.date()), [])    # the link counts as done
         os.remove(index)                                                    # an index made afresh
         self.assertEqual(camera_video.write_index(root, cams, "key_cameras", "Key cameras"), 2)
         with open(index) as f:
             days = json.load(f)["cameras"][0]["days"]
         self.assertEqual([(d["bytes"], d.get("offsite")) for d in days], [(1000, True), (1000, True)])
+        path = os.path.join(self.cameras, self.rel(656, self.day(8)))
+        os.remove(path)
+        os.symlink("offsite:not-a-size", path)                              # a link it can't read
+        os.remove(index)
+        self.assertEqual(camera_video.write_index(root, cams, "key_cameras", "Key cameras"), 2)
 
 
 if __name__ == "__main__":
