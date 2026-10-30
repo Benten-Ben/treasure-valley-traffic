@@ -483,6 +483,9 @@ check every run (above) is what would show it.
 **Setting it up** (once, after the merge; the lead, outside 00:00–04:00):
 
 1. Stop the timer while you work: `sudo systemctl stop tvt-cold-videos.timer`.
+   Take `compose.cold.yml` out of `COMPOSE_FILE` in `deploy/.env` (and
+   `COLD_MOUNT` with it) as soon as `main` reaches the server: the file is
+   gone, and every `docker compose` command fails until it's out.
 2. Make the key (as uid 1000, no passphrase) in `/srv/tvt/work/offsite/`, and
    record the other end's host key there, checked against its fingerprint.
    The owner installs the command and the key's forced-command line there
@@ -498,9 +501,9 @@ check every run (above) is what would show it.
    /etc/systemd/system/ && sudo systemctl daemon-reload`.
 5. Rebuild the capture image (the index code) under `heavy`, as image builds
    are, once neither capture service is rolling up: from `deploy/`,
-   `docker compose build cameras regional`; take `compose.cold.yml` out of
-   `COMPOSE_FILE` in `deploy/.env` (and `COLD_MOUNT` with it); then
-   `docker compose up -d cameras regional web`.
+   `docker compose build cameras regional`, then `docker compose up -d
+   cameras regional web` (it restarts `app` too). The index marks the days
+   sent off-site at the next roll-up.
 6. A dry run, then one camera-day, as uid 1000: `sudo -u '#1000'
    /srv/tvt/work/bin/cold-videos --dry-run`, then `--limit 2`; open that day
    in the library ("Kept off-site"), bring it back with `--bring-back`, and
