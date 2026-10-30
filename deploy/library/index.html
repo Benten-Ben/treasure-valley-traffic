@@ -12,9 +12,10 @@
   The archive keeps its clock layout (video mm:ss = clock hh:mm, docs/11
   §11.5); this page plays it faster, 12 frames a second by default.
   Data: files/index-<list>.json (written by the frame streams) and, per day,
-  the video and its frame CSV. Days older than a week sit on the cold drive
-  ("cold": true in the index; deploy/bin/cold-videos): when one can't be read,
-  the page says it isn't available right now.
+  the video and its frame CSV. Days older than the server keeps are sent
+  off-site ("offsite": true in the index; deploy/bin/cold-videos) and can't be
+  played here: the page says so. Days moved to the cold drive before it failed
+  ("cold": true) can't be read either, until their off-site copies are proven.
 -->
 <style>
   :root {
@@ -226,19 +227,22 @@ async function selectCamera(id, day, t) {
   $("title").append(cam.name, Object.assign(document.createElement("small"), { textContent: `#${cam.id}` }));
   const sel = $("day");
   sel.textContent = "";
-  for (const d of [...cam.days].reverse()) sel.append(new Option(dayLabel(d.day), d.day));
+  for (const d of [...cam.days].reverse()) sel.append(new Option(dayLabel(d.day) + (d.offsite ? " · off-site" : ""), d.day));
   await selectDay(day && cam.days.some((d) => d.day === day) ? day : cam.days[cam.days.length - 1].day, t);
 }
 
-// A day that can't be read right now: most likely one kept on the cold drive while the drive can't be
-// reached (the index marks those "cold"). Say so in words; the other days still play.
+// A day that can't be played here: one kept off-site (the index marks those "offsite"), one still linked
+// to the cold drive that failed ("cold"), or one that won't load. Say which in words; the other days play.
 function showUnavailable(d) {
   const box = $("notice");
   box.textContent = "";
-  box.append(Object.assign(document.createElement("strong"), { textContent: "Not available right now" }),
-    Object.assign(document.createElement("span"), { textContent: d && d.cold
-      ? "This day is kept on the cold drive, which can't be reached at the moment. It comes back once it can; the last week's days are always here."
-      : "This day's video can't be loaded at the moment." }));
+  const [title, text] = d && d.offsite
+    ? ["Kept off-site", "This day is kept in off-site storage, not on this server, so it can't be played here. It can be brought back by hand (cold-videos --bring-back); the last few days are always here."]
+    : d && d.cold
+    ? ["Not available", "This day was kept on the cold drive, which failed. It shows as kept off-site once its off-site copy is checked; until then it can't be played."]
+    : ["Not available right now", "This day's video can't be loaded at the moment."];
+  box.append(Object.assign(document.createElement("strong"), { textContent: title }),
+    Object.assign(document.createElement("span"), { textContent: text }));
   box.hidden = false;
   $("hud").hidden = true;
   $("frameInfo").textContent = "";
@@ -255,6 +259,17 @@ async function selectDay(day, t) {
   state.day = d;
   $("day").value = day;
   hideUnavailable();
+  if (d.offsite) {                                       // nothing here to load: say so, fetch nothing
+    video.removeAttribute("src");
+    video.load();
+    state.rows = [];
+    state.frames = [];
+    $("downloads").textContent = "";
+    showUnavailable(d);
+    drawCoverage();
+    writeHash();
+    return;
+  }
   let r = null;
   try { r = await fetch("files/" + d.csv); } catch (_) { /* unreachable: said below */ }
   if (state.day !== d) return;                           // another day was picked meanwhile

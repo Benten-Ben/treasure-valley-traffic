@@ -1,12 +1,11 @@
-"""Tests for deploy/bin/cold-videos: finished camera days older than a week move to the cold drive,
-with symlinks left in their place (decision A1).
+"""Tests for deploy/bin/cold-videos: finished camera days older than a few days go to off-site storage, read
+back before off-site links take their place (decision A1, as changed on Oct 30, 2026).
 
     python3 -m unittest discover -s deploy/tests
 
-Against synthetic trees: a made-up camera archive, capture status files and work folder (heavy's
-settings, which cold-videos reads), a fixed clock and fixed free disk. Nothing here touches the
-real /srv or docker. On the VM, set COLD_VIDEOS_TEST_COLD to a scratch folder on the cold drive to
-make the copies there (through the VM's share of the drive) instead of in a temporary folder.
+Against synthetic trees: a made-up camera archive, capture status files and work folder (heavy's settings, which
+cold-videos reads), a fixed clock and fixed free disk. The off-site storage is offsite_double.py over a temporary
+folder, reached through OFFSITE_SSH as the real one is. Nothing here touches the real /srv, docker or the network.
 """
 import datetime as dt
 import fcntl
@@ -14,6 +13,7 @@ import hashlib
 import io
 import json
 import os
+import shlex
 import shutil
 import signal
 import subprocess
@@ -30,6 +30,7 @@ sys.path.insert(0, HERE)
 import cold_harness  # noqa: E402
 
 HARNESS = os.path.join(HERE, "cold_harness.py")
+DOUBLE = os.path.join(HERE, "offsite_double.py")
 
 
 def boise(text, tz):
@@ -42,30 +43,25 @@ def sha(path):
 
 
 class Base(unittest.TestCase):
-    now = "2026-10-16 02:30"           # Boise: tonight's roll-up finished; days up to Oct 8 move
+    now = "2026-10-16 02:30"           # Boise: tonight's roll-up finished; days up to Oct 8 go
 
     def setUp(self):
         self.cv = cold_harness.load()
         self.h = h = self.cv.heavy
         self.tmp = tempfile.mkdtemp(prefix="tvt-cold-videos-")
         self.addCleanup(shutil.rmtree, self.tmp, True)
-        base = os.environ.get("COLD_VIDEOS_TEST_COLD")
-        self.mount = tempfile.mkdtemp(prefix="drive-", dir=base) if base else os.path.join(self.tmp, "cold")
-        os.makedirs(self.mount, exist_ok=True)
-        self.addCleanup(shutil.rmtree, self.mount, True)
         self.work = os.path.join(self.tmp, "work")
         self.cameras = os.path.join(self.tmp, "archive", "cameras")
-        self.marker = os.path.join(self.mount, ".tvt-cold-drive")
-        self.folder = os.path.join(self.mount, "vm", "cameras")
-        for d in (self.work, os.path.join(self.cameras, "status"), os.path.join(self.cameras, "video"), self.folder):
+        self.offsite = os.path.join(self.tmp, "offsite")
+        self.store = os.path.join(self.offsite, "store")
+        for d in (self.work, os.path.join(self.cameras, "status"), os.path.join(self.cameras, "video"), self.store):
             os.makedirs(d, exist_ok=True)
-        open(self.marker, "w").close()
         self.conf()
         h.WORK = self.work
         h.STATUS_DIR = os.path.join(self.cameras, "status")
         self.set_clock(self.now)
-        self.cold_free_gb = 1500.0
-        h.free_gb = lambda where: self.cold_free() if where == self.mount else 40.0
+        self.free = 40.0
+        h.free_gb = lambda where: self.free
         self.statuses()
 
     def set_clock(self, text):
@@ -74,20 +70,25 @@ class Base(unittest.TestCase):
         self.h.boot_time = lambda: self.t.timestamp() - self.h.OFFSET - 86400
 
     def conf(self, **extra):
-        values = {"COLD_MOUNT": self.mount, "COLD_MARKER": self.marker, "COLD_KEEP_GB": "200",
-                  "COLD_CAMERAS": self.folder, **extra}
+        command = " ".join(shlex.quote(a) for a in (sys.executable, DOUBLE, self.offsite))
+        values = {"OFFSITE_SSH": command, **extra}
         with open(os.path.join(self.work, "heavy.conf"), "w") as f:
-            f.write("# the VM's own paths\n")
+            f.write("# the VM's own settings\n")
             for key, value in values.items():
                 if value is not None:
                     f.write(f"{key}={value}\n")
 
-    def cold_free(self):
-        """What's free on the made-up drive: the starting figure less what the copies took."""
-        used = 0
-        for folder, _, names in os.walk(self.folder):
-            used += sum(os.path.getsize(os.path.join(folder, n)) for n in names)
-        return self.cold_free_gb - used / self.h.GB
+    def faults(self, **faults):
+        with open(os.path.join(self.offsite, "faults.json"), "w") as f:
+            json.dump(faults, f)
+
+    def calls(self, verb=None):
+        try:
+            with open(os.path.join(self.offsite, "calls.log")) as f:
+                lines = f.read().splitlines()
+        except FileNotFoundError:
+            return []
+        return [line for line in lines if verb is None or line.split()[0] == verb]
 
     def statuses(self, rolling=(False, False), ages=(10, 10)):
         for (name, cadence), roll, age in zip((("key_cameras", 50), ("regional-cameras", 600)), rolling, ages):
@@ -137,29 +138,41 @@ class Base(unittest.TestCase):
         with open(os.path.join(self.cameras, "cold-videos.log")) as f:
             return f.read()
 
-    def assertMoved(self, rel):
+    def assertSent(self, rel, digest=None):
+        """rel is an off-site link recording its bytes and sha256, and the storage holds those bytes."""
         path = os.path.join(self.cameras, rel)
         self.assertTrue(os.path.islink(path), f"{rel} isn't a link")
-        self.assertEqual(os.readlink(path), os.path.join(self.folder, rel))
-        self.assertTrue(os.path.isfile(os.path.join(self.folder, rel)))
+        target = os.readlink(path)
+        self.assertRegex(target, r"^offsite:\d+:[0-9a-f]{64}$")
+        _, size, digest_in_link = target.split(":")
+        copy = os.path.join(self.store, rel)
+        self.assertEqual((int(size), digest_in_link), (os.path.getsize(copy), sha(copy)))
+        if digest is not None:
+            self.assertEqual(digest_in_link, digest)
 
     def assertStays(self, rel):
         path = os.path.join(self.cameras, rel)
-        self.assertTrue(os.path.isfile(path) and not os.path.islink(path), f"{rel} moved")
+        self.assertTrue(os.path.isfile(path) and not os.path.islink(path), f"{rel} went")
+
+    def assertNoHiddenFiles(self):
+        for folder, _, names in os.walk(self.cameras):
+            self.assertFalse([n for n in names if n.endswith((".cold-link", ".cold-back"))], folder)
 
     def snapshot(self):
         out = {}
-        for root in (self.cameras, self.mount):
+        for root in (self.cameras, self.store):
             for folder, dirs, names in os.walk(root):
                 for n in dirs + names:
                     p = os.path.join(folder, n)
+                    if n in ("cold-videos.log", "cold-videos.json"):
+                        continue
                     out[p] = (os.path.islink(p), os.readlink(p) if os.path.islink(p) else None,
                               None if os.path.isdir(p) or os.path.islink(p) else sha(p))
         return out
 
 
-class MoveTest(Base):
-    def test_days_older_than_a_week_move_and_links_take_their_place(self):
+class SendTest(Base):
+    def test_days_older_than_the_kept_ones_go_off_site_and_links_take_their_place(self):
         self.archive()
         before = {rel: sha(os.path.join(self.cameras, rel))
                   for cam in (656, 752) for back in range(1, 11) for rel in
@@ -171,44 +184,47 @@ class MoveTest(Base):
             for back in range(1, 11):
                 for ext in ("mp4", "csv"):
                     rel = self.rel(cam, self.day(back), ext)
-                    (self.assertMoved if back >= 8 else self.assertStays)(rel)
-                    # Every reader keeps the same path and the same bytes.
-                    self.assertEqual(sha(os.path.join(self.cameras, rel)), before[rel])
-        copy = os.stat(os.path.join(self.folder, self.rel(656, self.day(8))))
-        self.assertEqual((copy.st_size, copy.st_mtime_ns, copy.st_mode & 0o777),
-                         (st.st_size, st.st_mtime_ns, st.st_mode & 0o777))       # same size, time and mode
+                    if back >= 8:
+                        self.assertSent(rel, before[rel])        # the storage holds the very bytes
+                    else:
+                        self.assertStays(rel)
+                        self.assertEqual(sha(os.path.join(self.cameras, rel)), before[rel])
+        copy = os.stat(os.path.join(self.store, self.rel(656, self.day(8))))
+        self.assertEqual(copy.st_mtime_ns, st.st_mtime_ns)       # the copy keeps the original's time
 
         state = self.state()
-        self.assertEqual((state["result"], state["code"], state["moved"], state["left"], state["failed"]),
-                         ("done", 0, 12, 0, 0))
+        self.assertEqual((state["version"], state["result"], state["code"], state["moved"], state["left"],
+                          state["failed"]), (2, "done", 0, 12, 0, 0))
+        self.assertEqual(state["bytes"], 6 * 1000 + 6 * 100)
         self.assertEqual(state["cutoff"], self.day(8).isoformat())
         self.assertEqual(state["last_done"], state["finished"])
+        self.assertEqual((state["relinked"], state["old_left"], state["old_bad"]), (0, 0, 0))
         log = self.log()
-        self.assertEqual(log.count(" moved video/"), 12)
+        self.assertEqual(log.count(" sent video/"), 12)
         rel = self.rel(752, self.day(10))
-        self.assertIn(f"moved {rel} (1000 bytes, sha256 {before[rel]})", log)
+        self.assertIn(f"sent {rel} (1000 bytes, sha256 {before[rel]})", log)
         # Each day's CSV goes before its video, oldest day first.
-        order = [line.split()[2] for line in log.splitlines() if " moved video/" in line]
+        order = [line.split()[2] for line in log.splitlines() if " sent video/" in line]
         self.assertEqual(order[:4], [self.rel(656, self.day(10), "csv"), self.rel(656, self.day(10)),
                                      self.rel(752, self.day(10), "csv"), self.rel(752, self.day(10))])
-        # No hidden part files or links left behind.
-        for root in (self.cameras, self.mount):
-            for folder, _, names in os.walk(root):
-                self.assertFalse([n for n in names if n.endswith((".cold-part", ".cold-link"))])
+        self.assertNoHiddenFiles()
 
-    def test_a_second_run_moves_nothing(self):
+    def test_a_second_run_sends_nothing(self):
         self.archive()
         self.assertEqual(self.run_cv()[0], 0)
-        before = self.snapshot()
+        before, puts = self.snapshot(), len(self.calls("put"))
         code, out = self.run_cv()
         self.assertEqual(code, 0, out)
         self.assertEqual(self.state()["moved"], 0)
-        after = self.snapshot()
-        after.pop(os.path.join(self.cameras, "cold-videos.log"))
-        before.pop(os.path.join(self.cameras, "cold-videos.log"))
-        after.pop(os.path.join(self.cameras, "cold-videos.json"))
-        before.pop(os.path.join(self.cameras, "cold-videos.json"))
-        self.assertEqual(before, after)
+        self.assertEqual(self.snapshot(), before)
+        self.assertEqual(len(self.calls("put")), puts)
+
+    def test_files_are_read_back_in_batches(self):
+        self.archive(cams=(656, 752, 801), days=(8, 9))         # 12 files
+        self.cv.BATCH = 5
+        code, out = self.run_cv()
+        self.assertEqual(code, 0, out)
+        self.assertEqual((len(self.calls("put")), len(self.calls("verify"))), (12, 3))   # 5 + 5 + 2
 
     def test_keep_days_and_the_files_that_always_stay(self):
         self.archive(cams=(656,), days=range(0, 6))
@@ -223,8 +239,8 @@ class MoveTest(Base):
         self.assertEqual(code, 0, out)
         for back in (0, 1, 2):
             self.assertStays(self.rel(656, self.day(back)))
-        self.assertMoved(self.rel(656, self.day(3)))
-        self.assertMoved(self.rel(656, self.day(4), "csv"))
+        self.assertSent(self.rel(656, self.day(3)))
+        self.assertSent(self.rel(656, self.day(4), "csv"))
         for rel in (self.rel(656, busy), self.rel(656, busy, "csv"), self.rel(752, self.day(4), "csv"),
                     self.rel(801, self.day(4)), self.rel(802, self.day(4))):
             self.assertStays(rel)
@@ -237,16 +253,28 @@ class MoveTest(Base):
         self.conf(COLD_VIDEO_KEEP_DAYS="3")
         self.assertEqual(self.run_cv()[0], 0)
         self.assertStays(self.rel(656, self.day(3)))
-        self.assertMoved(self.rel(656, self.day(4)))
+        self.assertSent(self.rel(656, self.day(4)))
+
+    def test_limit_sends_the_oldest_files_first(self):
+        self.archive(cams=(656, 752), days=(8, 9))
+        code, out = self.run_cv("--limit", "2")
+        self.assertEqual(code, 0, out)
+        self.assertSent(self.rel(656, self.day(9), "csv"))
+        self.assertSent(self.rel(656, self.day(9)))
+        for rel in (self.rel(752, self.day(9)), self.rel(656, self.day(8)), self.rel(752, self.day(8))):
+            self.assertStays(rel)
+        self.assertEqual(self.state()["moved"], 2)
 
     def test_dry_run_changes_nothing(self):
         self.archive()
         before = self.snapshot()
         code, out = self.run_cv("--dry-run")
         self.assertEqual(code, 0, out)
-        self.assertIn(f"would move {self.rel(656, self.day(8))} (1000 bytes)", out)
-        self.assertNotIn(f"would move {self.rel(656, self.day(7))}", out)
+        self.assertIn(f"would send {self.rel(656, self.day(8))} (1000 bytes)", out)
+        self.assertNotIn(f"would send {self.rel(656, self.day(7))}", out)
         self.assertEqual(self.snapshot(), before)
+        self.assertFalse(self.calls("put"))
+        self.assertFalse(os.path.exists(os.path.join(self.cameras, "cold-videos.json")))
 
     def test_reads_are_paced(self):
         slept = []
@@ -259,108 +287,113 @@ class MoveTest(Base):
         self.assertAlmostEqual(slept[-1], 1.0, delta=0.1)
 
 
-class ResumeTest(Base):
-    def test_a_copy_already_on_the_drive_is_checked_and_used(self):
-        [video, csv] = self.camera_day(656, self.day(9))
-        rel = self.rel(656, self.day(9))
-        os.makedirs(os.path.dirname(os.path.join(self.folder, rel)))
-        shutil.copy2(video, os.path.join(self.folder, rel))                 # the run before stopped here
-        with open(os.path.join(os.path.dirname(os.path.join(self.folder, rel)),
-                               "." + os.path.basename(csv) + ".cold-part"), "w") as f:
-            f.write("half a copy")                                          # and a copy cut short
-        code, out = self.run_cv()
-        self.assertEqual(code, 0, out)
-        self.assertMoved(rel)
-        self.assertMoved(self.rel(656, self.day(9), "csv"))
-        self.assertIn(f"moved {rel} (1000 bytes, sha256 {sha(os.path.join(self.folder, rel))}): "
-                      "its copy was already on the cold drive", out)
-        self.assertEqual(sha(os.path.join(self.cameras, self.rel(656, self.day(9), "csv"))), sha(
-            os.path.join(self.folder, self.rel(656, self.day(9), "csv"))))
-        self.assertFalse([n for n in os.listdir(os.path.dirname(os.path.join(self.folder, rel)))
-                          if n.endswith(".cold-part")])
+class CheckTest(Base):
+    """Nothing becomes a link until its copy, read back from the storage, is the original."""
 
-    def test_a_different_copy_on_the_drive_is_replaced_by_the_one_readers_saw(self):
-        [video, _] = self.camera_day(656, self.day(9))
-        rel = self.rel(656, self.day(9))
-        os.makedirs(os.path.dirname(os.path.join(self.folder, rel)))
-        for stale in (b"y" * 1000, b"y" * 10):                              # same size, then another size
-            with open(os.path.join(self.folder, rel), "wb") as f:
-                f.write(stale)
-            want = sha(video)
-            code, out = self.run_cv()
-            self.assertEqual(code, 0, out)
-            self.assertMoved(rel)
-            self.assertEqual(sha(os.path.join(self.folder, rel)), want)
-            self.assertIn("replaced a different copy", out)
-            os.remove(os.path.join(self.cameras, rel))                      # back as it was, for the second round
-            shutil.copy2(os.path.join(self.folder, rel), os.path.join(self.cameras, rel))
-
-    def test_a_copy_that_reads_back_wrong_keeps_the_original(self):
+    def setUp(self):
+        super().setUp()
         self.archive(cams=(656,), days=(9, 10))
-        real = self.cv.sha256_of
-        self.cv.sha256_of = lambda path, pace, from_drive=False: "0" * 64 if from_drive else real(path, pace)
-        try:
-            code, out = self.run_cv()
-        finally:
-            self.cv.sha256_of = real
-        self.assertEqual(code, 1, out)
-        self.assertIn("doesn't match the original's sha256 (the original stays)", out)
+
+    def assertAllStay(self):
         for back in (9, 10):
             self.assertStays(self.rel(656, self.day(back)))
-        for folder, _, names in os.walk(self.folder):
-            self.assertFalse(names, "nothing is left on the drive")
-        self.assertEqual((self.state()["result"], self.state()["failed"], self.state()["left"]), ("failed", 4, 4))
-        self.assertEqual(self.run_cv()[0], 0)                               # the next run moves them
-        self.assertMoved(self.rel(656, self.day(9)))
+            self.assertStays(self.rel(656, self.day(back), "csv"))
+        self.assertNoHiddenFiles()
+
+    def test_a_copy_that_reads_back_wrong_keeps_the_original(self):
+        self.faults(corrupt=[self.rel(656, self.day(9))])
+        code, out = self.run_cv()
+        self.assertEqual(code, 1, out)
+        self.assertIn(f"FAILED {self.rel(656, self.day(9))}: the copy read back from the off-site storage doesn't "
+                      "match the original's sha256 (the original stays)", out)
+        self.assertStays(self.rel(656, self.day(9)))
+        self.assertSent(self.rel(656, self.day(10)))
+        self.assertEqual((self.state()["result"], self.state()["failed"], self.state()["left"], self.state()["moved"]),
+                         ("failed", 1, 1, 3))
+        self.faults()
+        self.assertEqual(self.run_cv()[0], 0)                               # the next run sends it again
+        self.assertSent(self.rel(656, self.day(9)))
         self.assertEqual(self.state()["last_done"], self.state()["finished"])
 
-    def test_an_original_that_changes_while_copied_stays(self):
-        [video, _] = self.camera_day(656, self.day(9))
-        real = self.cv.copy_to
+    def test_what_arrives_off_site_must_be_what_was_sent(self):
+        self.faults(put_answers="0" * 64)
+        code, out = self.run_cv()
+        self.assertEqual(code, 1, out)
+        self.assertIn("what arrived off-site isn't what was sent", out)
+        self.assertAllStay()
+        self.assertFalse(self.calls("verify"))
+        self.assertEqual(self.state()["failed"], 4)
 
-        def copy_then_change(src, tmp, st, pace):
-            digest = real(src, tmp, st, pace)
-            if src == video:
-                with open(src + ".new", "wb") as f:
+    def test_a_copy_the_storage_doesnt_keep_leaves_the_original(self):
+        self.faults(lose=[self.rel(656, self.day(10), "csv")])
+        code, out = self.run_cv()
+        self.assertEqual(code, 1, out)
+        self.assertIn("the off-site storage doesn't hold it after it was sent", out)
+        self.assertStays(self.rel(656, self.day(10), "csv"))
+        self.assertSent(self.rel(656, self.day(10)))
+
+    def test_a_read_back_that_fails_leaves_the_originals(self):
+        self.faults(verify_down=True)
+        code, out = self.run_cv()
+        self.assertEqual(code, 1, out)
+        self.assertIn("couldn't be read back", out)
+        self.assertAllStay()
+
+    def test_an_original_that_changes_while_sent_stays(self):
+        video = os.path.join(self.cameras, self.rel(656, self.day(9)))
+        real = self.cv.Offsite.put
+
+        def put_then_change(offsite, path, rel, st, pace):
+            digest = real(offsite, path, rel, st, pace)
+            if path == video:
+                with open(path + ".new", "wb") as f:
                     f.write(b"encoded again")
-                os.replace(src + ".new", src)                               # a roll-up's rename
+                os.replace(path + ".new", path)                             # a roll-up's rename
             return digest
 
-        self.cv.copy_to = copy_then_change
-        try:
+        with mock.patch.object(self.cv.Offsite, "put", put_then_change):
             code, out = self.run_cv()
-        finally:
-            self.cv.copy_to = real
         self.assertEqual(code, 1, out)
-        self.assertIn("the original changed while it was copied", out)
+        self.assertIn("the original changed while it was sent", out)
         self.assertStays(self.rel(656, self.day(9)))
         with open(video, "rb") as f:
             self.assertEqual(f.read(), b"encoded again")
         os.utime(video, (self.t.timestamp() - 3600,) * 2)
-        self.assertEqual(self.run_cv()[0], 0)                               # next time: the new one moves
-        with open(os.path.join(self.folder, self.rel(656, self.day(9))), "rb") as f:
-            self.assertEqual(f.read(), b"encoded again")
+        self.assertEqual(self.run_cv()[0], 0)                               # next time: the new one goes
+        self.assertSent(self.rel(656, self.day(9)), hashlib.sha256(b"encoded again").hexdigest())
 
-    def test_stopped_by_sigterm_leaves_the_original_and_no_part_file(self):
-        self.camera_day(656, self.day(9), size=6 * 2**20)
+    def test_a_day_encoded_again_goes_again(self):
+        self.assertEqual(self.run_cv()[0], 0)
+        rel = self.rel(656, self.day(9))
+        path = os.path.join(self.cameras, rel)
+        os.remove(path)                                                     # ingest rollup --force
+        with open(path, "wb") as f:
+            f.write(b"a better encode")
+        os.utime(path, (self.t.timestamp() - 3600,) * 2)
+        self.assertEqual(self.run_cv()[0], 0)
+        self.assertSent(rel, hashlib.sha256(b"a better encode").hexdigest())
+
+    def test_stopped_by_sigterm_leaves_the_original(self):
+        self.camera_day(801, self.day(9), size=6 * 2**20)
+        rel = self.rel(801, self.day(9))
         free = os.path.join(self.tmp, "free")
         with open(free, "w") as f:
-            f.write("1500")
+            f.write("40")
         env = dict(os.environ, HEAVY_HARNESS=json.dumps({
             "work": self.work, "status": os.path.join(self.cameras, "status"), "now": self.now, "free_file": free}))
         proc = subprocess.Popen([sys.executable, HARNESS, "--max-mb-s", "2"], env=env,
                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-        part = os.path.join(self.folder, "video", "656", f"{self.day(9):%Y}", f".656-{self.day(9)}.csv.cold-part")
-        give_up = time.monotonic() + 20
-        while time.monotonic() < give_up and not os.path.exists(part.replace(".csv.", ".mp4.")):
+        give_up = time.monotonic() + 30
+        while time.monotonic() < give_up and not any(c.startswith(f"put {rel} ") for c in self.calls("put")):
             time.sleep(0.05)
+        time.sleep(0.3)                                                     # into the 6 MB file's 3 s read
         proc.send_signal(signal.SIGTERM)
         out, _ = proc.communicate(timeout=30)
         self.assertEqual(proc.returncode, 130, out)
         self.assertIn("interrupted", out)
-        self.assertStays(self.rel(656, self.day(9)))
-        for folder, _, names in os.walk(self.folder):
-            self.assertFalse([n for n in names if n.endswith(".cold-part")], names)
+        self.assertStays(rel)
+        self.assertFalse(os.path.exists(os.path.join(self.store, rel)))
+        self.assertNoHiddenFiles()
         self.assertEqual(self.state()["result"], "interrupted")
 
 
@@ -370,48 +403,32 @@ class RefuseTest(Base):
         self.d8, self.d9 = self.day(8), self.day(9)          # Oct 8 and Oct 7, whatever the clock says later
         self.archive(cams=(656,), days=(8, 9))
 
-    def assertNothingMoved(self):
+    def assertNothingSent(self):
         for d in (self.d8, self.d9):
             self.assertStays(self.rel(656, d))
             self.assertStays(self.rel(656, d, "csv"))
 
-    def test_no_cold_drive(self):
-        os.remove(self.marker)
+    def test_no_off_site_storage(self):
+        self.faults(down=True)
         code, out = self.run_cv()
         self.assertEqual(code, 69, out)
-        self.assertIn("the cold drive isn't mounted", out)
-        self.assertNothingMoved()
-        self.assertEqual(self.state()["result"], "no cold drive")
+        self.assertIn("the off-site storage can't be reached (ping: exit 255: ssh: connect to host", out)
+        self.assertNothingSent()
+        self.assertEqual(self.state()["result"], "off-site storage unreachable")
 
-    def test_the_drive_keeps_its_free_space(self):
-        self.cold_free_gb = 200.0
-        code, out = self.run_cv()
-        self.assertEqual(code, 73, out)
-        self.assertNothingMoved()
-        # Room for exactly three of the four files: the oldest day, then the next day's CSV.
-        self.cold_free_gb = 200.0 + (1000 + 100 + 100) / self.h.GB + 1e-12
-        code, out = self.run_cv()
-        self.assertEqual(code, 73, out)
-        self.assertMoved(self.rel(656, self.d9))
-        self.assertMoved(self.rel(656, self.d8, "csv"))
-        self.assertStays(self.rel(656, self.d8))
-        self.assertEqual((self.state()["moved"], self.state()["left"]), (3, 1))
+    def test_the_storage_going_away_stops_the_run(self):
+        real = self.cv.send
 
-    def test_the_drive_going_away_stops_the_run(self):
-        real = self.cv.move
-
-        def move_then_unplug(rel, cameras, cold, pace):
-            done = real(rel, cameras, cold, pace)
-            os.remove(self.marker)
+        def send_then_go_away(*args):
+            done = real(*args)
+            self.faults(down=True)
             return done
 
-        self.cv.move = move_then_unplug
-        try:
+        with mock.patch.object(self.cv, "send", send_then_go_away):
             code, out = self.run_cv()
-        finally:
-            self.cv.move = real
         self.assertEqual(code, 69, out)
-        self.assertEqual((self.state()["moved"], self.state()["left"]), (1, 3))
+        self.assertNothingSent()                                 # the one sent was never read back
+        self.assertEqual((self.state()["moved"], self.state()["left"]), (0, 4))
 
     def test_the_roll_up_comes_first(self):
         self.statuses(rolling=(False, True))
@@ -423,7 +440,7 @@ class RefuseTest(Base):
         self.set_clock("2026-10-16 00:07")                     # just after 00:05: regional not checked yet
         self.statuses(ages=(10, 300))
         self.assertEqual(self.run_cv()[0], 75)
-        self.assertNothingMoved()
+        self.assertNothingSent()
         self.assertEqual((self.state()["result"], self.state()["last_done"]), ("not now", None))
 
     def test_a_roll_up_holding_its_lock(self):
@@ -433,7 +450,7 @@ class RefuseTest(Base):
         code, out = self.run_cv()
         self.assertEqual(code, 75, out)
         self.assertIn("a camera roll-up holds rollup.lock", out)
-        self.assertNothingMoved()
+        self.assertNothingSent()
 
     def test_another_run_going(self):
         fd = os.open(os.path.join(self.cameras, "cold-videos.lock"), os.O_RDONLY | os.O_CREAT)
@@ -442,13 +459,14 @@ class RefuseTest(Base):
         code, out = self.run_cv()
         self.assertEqual(code, 75, out)
         self.assertFalse(os.path.exists(os.path.join(self.cameras, "cold-videos.json")))   # its own to write
+        self.assertNothingSent()
 
     def test_in_the_day_a_quiet_capture_service_doesnt_hold_it_back(self):
         self.set_clock("2026-10-16 09:00")
         self.statuses(ages=(10, 5 * 3600))
         code, out = self.run_cv()
         self.assertEqual(code, 0, out)
-        self.assertMoved(self.rel(656, self.d8))
+        self.assertSent(self.rel(656, self.d8))
 
     def test_not_near_midnight(self):
         self.set_clock("2026-10-15 23:57")
@@ -456,25 +474,23 @@ class RefuseTest(Base):
         code, out = self.run_cv()
         self.assertEqual(code, 75, out)
         self.assertIn("tonight's camera roll-up", out)
-        self.assertNothingMoved()
+        self.assertNothingSent()
 
     def test_a_run_stops_at_23_55(self):
         self.set_clock("2026-10-15 23:54")
         self.statuses()
-        real = self.cv.move
+        real = self.cv.send
 
-        def slow_move(*args):
+        def slow_send(*args):
             self.h.OFFSET += 120                               # each file "takes" two minutes
             return real(*args)
 
-        self.cv.move = slow_move
-        try:
+        with mock.patch.object(self.cv, "send", slow_send):
             code, out = self.run_cv()
-        finally:
-            self.cv.move = real
         self.assertEqual(code, 75, out)
         self.assertIn("stopped at 23:56 Boise", out)
-        self.assertEqual((self.state()["moved"], self.state()["left"]), (1, 1))   # days up to Oct 7 here
+        self.assertEqual((self.state()["moved"], self.state()["left"]), (0, 2))   # days up to Oct 7 here
+        self.assertNothingSent()                               # sent, not read back: they go again
 
     def test_not_before_a_planned_restart(self):
         with open(os.path.join(self.work, "MAINTENANCE"), "w") as f:
@@ -487,68 +503,162 @@ class RefuseTest(Base):
         self.assertEqual(self.run_cv()[0], 0)
 
     def test_settings(self):
-        self.conf(COLD_CAMERAS=None)
-        self.assertEqual(self.run_cv()[0], 2)
-        self.conf(COLD_CAMERAS=os.path.join(self.tmp, "elsewhere"))
+        self.conf(OFFSITE_SSH=None)
         code, out = self.run_cv()
-        self.assertEqual(code, 2)
-        self.assertIn("inside COLD_MOUNT", out)
-        self.conf(COLD_CAMERAS=os.path.join(self.mount, "vm", "nothing-here"))
+        self.assertEqual(code, 2, out)
+        self.assertIn("(OFFSITE_SSH)", out)
+        self.conf(OFFSITE_SSH="ssh -o 'unclosed")
         code, out = self.run_cv()
-        self.assertEqual(code, 2)
-        self.assertIn("make it first", out)
-        self.conf(COLD_MOUNT=None)
+        self.assertEqual(code, 2, out)
+        self.assertIn("OFFSITE_SSH in heavy.conf can't be read", out)
+        self.conf(COLD_VIDEO_KEEP_DAYS="three")
         self.assertEqual(self.run_cv()[0], 2)
-        self.assertNothingMoved()
+        self.conf()
+        self.assertEqual(self.run_cv("--limit", "-1")[0], 2)
+        self.assertNothingSent()
 
-    def test_the_camera_folder_on_the_drive_cant_be_the_archive(self):
-        before = {rel: sha(os.path.join(self.cameras, rel)) for d in (self.d8, self.d9)
-                  for rel in (self.rel(656, d), self.rel(656, d, "csv"))}
-        self.h.free_gb = lambda where: 1500.0                               # room enough, wherever it looks
-        archive = os.path.dirname(self.cameras)
-        drive = os.path.join(self.tmp, "drive2")                           # beside the archive, never on
-        os.makedirs(drive)                                                  # the real cold drive
-        os.symlink(self.cameras, os.path.join(drive, "cameras"))
-        for mount, folder in ((archive, self.cameras),                     # the archive itself
-                              (drive, os.path.join(drive, "cameras")),      # reached through a link
-                              (self.tmp, archive),                          # around it
-                              (self.cameras, os.path.join(self.cameras, "video"))):   # inside it
-            with self.subTest(folder=folder):
-                marker = os.path.join(mount, ".tvt-cold-drive")
-                open(marker, "w").close()
-                self.conf(COLD_MOUNT=mount, COLD_MARKER=marker, COLD_CAMERAS=folder)
-                code, out = self.run_cv()
-                self.assertEqual(code, 2, out)
-                self.assertIn("the camera archive", out)
-                self.assertNothingMoved()
-        for rel, digest in before.items():
-            self.assertEqual(sha(os.path.join(self.cameras, rel)), digest)
 
-    def test_a_file_that_is_its_own_copy_stays(self):
-        """However the drive's folder reaches the archive (a bind mount, a hard link), a file is never
-        replaced by a link to itself."""
-        rel = self.rel(656, self.d9)
-        src = os.path.join(self.cameras, rel)
-        digest = sha(src)
-        alias = os.path.join(self.tmp, "alias")                             # a hard link beside the archive,
-        os.makedirs(os.path.dirname(os.path.join(alias, rel)))              # never on the real cold drive
-        os.link(src, os.path.join(alias, rel))
-        for folder in (self.cameras, alias):                                # past cold_settings' checks
-            with self.subTest(folder=folder):
-                cold = self.cv.Cold(self.mount, self.marker, 200.0, folder)
-                with self.assertRaises(self.cv.Stop) as caught:
-                    self.cv.move(rel, self.cameras, cold, self.cv.Pace(0))
-                self.assertEqual(caught.exception.code, 2)
-                self.assertIn("is the file itself", str(caught.exception))
-                self.assertStays(rel)
-                self.assertEqual(sha(src), digest)
-                self.assertFalse([n for n in os.listdir(os.path.dirname(src)) if n.startswith(".")])
+class OldLinksTest(Base):
+    """The cold drive's links, from before Oct 30: each becomes an off-site link once its copy off-site reads
+    back with the sha256 logged when it moved."""
+
+    def setUp(self):
+        super().setUp()
+        self.drive = os.path.join(self.tmp, "drive", "vm", "cameras")          # gone: never made
+        self.moved = {}
+        lines = []
+        for cam in (656, 752):
+            for back in (20, 21):
+                for path in self.camera_day(cam, self.day(back)):
+                    rel = os.path.relpath(path, self.cameras)
+                    digest, size = sha(path), os.path.getsize(path)
+                    self.moved[rel] = (size, digest)
+                    lines.append(f"2026-10-15T23:38:15Z moved {rel} ({size} bytes, sha256 {digest})")
+                    stored = os.path.join(self.store, rel)                 # its copy, uploaded from the drive
+                    os.makedirs(os.path.dirname(stored), exist_ok=True)
+                    shutil.copy2(path, stored)
+                    os.remove(path)
+                    os.symlink(os.path.join(self.drive, rel), path)
+        with open(os.path.join(self.cameras, "cold-videos.log"), "w") as f:
+            f.write("\n".join(lines) + "\n")
+        self.old = sorted(self.moved)
+
+    def assertOldLink(self, rel):
+        self.assertEqual(os.readlink(os.path.join(self.cameras, rel)), os.path.join(self.drive, rel))
+
+    def test_old_links_become_off_site_links_once_read_back(self):
+        missing, bad = self.old[0], self.old[1]
+        os.remove(os.path.join(self.store, missing))                       # not uploaded yet
+        self.faults(corrupt=[bad])
+        code, out = self.run_cv()
+        self.assertEqual(code, 0, out)
+        for rel in self.old[2:]:
+            self.assertSent(rel, self.moved[rel][1])
+        self.assertOldLink(missing)
+        self.assertOldLink(bad)
+        self.assertIn("8 files still link to the cold drive: 7 held off-site, to read back now; 1 not off-site yet",
+                      out)
+        self.assertIn(f"old link {bad}: its copy off-site doesn't match", out)
+        self.assertIn(f"relinked {self.old[2]} ({self.moved[self.old[2]][0]} bytes, sha256 "
+                      f"{self.moved[self.old[2]][1]}): its copy off-site, read back", out)
+        state = self.state()
+        self.assertEqual((state["relinked"], state["old_left"], state["old_bad"], state["code"]), (6, 2, 1, 0))
+        self.assertFalse(self.calls("put"))                                # nothing sent for them
+        self.assertNoHiddenFiles()
+
+        with open(os.path.join(self.store, missing), "wb") as f:           # arrives, but not the logged size
+            f.write(b"x" * 7)
+        self.faults()
+        self.assertEqual(self.run_cv()[0], 0)
+        self.assertSent(bad, self.moved[bad][1])
+        self.assertOldLink(missing)
+        self.assertEqual((self.state()["relinked"], self.state()["old_left"]), (1, 1))
+
+    def test_a_link_with_no_logged_sha256_keeps_its_old_link(self):
+        with open(os.path.join(self.cameras, "cold-videos.log"), "w") as f:
+            f.write("")
+        code, out = self.run_cv()
+        self.assertEqual(code, 0, out)
+        self.assertIn("8 with no sha256 in cold-videos.log", out)
+        for rel in self.old:
+            self.assertOldLink(rel)
+        self.assertFalse(self.calls("verify"))
+
+    def test_the_last_logged_move_counts(self):
+        rel = self.old[3]
+        with open(os.path.join(self.cameras, "cold-videos.log"), "a") as f:
+            f.write(f"2026-10-16T08:00:00Z moved {rel} (5 bytes, sha256 {'0' * 64})\n")    # moved again since
+        self.assertEqual(self.run_cv()[0], 0)
+        self.assertOldLink(rel)
+        self.assertEqual(self.state()["old_left"], 1)
+
+    def test_limit_and_dry_run(self):
+        before = self.snapshot()
+        code, out = self.run_cv("--dry-run")
+        self.assertEqual(code, 0, out)
+        self.assertIn("8 files still link to the cold drive: 8 held off-site, to read back now", out)
+        self.assertEqual(self.snapshot(), before)
+        self.assertFalse(self.calls("verify"))
+        self.assertEqual(self.run_cv("--limit", "3")[0], 0)
+        self.assertEqual((self.state()["relinked"], self.state()["old_left"]), (3, 5))
+
+
+class BringBackTest(Base):
+    def setUp(self):
+        super().setUp()
+        self.archive(cams=(656,), days=(9,))
+        self.video = self.rel(656, self.day(9))
+        self.path = os.path.join(self.cameras, self.video)
+        self.digest = sha(self.path)
+        self.assertEqual(self.run_cv()[0], 0)
+        self.assertSent(self.video, self.digest)
+
+    def test_a_day_comes_back_checked(self):
+        csv = os.path.join(self.cameras, self.rel(656, self.day(9), "csv"))
+        code, out = self.run_cv("--bring-back", self.video, csv)
+        self.assertEqual(code, 0, out)
+        self.assertStays(self.video)
+        self.assertEqual(sha(self.path), self.digest)
+        self.assertIn(f"brought back {self.video} (1000 bytes, sha256 {self.digest})", self.log())
+        self.assertTrue(os.path.isfile(csv) and not os.path.islink(csv))
+        self.assertNoHiddenFiles()
+        for path in (self.path, csv):
+            os.utime(path, (self.t.timestamp() - 3600,) * 2)
+        self.assertEqual(self.run_cv()[0], 0)                               # older than kept: it goes again
+        self.assertSent(self.video, self.digest)
+
+    def test_bytes_that_come_back_wrong_leave_the_link(self):
+        self.faults(corrupt=[self.video])
+        code, out = self.run_cv("--bring-back", self.video)
+        self.assertEqual(code, 1, out)
+        self.assertIn("isn't what was sent (its link stays)", out)
+        self.assertSent(self.video, self.digest)
+        self.assertNoHiddenFiles()
+
+    def test_only_off_site_links_come_back(self):
+        self.camera_day(752, self.day(2))
+        code, out = self.run_cv("--bring-back", self.rel(752, self.day(2)), "video/656/2026/nothing.mp4")
+        self.assertEqual(code, 1, out)
+        self.assertEqual(out.count("not an off-site link"), 2)
+        os.remove(os.path.join(self.store, self.video))                     # the storage lost it
+        code, out = self.run_cv("--bring-back", self.video)
+        self.assertEqual(code, 1, out)
+        self.assertIn("(0 bytes, sha256", out)
+        self.assertTrue(os.path.islink(self.path))
+        self.assertNoHiddenFiles()
+
+    def test_not_without_room(self):
+        self.free = self.h.FLOOR_GB + 0.5
+        code, out = self.run_cv("--bring-back", self.video)
+        self.assertEqual(code, 1, out)
+        self.assertIn("no room", out)
+        self.assertTrue(os.path.islink(self.path))
 
 
 class ReadersTest(Base):
-    """The camera roll-up and the library index read through the links (plugins/cameras)."""
+    """The camera roll-up and the library index read the links (plugins/cameras)."""
 
-    def test_the_library_index_marks_moved_days_and_keeps_them_while_the_drive_is_away(self):
+    def test_the_library_index_marks_off_site_days_and_the_roll_up_counts_them_done(self):
         sys.path.insert(0, REPO)
         try:
             from plugins.cameras.ingest import camera_video
@@ -564,12 +674,14 @@ class ReadersTest(Base):
         index = os.path.join(self.cameras, "video", "index-key_cameras.json")
         with open(index) as f:
             days = json.load(f)["cameras"][0]["days"]
-        self.assertEqual([(d["day"], d["bytes"], d.get("cold")) for d in days],
-                         [(self.day(9).isoformat(), 1000, True), (self.day(8).isoformat(), 1000, True)])
+        self.assertEqual([(d["day"], d["bytes"], d.get("offsite"), d.get("cold")) for d in days],
+                         [(self.day(9).isoformat(), 1000, True, None), (self.day(8).isoformat(), 1000, True, None)])
         self.assertEqual(camera_video.pending(root, self.t.date()), [])
-        shutil.rmtree(self.folder)                                          # the drive away
+        os.remove(index)                                                    # an index made afresh
         self.assertEqual(camera_video.write_index(root, cams, "key_cameras", "Key cameras"), 2)
-        self.assertEqual(camera_video.pending(root, self.t.date()), [])
+        with open(index) as f:
+            days = json.load(f)["cameras"][0]["days"]
+        self.assertEqual([(d["bytes"], d.get("offsite")) for d in days], [(1000, True), (1000, True)])
 
 
 if __name__ == "__main__":

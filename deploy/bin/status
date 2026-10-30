@@ -11,8 +11,9 @@ One line each (a line that needs a look starts with "!"):
   roll-up   last night's camera roll-up: going or finished, and the day's videos made, failed
             or missing (from the capture services' status files and the archive's videos, failure
             notes and JPEG folders)
-  cold-vid  the last run of cold-videos (camera days older than a week to the cold drive): what
-            it moved, and whether one has finished in the last two days
+  cold-vid  the last run of cold-videos (camera days older than the VM keeps, to off-site storage):
+            what it sent, the cold drive's old links still to prove, and whether a run has finished
+            in the last two days
   restart   a planned VM restart in MAINTENANCE
   sources   the sources and streams by state (ops.source_status: fresh, late, stale, never), with
             a line for each that isn't fresh or is failing, and its last error
@@ -240,16 +241,21 @@ def cold_videos(report, t):
             return None
         return t.timestamp() - when.timestamp()
 
+    sent = "sent" if d.get("version", 1) >= 2 else "moved"          # version 1: the cold drive's mover
     text = (f"last run {ago(age('finished'))} ago, {d.get('result', '?')}: "
             + (f"{d['why']}; " if d.get("why") else "")
-            + f"moved {d.get('moved', 0)} files ({(d.get('bytes') or 0) / heavy.GB:.1f} GB)"
-            + (f", {d['left']} still to move" if d.get("left") else "")
-            + (f"; {d['cold_free_gb']:.0f} GB free on the cold drive" if d.get("cold_free_gb") is not None else ""))
+            + f"{sent} {d.get('moved', 0)} files ({(d.get('bytes') or 0) / heavy.GB:.1f} GB)"
+            + (f", {d['left']} still to send" if d.get("left") else "")
+            + (f"; {d['relinked']} old cold-drive links now off-site" if d.get("relinked") else "")
+            + (f"; {d['old_left']} files still link to the cold drive" if d.get("old_left") else "")
+            + (f" ({d['old_bad']} don't match their off-site copies)" if d.get("old_bad") else ""))
     done = age("last_done")
     late = done is None or done > COLD_LATE_S
     if late:
         text += f"; last finished run: {ago(done) + ' ago' if done is not None else 'never'}"
-    (report.look if late or d.get("code") not in (0, 75) else report.ok)("cold-vid", text)
+    # A day still linked to the failed cold drive can't be played until its off-site copy is proven:
+    # a look until none is left (deploy/README.md says what to do with one that never will be).
+    (report.look if late or d.get("old_left") or d.get("code") not in (0, 75) else report.ok)("cold-vid", text)
 
 
 def restart(report, t):

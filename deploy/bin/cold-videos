@@ -1,57 +1,71 @@
 #!/usr/bin/env python3
-"""cold-videos: move finished camera videos older than a week to the cold drive (decision A1).
+"""cold-videos: send finished camera videos older than a few days to off-site storage (decision A1, as the
+owner changed it on Oct 30, 2026, when the cold drive failed).
 
-  cold-videos [--keep-days N] [--wait MIN] [--max-mb-s MB] [--dry-run] [--archive DIR]
+  cold-videos [--keep-days N] [--wait MIN] [--max-mb-s MB] [--limit N] [--dry-run] [--archive DIR]
+  cold-videos --bring-back REL [REL ...] [--archive DIR]
 
-Each finished camera day older than --keep-days (cameras/video/<id>/<year>/<id>-<day>.mp4 and the
-.csv beside it, plugins/cameras/ingest/camera_video.py's layout) is copied to the same place under
-the cold drive's camera folder (COLD_CAMERAS), checked there (its size, and its sha256 read back
-from the drive), and then replaced, in one rename, by a symlink to the copy. Readers keep the same
-path: the video library (Caddy in the web container), the roll-up's library index and anything run
-by hand follow the link, and every container that reads videos mounts the cold drive read-only at
-the same absolute path (deploy/compose.cold.yml). Without the drive a link leads nowhere, and the
-library says that day isn't available right now.
+Each finished camera day older than --keep-days (cameras/video/<id>/<year>/<id>-<day>.mp4 and the .csv beside
+it, plugins/cameras/ingest/camera_video.py's layout) is sent to off-site storage (Backblaze B2, encrypted) and
+read back from there. Only when the sha256 of what came back is the original's is the original replaced, in one
+rename, by an off-site link: a symlink whose target, offsite:<bytes>:<sha256>, leads nowhere and records what was
+sent. No second copy is kept on the server. Readers keep the same path: the roll-up counts a linked day as done,
+and the library's index marks it "offsite", which the library shows as kept off-site.
 
-  --keep-days N  finished days kept on the VM's disk (default 7, or COLD_VIDEO_KEEP_DAYS): a day
-                 moves once it's more than N days old. At least 2, so today's and yesterday's
-                 files are never touched.
-  --wait MIN     wait at most MIN minutes for the roll-up to finish (default 0: refuse at once)
-  --max-mb-s MB  read at most this fast, from the VM's disk and the cold drive (default 50)
-  --dry-run      say what would move and what stays; change nothing
-  --archive DIR  the camera archive (default /srv/tvt/archive/cameras)
+Off-site storage is reached through one command, OFFSITE_SSH in heavy.conf (on the VM, an ssh to the home server,
+whose forced command holds the storage's keys: the VM holds none), with a verb after it:
+  ping                          "ok" once the storage answers
+  list                          "<bytes>\t<rel>" for each camera file it holds
+  put <rel> <bytes> <mtime_ns>  the file on stdin; answers "ok <sha256 of what arrived>"
+  verify                        <rel> lines on stdin; answers "<sha256>  <rel>" for each one it holds, read back
+                                from the storage (one it doesn't hold is left out)
+  get <rel>                     the file's bytes on stdout
+<rel> is relative to the camera archive: video/<id>/<year>/<name>, the layout the cold drive had.
 
-When it moves:
-- only while the cold drive is mounted (COLD_MARKER exists) and keeps COLD_KEEP_GB free (default
-  200) after each copy;
-- once tonight's camera roll-up has finished: at night both capture status files say rolling_up
-  false after 00:05, in the day neither says it's rolling up. It holds the roll-up's own lock
-  (cameras/rollup.lock) while it works, so no roll-up starts meanwhile;
-- not from 23:55 until tonight's roll-up has finished, nor within 15 minutes of a planned VM
-  restart (MAINTENANCE): a run under way stops between files;
-- never a day whose JPEGs are still in the buffer (cameras/jpeg/<id>/<day>), whose encode is
-  going (a .part beside it), a file written in the last 10 minutes, or a CSV without its video.
+Days moved to the cold drive before Oct 30 are links to their copies there, which lead nowhere now. Each run also
+checks those: when the storage holds a file with the size this tool logged when it moved it to the drive, the file
+is read back from the storage, and if its sha256 is the logged one, its link becomes an off-site link. One that
+doesn't match, or that the storage doesn't hold yet, keeps its old link and is counted.
 
-Idempotent and resumable: a moved file is a symlink and is skipped. A copy cut short is made again
-(its hidden .cold-part file is overwritten). A finished copy whose original wasn't replaced yet is
-checked and used. A different copy already on the drive (a day encoded again since) is replaced
-by the one on the VM's disk, which is what readers saw.
+  --keep-days N   finished days kept on the VM's disk (default 7, or COLD_VIDEO_KEEP_DAYS): a day goes once it's
+                  more than N days old. At least 2, so today's and yesterday's files are never touched.
+  --wait MIN      wait at most MIN minutes for the roll-up to finish (default 0: refuse at once)
+  --max-mb-s MB   read the VM's disk at most this fast (default 50)
+  --limit N       send at most N files, and turn at most N old links (a careful first run)
+  --dry-run       say what would be sent and what stays; change nothing
+  --archive DIR   the camera archive (default /srv/tvt/archive/cameras)
+  --bring-back REL ...
+                  fetch these off-site files back onto the VM's disk (REL as above, or a path in the archive),
+                  each checked against the bytes and sha256 in its link before it replaces the link. A day older
+                  than --keep-days goes off-site again on the next run.
 
-Settings, in /srv/tvt/work/heavy.conf (KEY=value; the VM's own paths, kept out of the repo):
-heavy's COLD_MOUNT, COLD_MARKER and COLD_KEEP_GB, plus COLD_CAMERAS, the camera folder on the cold
-drive (under COLD_MOUNT), and optionally COLD_VIDEO_KEEP_DAYS.
+When it sends:
+- once tonight's camera roll-up has finished: at night both capture status files say rolling_up false after
+  00:05, in the day neither says it's rolling up. It holds the roll-up's own lock (cameras/rollup.lock) while it
+  works, so no roll-up starts meanwhile;
+- not from 23:55 until tonight's roll-up has finished, nor within 15 minutes of a planned VM restart
+  (MAINTENANCE): a run under way stops between files;
+- never a day whose JPEGs are still in the buffer (cameras/jpeg/<id>/<day>), whose encode is going (a .part
+  beside it), a file written in the last 10 minutes, or a CSV without its video.
 
-Log: each move (path, bytes, sha256) and each run's start and end, on stdout (the journal, under
-systemd) and appended to cameras/cold-videos.log; the last run's outcome in
-cameras/cold-videos.json, which bin/status reads.
+Files are sent one at a time and read back BATCH at a time. Idempotent and resumable: a sent file is a link, and is
+skipped. One sent but not yet read back and linked when a run stopped is sent again by the next. A day encoded
+again since it went (`ingest rollup --force` puts a file where its link was) goes again, and the storage keeps the
+new one, which is what readers saw.
 
-Exit: 0 done (or nothing to move); 1 a file failed its check (its original is kept); 2 usage or
-settings; 69 the cold drive isn't mounted; 73 the cold drive would fall under COLD_KEEP_GB free;
-75 not now (the roll-up is going or hasn't finished, a restart is planned, another run is going,
-or 23:55 came); 130 interrupted.
+Settings, in /srv/tvt/work/heavy.conf (KEY=value; the VM's own, kept out of the repo): OFFSITE_SSH, the command
+(split as a shell would), and optionally COLD_VIDEO_KEEP_DAYS.
 
-Runs daily from deploy/systemd/tvt-cold-videos.timer, as the archive's owner. Source:
-deploy/bin/cold-videos in the repo; installed in /srv/tvt/work/bin beside heavy, whose rules and
-settings it reads, so the two always agree.
+Log: each file sent or relinked (path, bytes, sha256) and each run's start and end, on stdout (the journal, under
+systemd) and appended to cameras/cold-videos.log; the last run's outcome in cameras/cold-videos.json, which
+bin/status reads. The log is also where the old links' sha256s are read from: keep it.
+
+Exit: 0 done (or nothing to send); 1 a file failed its check (its original is kept); 2 usage or settings; 69 the
+off-site storage can't be reached; 75 not now (the roll-up is going or hasn't finished, a restart is planned,
+another run is going, or 23:55 came); 130 interrupted.
+
+Runs daily from deploy/systemd/tvt-cold-videos.timer, as the archive's owner. Source: deploy/bin/cold-videos in
+the repo; installed in /srv/tvt/work/bin beside heavy, whose rules and settings it reads, so the two always agree.
 """
 import argparse
 import datetime as dt
@@ -62,8 +76,10 @@ import importlib.util
 import json
 import os
 import re
+import shlex
 import signal
 import stat
+import subprocess
 import sys
 import time
 from collections import Counter
@@ -91,17 +107,26 @@ STOP_AT = dt.time(23, 55)       # tonight's roll-up starts at 00:05
 RESTART_MARGIN = dt.timedelta(minutes=15)
 RECENT_S = 600                  # a file written this recently is left alone
 WAIT_POLL_S = 60
+BATCH = 50                      # files sent before they're read back together
+OLD_BATCH = 500                 # old cold-drive links read back together
+ANSWER_S = 120                  # how long the storage gets to answer a ping, or a put after its last byte
+READ_BACK_S = 3600              # ... a list, or a batch's read-back
+BACK_SPARE_GB = 1               # left free on the VM's disk above heavy's floor when a file comes back
 NAME = re.compile(r"^(?P<cam>.+)-(?P<day>\d{4}-\d\d-\d\d)\.(?P<ext>mp4|csv)$")
+REL = re.compile(r"video/(?P<cam>[^/]+)/(?P<year>\d{4})/(?P=cam)-(?P=year)-\d\d-\d\d\.(?:mp4|csv)")
+MOVED = re.compile(r" moved (?P<rel>video/\S+) \((?P<bytes>\d+) bytes, sha256 (?P<sha>[0-9a-f]{64})\)")
+OFFSITE = "offsite:"            # an off-site link's target: offsite:<bytes>:<sha256> (camera_video.OFFSITE_LINK)
+OFFSITE_TARGET = re.compile(r"offsite:(?P<bytes>\d+):(?P<sha>[0-9a-f]{64})")
 ROLLUP_LOCK = "rollup.lock"     # camera_video.LOCK: held by a roll-up while it runs
 LOCK = "cold-videos.lock"
 LOG = "cold-videos.log"
 STATE = "cold-videos.json"
-PART = ".cold-part"             # a copy being made on the cold drive (hidden, beside its place)
 LINK = ".cold-link"             # a symlink about to replace an original (hidden, beside it)
+BACK = ".cold-back"             # a file coming back from off-site storage (hidden, beside its link)
 
-EX_FAILED, EX_USAGE, EX_NOCOLD, EX_FULL, EX_LATER, EX_INT = 1, 2, 69, 73, 75, 130
-RESULTS = {0: "done", EX_FAILED: "failed", EX_USAGE: "settings", EX_NOCOLD: "no cold drive",
-           EX_FULL: "cold drive full", EX_LATER: "not now", EX_INT: "interrupted"}
+EX_FAILED, EX_USAGE, EX_UNREACHABLE, EX_LATER, EX_INT = 1, 2, 69, 75, 130
+RESULTS = {0: "done", EX_FAILED: "failed", EX_USAGE: "settings", EX_UNREACHABLE: "off-site storage unreachable",
+           EX_LATER: "not now", EX_INT: "interrupted"}
 
 
 class Stop(Exception):
@@ -119,7 +144,11 @@ class Terminated(Exception):
 
 
 class CheckFailed(Exception):
-    """One file couldn't be moved safely; its original is kept."""
+    """One file couldn't be sent safely; its original is kept."""
+
+
+class OffsiteError(CheckFailed):
+    """The off-site storage didn't do what it was asked, or didn't answer."""
 
 
 def stamp(t=None):
@@ -130,58 +159,133 @@ def gb(n):
     return n / heavy.GB
 
 
-# --- settings -----------------------------------------------------------------
-
-class Cold:
-    """The cold drive's mount, marker, the GB kept free there, and the camera folder on it."""
-
-    def __init__(self, mount, marker, keep, folder):
-        self.mount, self.marker, self.keep, self.folder = mount, marker, keep, folder
-
-    def present(self):
-        return heavy.cold_mounted((self.mount, self.marker, self.keep))
+def last_line(data):
+    text = data.decode(errors="replace") if isinstance(data, bytes) else (data or "")
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    return lines[-1][:300] if lines else "no message"
 
 
-def inside(path, folder):
-    path, folder = os.path.normpath(path), os.path.normpath(folder)
-    return path.startswith(folder.rstrip(os.sep) + os.sep)
+# --- off-site storage -------------------------------------------------------------
 
+class Offsite:
+    """Off-site storage: the command in OFFSITE_SSH, with a verb after it (see the top)."""
 
-def overlaps(folder, archive):
-    """Why the camera folder on the drive can't be used beside the archive, or None. It mustn't be
-    the archive, nor hold it or sit inside it, however it reaches it (through symlinks, or a bind
-    mount of the same folder): a file would then be its own copy, and the link put in its place
-    would point at itself."""
-    a, b = os.path.realpath(folder), os.path.realpath(archive)
-    if a == b:
-        return "is"
-    if inside(a, b):
-        return "is inside"
-    if inside(b, a):
-        return "holds"
-    for x, y in ((folder, archive), (os.path.join(folder, "video"), os.path.join(archive, "video"))):
+    def __init__(self, command):
+        self.command = list(command)
+
+    def call(self, verb, *args, data=None, timeout=ANSWER_S):
         try:
-            if os.path.samefile(x, y):
-                return "is"
-        except OSError:
-            pass
-    return None
+            r = subprocess.run(self.command + [verb, *args], input=data, stdout=subprocess.PIPE,
+                               stderr=subprocess.PIPE, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            raise OffsiteError(f"{verb}: no answer in {timeout} s")
+        except OSError as err:
+            raise OffsiteError(f"{verb}: {err}")
+        if r.returncode:
+            raise OffsiteError(f"{verb}: exit {r.returncode}: {last_line(r.stderr)}")
+        return r.stdout.decode(errors="replace")
+
+    def ping(self):
+        self.call("ping")
+
+    def listing(self):
+        """{rel: bytes} for each camera file the storage holds."""
+        held = {}
+        for line in self.call("list", timeout=READ_BACK_S).splitlines():
+            size, _, rel = line.partition("\t")
+            if size.isdigit() and REL.fullmatch(rel):
+                held[rel] = int(size)
+        return held
+
+    def verify(self, rels):
+        """{rel: sha256 of its copy, read back from the storage} for those of rels it holds."""
+        want = set(rels)
+        out = self.call("verify", data="".join(rel + "\n" for rel in rels).encode(), timeout=READ_BACK_S)
+        back = {}
+        for line in out.splitlines():
+            digest, _, rel = line.partition("  ")
+            if rel in want and re.fullmatch(r"[0-9a-f]{64}", digest):
+                back[rel] = digest
+        return back
+
+    def put(self, path, rel, st, pace):
+        """Sends the file at path as rel. Returns its sha256, computed as it was read. Raises
+        CheckFailed when what arrived isn't what was sent, OffsiteError when it wasn't taken."""
+        h = hashlib.sha256()
+        try:
+            proc = subprocess.Popen(self.command + ["put", rel, str(st.st_size), str(st.st_mtime_ns)],
+                                    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        except OSError as err:
+            raise OffsiteError(f"put: {err}")
+        try:
+            try:
+                with open(path, "rb", buffering=0) as f:
+                    while chunk := f.read(CHUNK):
+                        h.update(chunk)
+                        proc.stdin.write(chunk)
+                        pace(len(chunk))
+            except BrokenPipeError:
+                pass                                     # it stopped reading: its answer says why
+            out, err = proc.communicate(timeout=ANSWER_S)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+            raise OffsiteError(f"put: no answer in {ANSWER_S} s after the last byte")
+        except BaseException:
+            proc.kill()
+            proc.wait()
+            raise
+        if proc.returncode:
+            raise OffsiteError(f"put: exit {proc.returncode}: {last_line(err)}")
+        words = out.decode(errors="replace").split()
+        if len(words) != 2 or words[0] != "ok":
+            raise OffsiteError(f"put: an answer it doesn't understand: {out[:200]!r}")
+        if words[1] != h.hexdigest():
+            raise CheckFailed("what arrived off-site isn't what was sent (its sha256 differs)")
+        return h.hexdigest()
+
+    def get(self, rel, f, pace):
+        """Writes rel's bytes from the storage to f. Returns (bytes, sha256)."""
+        h, n = hashlib.sha256(), 0
+        try:
+            proc = subprocess.Popen(self.command + ["get", rel], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        except OSError as err:
+            raise OffsiteError(f"get: {err}")
+        try:
+            while chunk := proc.stdout.read(CHUNK):
+                h.update(chunk)
+                f.write(chunk)
+                n += len(chunk)
+                pace(len(chunk))
+            err = proc.stderr.read()
+            proc.wait(timeout=ANSWER_S)
+        except BaseException:
+            proc.kill()
+            proc.wait()
+            raise
+        if proc.returncode:
+            raise OffsiteError(f"get: exit {proc.returncode}: {last_line(err)}")
+        return n, h.hexdigest()
 
 
-def cold_settings():
-    """The cold drive and its camera folder, from heavy.conf. Raises Stop when they're not set
-    up. The folder is checked as written, not resolved: the symlinks point at it by that path,
-    and the containers mount the drive at the same one."""
-    cold = heavy.cold_drive()
-    if cold is None:
-        raise Stop(f"{heavy.path('heavy.conf')} names no cold drive (COLD_MOUNT)", EX_USAGE)
-    mount, marker, keep = cold
-    folder = heavy.settings().get("COLD_CAMERAS", "")
-    if not folder:
-        raise Stop(f"{heavy.path('heavy.conf')} names no camera folder on the cold drive (COLD_CAMERAS)", EX_USAGE)
-    if not os.path.isabs(mount) or not os.path.isabs(folder) or not inside(folder, mount):
-        raise Stop(f"COLD_CAMERAS ({folder}) must be an absolute path inside COLD_MOUNT ({mount})", EX_USAGE)
-    return Cold(mount, marker, keep, os.path.normpath(folder))
+def offsite_settings():
+    """The off-site storage, from heavy.conf. Raises Stop when it isn't set up."""
+    text = heavy.settings().get("OFFSITE_SSH", "")
+    if not text:
+        raise Stop(f"{heavy.path('heavy.conf')} names no way to off-site storage (OFFSITE_SSH)", EX_USAGE)
+    try:
+        command = shlex.split(text)
+    except ValueError as err:
+        raise Stop(f"OFFSITE_SSH in heavy.conf can't be read: {err}", EX_USAGE)
+    return Offsite(command)
+
+
+def reachable(offsite):
+    """Raises Stop when the off-site storage doesn't answer."""
+    try:
+        offsite.ping()
+    except OffsiteError as err:
+        raise Stop(f"the off-site storage can't be reached ({err})", EX_UNREACHABLE)
 
 
 def keep_days_setting(given):
@@ -193,10 +297,10 @@ def keep_days_setting(given):
         raise Stop("COLD_VIDEO_KEEP_DAYS in heavy.conf must be a whole number of days", EX_USAGE)
 
 
-# --- when it may move -----------------------------------------------------------
+# --- when it may send -----------------------------------------------------------
 
 def restart_problem(t):
-    """Why a planned VM restart holds moves back, or None."""
+    """Why a planned VM restart holds sends back, or None."""
     m = heavy.maintenance(t)
     if m is None:
         return None
@@ -209,12 +313,12 @@ def restart_problem(t):
 
 
 def gate(t, statuses):
-    """None when moving may start at t (Boise), else why not. The roll-up rule is heavy's: at
+    """None when sending may start at t (Boise), else why not. The roll-up rule is heavy's: at
     night, once both capture services report tonight's roll-up finished; in the day, while
     neither says it's rolling up."""
     clock = t.time()
     if clock >= STOP_AT or clock < heavy.NIGHT[0]:
-        return (f"it's {heavy.hm(t)} in Boise: from {STOP_AT:%H:%M}, moves wait for tonight's camera "
+        return (f"it's {heavy.hm(t)} in Boise: from {STOP_AT:%H:%M}, sends wait for tonight's camera "
                 f"roll-up (from 00:05) to finish")
     going = heavy.rolling_now(t, statuses)
     if going:
@@ -224,6 +328,16 @@ def gate(t, statuses):
         if not done:
             return why
     return restart_problem(t)
+
+
+def stop_between_files():
+    """Raises Stop once 23:55 has come or a planned restart is near."""
+    t = heavy.now()
+    if t.time() >= STOP_AT:
+        raise Stop(f"stopped at {heavy.hm(t)} Boise: tonight's roll-up comes next", EX_LATER)
+    why = restart_problem(t)
+    if why:
+        raise Stop(f"stopped: {why}", EX_LATER)
 
 
 def take_lock(path):
@@ -238,7 +352,7 @@ def take_lock(path):
 
 
 def wait_to_start(cameras, wait_min, say):
-    """Waits (at most wait_min minutes) until moving may start, and returns an fd holding the
+    """Waits (at most wait_min minutes) until sending may start, and returns an fd holding the
     roll-up's lock. Raises Stop when the wait runs out."""
     give_up = time.monotonic() + wait_min * 60
     said = None
@@ -258,12 +372,12 @@ def wait_to_start(cameras, wait_min, say):
         time.sleep(min(WAIT_POLL_S, max(1.0, left)))
 
 
-# --- what moves ---------------------------------------------------------------
+# --- what goes ------------------------------------------------------------------
 
 def plan(cameras, cutoff, now_s=None):
-    """(files to move, Counter of reasons files stay). Files are (path relative to the archive,
+    """(files to send, Counter of reasons files stay). Files are (path relative to the archive,
     bytes): video/<id>/<year>/<id>-<day>.ext, each camera-day's CSV before its video, oldest day
-    first. Only regular files: a moved one is a symlink."""
+    first. Only regular files: a sent one is a symlink."""
     now_s = heavy.now().timestamp() if now_s is None else now_s
     base = os.path.join(cameras, "video")
     todo, kept = [], Counter()
@@ -311,7 +425,37 @@ def plan(cameras, cutoff, now_s=None):
     return [(rel, size) for _, _, _, rel, size in todo], kept
 
 
-# --- moving one file ----------------------------------------------------------
+def old_links(cameras):
+    """The links the cold drive left: {rel: target} for each camera file in the archive that's a
+    symlink but not an off-site link."""
+    out = {}
+    for folder, dirs, names in os.walk(os.path.join(cameras, "video")):
+        dirs.sort()
+        for name in names:
+            path = os.path.join(folder, name)
+            rel = os.path.relpath(path, cameras)
+            if REL.fullmatch(rel) and os.path.islink(path):
+                target = os.readlink(path)
+                if not target.startswith(OFFSITE):
+                    out[rel] = target
+    return out
+
+
+def logged(cameras):
+    """{rel: (bytes, sha256)} as this tool last moved each file to the cold drive, from its log."""
+    out = {}
+    try:
+        with open(os.path.join(cameras, LOG), errors="replace") as f:
+            for line in f:
+                m = MOVED.search(line)
+                if m:
+                    out[m["rel"]] = (int(m["bytes"]), m["sha"])
+    except FileNotFoundError:
+        pass
+    return out
+
+
+# --- sending one file -------------------------------------------------------------
 
 class Pace:
     """Keeps reads under a rate (bytes a second), counted over the whole run."""
@@ -328,43 +472,6 @@ class Pace:
         ahead = self.done / self.rate - (time.monotonic() - self.start)
         if ahead > 0:
             time.sleep(ahead)
-
-
-def drop_cache(fd):
-    """Asks the kernel to forget fd's cached pages, so the read-back comes from the drive
-    rather than from the VM's cached copy of what was just written."""
-    if hasattr(os, "posix_fadvise"):
-        try:
-            os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
-        except OSError:
-            pass
-
-
-def sha256_of(path, pace, from_drive=False):
-    h = hashlib.sha256()
-    with open(path, "rb", buffering=0) as f:
-        if from_drive:
-            drop_cache(f.fileno())
-        while chunk := f.read(CHUNK):
-            h.update(chunk)
-            pace(len(chunk))
-    return h.hexdigest()
-
-
-def copy_to(src, tmp, st, pace):
-    """Copies src to tmp (made anew) with src's mode and times, synced to the drive. Returns
-    src's sha256, computed as it's read."""
-    h = hashlib.sha256()
-    with open(src, "rb", buffering=0) as fi, open(tmp, "wb") as fo:
-        while chunk := fi.read(CHUNK):
-            h.update(chunk)
-            fo.write(chunk)
-            pace(len(chunk))
-        fo.flush()
-        os.fchmod(fo.fileno(), stat.S_IMODE(st.st_mode))
-        os.utime(fo.fileno(), ns=(st.st_atime_ns, st.st_mtime_ns))
-        os.fsync(fo.fileno())
-    return h.hexdigest()
 
 
 def fsync_dir(path):
@@ -385,77 +492,43 @@ def hidden(path, suffix):
     return os.path.join(folder, "." + name + suffix)
 
 
-def room(cold, size):
-    """Free GB on the cold drive. Raises Stop when it isn't mounted, or when a copy of size
-    bytes would leave less than it keeps free."""
-    if not cold.present():
-        raise Stop(f"the cold drive isn't mounted ({cold.marker or cold.mount} is missing)", EX_NOCOLD)
-    free = heavy.free_gb(cold.mount)
-    if free - gb(size) < cold.keep:
-        raise Stop(f"{free:.0f} GB free on the cold drive, which keeps {cold.keep:g} GB free; the next file "
-                   f"is {gb(size):.2f} GB", EX_FULL)
-    return free
+def offsite_target(size, sha):
+    return f"{OFFSITE}{size}:{sha}"
 
 
-def same_file(dst, src):
-    return (f"{dst} on the cold drive is the file itself ({src}): the drive's camera folder reaches the "
-            f"archive (a bind mount or a hard link?), so nothing moves; the original stays")
+def put_link(path, target):
+    """Puts a symlink to target where path is, in one rename: readers see the file (or the old
+    link) or the new link, never neither."""
+    link = hidden(path, LINK)
+    if os.path.lexists(link):
+        os.remove(link)
+    os.symlink(target, link)
+    os.replace(link, path)
+    fsync_dir(os.path.dirname(path))
 
 
-def move(rel, cameras, cold, pace):
-    """Moves one file to the cold drive and leaves a symlink to the copy in its place.
-    Returns (bytes, sha256, note), or None when it's no longer a regular file."""
+def send(rel, cameras, offsite, pace):
+    """Sends one file. Returns the lstat it was sent with and its sha256, or None when it's no
+    longer a regular file."""
     src = os.path.join(cameras, rel)
-    dst = os.path.join(cold.folder, rel)
     st = os.lstat(src)
     if not stat.S_ISREG(st.st_mode):
         return None
-    room(cold, st.st_size)
-    os.makedirs(os.path.dirname(dst), exist_ok=True)
-    try:
-        there = os.lstat(dst)
-    except FileNotFoundError:
-        there = None
-    if there is not None and not stat.S_ISREG(there.st_mode):
-        raise CheckFailed(f"{dst} is there but isn't a plain file")
-    if there is not None and os.path.samestat(there, st):
-        raise Stop(same_file(dst, src), EX_USAGE)
-    sha, note = None, ""
-    if there is not None and there.st_size == st.st_size:
-        sha = sha256_of(src, pace)
-        if sha256_of(dst, pace, from_drive=True) == sha:
-            note = "its copy was already on the cold drive"
-    if not note:
-        tmp = hidden(dst, PART)
-        try:
-            sha = copy_to(src, tmp, st, pace)
-            size = os.stat(tmp).st_size
-            if size != st.st_size:
-                raise CheckFailed(f"the copy has {size} bytes, the original {st.st_size}")
-            if sha256_of(tmp, pace, from_drive=True) != sha:
-                raise CheckFailed("the copy, read back from the cold drive, doesn't match the original's sha256")
-            os.replace(tmp, dst)
-        except BaseException:
-            try:
-                os.remove(tmp)
-            except OSError:
-                pass
-            raise
-        fsync_dir(os.path.dirname(dst))
-        if there is not None:
-            note = "it replaced a different copy on the cold drive (the day was encoded again)"
+    return st, offsite.put(src, rel, st, pace)
+
+
+def link_sent(rel, cameras, st, sha, back):
+    """Replaces a sent file with its off-site link, once back (the sha256 of its copy read back
+    from the storage, or None when the storage holds none) is the original's."""
+    if back is None:
+        raise CheckFailed("the off-site storage doesn't hold it after it was sent")
+    if back != sha:
+        raise CheckFailed("the copy read back from the off-site storage doesn't match the original's sha256")
+    src = os.path.join(cameras, rel)
     now = os.lstat(src)
     if (now.st_ino, now.st_size, now.st_mtime_ns) != (st.st_ino, st.st_size, st.st_mtime_ns):
-        raise CheckFailed("the original changed while it was copied; it stays, and the next run copies it again")
-    if os.path.samestat(os.stat(dst), now):  # never a link to the file itself, the only copy
-        raise Stop(same_file(dst, src), EX_USAGE)
-    link = hidden(src, LINK)
-    if os.path.lexists(link):
-        os.remove(link)
-    os.symlink(dst, link)
-    os.replace(link, src)                    # one rename: readers see the file or the link, never neither
-    fsync_dir(os.path.dirname(src))
-    return st.st_size, sha, note
+        raise CheckFailed("the original changed while it was sent; it stays, and the next run sends it again")
+    put_link(src, offsite_target(st.st_size, sha))
 
 
 # --- a run --------------------------------------------------------------------
@@ -466,9 +539,9 @@ class Run:
         self.dry_run = dry_run
         self.started = dt.datetime.now(dt.timezone.utc)
         self.moved = self.bytes = self.failed = self.left = 0
+        self.relinked = self.old_left = self.old_bad = 0
         self.kept = Counter()
         self.cutoff = None
-        self.cold_free = None
 
     def say(self, message):
         line = f"{stamp()} {message}"
@@ -483,9 +556,12 @@ class Run:
     def finish(self, code, why="", record=True):
         """Logs the end and records it in the state file (unless record is false). Returns code."""
         result = RESULTS.get(code, "failed")
-        moved = f"moved {self.moved} files ({gb(self.bytes):.2f} GB)"
-        tail = (f"; {self.left} still to move" if self.left else "") + \
-               (f"; {self.failed} failed their check" if self.failed else "")
+        moved = f"sent {self.moved} files ({gb(self.bytes):.2f} GB) off-site"
+        tail = (f"; {self.left} still to send" if self.left else "") + \
+               (f"; {self.failed} failed their check" if self.failed else "") + \
+               (f"; {self.relinked} old cold-drive links now off-site links" if self.relinked else "") + \
+               (f"; {self.old_left} files still link to the cold drive" if self.old_left else "") + \
+               (f" ({self.old_bad} of them don't match off-site)" if self.old_bad else "")
         self.say(f"{'dry run ' if self.dry_run else ''}{result}: {why + '; ' if why else ''}{moved}{tail}")
         if self.dry_run or not record:
             return code
@@ -497,11 +573,11 @@ class Run:
             pass
         finished = stamp()
         state = {
-            "version": 1, "started": stamp(self.started), "finished": finished, "code": code,
+            "version": 2, "started": stamp(self.started), "finished": finished, "code": code,
             "result": result, "why": why, "moved": self.moved, "bytes": self.bytes, "failed": self.failed,
             "left": self.left, "kept": dict(self.kept),
             "cutoff": self.cutoff.isoformat() if self.cutoff else None,
-            "cold_free_gb": None if self.cold_free is None else round(self.cold_free, 1),
+            "relinked": self.relinked, "old_left": self.old_left, "old_bad": self.old_bad,
             "last_done": finished if code == 0 else previous.get("last_done"),
         }
         path = os.path.join(self.cameras, STATE)
@@ -515,35 +591,130 @@ class Run:
 
 
 def parse(argv):
-    p = argparse.ArgumentParser(prog="cold-videos", description="Move finished camera videos older than a "
-                                "week to the cold drive, leaving symlinks (deploy/README.md).")
+    p = argparse.ArgumentParser(prog="cold-videos", description="Send finished camera videos older than a few "
+                                "days to off-site storage, leaving links (deploy/README.md).")
     p.add_argument("--keep-days", type=int, help=f"finished days kept on the VM's disk (default {KEEP_DAYS})")
     p.add_argument("--wait", type=float, default=0, metavar="MIN", help="wait at most MIN minutes for the roll-up")
     p.add_argument("--max-mb-s", type=float, default=MAX_MB_S, metavar="MB", help="read at most this fast")
-    p.add_argument("--dry-run", action="store_true", help="say what would move; change nothing")
+    p.add_argument("--limit", type=int, metavar="N", help="send at most N files and turn at most N old links")
+    p.add_argument("--dry-run", action="store_true", help="say what would be sent; change nothing")
     p.add_argument("--archive", help="the camera archive (default: beside heavy's status files)")
+    p.add_argument("--bring-back", nargs="+", metavar="REL", help="fetch these off-site files back")
     return p.parse_args(argv)
+
+
+def send_new(files, cameras, offsite, pace, run_):
+    """Sends files one at a time, and reads them back BATCH at a time before they become links."""
+    batch = []                                   # (rel, lstat, sha256): sent, not yet read back
+    gone = 0                                     # files no longer regular files when their turn came
+
+    def read_back():
+        rels = [rel for rel, _, _ in batch]
+        try:
+            back = offsite.verify(rels)
+        except OffsiteError as err:
+            for rel in rels:
+                run_.failed += 1
+                run_.say(f"FAILED {rel}: it couldn't be read back ({err}) (the original stays)")
+            batch.clear()
+            reachable(offsite)                   # gone away: stop rather than fail every file
+            return
+        for rel, st, sha in batch:
+            try:
+                link_sent(rel, cameras, st, sha, back.get(rel))
+            except (CheckFailed, OSError) as err:
+                run_.failed += 1
+                run_.say(f"FAILED {rel}: {err} (the original stays)")
+                continue
+            run_.moved += 1
+            run_.bytes += st.st_size
+            run_.say(f"sent {rel} ({st.st_size} bytes, sha256 {sha})")
+        batch.clear()
+
+    for rel, _ in files:
+        run_.left = len(files) - run_.moved - gone       # if it stops here
+        stop_between_files()
+        try:
+            done = send(rel, cameras, offsite, pace)
+        except OffsiteError as err:
+            run_.failed += 1
+            run_.say(f"FAILED {rel}: {err} (the original stays)")
+            reachable(offsite)
+            continue
+        except (CheckFailed, OSError) as err:
+            run_.failed += 1
+            run_.say(f"FAILED {rel}: {err} (the original stays)")
+            continue
+        if done is None:
+            gone += 1
+            continue
+        batch.append((rel, *done))
+        if len(batch) >= BATCH:
+            read_back()
+    if batch:
+        read_back()
+    run_.left = len(files) - run_.moved - gone
+
+
+def relink_old(cameras, offsite, limit, run_):
+    """Turns the cold drive's old links into off-site links, each once its copy read back from the
+    storage has the sha256 this tool logged when it moved the file to the drive."""
+    olds = old_links(cameras)
+    if not olds:
+        return
+    record = logged(cameras)
+    held = offsite.listing()
+    ready, waiting, unknown = [], 0, 0
+    for rel in sorted(olds):
+        if rel not in record:
+            unknown += 1
+        elif held.get(rel) != record[rel][0]:
+            waiting += 1
+        else:
+            ready.append(rel)
+    run_.old_left = len(olds)
+    run_.say(f"{len(olds)} files still link to the cold drive: {len(ready)} held off-site, to read back now; "
+             f"{waiting} not off-site yet" + (f"; {unknown} with no sha256 in {LOG}" if unknown else ""))
+    if run_.dry_run:
+        return
+    if limit is not None:
+        ready = ready[:limit]
+    for i in range(0, len(ready), OLD_BATCH):
+        stop_between_files()
+        rels = ready[i:i + OLD_BATCH]
+        try:
+            back = offsite.verify(rels)
+        except OffsiteError as err:
+            run_.say(f"old links: {len(rels)} couldn't be read back ({err}); they keep their old links")
+            reachable(offsite)
+            continue
+        for rel in rels:
+            size, sha = record[rel]
+            path = os.path.join(cameras, rel)
+            if back.get(rel) != sha:
+                run_.old_bad += 1
+                run_.say(f"old link {rel}: its copy off-site doesn't match the sha256 logged when it moved to the "
+                         f"cold drive ({sha}); it keeps its old link")
+                continue
+            if not os.path.islink(path) or os.readlink(path) != olds[rel]:
+                continue                         # changed meanwhile (a day encoded again)
+            put_link(path, offsite_target(size, sha))
+            run_.relinked += 1
+            run_.old_left -= 1
+            run_.say(f"relinked {rel} ({size} bytes, sha256 {sha}): its copy off-site, read back")
 
 
 def run(args, run_):
     cameras = run_.cameras
-    cold = cold_settings()
+    offsite = offsite_settings()
     keep = keep_days_setting(args.keep_days)
     if keep < MIN_KEEP_DAYS:
         raise Stop(f"--keep-days must be at least {MIN_KEEP_DAYS}: today's and yesterday's videos stay", EX_USAGE)
-    if args.wait < 0 or args.max_mb_s < 0:
-        raise Stop("--wait and --max-mb-s take numbers of 0 or more", EX_USAGE)
+    if args.wait < 0 or args.max_mb_s < 0 or (args.limit is not None and args.limit < 0):
+        raise Stop("--wait, --max-mb-s and --limit take numbers of 0 or more", EX_USAGE)
     if not os.path.isdir(os.path.join(cameras, "video")):
         raise Stop(f"no camera videos in {cameras} (video/ is missing)", EX_USAGE)
-    if not cold.present():
-        raise Stop(f"the cold drive isn't mounted ({cold.marker or cold.mount} is missing)", EX_NOCOLD)
-    if not os.path.isdir(cold.folder):
-        raise Stop(f"the camera folder on the cold drive ({cold.folder}) isn't there: make it first "
-                   f"(deploy/README.md)", EX_USAGE)
-    how = overlaps(cold.folder, cameras)
-    if how:
-        raise Stop(f"the camera folder on the cold drive ({cold.folder}) {how} the camera archive ({cameras}): "
-                   f"COLD_CAMERAS must be a folder of its own on the drive", EX_USAGE)
+    reachable(offsite)
 
     held = []
     try:
@@ -561,47 +732,78 @@ def run(args, run_):
         today = heavy.now().date()
         run_.cutoff = today - dt.timedelta(days=keep + 1)
         files, run_.kept = plan(cameras, run_.cutoff)
+        if args.limit is not None:
+            files = files[:args.limit]
         total = sum(size for _, size in files)
-        run_.cold_free = heavy.free_gb(cold.mount)
-        run_.say(f"{len(files)} files ({gb(total):.2f} GB) of days up to {run_.cutoff.isoformat()} to move "
-                 f"(keeping {keep} finished days); {run_.cold_free:.0f} GB free on the cold drive, "
-                 f"{cold.keep:g} GB kept free")
+        run_.say(f"{len(files)} files ({gb(total):.2f} GB) of days up to {run_.cutoff.isoformat()} to send "
+                 f"off-site (keeping {keep} finished days)")
         for why, n in sorted(run_.kept.items()):
             run_.say(f"staying: {n} files: {why}")
         if run_.dry_run:
             for rel, size in files:
-                run_.say(f"would move {rel} ({size} bytes)")
+                run_.say(f"would send {rel} ({size} bytes)")
             run_.left = len(files)
-            room(cold, files[0][1] if files else 0)
+            relink_old(cameras, offsite, args.limit, run_)
             return 0
 
-        pace = Pace(args.max_mb_s)
-        for i, (rel, _) in enumerate(files):
-            run_.left = len(files) - i + run_.failed      # if it stops here
-            t = heavy.now()
-            if t.time() >= STOP_AT:
-                raise Stop(f"stopped at {heavy.hm(t)} Boise: tonight's roll-up comes next", EX_LATER)
-            why = restart_problem(t)
-            if why:
-                raise Stop(f"stopped: {why}", EX_LATER)
-            try:
-                done = move(rel, cameras, cold, pace)
-            except (CheckFailed, OSError) as err:
-                run_.failed += 1
-                run_.say(f"FAILED {rel}: {err} (the original stays)")
-                continue
-            if done is None:
-                continue
-            size, sha, note = done
-            run_.moved += 1
-            run_.bytes += size
-            run_.say(f"moved {rel} ({size} bytes, sha256 {sha})" + (f": {note}" if note else ""))
-        run_.left = run_.failed
-        run_.cold_free = heavy.free_gb(cold.mount)
+        send_new(files, cameras, offsite, Pace(args.max_mb_s), run_)
+        relink_old(cameras, offsite, args.limit, run_)
         return EX_FAILED if run_.failed else 0
     finally:
         for fd in reversed(held):
             os.close(fd)
+
+
+def bring_back(rels, run_, max_mb_s):
+    """Fetches off-site files back onto the VM's disk, each checked against the bytes and sha256 in
+    its link before it replaces the link. Returns the exit code."""
+    cameras = run_.cameras
+    offsite = offsite_settings()
+    reachable(offsite)
+    fd = take_lock(os.path.join(cameras, LOCK))
+    if fd is None:
+        raise Stop("a cold-videos run is going", EX_LATER)
+    pace = Pace(max_mb_s)
+    try:
+        for given in rels:
+            rel = os.path.relpath(os.path.abspath(given), cameras) if os.path.isabs(given) else given
+            path = os.path.join(cameras, rel)
+            target = os.readlink(path) if REL.fullmatch(rel) and os.path.islink(path) else ""
+            m = OFFSITE_TARGET.fullmatch(target)
+            if not m:
+                run_.failed += 1
+                run_.say(f"FAILED {given}: not an off-site link in {cameras}" +
+                         (" (a cold-drive link: it becomes an off-site link once its copy is proven)"
+                          if target else ""))
+                continue
+            size, sha = int(m["bytes"]), m["sha"]
+            free = heavy.free_gb(cameras)
+            if free - gb(size) < heavy.FLOOR_GB + BACK_SPARE_GB:
+                raise Stop(f"{free:.1f} GB free on the VM's disk: no room for {rel} above heavy's floor", EX_FAILED)
+            tmp = hidden(path, BACK)
+            try:
+                with open(tmp, "wb") as f:
+                    n, got = offsite.get(rel, f, pace)
+                    f.flush()
+                    os.fsync(f.fileno())
+                if (n, got) != (size, sha):
+                    raise CheckFailed(f"what came back ({n} bytes, sha256 {got}) isn't what was sent")
+                os.chmod(tmp, 0o644)
+                os.replace(tmp, path)                    # one rename: the link or the file, never neither
+            except (CheckFailed, OSError) as err:
+                run_.failed += 1
+                run_.say(f"FAILED {rel}: {err} (its link stays)")
+                continue
+            finally:
+                if os.path.lexists(tmp):
+                    os.remove(tmp)
+            fsync_dir(os.path.dirname(path))
+            run_.moved += 1
+            run_.bytes += size
+            run_.say(f"brought back {rel} ({size} bytes, sha256 {sha})")
+    finally:
+        os.close(fd)
+    return EX_FAILED if run_.failed else 0
 
 
 def main(argv=None):
@@ -617,13 +819,28 @@ def main(argv=None):
 
     previous = signal.signal(signal.SIGTERM, terminated)
     try:
+        if args.bring_back:
+            try:
+                code = bring_back(args.bring_back, run_, args.max_mb_s)
+            except Stop as stop:
+                run_.say(f"bring-back stopped: {stop}")
+                code = stop.code
+            run_.say(f"brought back {run_.moved} files ({gb(run_.bytes):.2f} GB)"
+                     + (f"; {run_.failed} failed" if run_.failed else ""))
+            return code
         code = run(args, run_)
         return run_.finish(code)
     except Stop as stop:
         return run_.finish(stop.code, str(stop), stop.record)
     except (KeyboardInterrupt, Terminated):
-        return run_.finish(EX_INT, "interrupted; the file being copied stays where it was")
+        if args.bring_back:
+            run_.say("bring-back interrupted; the file coming back stays off-site, behind its link")
+            return EX_INT
+        return run_.finish(EX_INT, "interrupted; the file being sent stays where it was")
     except Exception as err:                 # anything unforeseen still ends in the log and the state
+        if args.bring_back:
+            run_.say(f"bring-back stopped by an error: {err!r}")
+            return EX_FAILED
         return run_.finish(EX_FAILED, f"stopped by an error: {err!r}")
     finally:
         signal.signal(signal.SIGTERM, previous)

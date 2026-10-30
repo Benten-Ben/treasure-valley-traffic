@@ -14,10 +14,10 @@ network stay in private notes on the server, never in this repository.
 | `transit` | the ingest image | Records Valley Regional Transit's live feeds every 30 s: a raw archive in `ARCHIVE_DIR`, plus bus positions in the database |
 | `wzdx` | the ingest image | Records ITD's work zones (WZDx feed on 511 Idaho) every 5 minutes: changed snapshots archived in `ARCHIVE_DIR`, every version in `raw.record`, cleaned rows in `evt.event` |
 | `idaho511` | the ingest image | Polls the 511 Idaho API (key `IDAHO511_API_KEY` in `.env`), at most 8 calls a minute: events, advisories and truck restrictions into `evt.event`, message signs into `evt.sign_message`, road-weather readings into `obs.weather_reading`, everything versioned in `raw.record`; changed responses archived in `ARCHIVE_DIR/idaho511`. Rebuilds the regional capture list (`ARCHIVE_DIR/lists/regional-cameras.csv`) from the camera list |
-| `cameras` | built from [`ingest/Dockerfile.cameras`](../ingest/Dockerfile.cameras) (Ubuntu 24.04, for the benchmarked SVT-AV1 1.7) | Fetches the key cameras ([`plugins/cameras/ingest/key_cameras.csv`](../plugins/cameras/ingest/key_cameras.csv)) from 511 Idaho every 50 s into `ARCHIVE_DIR/cameras/jpeg`, and after local midnight rolls each day into one AV1 video per camera in `ARCHIVE_DIR/cameras/video`. JPEGs are deleted after 2 days, once their video exists; videos older than a week move to the cold drive ([below](#older-camera-videos-on-the-cold-drive)). Pauses below 10 GB free. The VM trims its disk daily (`/etc/systemd/system/fstrim.timer.d/daily.conf`), so deleted JPEGs free space in the server's shared storage. |
+| `cameras` | built from [`ingest/Dockerfile.cameras`](../ingest/Dockerfile.cameras) (Ubuntu 24.04, for the benchmarked SVT-AV1 1.7) | Fetches the key cameras ([`plugins/cameras/ingest/key_cameras.csv`](../plugins/cameras/ingest/key_cameras.csv)) from 511 Idaho every 50 s into `ARCHIVE_DIR/cameras/jpeg`, and after local midnight rolls each day into one AV1 video per camera in `ARCHIVE_DIR/cameras/video`. JPEGs are deleted after 2 days, once their video exists; videos older than a few days go to off-site storage ([below](#older-camera-videos-go-off-site)). Pauses below 10 GB free. The VM trims its disk daily (`/etc/systemd/system/fstrim.timer.d/daily.conf`), so deleted JPEGs free space in the server's shared storage. |
 | `regional` | the cameras image | The same capture for ITD's road-weather camera views statewide plus Oregon DOT views in the regional ring, every 10 minutes, with their own daily videos. The list (`ARCHIVE_DIR/lists/regional-cameras.csv`) is rebuilt by `idaho511` and picked up without a restart |
 | `app` | built from [`app/`](../app) | SvelteKit (adapter-node) on port 3000 inside the network. Stores calibration reference frames in `FRAMES_DIR`. |
-| `web` | `caddy:2.11-alpine` | The single entry point: serves `/tiles/` from the basemap folder (with range requests), the camera video library at `/videos/` ([`library/`](library/index.html), with the videos read-only from `ARCHIVE_DIR/cameras/video`, and the older days through their links to the cold drive), and proxies everything else to `app`. Plain HTTP on `HTTP_PORT` for the LAN, and HTTPS (HTTP/2 and HTTP/3) on the VM's Tailscale name (`TVT_HTTPS_HOST`), with the certificate from the VM's Tailscale daemon |
+| `web` | `caddy:2.11-alpine` | The single entry point: serves `/tiles/` from the basemap folder (with range requests), the camera video library at `/videos/` ([`library/`](library/index.html), with the videos read-only from `ARCHIVE_DIR/cameras/video`, while the older days, kept off-site, are listed but not served), and proxies everything else to `app`. Plain HTTP on `HTTP_PORT` for the LAN, and HTTPS (HTTP/2 and HTTP/3) on the VM's Tailscale name (`TVT_HTTPS_HOST`), with the certificate from the VM's Tailscale daemon |
 
 ## First-time setup (on the VM)
 
@@ -253,7 +253,7 @@ roll-up (going or finished, and the day's videos made, failed or missing),
 a planned restart, and from the database the scheduled sources by state
 (`ops.source_status`) and the builds that are marked, running or failed
 (`ops.build_status`, migration 0021), and the last run of `cold-videos`
-([below](#older-camera-videos-on-the-cold-drive)). It reads `heavy`'s rules from the
+([below](#older-camera-videos-go-off-site)). It reads `heavy`'s rules from the
 `heavy` beside it, and the database read-only (psql in its container, as
 its owner, with a 10 s statement timeout); keys and passwords in errors are
 hidden. A line that needs a look starts with `!`, and it exits 1 if any
@@ -356,144 +356,148 @@ private files' group and setgid bit from its parent):
 A full run of the 94 frames was 2.3 minutes and 0.23 GB (one panel each,
 Oct 11). Sheets are private and never committed; delete runs once reviewed.
 
-## Older camera videos on the cold drive
+## Older camera videos go off-site
 
 The daily camera videos grow about 2.1–2.3 GB a day (measured Oct 6–14,
-2026), on a VM disk that had 21 GB free on Oct 15. Decision A1 (owner, Oct 8;
-the drive inside the VM since Oct 10) put the cold drive in the VM for
-finished videos older than about a week. **`cold-videos`**
-([`bin/cold-videos`](bin/cold-videos), Python 3, standard library; tests in
-[`tests/test_cold_videos.py`](tests/test_cold_videos.py)) moves them there,
-daily, from a systemd timer ([`systemd/`](systemd)). The VM's disk then
-holds about a week of videos (about 15 GB) instead of every day since Oct 5.
-Since Oct 24 the VM keeps 3 days instead (owner; `COLD_VIDEO_KEEP_DAYS=3` in
-`heavy.conf`), about 7 GB, to leave room for heavy jobs.
+2026). Decision A1 (owner, Oct 8) kept finished videos older than about a
+week on a cold drive shared into the VM; since Oct 24 the VM keeps 3 days
+(owner; `COLD_VIDEO_KEEP_DAYS=3` in `heavy.conf`). On Oct 29–30 that drive
+failed, and the owner changed the plan (Oct 30): older days go **straight to
+off-site storage** (Backblaze B2, encrypted before upload), with no second
+local copy, and the VM deletes its copy only once B2 is proven to hold it. **`cold-videos`** ([`bin/cold-videos`](bin/cold-videos), Python 3,
+standard library; tests in [`tests/test_cold_videos.py`](tests/test_cold_videos.py),
+against a stand-in for the storage, [`tests/offsite_double.py`](tests/offsite_double.py))
+does it daily, from a systemd timer ([`systemd/`](systemd)). The VM's disk
+holds the last 3 finished days (about 7 GB).
 
-**What moves.** Each finished camera day more than 7 days old (a setting): the
-video, `video/<id>/<year>/<id>-<day>.mp4`, and its frame CSV beside it, to the
-same place under the camera folder on the cold drive. Never today's or
-yesterday's (the setting can't go under 2 days), a day whose JPEGs are still
-in the buffer, a day whose encode is going (a `.part` beside it), a file
-written in the last 10 minutes, a CSV without its video, the library's
-`index-*.json` or the JPEG buffer.
+**What goes.** Each finished camera day older than the days kept: the
+video, `video/<id>/<year>/<id>-<day>.mp4`, and its frame CSV beside it.
+Never today's or yesterday's (the setting can't go under 2 days), a day whose
+JPEGs are still in the buffer, a day whose encode is going (a `.part` beside
+it), a file written in the last 10 minutes, a CSV without its video, the
+library's `index-*.json` or the JPEG buffer.
 
-**How.** Each file is copied to a hidden `.cold-part` beside its place on the
-drive, synced, and read back from the drive (the VM's cached copy dropped
-first) to check its size and sha256 against the original's. The copy is
-renamed into place, and then one rename puts a symlink to it where the
-original was, so readers see the file or the link, never neither. The copy
-keeps the original's mode and times, so Caddy's ETag for it stays the same.
-Every move (path, bytes, sha256) is logged to the journal and to
-`cameras/cold-videos.log` in the archive, and each run's outcome to
-`cameras/cold-videos.json`, which `status` reads. Reads are paced (50 MB/s by
-default, both drives together), at idle I/O priority.
+**How.** The VM holds no storage keys. It reaches the storage through one
+command (`OFFSITE_SSH` in `heavy.conf`): an SSH key that can run only one
+locked-down command outside the VM, which holds the keys. That command takes
+five requests and nothing else: `ping`, `list`, `put` (a file
+on its input: it buffers the file in memory, uploads it, and answers the
+sha256 of what arrived), `verify` (downloads each named file back from B2,
+through the decryption, and answers its sha256) and `get` (a file's bytes).
+It has no delete. Each file is sent once, paced (50 MB/s from the VM's disk
+by default, at idle I/O priority), its sha256 computed as it's read; what
+arrived must have that sha256. Every 50 files, the batch is read back from
+B2, and each file whose copy read back has the original's sha256, and
+which hasn't changed since it was sent, is replaced, in one rename, by an
+**off-site link**: a symlink to `offsite:<bytes>:<sha256>`, which leads
+nowhere and records what was sent. Readers see the file or the link, never
+neither. Every file sent (path, bytes, sha256) is logged to the journal and
+to `cameras/cold-videos.log` in the archive, and each run's outcome to
+`cameras/cold-videos.json`, which `status` reads.
 
 **When.** Daily at 02:00 Boise (`tvt-cold-videos.timer`, `Persistent=true`),
 as the archive's owner (uid 1000, as the capture containers run). It waits up
 to 5 hours for tonight's roll-up: heavy's rule, both capture status files
 saying `rolling_up` false after 00:05 (in the day, neither rolling up). It
 holds the roll-up's own lock (`cameras/rollup.lock`) while it works, so no
-roll-up, nightly or by hand, starts meanwhile. It moves only while the drive's
-marker file is there and the drive keeps 200 GB free after each copy
-(`COLD_KEEP_GB`, heavy's). It doesn't start from 23:55 until tonight's
-roll-up has finished, nor within 15 minutes of a restart planned in
-`MAINTENANCE`; a run under way stops between files.
+roll-up, nightly or by hand, starts meanwhile. It doesn't start from 23:55
+until tonight's roll-up has finished, nor within 15 minutes of a restart
+planned in `MAINTENANCE`; a run under way stops between files. It starts
+only when the storage answers a `ping`, and stops if the storage stops
+answering.
 
-**Idempotent and resumable.** A moved file is a link, and is skipped. A copy
-cut short is made again. A copy that finished on the drive but whose original
-wasn't replaced yet is checked and used. If a day was encoded again since its
-copy was made (`ingest rollup --force` replaces the link with a new file), the
-next run replaces the copy on the drive with the new file. SIGTERM (systemd
-stopping it) removes the copy being made and leaves its original.
+**Idempotent and resumable.** A sent file is a link, and is skipped. One
+sent but not read back and linked when a run stopped (23:55, SIGTERM, the
+storage gone) stays on the VM's disk and is sent again by the next run. If a
+day is encoded again (`ingest rollup --force` puts a file where its link
+was), the next run sends it again, and B2 keeps the new one.
 
-**Readers keep the same paths.** Why links, rather than something cleverer:
-every reader already opens `cameras/video/...`, so a link in place changes no
-path, no URL and no index entry, and needs no union filesystem or host-side
-change. What reads videos, and how each sees a moved day:
+**The cold drive's old links.** Days moved to the drive from Oct 15 to Oct 30
+are links to it, which lead nowhere since it failed. The drive's contents
+are being uploaded to the same place in B2 (the owner's rescue, Oct 30).
+Each run checks those links too: for a file B2 holds with the size logged
+when it moved to the drive, it reads the file back from B2, and when its
+sha256 is the one in `cold-videos.log` for that move, the link becomes an
+off-site link. A file B2 doesn't hold yet, or whose copy doesn't match,
+keeps its old link and is counted (`status` flags them). Keep
+`cold-videos.log`: it is where those sha256s are read from. A day that never
+matches is lost; once the owner agrees, deleting its link (as uid 1000)
+takes it out of the library at the next roll-up.
 
-- **The video library** (`web`, Caddy 2.11): follows the links, range
-  requests included (checked on the VM, Oct 15). The link's target is an
-  absolute path on the drive, so [`compose.cold.yml`](compose.cold.yml) mounts
-  the drive's mount point read-only at the same path in the containers that
-  read videos. The mount point, not a folder on the drive: it's there even
-  when the drive isn't, so the containers always start.
-- **The roll-up and the library's index** (`cameras`, `regional`): a link
-  counts as a finished video (`os.path.lexists`), so a moved day is never
-  encoded again, and its JPEGs are pruned as usual. The index marks a moved
-  day `"cold": true` and reads its size through the link (the same mount).
-- **`status`**: counts last night's videos only, which never move.
+**Readers keep the same paths.** What reads videos, and how each sees a day
+sent off-site:
+
+- **The video library** (`web`, Caddy): the index marks the day
+  `"offsite": true` and keeps its last summary (or its size, from the link),
+  and the library lists it as **"Kept off-site"**, not playable, without
+  fetching anything. Its file's URL answers 404 with the same words (the
+  Caddyfile's `handle_errors`). A day still linked to the cold drive is
+  marked `"cold": true` and shown as not available.
+- **The roll-up** (`cameras`, `regional`): a link counts as a finished video
+  (`os.path.lexists`), so a sent day is never encoded again, and its JPEGs
+  are pruned as usual.
+- **`status`**: counts last night's videos only, which never go.
 - **The app and `app-next`**: read only `cameras/jpeg` and `cameras/status`,
   not videos. No API serves videos.
-- **By hand on the VM** (ffmpeg, docs/11 §11.5): the links work as files.
 
-**Without the drive** (unplugged, or the VM started without it): the links
-lead nowhere. The library says **"Not available right now"** for those days,
-and the other days play; a moved file's URL answers 404 with the same words
-(the Caddyfile's `handle_errors`). The index keeps listing the days, the
-roll-up doesn't redo them, and `cold-videos` refuses to start (exit 69),
-which `status` flags (`! cold-vid`). Plugging the drive back in isn't enough:
-a VM started without it sees an empty placeholder in its place, and the
-containers' mounts don't see a drive mounted later. Restart the VM once the
-drive is back (the drive's own notes say the same); the old days then play
-again with nothing else to do.
+No container mounts anything for videos any more (`compose.cold.yml` is
+gone). The cold drive's mount in the VM, and `heavy`'s `COLD_*` settings and
+`--cold`, are left as they were for the scratch dumps and the ground's
+development runs, which are a separate question.
 
-**The only copy.** A moved video has no other copy: its original on the VM's
-disk is replaced by the link, a camera day can't be fetched again, and the
-project has no backups yet (Oct 7: "not yet"). The cold drive is one USB
-drive with no redundancy, and its own notes keep only-copies off it; decision
-A1 makes older camera videos the exception. If the drive fails, every day
-more than a week old is lost; the last week stays on the VM's disk.
+**Bringing a day back.** As uid 1000, `cold-videos --bring-back <rel or path>
+...` fetches each file from B2, checks its bytes and sha256 against its
+link, and renames it over the link. A day older than the days kept goes
+off-site again on the next run (cheaply: it is sent and read back again).
 
-**Settings.** Paths on the VM stay out of the repo:
+**The only copy.** A day sent off-site has one copy, in B2, and the VM has
+no way to delete it. Nothing else may mirror (`rclone sync`) into that folder
+in B2: a mirror from a source without these files would delete them there.
 
-- `/srv/tvt/work/heavy.conf`: heavy's `COLD_MOUNT`, `COLD_MARKER` and
-  `COLD_KEEP_GB`, plus `COLD_CAMERAS`, the camera folder on the drive (inside
-  `COLD_MOUNT`, and a folder of its own: `cold-videos` refuses, exit 2, one
-  that is the camera archive, holds it or sits inside it, through links or a
-  bind mount too, and stops if a file's copy turns out to be the file itself),
-  and optionally `COLD_VIDEO_KEEP_DAYS` (default 7).
-- `deploy/.env`: `COLD_MOUNT`, the same mount point, for `compose.cold.yml`,
-  and `compose.cold.yml` added to `COMPOSE_FILE`.
+**Settings.** On the VM, kept out of the repo:
+
+- `/srv/tvt/work/heavy.conf`: `OFFSITE_SSH`, the command (split as a shell
+  would; the key, the known host and the address are the VM's), and
+  `COLD_VIDEO_KEEP_DAYS` (default 7; 3 since Oct 24).
+- The SSH key and its known host, in `/srv/tvt/work/offsite/`, readable by
+  uid 1000 only. The command at the other end, and the line that ties the
+  key to it, are in the private server notes.
 
 **Setting it up** (once, after the merge; the lead, outside 00:00–04:00):
 
-1. Make the camera folder on the drive, owned by uid 1000 and writable by the
-   lead's group (setgid): `sudo install -d -o 1000 -g <group> -m 2775
-   <COLD_CAMERAS>`. Add `COLD_CAMERAS=<that folder>` to `heavy.conf`.
-2. Add `COLD_MOUNT=<mount point>` to `deploy/.env` and `compose.cold.yml` to
-   `COMPOSE_FILE`. Once neither capture service is rolling up, from `deploy/`:
-   build the capture image (the new index code) under `heavy`, as image builds
-   are, with `docker compose build cameras regional`, then `docker compose up
-   -d cameras regional web` (the mount). Check that each sees the drive:
-   `docker compose exec web ls <COLD_CAMERAS>` (and `cameras`, `regional`).
-3. Install the tool beside `heavy`, by rename (as for `heavy`, above):
+1. Make the key (as uid 1000, no passphrase) in `/srv/tvt/work/offsite/`, and
+   record the other end's host key there. The owner installs the command and
+   the key's forced-command line there (private notes).
+2. Add `OFFSITE_SSH=ssh -F /dev/null -i <key> -o IdentitiesOnly=yes -o
+   BatchMode=yes -o UserKnownHostsFile=<known_hosts> -o ServerAliveInterval=30
+   <user>@<host>` to `heavy.conf`, and check it as uid 1000: `<that command>
+   ping` answers `ok`.
+3. Install the tool beside `heavy`, by rename, and `status` the same way:
    `install -m 755 deploy/bin/cold-videos /srv/tvt/work/bin/.cold-videos.new && mv -f /srv/tvt/work/bin/.cold-videos.new /srv/tvt/work/bin/cold-videos`.
-4. A dry run as uid 1000: `sudo -u '#1000' /srv/tvt/work/bin/cold-videos --dry-run`
-   lists what would move and what stays.
-5. The timer: `sudo install -m 644 deploy/systemd/tvt-cold-videos.service
-   deploy/systemd/tvt-cold-videos.timer /etc/systemd/system/ && sudo systemctl
-   daemon-reload && sudo systemctl enable --now tvt-cold-videos.timer`. The
-   first run can start at once (`sudo systemctl start tvt-cold-videos`); follow
-   it with `journalctl -u tvt-cold-videos -f`. Afterwards, open an old day in
-   the library.
+4. Rebuild the capture image (the index code) under `heavy`, as image builds
+   are, once neither capture service is rolling up: from `deploy/`,
+   `docker compose build cameras regional`; take `compose.cold.yml` out of
+   `COMPOSE_FILE` in `deploy/.env` (and `COLD_MOUNT` with it); then
+   `docker compose up -d cameras regional web`.
+5. A dry run, then one camera-day, as uid 1000: `sudo -u '#1000'
+   /srv/tvt/work/bin/cold-videos --dry-run`, then `--limit 2`; open that day
+   in the library ("Kept off-site"), bring it back with `--bring-back` and
+   compare its sha256 with the log's. The timer (already installed) then
+   runs the rest at 02:00.
 
 ```bash
-sudo -u '#1000' /srv/tvt/work/bin/cold-videos --dry-run    # what would move; changes nothing
+sudo -u '#1000' /srv/tvt/work/bin/cold-videos --dry-run    # what would go; changes nothing
 sudo systemctl start tvt-cold-videos                        # a run now, as the timer would
 systemctl list-timers tvt-cold-videos.timer                 # the next run
-tail /srv/tvt/archive/cameras/cold-videos.log               # the moves
+tail /srv/tvt/archive/cameras/cold-videos.log               # what went
 ```
 
-Exit codes: 0 done (or nothing to move); 1 a file failed its check (its
-original stays; the next run tries again); 2 usage or settings; 69 the drive
-isn't mounted; 73 the drive would fall under 200 GB free; 75 not now (the
-roll-up still going after the wait, a restart planned, another run going,
-23:55 reached), which systemd counts as success: the next day's run catches
-up, and `status` flags two days without a finished run. To bring a day back
-onto the VM's disk, as uid 1000, copy it beside its link and rename it over
-the link (`cp -p <copy on the drive> <dir>/.<name>.back && mv -f
-<dir>/.<name>.back <dir>/<name>`); a day older than a week moves again on the
-next run unless `--keep-days` says otherwise.
+Exit codes: 0 done (or nothing to send); 1 a file failed its check (its
+original stays; the next run tries again); 2 usage or settings; 69 the
+storage can't be reached; 75 not now (the roll-up still going after the
+wait, a restart planned, another run going, 23:55 reached), which systemd
+counts as success: the next day's run catches up, and `status` flags two
+days without a finished run.
 
 ## Loading an OpenStreetMap extract (by hand)
 
