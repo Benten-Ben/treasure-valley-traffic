@@ -179,7 +179,7 @@ class TheVm(Base):
             json.dump(run, f)
         code, out = self.run_status()
         self.assertEqual(code, 0, out)
-        self.assertIn("  cold-vid: last run 6 h ago, done: moved 830 files (2.1 GB); 1498 GB free on the cold drive\n", out)
+        self.assertIn("  cold-vid: last run 6 h ago, done: moved 830 files (2.1 GB)\n", out)   # the cold drive's state
         # Not now (the roll-up ran late) is fine for a day; two days without a finished run isn't.
         with open(state, "w") as f:
             json.dump(dict(run, result="not now", code=75, why="the camera roll-up is still going (key_cameras)",
@@ -187,13 +187,35 @@ class TheVm(Base):
         code, out = self.run_status()
         self.assertEqual(code, 1, out)
         self.assertIn("! cold-vid: last run 6 h ago, not now: the camera roll-up is still going (key_cameras); "
-                      "moved 0 files (0.0 GB); 1498 GB free on the cold drive; last finished run: 2 d ago", out)
+                      "moved 0 files (0.0 GB); last finished run: 2 d ago", out)
+        # Off-site (version 2): what was sent, and the cold drive's old links still to prove.
+        run = dict(run, version=2, moved=830, left=0, relinked=0, old_left=0, old_bad=0)
+        run.pop("cold_free_gb")
         with open(state, "w") as f:
-            json.dump(dict(run, result="no cold drive", code=69, why="the cold drive isn't mounted", moved=0,
-                           cold_free_gb=None, left=0), f)
+            json.dump(run, f)
+        code, out = self.run_status()
+        self.assertEqual(code, 0, out)
+        self.assertIn("  cold-vid: last run 6 h ago, done: sent 830 files (2.1 GB)\n", out)
+        with open(state, "w") as f:
+            json.dump(dict(run, relinked=9000, old_left=40, old_bad=2, old_unknown=1), f)
         code, out = self.run_status()
         self.assertEqual(code, 1, out)
-        self.assertIn("! cold-vid: last run 6 h ago, no cold drive: the cold drive isn't mounted; moved 0 files", out)
+        self.assertIn("! cold-vid: last run 6 h ago, done: sent 830 files (2.1 GB); 9000 old cold-drive links now "
+                      "off-site; 40 files still link to the cold drive (2 don't match their off-site copies, "
+                      "1 have no logged sha256)\n", out)
+        with open(state, "w") as f:
+            json.dump(dict(run, code=1, result="failed", offsite_links=5000, offsite_missing=3), f)
+        code, out = self.run_status()
+        self.assertEqual(code, 1, out)
+        self.assertIn("! cold-vid: last run 6 h ago, failed: sent 830 files (2.1 GB); 3 of 5000 off-site copies "
+                      "missing\n", out)
+        with open(state, "w") as f:
+            json.dump(dict(run, result="off-site storage unreachable", code=69, moved=0, bytes=0,
+                           why="the off-site storage can't be reached (ping: exit 255: no route)"), f)
+        code, out = self.run_status()
+        self.assertEqual(code, 1, out)
+        self.assertIn("! cold-vid: last run 6 h ago, off-site storage unreachable: the off-site storage can't be "
+                      "reached (ping: exit 255: no route); sent 0 files", out)
         with open(state, "w") as f:
             f.write("{")
         self.assertIn("! cold-vid: its state file can't be read", self.run_status()[1])

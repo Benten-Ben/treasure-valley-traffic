@@ -20,6 +20,6 @@
     {"name": "rollup", "module": "ingest.camera_video",
      "help": "roll camera JPEGs into daily videos (the frame stream does this nightly)"}
   ],
-  "storage": "The largest plugin, on disk rather than in the database: the 34 key cameras download about 4 GB of JPEGs a day (2 days kept, about 8 GB) and the road-weather views about 2 GB a day (2 days kept), each rolled into one AV1 video per camera per day, kept (docs/11 §11.5): the last week on the VM's disk, older days on the cold drive with symlinks in their place (deploy/bin/cold-videos).",
-  "ethics": "The road network, not people: no plate or face recognition and no tracking of individuals. Images come only through 511 Idaho's republished copies (/map/Cctv/<id>), never from ACHD's image host or 511's list pages; they stay on the server and are never republished."
+  "storage": "The largest plugin, on disk rather than in the database: the 34 key cameras download about 4 GB of JPEGs a day (2 days kept, about 8 GB) and the road-weather views about 2 GB a day (2 days kept), each rolled into one AV1 video per camera per day, kept (docs/11 §11.5): the last few days on the VM's disk, older days in off-site storage with links in their place (deploy/bin/cold-videos).",
+  "ethics": "The road network, not people: no plate or face recognition and no tracking of individuals. Images come only through 511 Idaho's republished copies (/map/Cctv/<id>), never from ACHD's image host or 511's list pages; they stay private (on the server, and older videos encrypted in off-site storage) and are never republished."
 }

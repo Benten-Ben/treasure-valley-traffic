@@ -334,7 +334,7 @@ became the camera registry and the map's camera layer (piece 1 below).
 | **2. Capture service** | Fetches each camera at its real refresh rate (about 60 s). Keeps a frame only when the picture changed, using the timestamp bar plus a scene hash. Hourly AV1 roll-ups. Scales up in steps (see §11.7). | Yes (tested against fake images) |
 | **3. Health monitor** | Stale or frozen frames (repeated content), blank or gray frames, re-aimed cameras (scene change against a reference). Uptime per camera. | Logic yes; tuning needs real frames |
 | **4. Queue measurement** | Vehicle detection (permissive license) inside per-approach zones drawn by hand. Outputs queue presence and rough length over time. | Pipeline yes; calibration needs real frames |
-| **5. Privacy rules** | Measurements of vehicles as traffic only: no plate or face recognition, no following a vehicle across cameras. The archive is kept long-term (owner, Oct 5) but stays private on the home server and is never published without permission. | Built into 2 and 4 |
+| **5. Privacy rules** | Measurements of vehicles as traffic only: no plate or face recognition, no following a vehicle across cameras. The archive is kept long-term (owner, Oct 5) but stays private (on the home server, and older videos encrypted in off-site storage, Oct 30) and is never published without permission. | Built into 2 and 4 |
 
 ## 11.5 Storage
 
@@ -575,10 +575,11 @@ JPEG, 752 about 32 KB.
   AV1 bitstream, checked by a test).
 - **Originals:** keep the JPEGs 2 days (today and yesterday), then delete
   them once their video exists (owner, Oct 5). Measuring needs 24–48 hours.
-- **Older videos:** finished days more than a week old move to the cold
-  drive (decision A1, Oct 8, 2026), each left as a symlink in its place, so
-  the library and every other reader keep the same paths
-  ([deploy/README.md](../deploy/README.md#older-camera-videos-on-the-cold-drive)).
+- **Older videos:** finished days older than the VM keeps (3 days since
+  Oct 24) go to off-site storage (decision A1, Oct 8, 2026, as changed on
+  Oct 30 when the cold drive failed), each left as a link in its place, so
+  every reader keeps the same paths; the library lists those days as kept
+  off-site ([deploy/README.md](../deploy/README.md#older-camera-videos-go-off-site)).
 - **Getting a frame back:** every frame can be pulled out of the video as an
   image, and the CSV beside the video maps frame numbers to fetch times. The
   pictures aren't byte-identical to the originals, but they're close:

@@ -23,9 +23,11 @@ Layout under TVT_ARCHIVE:
     cameras/video/<image_id>/<YYYY>/<image_id>-<YYYY-MM-DD>.mp4 and .csv
     cameras/video/index-<list>.json
 
-Days older than a week move to the cold drive (deploy/bin/cold-videos, on the VM): each file is
-then a symlink to its copy there, so a video "exists" if its path does, link or file
-(os.path.lexists), even while the drive can't be reached.
+Days older than the VM keeps go to off-site storage (deploy/bin/cold-videos, on the VM): each file
+is then an off-site link, a symlink to offsite:<bytes>:<sha256> that leads nowhere, so a video
+"exists" if its path does, link or file (os.path.lexists). Days moved to the cold drive before
+Oct 30, 2026 are links to it, which lead nowhere since it failed, until cold-videos proves their
+off-site copies and makes them off-site links too.
 """
 
 import argparse
@@ -34,6 +36,7 @@ import csv
 import fcntl
 import json
 import os
+import re
 import shutil
 import struct
 import subprocess
@@ -60,6 +63,7 @@ WORKERS = 4            # encodes side by side, at most
 # runs at a time (LOCK).
 MEMORY_MB = int(os.environ.get("TVT_ROLLUP_MEMORY_MB", "6000"))
 LOCK = "rollup.lock"   # in TVT_ARCHIVE/cameras, held by whichever roll-up is running
+OFFSITE_LINK = "offsite:"   # the target of a day sent off-site: offsite:<bytes>:<sha256> (deploy/bin/cold-videos)
 INDEX = "index.csv"
 INDEX_FIELDS = ["fetched_at", "file", "bytes", "sha256"]
 VIDEO_FIELDS = ["video_s", "kind", "fetched_at", "local_time", "file", "bytes", "sha256"]
@@ -416,9 +420,9 @@ def write_index(root, cams, name, title):
     """Write cameras/video/index-<name>.json for the video library: this list's cameras
     and, for each, every finished day (video and CSV paths relative to cameras/video,
     sizes, frame counts, first and last frame). Days already summarized are reused.
-    A day moved to the cold drive (its video is a symlink) is marked "cold": true; while the
-    drive can't be reached, its last summary is kept, or a bare entry if it has none, so the
-    library can say it isn't available right now.
+    A day sent off-site (its video is an off-site link) is marked "offsite": true, and one still
+    linked to the cold drive "cold": true; neither can be read here, so its last summary is kept,
+    or a bare entry if it has none, and the library says why it can't be played.
     cams: [(image_id, camera name)]. Returns the number of days listed."""
     base = os.path.join(root, "cameras", "video")
     path = os.path.join(base, f"index-{name}.json")
@@ -441,9 +445,12 @@ def write_index(root, cams, name, title):
                 rel = f"{cam}/{year}/{fname}"
                 csv_rel = rel[:-4] + ".csv"
                 cold = os.path.islink(os.path.join(base, rel))
+                sent = re.fullmatch(OFFSITE_LINK + r"(\d+):[0-9a-f]{64}", os.readlink(os.path.join(base, rel))) \
+                    if cold else None
+                offsite = cold and os.readlink(os.path.join(base, rel)).startswith(OFFSITE_LINK)
                 try:
                     size = os.path.getsize(os.path.join(base, rel))
-                except OSError:                              # a moved day while the cold drive is away
+                except OSError:                              # an off-site day, or one on the gone cold drive
                     size = None
                 old = known.get(rel)
                 if old and (size is None or old.get("bytes") == size):
@@ -456,10 +463,15 @@ def write_index(root, cams, name, title):
                     entry = {"day": fname[len(str(cam)) + 1:-4], "video": rel, "csv": csv_rel, "bytes": size, **summary}
                 elif cold:
                     entry = {"day": fname[len(str(cam)) + 1:-4], "video": rel, "csv": csv_rel}
+                    if sent:                                 # the link records the bytes sent
+                        entry["bytes"] = int(sent[1])
                 else:
                     continue                                 # gone since it was listed
                 entry.pop("cold", None)
-                if cold:
+                entry.pop("offsite", None)
+                if offsite:
+                    entry["offsite"] = True
+                elif cold:
                     entry["cold"] = True
                 days.append(entry)
         total += len(days)

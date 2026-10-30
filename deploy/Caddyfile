@@ -47,16 +47,15 @@
 		file_server
 	}
 
-	# Camera days older than a week live on the cold drive (deploy/bin/cold-videos):
-	# each is a symlink here, read through the drive mounted read-only at the same
-	# path (compose.cold.yml). While the drive can't be reached a link leads
-	# nowhere: say so in words rather than with an empty error. The library page
-	# says the same for a day it can't play.
+	# Camera days older than the VM keeps are sent off-site (deploy/bin/cold-videos):
+	# each is a link here that leads nowhere (offsite:<bytes>:<sha256>), as are the
+	# days moved to the cold drive before it failed. Say so in words rather than
+	# with an empty error. The library page says the same for a day it can't play.
 	handle_errors 404 500 {
 		@videofiles path /videos/files/*
 		handle @videofiles {
 			header Cache-Control "no-store"
-			respond "Not available right now. Camera days older than a week are kept on the cold drive; when it can't be reached, they come back once it can." {err.status_code}
+			respond "Not available here. Older camera days are kept off-site and aren't served from this server." {err.status_code}
 		}
 	}
 
